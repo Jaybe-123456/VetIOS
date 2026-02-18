@@ -766,6 +766,202 @@ export interface Database {
                     }
                 ];
             };
+
+            // ─── API Event Tables (Migration 014) ──────────────────────────
+
+            ai_inference_events: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    case_id: string | null;
+                    model_name: string;
+                    model_version: string;
+                    input_signature: Json;
+                    output_payload: Json;
+                    confidence_score: number | null;
+                    uncertainty_metrics: Json | null;
+                    latency_ms: number;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    case_id?: string | null;
+                    model_name: string;
+                    model_version: string;
+                    input_signature: Json;
+                    output_payload: Json;
+                    confidence_score?: number | null;
+                    uncertainty_metrics?: Json | null;
+                    latency_ms: number;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    case_id?: string | null;
+                    model_name?: string;
+                    model_version?: string;
+                    input_signature?: Json;
+                    output_payload?: Json;
+                    confidence_score?: number | null;
+                    uncertainty_metrics?: Json | null;
+                    latency_ms?: number;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "ai_inference_events_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            clinical_outcome_events: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    case_id: string | null;
+                    inference_event_id: string;
+                    outcome_type: string;
+                    outcome_payload: Json;
+                    outcome_timestamp: string;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    case_id?: string | null;
+                    inference_event_id: string;
+                    outcome_type: string;
+                    outcome_payload: Json;
+                    outcome_timestamp: string;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    case_id?: string | null;
+                    inference_event_id?: string;
+                    outcome_type?: string;
+                    outcome_payload?: Json;
+                    outcome_timestamp?: string;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "clinical_outcome_events_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "clinical_outcome_events_inference_event_id_fkey";
+                        columns: ["inference_event_id"];
+                        referencedRelation: "ai_inference_events";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            edge_simulation_events: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    simulation_type: string;
+                    simulation_parameters: Json;
+                    scenario: Json;
+                    triggered_inference_id: string | null;
+                    inference_output: Json | null;
+                    failure_mode: string | null;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    simulation_type: string;
+                    simulation_parameters: Json;
+                    scenario: Json;
+                    triggered_inference_id?: string | null;
+                    inference_output?: Json | null;
+                    failure_mode?: string | null;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    simulation_type?: string;
+                    simulation_parameters?: Json;
+                    scenario?: Json;
+                    triggered_inference_id?: string | null;
+                    inference_output?: Json | null;
+                    failure_mode?: string | null;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "edge_simulation_events_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "edge_simulation_events_inference_id_fkey";
+                        columns: ["triggered_inference_id"];
+                        referencedRelation: "ai_inference_events";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            network_intelligence_metrics: {
+                Row: {
+                    id: string;
+                    tenant_id: string | null;
+                    metric_name: string;
+                    metric_scope: string;
+                    aggregated_signal: Json;
+                    model_version: string | null;
+                    computed_at: string;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id?: string | null;
+                    metric_name: string;
+                    metric_scope: string;
+                    aggregated_signal: Json;
+                    model_version?: string | null;
+                    computed_at?: string;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string | null;
+                    metric_name?: string;
+                    metric_scope?: string;
+                    aggregated_signal?: Json;
+                    model_version?: string | null;
+                    computed_at?: string;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "network_intelligence_metrics_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
         };
         Views: Record<string, never>;
         Functions: Record<string, never>;
@@ -800,3 +996,7 @@ export type DataGenerationEvent = Database['public']['Tables']['data_generation_
 export type WorkflowSnapshot = Database['public']['Tables']['workflow_snapshots']['Row'];
 export type IntelligenceMetric = Database['public']['Tables']['intelligence_metrics']['Row'];
 export type EdgeSimulation = Database['public']['Tables']['edge_simulations']['Row'];
+export type AIInferenceEvent = Database['public']['Tables']['ai_inference_events']['Row'];
+export type ClinicalOutcomeEvent = Database['public']['Tables']['clinical_outcome_events']['Row'];
+export type EdgeSimulationEvent = Database['public']['Tables']['edge_simulation_events']['Row'];
+export type NetworkIntelligenceMetric = Database['public']['Tables']['network_intelligence_metrics']['Row'];
