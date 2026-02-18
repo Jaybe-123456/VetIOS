@@ -1,0 +1,7 @@
+{
+    "name": "@vetios/supabase-infra",
+    "version": "0.0.1",
+    "private": true,
+    "license": "UNLICENSED",
+    "description": "Supabase CLI project: migrations, seed data, and edge functions for VetIOS."
+}
