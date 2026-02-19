@@ -79,7 +79,7 @@ INFERENCE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/inferenc
   -d '{
     "tenant_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
     "clinic_id": "b1ffc100-ad1c-5bf9-cc7e-7ccabd490b22",
-    "case_id": "c2ggd211-be2d-6cga-dd8f-8ddbce5a1c33",
+    "case_id": "c2aad211-be2d-4caa-ad8f-8ddbce5a1c33",
     "model": { "name": "gpt-4o-mini", "version": "2024-07-18" },
     "input": {
       "input_signature": {
@@ -114,7 +114,7 @@ if [ -n "$INFERENCE_EVENT_ID" ]; then
         \"tenant_id\": \"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\",
         \"inference_event_id\": \"$INFERENCE_EVENT_ID\",
         \"clinic_id\": \"b1ffc100-ad1c-5bf9-cc7e-7ccabd490b22\",
-        \"case_id\": \"c2ggd211-be2d-6cga-dd8f-8ddbce5a1c33\",
+        \"case_id\": \"c2aad211-be2d-4caa-ad8f-8ddbce5a1c33\",
         \"outcome\": {
           \"type\": \"diagnosis_confirmed\",
           \"payload\": { \"diagnosis\": \"cushing_syndrome\", \"confirmed_by\": \"veterinarian\" },
