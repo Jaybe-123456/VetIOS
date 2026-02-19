@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS public.ai_inference_events (
     output_payload  jsonb NOT NULL,
     confidence_score double precision,
     uncertainty_metrics jsonb,
-    latency_ms      integer NOT NULL,
+    inference_latency_ms      integer NOT NULL,
     created_at      timestamptz NOT NULL DEFAULT now()
 );
 

@@ -19,7 +19,7 @@ export interface InferenceLogInput {
     output_payload: Record<string, unknown>;
     confidence_score?: number | null;
     uncertainty_metrics?: Record<string, unknown> | null;
-    latency_ms: number;
+    inference_latency_ms: number;
 }
 
 export async function logInference(
@@ -38,7 +38,7 @@ export async function logInference(
             output_payload: input.output_payload,
             confidence_score: input.confidence_score ?? null,
             uncertainty_metrics: input.uncertainty_metrics ?? null,
-            latency_ms: input.latency_ms,
+            inference_latency_ms: input.inference_latency_ms,
         })
         .select('id')
         .single();

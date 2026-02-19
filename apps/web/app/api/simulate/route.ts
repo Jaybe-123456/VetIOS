@@ -80,7 +80,7 @@ export async function POST(request: Request) {
             output_payload: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
-            latency_ms: latencyMs,
+            inference_latency_ms: latencyMs,
         });
 
         // ── Log the simulation linking to the inference ──

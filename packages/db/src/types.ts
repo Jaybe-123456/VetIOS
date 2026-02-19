@@ -781,7 +781,7 @@ export interface Database {
                     output_payload: Json;
                     confidence_score: number | null;
                     uncertainty_metrics: Json | null;
-                    latency_ms: number;
+                    inference_latency_ms: number;
                     created_at: string;
                 };
                 Insert: {
@@ -795,7 +795,7 @@ export interface Database {
                     output_payload: Json;
                     confidence_score?: number | null;
                     uncertainty_metrics?: Json | null;
-                    latency_ms: number;
+                    inference_latency_ms: number;
                     created_at?: string;
                 };
                 Update: {
@@ -809,7 +809,7 @@ export interface Database {
                     output_payload?: Json;
                     confidence_score?: number | null;
                     uncertainty_metrics?: Json | null;
-                    latency_ms?: number;
+                    inference_latency_ms?: number;
                     created_at?: string;
                 };
                 Relationships: [
