@@ -51,7 +51,8 @@ echo ""
 
 # ─── Test 1: Empty body → 400 ──────────────────────────
 bold "Test 1: Empty body → 400"
-STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/api/inference")
+STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/api/inference" \
+  -H "Content-Type: application/json")
 assert_status "/api/inference empty body" "400" "$STATUS"
 echo ""
 
@@ -76,9 +77,9 @@ bold "Test 4: POST /api/inference (full payload)"
 INFERENCE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/inference" \
   -H "Content-Type: application/json" \
   -d '{
-    "tenant_id": "test-tenant-001",
-    "clinic_id": "clinic-001",
-    "case_id": "case-001",
+    "tenant_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
+    "clinic_id": "b1ffc100-ad1c-5bf9-cc7e-7ccabd490b22",
+    "case_id": "c2ggd211-be2d-6cga-dd8f-8ddbce5a1c33",
     "model": { "name": "gpt-4o-mini", "version": "2024-07-18" },
     "input": {
       "input_signature": {
@@ -110,10 +111,10 @@ if [ -n "$INFERENCE_EVENT_ID" ]; then
     OUTCOME_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/outcome" \
       -H "Content-Type: application/json" \
       -d "{
-        \"tenant_id\": \"test-tenant-001\",
+        \"tenant_id\": \"a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11\",
         \"inference_event_id\": \"$INFERENCE_EVENT_ID\",
-        \"clinic_id\": \"clinic-001\",
-        \"case_id\": \"case-001\",
+        \"clinic_id\": \"b1ffc100-ad1c-5bf9-cc7e-7ccabd490b22\",
+        \"case_id\": \"c2ggd211-be2d-6cga-dd8f-8ddbce5a1c33\",
         \"outcome\": {
           \"type\": \"diagnosis_confirmed\",
           \"payload\": { \"diagnosis\": \"cushing_syndrome\", \"confirmed_by\": \"veterinarian\" },
@@ -140,7 +141,7 @@ bold "Test 6: POST /api/simulate"
 SIMULATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/simulate" \
   -H "Content-Type: application/json" \
   -d '{
-    "tenant_id": "test-tenant-001",
+    "tenant_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
     "simulation": {
       "type": "rare_disease_adversarial",
       "parameters": {
