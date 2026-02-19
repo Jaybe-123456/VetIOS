@@ -1,13 +1,14 @@
 /**
  * Outcome Logger
  *
- * Inserts into clinical_outcome_events.
+ * Inserts into clinical_outcome_events using schema contracts.
  * Returns inserted row ID.
  *
  * Rule: Never update inference logs. Outcomes are separate events.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { CLINICAL_OUTCOME_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface OutcomeLogInput {
     tenant_id: string;
@@ -23,16 +24,18 @@ export async function logOutcome(
     client: SupabaseClient,
     input: OutcomeLogInput,
 ): Promise<string> {
+    const C = CLINICAL_OUTCOME_EVENTS.COLUMNS;
+
     const { data, error } = await client
-        .from('clinical_outcome_events')
+        .from(CLINICAL_OUTCOME_EVENTS.TABLE)
         .insert({
-            tenant_id: input.tenant_id,
-            clinic_id: input.clinic_id ?? null,
-            case_id: input.case_id ?? null,
-            inference_event_id: input.inference_event_id,
-            outcome_type: input.outcome_type,
-            outcome_payload: input.outcome_payload,
-            outcome_timestamp: input.outcome_timestamp,
+            [C.tenant_id]: input.tenant_id,
+            [C.clinic_id]: input.clinic_id ?? null,
+            [C.case_id]: input.case_id ?? null,
+            [C.inference_event_id]: input.inference_event_id,
+            [C.outcome_type]: input.outcome_type,
+            [C.outcome_payload]: input.outcome_payload,
+            [C.outcome_timestamp]: input.outcome_timestamp,
         })
         .select('id')
         .single();

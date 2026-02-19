@@ -1,14 +1,14 @@
 /**
  * Simulation Logger
  *
- * Inserts into edge_simulation_events.
+ * Inserts into edge_simulation_events using schema contracts.
  * Returns inserted row ID.
  *
- * Every simulation must call the inference pipeline —
- * otherwise you don't generate adversarial inference data.
+ * Every simulation must call the inference pipeline.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { EDGE_SIMULATION_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface SimulationLogInput {
     tenant_id: string;
@@ -24,16 +24,18 @@ export async function logSimulation(
     client: SupabaseClient,
     input: SimulationLogInput,
 ): Promise<string> {
+    const C = EDGE_SIMULATION_EVENTS.COLUMNS;
+
     const { data, error } = await client
-        .from('edge_simulation_events')
+        .from(EDGE_SIMULATION_EVENTS.TABLE)
         .insert({
-            tenant_id: input.tenant_id,
-            simulation_type: input.simulation_type,
-            simulation_parameters: input.simulation_parameters,
-            scenario: input.scenario,
-            triggered_inference_id: input.triggered_inference_id,
-            inference_output: input.inference_output ?? null,
-            failure_mode: input.failure_mode ?? null,
+            [C.tenant_id]: input.tenant_id,
+            [C.simulation_type]: input.simulation_type,
+            [C.simulation_parameters]: input.simulation_parameters,
+            [C.scenario]: input.scenario,
+            [C.triggered_inference_id]: input.triggered_inference_id,
+            [C.inference_output]: input.inference_output ?? null,
+            [C.failure_mode]: input.failure_mode ?? null,
         })
         .select('id')
         .single();

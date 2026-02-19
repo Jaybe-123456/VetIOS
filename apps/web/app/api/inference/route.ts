@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { safeJson } from '@/lib/http/safeJson';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runInference } from '@/lib/ai/provider';
 import { logInference } from '@/lib/logging/inferenceLogger';
@@ -24,10 +25,15 @@ interface InferenceRequestBody {
     };
 }
 
-export async function POST(request: Request) {
-    try {
-        const body = (await request.json()) as InferenceRequestBody;
+export async function POST(req: Request) {
+    // ── Safe JSON parse (returns 400, never 500) ──
+    const parsed = await safeJson<InferenceRequestBody>(req);
+    if (!parsed.ok) {
+        return NextResponse.json({ error: parsed.error }, { status: 400 });
+    }
+    const body = parsed.data;
 
+    try {
         // ── Validate required fields ──
         if (!body.tenant_id) {
             return NextResponse.json({ error: 'Missing tenant_id' }, { status: 400 });
@@ -74,7 +80,7 @@ export async function POST(request: Request) {
             output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
-            latency_ms: latencyMs,
+            inference_latency_ms: latencyMs,
         });
     } catch (err) {
         console.error('[POST /api/inference] Error:', err);

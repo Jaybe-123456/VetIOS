@@ -4,12 +4,14 @@
  * One function, no framework.
  * API routes call this module ONLY — no direct LLM calls in route handlers.
  *
- * Uses fetch against OpenAI-compatible chat completions endpoint.
- * Configurable base URL via AI_PROVIDER_BASE_URL env var.
+ * Env var support:
+ *   - OPENAI_API_KEY or AI_PROVIDER_API_KEY
+ *   - AI_PROVIDER_BASE_URL (default: https://api.openai.com/v1)
+ *   - AI_PROVIDER_DEFAULT_MODEL (default: gpt-4o-mini)
  */
 
 export interface InferenceInput {
-    model: string;
+    model?: string;
     input_signature: Record<string, unknown>;
 }
 
@@ -20,18 +22,33 @@ export interface InferenceOutput {
     raw_content: string;
 }
 
+function getApiKey(): string {
+    const key = process.env.OPENAI_API_KEY || process.env.AI_PROVIDER_API_KEY;
+    if (!key) {
+        throw new Error(
+            'Missing AI provider key: set OPENAI_API_KEY or AI_PROVIDER_API_KEY.'
+        );
+    }
+    return key;
+}
+
+function getBaseUrl(): string {
+    return process.env.AI_PROVIDER_BASE_URL || 'https://api.openai.com/v1';
+}
+
+function getDefaultModel(): string {
+    return process.env.AI_PROVIDER_DEFAULT_MODEL || 'gpt-4o-mini';
+}
+
 /**
  * Runs a single inference call against the configured AI provider.
  *
  * Rule: this is the ONLY module that touches the LLM.
  */
 export async function runInference(input: InferenceInput): Promise<InferenceOutput> {
-    const apiKey = process.env.OPENAI_API_KEY;
-    const baseUrl = process.env.AI_PROVIDER_BASE_URL || 'https://api.openai.com/v1';
-
-    if (!apiKey) {
-        throw new Error('Missing OPENAI_API_KEY environment variable.');
-    }
+    const apiKey = getApiKey();
+    const baseUrl = getBaseUrl();
+    const model = input.model || getDefaultModel();
 
     const systemPrompt = `You are VetIOS Decision Intelligence, a clinical decision support system for veterinary medicine.
 Respond ONLY with valid JSON. Include:
@@ -42,27 +59,51 @@ Respond ONLY with valid JSON. Include:
 
     const userPrompt = JSON.stringify(input.input_signature, null, 2);
 
-    const response = await fetch(`${baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-            model: input.model,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt },
-            ],
-            temperature: 0.3,
-            max_tokens: 2048,
-            response_format: { type: 'json_object' },
-        }),
-    });
+    let response: Response;
+    try {
+        response = await fetch(`${baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt },
+                ],
+                temperature: 0.3,
+                max_tokens: 2048,
+                response_format: { type: 'json_object' },
+            }),
+        });
+    } catch (err) {
+        throw new Error(
+            `AI provider connection failed: ${err instanceof Error ? err.message : String(err)}`
+        );
+    }
 
     if (!response.ok) {
         const errorBody = await response.text();
-        throw new Error(`AI provider returned ${response.status}: ${errorBody}`);
+
+        // Surface quota/billing errors cleanly
+        if (response.status === 429) {
+            throw new Error(
+                `AI provider rate limited (429). You may have exceeded your quota. ` +
+                `Provider response: ${errorBody}`
+            );
+        }
+        if (response.status === 402 || errorBody.includes('billing')) {
+            throw new Error(
+                `AI provider billing error (${response.status}). ` +
+                `Check your API key billing status. Provider response: ${errorBody}`
+            );
+        }
+
+        throw new Error(
+            `AI provider returned ${response.status}: ${errorBody}`
+        );
     }
 
     const json = (await response.json()) as {

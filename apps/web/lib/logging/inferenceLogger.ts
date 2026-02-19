@@ -1,13 +1,14 @@
 /**
  * Inference Logger
  *
- * Inserts into ai_inference_events.
+ * Inserts into ai_inference_events using schema contracts.
  * Returns inserted row ID.
  *
  * This is where the moat becomes automatic.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { AI_INFERENCE_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface InferenceLogInput {
     tenant_id: string;
@@ -26,19 +27,21 @@ export async function logInference(
     client: SupabaseClient,
     input: InferenceLogInput,
 ): Promise<string> {
+    const C = AI_INFERENCE_EVENTS.COLUMNS;
+
     const { data, error } = await client
-        .from('ai_inference_events')
+        .from(AI_INFERENCE_EVENTS.TABLE)
         .insert({
-            tenant_id: input.tenant_id,
-            clinic_id: input.clinic_id ?? null,
-            case_id: input.case_id ?? null,
-            model_name: input.model_name,
-            model_version: input.model_version,
-            input_signature: input.input_signature,
-            output_payload: input.output_payload,
-            confidence_score: input.confidence_score ?? null,
-            uncertainty_metrics: input.uncertainty_metrics ?? null,
-            inference_latency_ms: input.inference_latency_ms,
+            [C.tenant_id]: input.tenant_id,
+            [C.clinic_id]: input.clinic_id ?? null,
+            [C.case_id]: input.case_id ?? null,
+            [C.model_name]: input.model_name,
+            [C.model_version]: input.model_version,
+            [C.input_signature]: input.input_signature,
+            [C.output_payload]: input.output_payload,
+            [C.confidence_score]: input.confidence_score ?? null,
+            [C.uncertainty_metrics]: input.uncertainty_metrics ?? null,
+            [C.inference_latency_ms]: input.inference_latency_ms,
         })
         .select('id')
         .single();
