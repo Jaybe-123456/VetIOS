@@ -7,6 +7,11 @@
  * Otherwise you don't generate adversarial inference data.
  *
  * Uses the shared runInference() function directly — NOT an HTTP call.
+ *
+ * ACTUAL edge_simulation_events columns:
+ *   id, simulation_type, simulation_parameters, triggered_inference_id,
+ *   failure_mode, stress_metrics, is_real_world, created_at
+ *   (NO tenant_id, NO scenario, NO inference_output)
  */
 
 import { NextResponse } from 'next/server';
@@ -51,13 +56,6 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Missing inference.model' }, { status: 400 });
         }
 
-        // ── Generate scenario ──
-        const scenario = {
-            type: body.simulation.type,
-            parameters: body.simulation.parameters,
-            generated_at: new Date().toISOString(),
-        };
-
         // ── Build inference input from simulation parameters ──
         const inputSignature: Record<string, unknown> = {
             simulation_type: body.simulation.type,
@@ -89,20 +87,18 @@ export async function POST(req: Request) {
             inference_latency_ms: latencyMs,
         });
 
-        // ── Log the simulation linking to the inference ──
+        // ── Log the simulation (matches actual DB columns) ──
         const simulationEventId = await logSimulation(supabase, {
-            tenant_id: body.tenant_id,
             simulation_type: body.simulation.type,
             simulation_parameters: body.simulation.parameters,
-            scenario,
             triggered_inference_id: triggeredInferenceId,
-            inference_output: inferenceResult.output_payload,
+            stress_metrics: inferenceResult.output_payload,
+            is_real_world: false,
         });
 
         return NextResponse.json({
             simulation_event_id: simulationEventId,
             triggered_inference_event_id: triggeredInferenceId,
-            scenario,
             inference_output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             inference_latency_ms: latencyMs,

@@ -4,20 +4,21 @@
  * Inserts into edge_simulation_events using schema contracts.
  * Returns inserted row ID.
  *
- * Every simulation must call the inference pipeline.
+ * ACTUAL DB COLUMNS (no tenant_id, no scenario, no inference_output):
+ *   id, simulation_type, simulation_parameters, triggered_inference_id,
+ *   failure_mode, stress_metrics, is_real_world, created_at
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { EDGE_SIMULATION_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface SimulationLogInput {
-    tenant_id: string;
     simulation_type: string;
     simulation_parameters: Record<string, unknown>;
-    scenario: Record<string, unknown>;
     triggered_inference_id: string | null;
-    inference_output?: Record<string, unknown> | null;
     failure_mode?: string | null;
+    stress_metrics?: Record<string, unknown> | null;
+    is_real_world: boolean;
 }
 
 export async function logSimulation(
@@ -29,13 +30,12 @@ export async function logSimulation(
     const { data, error } = await client
         .from(EDGE_SIMULATION_EVENTS.TABLE)
         .insert({
-            [C.tenant_id]: input.tenant_id,
             [C.simulation_type]: input.simulation_type,
             [C.simulation_parameters]: input.simulation_parameters,
-            [C.scenario]: input.scenario,
             [C.triggered_inference_id]: input.triggered_inference_id,
-            [C.inference_output]: input.inference_output ?? null,
             [C.failure_mode]: input.failure_mode ?? null,
+            [C.stress_metrics]: input.stress_metrics ?? null,
+            [C.is_real_world]: input.is_real_world,
         })
         .select('id')
         .single();
