@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-foreground font-sans antialiased selection:bg-accent selection:text-black;
+  }
+}
+
+@layer utilities {
+  .border-grid {
+    @apply border border-muted;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-background;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-muted border border-background;
+}
+::-webkit-scrollbar-corner {
+  @apply bg-background;
+}
