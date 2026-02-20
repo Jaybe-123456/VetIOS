@@ -32,6 +32,7 @@
             ],
             "outputs": [
                 ".next/**",
+                "apps/web/.next/**",
                 "!.next/cache/**",
                 "dist/**"
             ]
