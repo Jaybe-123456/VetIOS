@@ -31,11 +31,22 @@ export default function InferenceConsole() {
         setState({ status: 'computing', eventId: null, probabilities: [], errorMessage: null });
 
         const formData = new FormData(e.currentTarget);
+
+        // Match the API route's expected InferenceRequestBody structure
         const data = {
-            species: formData.get('species'),
-            breed: formData.get('breed'),
-            symptoms: formData.get('symptoms')?.toString().split(',').map(s => s.trim()),
-            metadata: formData.get('metadata') ? JSON.parse(formData.get('metadata') as string) : {}
+            tenant_id: "demo-tenant-id", // Hardcoded for demo/local testing pending auth
+            model: {
+                name: "gpt-4-turbo",
+                version: "1.0.0"
+            },
+            input: {
+                input_signature: {
+                    species: formData.get('species'),
+                    breed: formData.get('breed'),
+                    symptoms: formData.get('symptoms')?.toString().split(',').map(s => s.trim()) || [],
+                    metadata: formData.get('metadata') ? JSON.parse(formData.get('metadata') as string) : {}
+                }
+            }
         };
 
         try {
@@ -54,7 +65,7 @@ export default function InferenceConsole() {
 
             setState({
                 status: 'success',
-                eventId: result.eventId || `evt_${Math.random().toString(36).substr(2, 9)}`,
+                eventId: result.inference_event_id || `evt_${Math.random().toString(36).substr(2, 9)}`,
                 probabilities: result.probabilities || [
                     { label: 'Primary Pathogen', value: 0.82 },
                     { label: 'Secondary Opportunistic', value: 0.14 },
@@ -105,9 +116,9 @@ export default function InferenceConsole() {
                     <div>
                         <TerminalLabel>Execution Status</TerminalLabel>
                         <div className={`p-4 border font-mono text-sm ${state.status === 'idle' ? 'border-muted text-muted' :
-                                state.status === 'computing' ? 'border-accent text-accent animate-pulse' :
-                                    state.status === 'error' ? 'border-danger text-danger' :
-                                        'border-accent text-accent'
+                            state.status === 'computing' ? 'border-accent text-accent animate-pulse' :
+                                state.status === 'error' ? 'border-danger text-danger' :
+                                    'border-accent text-accent'
                             }`}>
                             {state.status === 'idle' && 'AWAITING INPUT'}
                             {state.status === 'computing' && 'CALCULATING PROBABILITIES...'}

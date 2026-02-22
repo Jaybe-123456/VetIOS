@@ -1,6 +1,16 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-background: #000000;
+  --color-foreground: #ffffff;
+  --color-accent: #00ff41;
+  --color-muted: #333333;
+  --color-dim: #1a1a1a;
+  --color-danger: #ff3333;
+
+  --font-mono: var(--font-geist-mono), monospace;
+  --font-sans: var(--font-inter), sans-serif;
+}
 
 @layer base {
   body {
@@ -19,12 +29,15 @@
   width: 8px;
   height: 8px;
 }
+
 ::-webkit-scrollbar-track {
   @apply bg-background;
 }
+
 ::-webkit-scrollbar-thumb {
   @apply bg-muted border border-background;
 }
+
 ::-webkit-scrollbar-corner {
   @apply bg-background;
 }

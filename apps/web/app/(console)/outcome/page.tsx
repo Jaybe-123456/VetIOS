@@ -26,13 +26,20 @@ export default function OutcomeAttachment() {
         setState({ status: 'validating', errorMessage: null });
 
         const formData = new FormData(e.currentTarget);
+        const parsedContext = formData.get('outcome_context') ? JSON.parse(formData.get('outcome_context') as string) : {};
+
         const data = {
-            inferenceEventId: formData.get('inferenceId'),
-            outcomeContext: formData.get('outcome_context')
+            tenant_id: "demo-tenant-id", // Hardcoded for demo/local testing
+            inference_event_id: formData.get('inferenceId'),
+            outcome: {
+                type: "clinical_update",
+                payload: parsedContext,
+                timestamp: new Date().toISOString()
+            }
         };
 
         try {
-            if (!data.inferenceEventId) throw new Error('Inference Event ID is compulsory.');
+            if (!data.inference_event_id) throw new Error('Inference Event ID is compulsory.');
 
             const res = await fetch('/api/outcome', {
                 method: 'POST',
@@ -85,9 +92,9 @@ export default function OutcomeAttachment() {
                     <div>
                         <TerminalLabel>Weight Calibration Status</TerminalLabel>
                         <div className={`p-4 border font-mono text-sm ${state.status === 'idle' ? 'border-muted text-muted' :
-                                state.status === 'validating' ? 'border-accent text-accent animate-pulse' :
-                                    state.status === 'error' ? 'border-danger text-danger' :
-                                        'border-accent text-accent'
+                            state.status === 'validating' ? 'border-accent text-accent animate-pulse' :
+                                state.status === 'error' ? 'border-danger text-danger' :
+                                    'border-accent text-accent'
                             }`}>
                             {state.status === 'idle' && 'AWAITING EVENT ATTACHMENT'}
                             {state.status === 'validating' && 'CLOSING LOOP & CALIBRATING...'}
