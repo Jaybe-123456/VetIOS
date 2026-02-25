@@ -1,0 +1,14 @@
+﻿
+=== VetIOS Stage 1 - Local Test Suite ===
+
+  [OK] Root (/) redirects to /login: PASS: 307 -> /login
+  [OK] POST /api/inference returns 401: PASS: 401 {"error":"Unauthorized"}
+  [OK] POST /api/outcome returns 401: PASS: 401
+  [OK] POST /api/simulate returns 401: PASS: 401
+  [OK] GET /api/evaluation returns 401: PASS: 401
+  [OK] DB: ai_inference_events table: PASS: table exists
+  [OK] DB: model_evaluation_events table: PASS: table exists
+  [OK] RLS: anon key gets empty result (no auth.uid): PASS: anon gets 401 (RLS + no auth.uid blocks access entirely)
+
+  Results: 8 passed, 0 failed, 8 total
+
