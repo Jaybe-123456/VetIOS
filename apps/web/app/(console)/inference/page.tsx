@@ -32,9 +32,8 @@ export default function InferenceConsole() {
 
         const formData = new FormData(e.currentTarget);
 
-        // Match the API route's expected InferenceRequestBody structure
+        // Server derives tenant_id from the auth session
         const data = {
-            tenant_id: "demo-tenant-id", // Hardcoded for demo/local testing pending auth
             model: {
                 name: "gpt-4-turbo",
                 version: "1.0.0"
