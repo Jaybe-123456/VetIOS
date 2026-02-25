@@ -1,0 +1,314 @@
+﻿
+> @vetios/web@0.1.0 build C:\Users\Administrator\New folder\apps\web
+> next build
+
+  Γû▓ Next.js 14.2.35
+
+   Creating an optimized production build ...
+node.exe : Error: Cannot 
+apply unknown utility 
+class 
+`selection:text-black`
+At C:\Users\Administrator\A
+ppData\Roaming\npm\pnpm.ps1
+:24 char:5
++     & "node$exe"  "$based
+ir/node_modules/pnpm/bin/pn
+pm.cjs" $args
++     ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~
+    + CategoryInfo         
+     : NotSpecified: (Err  
+  or: Cannot a...ion:tex   
+ t-black`:String) [], R    
+emoteException
+    + FullyQualifiedErrorI 
+   d : NativeCommandError
+ 
+    at onInvalidCandidate (
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\tailwindcss\dist\lib.js:2
+1:1511)
+    at Ee (C:\Users\Adminis
+trator\New folder\apps\web\
+node_modules\tailwindcss\di
+st\lib.js:16:37066)
+    at 
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\tailwindcss\dist\lib.js:2
+1:355
+    at Pr (C:\Users\Adminis
+trator\New folder\apps\web\
+node_modules\tailwindcss\di
+st\lib.js:3:1733)
+    at _ (C:\Users\Administ
+rator\New folder\apps\web\n
+ode_modules\tailwindcss\dis
+t\lib.js:3:1377)
+    at Te (C:\Users\Adminis
+trator\New folder\apps\web\
+node_modules\tailwindcss\di
+st\lib.js:21:172)
+    at pn (C:\Users\Adminis
+trator\New folder\apps\web\
+node_modules\tailwindcss\di
+st\lib.js:38:294)
+    at async dn (C:\Users\A
+dministrator\New folder\app
+s\web\node_modules\tailwind
+css\dist\lib.js:38:631)
+    at async Xr (C:\Users\A
+dministrator\New folder\app
+s\web\node_modules\@tailwin
+dcss\node\dist\index.js:10:
+3417)
+    at async N (C:\Users\Ad
+ministrator\New folder\apps
+\web\node_modules\@tailwind
+css\postcss\dist\index.js:1
+0:3979)
+<w> [webpack.cache.PackFile
+CacheStrategy] Skipped not 
+serializable cache item 'Co
+mpilation/modules|C:\Users\
+Administrator\New folder\ap
+ps\web\node_modules\next\di
+st\build\webpack\loaders\cs
+s-loader\src\index.js??rule
+Set[1].rules[14].oneOf[12].
+use[2]!C:\Users\Administrat
+or\New folder\apps\web\node
+_modules\next\dist\build\we
+bpack\loaders\postcss-loade
+r\src\index.js??ruleSet[1].
+rules[14].oneOf[12].use[3]!
+C:\Users\Administrator\New 
+folder\apps\web\app\globals
+.css': No serializer 
+registered for 
+PostCSSSyntaxError
+<w> while serializing webpa
+ck/lib/cache/PackFileCacheS
+trategy.PackContentItems 
+-> 
+webpack/lib/NormalModule 
+-> webpack/lib/ModuleBuildE
+rror -> PostCSSSyntaxError
+Failed to compile.
+
+./app/globals.css:1:1
+Syntax error: tailwindcss: 
+C:\Users\Administrator\New 
+folder\apps\web\app\globals
+.css Cannot apply unknown 
+utility class 
+`selection:text-black`
+
+[1m[31m>[39m[22m[90m 
+1 | 
+[39m[36m@tailwind[39m 
+base[33m;[39m
+ [90m   | 
+[39m[1m[31m^[39m[22m
+ [90m 2 | 
+[39m[36m@tailwind[39m 
+components[33m;[39m
+ [90m 3 | 
+[39m[36m@tailwind[39m 
+utilities[33m;[39m
+
+./app/globals.css
+Syntax error: tailwindcss: 
+C:\Users\Administrator\New 
+folder\apps\web\app\globals
+.css Can't resolve 
+'../../tailwind.config.js' 
+in 'C:\Users\Administrator\
+New folder\apps\web\app' 
+(1:1)
+
+[1m[31m>[39m[22m[90m 
+1 | [39m[36m@import[39m 
+[32m"tailwindcss"[39m[33
+m;[39m
+ [90m   | 
+[39m[1m[31m^[39m[22m
+ [90m 2 | [39m
+ [90m 3 | 
+[39m[36m@config[39m [32
+m"../../tailwind.config.js"
+[39m[33m;[39m
+
+    at 
+tryRunOrWebpackError (C:\Us
+ers\Administrator\New folde
+r\apps\web\node_modules\nex
+t\dist\compiled\webpack\bun
+dle5.js:28:312989)
+    at 
+__webpack_require_module__ 
+(C:\Users\Administrator\New
+ folder\apps\web\node_modul
+es\next\dist\compiled\webpa
+ck\bundle5.js:28:131165)
+    at __nested_webpack_req
+uire_153728__ (C:\Users\Adm
+inistrator\New folder\apps\
+web\node_modules\next\dist\
+compiled\webpack\bundle5.js
+:28:130607)
+    at 
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\next\dist\compiled\webpac
+k\bundle5.js:28:131454
+    at symbolIterator (C:\U
+sers\Administrator\New fold
+er\apps\web\node_modules\ne
+xt\dist\compiled\neo-async\
+async.js:1:14444)
+    at done (C:\Users\Admin
+istrator\New folder\apps\we
+b\node_modules\next\dist\co
+mpiled\neo-async\async.js:1
+:14824)
+    at Hook.eval [as 
+callAsync] (eval at create 
+(C:\Users\Administrator\New
+ folder\apps\web\node_modul
+es\next\dist\compiled\webpa
+ck\bundle5.js:13:28858), 
+<anonymous>:15:1)
+    at 
+Hook.CALL_ASYNC_DELEGATE 
+[as _callAsync] (C:\Users\A
+dministrator\New folder\app
+s\web\node_modules\next\dis
+t\compiled\webpack\bundle5.
+js:13:26012)
+    at 
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\next\dist\compiled\webpac
+k\bundle5.js:28:130328
+    at symbolIterator (C:\U
+sers\Administrator\New fold
+er\apps\web\node_modules\ne
+xt\dist\compiled\neo-async\
+async.js:1:14402)
+-- inner error --
+Syntax error: tailwindcss: 
+C:\Users\Administrator\New 
+folder\apps\web\app\globals
+.css Can't resolve 
+'../../tailwind.config.js' 
+in 'C:\Users\Administrator\
+New folder\apps\web\app' 
+(1:1)
+
+[1m[31m>[39m[22m[90m 
+1 | [39m[36m@import[39m 
+[32m"tailwindcss"[39m[33
+m;[39m
+ [90m   | 
+[39m[1m[31m^[39m[22m
+ [90m 2 | [39m
+ [90m 3 | 
+[39m[36m@config[39m [32
+m"../../tailwind.config.js"
+[39m[33m;[39m
+
+    at Object.<anonymous> (
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\next\dist\build\webpack\l
+oaders\css-loader\src\index
+.js??ruleSet[1].rules[14].o
+neOf[12].use[2]!C:\Users\Ad
+ministrator\New folder\apps
+\web\node_modules\next\dist
+\build\webpack\loaders\post
+css-loader\src\index.js??ru
+leSet[1].rules[14].oneOf[12
+].use[3]!C:\Users\Administr
+ator\New folder\apps\web\ap
+p\globals.css:1:7)
+    at 
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\next\dist\compiled\webpac
+k\bundle5.js:28:922493
+    at Hook.eval [as call] 
+(eval at create (C:\Users\A
+dministrator\New folder\app
+s\web\node_modules\next\dis
+t\compiled\webpack\bundle5.
+js:13:28636), 
+<anonymous>:7:1)
+    at Hook.CALL_DELEGATE 
+[as _call] (C:\Users\Admini
+strator\New folder\apps\web
+\node_modules\next\dist\com
+piled\webpack\bundle5.js:13
+:25906)
+    at 
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\next\dist\compiled\webpac
+k\bundle5.js:28:131198
+    at 
+tryRunOrWebpackError (C:\Us
+ers\Administrator\New folde
+r\apps\web\node_modules\nex
+t\dist\compiled\webpack\bun
+dle5.js:28:312943)
+    at 
+__webpack_require_module__ 
+(C:\Users\Administrator\New
+ folder\apps\web\node_modul
+es\next\dist\compiled\webpa
+ck\bundle5.js:28:131165)
+    at __nested_webpack_req
+uire_153728__ (C:\Users\Adm
+inistrator\New folder\apps\
+web\node_modules\next\dist\
+compiled\webpack\bundle5.js
+:28:130607)
+    at 
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\next\dist\compiled\webpac
+k\bundle5.js:28:131454
+    at symbolIterator (C:\U
+sers\Administrator\New fold
+er\apps\web\node_modules\ne
+xt\dist\compiled\neo-async\
+async.js:1:14444)
+
+Generated code for 
+C:\Users\Administrator\New 
+folder\apps\web\node_module
+s\next\dist\build\webpack\l
+oaders\css-loader\src\index
+.js??ruleSet[1].rules[14].o
+neOf[12].use[2]!C:\Users\Ad
+ministrator\New folder\apps
+\web\node_modules\next\dist
+\build\webpack\loaders\post
+css-loader\src\index.js??ru
+leSet[1].rules[14].oneOf[12
+].use[3]!C:\Users\Administr
+ator\New folder\apps\web\ap
+p\globals.css
+
+Import trace for requested 
+module:
+./app/globals.css
+
+
+> Build failed because of 
+webpack errors
+ΓÇëELIFECYCLEΓÇë Command failed with exit code 1.

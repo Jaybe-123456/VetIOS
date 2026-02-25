@@ -9,6 +9,8 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 
 let _client: SupabaseClient | null = null;
 
@@ -47,4 +49,52 @@ export function getSupabaseServer(): SupabaseClient {
     });
 
     return _client;
+}
+
+/**
+ * Resolves the current authenticated user's tenant_id from cookies.
+ *
+ * V1 Tenant Model: tenant_id = auth.uid() (1 user = 1 tenant).
+ *
+ * Returns null if the user is not authenticated.
+ * API routes should return 401 when this returns null.
+ */
+export async function resolveSessionTenant(): Promise<{
+    supabase: SupabaseClient;
+    tenantId: string;
+    userId: string;
+} | null> {
+    const cookieStore = await cookies();
+
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!url || !anonKey) return null;
+
+    const supabase = createServerClient(url, anonKey, {
+        cookies: {
+            getAll() {
+                return cookieStore.getAll();
+            },
+            setAll(cookiesToSet) {
+                try {
+                    cookiesToSet.forEach(({ name, value, options }) =>
+                        cookieStore.set(name, value, options)
+                    );
+                } catch {
+                    // Ignored in read-only server component context
+                }
+            },
+        },
+    });
+
+    const { data: { user }, error } = await supabase.auth.getUser();
+
+    if (error || !user) return null;
+
+    return {
+        supabase,
+        tenantId: user.id, // V1: tenant_id = auth.uid()
+        userId: user.id,
+    };
 }
