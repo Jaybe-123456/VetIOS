@@ -7,22 +7,18 @@
  * Otherwise you don't generate adversarial inference data.
  *
  * Uses the shared runInference() function directly — NOT an HTTP call.
- *
- * ACTUAL edge_simulation_events columns:
- *   id, simulation_type, simulation_parameters, triggered_inference_id,
- *   failure_mode, stress_metrics, is_real_world, created_at
- *   (NO tenant_id, NO scenario, NO inference_output)
+ * Auth: Requires authenticated session. tenant_id = auth.uid().
  */
 
 import { NextResponse } from 'next/server';
 import { safeJson } from '@/lib/http/safeJson';
-import { getSupabaseServer } from '@/lib/supabaseServer';
+import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { runInference } from '@/lib/ai/provider';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { logSimulation } from '@/lib/logging/simulationLogger';
 
 interface SimulateRequestBody {
-    tenant_id: string;
+    tenant_id?: string; // Deprecated: now derived from session
     simulation: {
         type: string;
         parameters: Record<string, unknown>;
@@ -34,6 +30,13 @@ interface SimulateRequestBody {
 }
 
 export async function POST(req: Request) {
+    // ── Auth check ──
+    const session = await resolveSessionTenant();
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const { tenantId } = session;
+
     // ── Safe JSON parse (returns 400, never 500) ──
     const parsed = await safeJson<SimulateRequestBody>(req);
     if (!parsed.ok) {
@@ -43,9 +46,6 @@ export async function POST(req: Request) {
 
     try {
         // ── Validate required fields ──
-        if (!body.tenant_id) {
-            return NextResponse.json({ error: 'Missing tenant_id' }, { status: 400 });
-        }
         if (!body.simulation?.type) {
             return NextResponse.json({ error: 'Missing simulation.type' }, { status: 400 });
         }
@@ -77,7 +77,7 @@ export async function POST(req: Request) {
 
         // ── Log the inference (same path as /api/inference) ──
         const triggeredInferenceId = await logInference(supabase, {
-            tenant_id: body.tenant_id,
+            tenant_id: tenantId,
             model_name: body.inference.model,
             model_version: body.inference.model_version ?? body.inference.model,
             input_signature: inputSignature,

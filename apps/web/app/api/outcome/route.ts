@@ -4,15 +4,16 @@
  * Links a clinical outcome to a previously logged inference event.
  *
  * Critical rule: Never update inference logs. Outcomes are separate events.
+ * Auth: Requires authenticated session. tenant_id = auth.uid().
  */
 
 import { NextResponse } from 'next/server';
 import { safeJson } from '@/lib/http/safeJson';
-import { getSupabaseServer } from '@/lib/supabaseServer';
+import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { logOutcome } from '@/lib/logging/outcomeLogger';
 
 interface OutcomeRequestBody {
-    tenant_id: string;
+    tenant_id?: string; // Deprecated: now derived from session
     inference_event_id: string;
     clinic_id?: string;
     case_id?: string;
@@ -24,6 +25,13 @@ interface OutcomeRequestBody {
 }
 
 export async function POST(req: Request) {
+    // ── Auth check ──
+    const session = await resolveSessionTenant();
+    if (!session) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    const { tenantId } = session;
+
     // ── Safe JSON parse (returns 400, never 500) ──
     const parsed = await safeJson<OutcomeRequestBody>(req);
     if (!parsed.ok) {
@@ -33,9 +41,6 @@ export async function POST(req: Request) {
 
     try {
         // ── Validate required fields ──
-        if (!body.tenant_id) {
-            return NextResponse.json({ error: 'Missing tenant_id' }, { status: 400 });
-        }
         if (!body.inference_event_id) {
             return NextResponse.json({ error: 'Missing inference_event_id' }, { status: 400 });
         }
@@ -65,7 +70,7 @@ export async function POST(req: Request) {
             );
         }
 
-        if ((inferenceRecord as { tenant_id: string }).tenant_id !== body.tenant_id) {
+        if ((inferenceRecord as { tenant_id: string }).tenant_id !== tenantId) {
             return NextResponse.json(
                 { error: 'Inference event does not belong to this tenant' },
                 { status: 403 },
@@ -74,7 +79,7 @@ export async function POST(req: Request) {
 
         // ── Insert outcome event ──
         const outcomeEventId = await logOutcome(supabase, {
-            tenant_id: body.tenant_id,
+            tenant_id: tenantId,
             clinic_id: body.clinic_id ?? null,
             case_id: body.case_id ?? null,
             inference_event_id: body.inference_event_id,
@@ -95,3 +100,4 @@ export async function POST(req: Request) {
         );
     }
 }
+

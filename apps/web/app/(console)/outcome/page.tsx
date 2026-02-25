@@ -28,8 +28,8 @@ export default function OutcomeAttachment() {
         const formData = new FormData(e.currentTarget);
         const parsedContext = formData.get('outcome_context') ? JSON.parse(formData.get('outcome_context') as string) : {};
 
+        // Server derives tenant_id from the auth session
         const data = {
-            tenant_id: "demo-tenant-id", // Hardcoded for demo/local testing
             inference_event_id: formData.get('inferenceId'),
             outcome: {
                 type: "clinical_update",
