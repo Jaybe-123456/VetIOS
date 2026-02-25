@@ -12,6 +12,7 @@ import { safeJson } from '@/lib/http/safeJson';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { runInference } from '@/lib/ai/provider';
 import { logInference } from '@/lib/logging/inferenceLogger';
+import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
 
 interface InferenceRequestBody {
     tenant_id?: string; // Deprecated: now derived from session
@@ -80,12 +81,32 @@ export async function POST(req: Request) {
             inference_latency_ms: latencyMs,
         });
 
+        // ── Evaluation Engine: Auto-trigger baseline evaluation ──
+        let evalResult = null;
+        try {
+            const recentEvals = await getRecentEvaluations(
+                supabase, tenantId, body.model.name, 20,
+            );
+            evalResult = await createEvaluationEvent(supabase, {
+                tenant_id: tenantId,
+                trigger_type: 'inference',
+                inference_event_id: inferenceEventId,
+                model_name: body.model.name,
+                model_version: body.model.version,
+                predicted_confidence: inferenceResult.confidence_score,
+                recent_evaluations: recentEvals,
+            });
+        } catch (evalErr) {
+            console.warn('[POST /api/inference] Evaluation auto-trigger failed (non-fatal):', evalErr);
+        }
+
         return NextResponse.json({
             inference_event_id: inferenceEventId,
             output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
             inference_latency_ms: latencyMs,
+            evaluation: evalResult,
         });
     } catch (err) {
         console.error('[POST /api/inference] Error:', err);

@@ -11,6 +11,7 @@ import { NextResponse } from 'next/server';
 import { safeJson } from '@/lib/http/safeJson';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { logOutcome } from '@/lib/logging/outcomeLogger';
+import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
 
 interface OutcomeRequestBody {
     tenant_id?: string; // Deprecated: now derived from session
@@ -88,9 +89,43 @@ export async function POST(req: Request) {
             outcome_timestamp: body.outcome.timestamp,
         });
 
+        // ── Evaluation Engine: Auto-trigger outcome alignment eval ──
+        let evalResult = null;
+        try {
+            // Fetch the inference output to compute alignment delta
+            const { data: inferenceData } = await supabase
+                .from('ai_inference_events')
+                .select('output_payload, confidence_score, model_name, model_version')
+                .eq('id', body.inference_event_id)
+                .single();
+
+            if (inferenceData) {
+                const inf = inferenceData as { output_payload: Record<string, unknown>; confidence_score: number | null; model_name: string; model_version: string };
+                const recentEvals = await getRecentEvaluations(
+                    supabase, tenantId, inf.model_name, 20,
+                );
+                evalResult = await createEvaluationEvent(supabase, {
+                    tenant_id: tenantId,
+                    trigger_type: 'outcome',
+                    inference_event_id: body.inference_event_id,
+                    outcome_event_id: outcomeEventId,
+                    model_name: inf.model_name,
+                    model_version: inf.model_version,
+                    predicted_confidence: inf.confidence_score,
+                    actual_correctness: 1.0, // Outcome attached = ground truth available
+                    predicted_output: inf.output_payload,
+                    actual_outcome: body.outcome.payload,
+                    recent_evaluations: recentEvals,
+                });
+            }
+        } catch (evalErr) {
+            console.warn('[POST /api/outcome] Evaluation auto-trigger failed (non-fatal):', evalErr);
+        }
+
         return NextResponse.json({
             outcome_event_id: outcomeEventId,
             linked_inference_event_id: body.inference_event_id,
+            evaluation: evalResult,
         });
     } catch (err) {
         console.error('[POST /api/outcome] Error:', err);
