@@ -1,6 +1,6 @@
 {
-    "installCommand": "cd ../.. && npx -y pnpm@10.5.2 install --no-frozen-lockfile",
-    "buildCommand": "cd ../.. && npx -y pnpm@10.5.2 run build --filter=@vetios/web",
+    "installCommand": "cd ../.. && corepack enable && pnpm install --frozen-lockfile",
+    "buildCommand": "cd ../.. && pnpm run build --filter=@vetios/web",
     "outputDirectory": ".next",
     "framework": "nextjs"
 }
