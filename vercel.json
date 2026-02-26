@@ -1,6 +1,5 @@
 {
-    "$schema": "https://openapi.vercel.sh/vercel.json",
-    "installCommand": "corepack enable && pnpm install --frozen-lockfile",
-    "buildCommand": "pnpm run build --filter=@vetios/web",
-    "outputDirectory": "apps/web/.next"
+    "buildCommand": "cd ../.. && pnpm run build --filter=@vetios/web",
+    "outputDirectory": ".next",
+    "framework": "nextjs"
 }
