@@ -1,0 +1,6 @@
+{
+    "framework": "nextjs",
+    "installCommand": "pnpm install",
+    "buildCommand": "cd ../.. && pnpm run build --filter=@vetios/web",
+    "outputDirectory": ".next"
+}
