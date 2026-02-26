@@ -1,1 +1,6 @@
-{}
+{
+    "installCommand": "cd ../.. && corepack enable && pnpm install",
+    "buildCommand": "cd ../.. && pnpm run build --filter=@vetios/web",
+    "outputDirectory": ".next",
+    "framework": "nextjs"
+}
