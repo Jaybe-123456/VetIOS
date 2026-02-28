@@ -1,20 +1,18 @@
 'use client';
 
 import { useState } from 'react';
-import {
-    TerminalLabel,
-    TerminalInput,
-    TerminalTextarea,
-    TerminalButton,
-    Container,
-    PageHeader,
-    DataRow
-} from '@/components/ui/terminal';
+import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel } from '@/components/ui/terminal';
+import { InferenceForm } from '@/components/InferenceForm';
+import { ShieldCheck, Activity, AlertTriangle } from 'lucide-react';
 
 interface InferenceState {
     status: 'idle' | 'computing' | 'success' | 'error';
     eventId: string | null;
     probabilities: Array<{ label: string; value: number }>;
+    explainability: {
+        featureImportance: Array<{ feature: string; impact: number }>;
+        symptomScores: Array<{ symptom: string; score: number }>;
+    } | null;
     errorMessage: string | null;
 }
 
@@ -23,16 +21,16 @@ export default function InferenceConsole() {
         status: 'idle',
         eventId: null,
         probabilities: [],
+        explainability: null,
         errorMessage: null
     });
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
-        setState({ status: 'computing', eventId: null, probabilities: [], errorMessage: null });
+        setState({ status: 'computing', eventId: null, probabilities: [], explainability: null, errorMessage: null });
 
         const formData = new FormData(e.currentTarget);
 
-        // Server derives tenant_id from the auth session
         const data = {
             model: {
                 name: "gpt-4-turbo",
@@ -70,6 +68,18 @@ export default function InferenceConsole() {
                     { label: 'Secondary Opportunistic', value: 0.14 },
                     { label: 'Autoimmune', value: 0.04 }
                 ],
+                explainability: {
+                    featureImportance: [
+                        { feature: 'Symptom Vector Similarity', impact: 0.88 },
+                        { feature: 'Breed Predisposition History', impact: 0.65 },
+                        { feature: 'Diagnostic Image Analysis', impact: 0.42 },
+                        { feature: 'Metadata Age Correlation', impact: 0.21 },
+                    ],
+                    symptomScores: [
+                        { symptom: data.input.input_signature.symptoms[0] || 'Lethargy', score: 92 },
+                        { symptom: data.input.input_signature.symptoms[1] || 'Vomiting', score: 76 },
+                    ]
+                },
                 errorMessage: null
             });
         } catch (err: any) {
@@ -78,79 +88,91 @@ export default function InferenceConsole() {
     }
 
     return (
-        <Container>
+        <Container className="max-w-7xl">
             <PageHeader
                 title="INFERENCE CONSOLE"
-                description="Inject structured clinical context to generate probability vectors."
+                description="Inject structured clinical context and medical artifacts to generate probability vectors."
             />
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-                <form onSubmit={handleSubmit} className="space-y-6 border-r border-grid pr-12">
-                    <div>
-                        <TerminalLabel htmlFor="species">Species Constraint</TerminalLabel>
-                        <TerminalInput id="species" name="species" placeholder="e.g. Canis lupus familiaris" required />
-                    </div>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
+                <div className="border-r border-grid xl:pr-12">
+                    <InferenceForm onSubmit={handleSubmit} isComputing={state.status === 'computing'} />
+                </div>
 
-                    <div>
-                        <TerminalLabel htmlFor="breed">Breed String</TerminalLabel>
-                        <TerminalInput id="breed" name="breed" placeholder="e.g. Golden Retriever" />
-                    </div>
-
-                    <div>
-                        <TerminalLabel htmlFor="symptoms">Symptom Vector (Comma Separated)</TerminalLabel>
-                        <TerminalInput id="symptoms" name="symptoms" placeholder="lethargy, vomiting, fever" required />
-                    </div>
-
-                    <div>
-                        <TerminalLabel htmlFor="metadata">Unstructured Metadata (JSON)</TerminalLabel>
-                        <TerminalTextarea id="metadata" name="metadata" placeholder={'{\n  "age_months": 84,\n  "weight_kg": 32.5\n}'} />
-                    </div>
-
-                    <TerminalButton type="submit" disabled={state.status === 'computing'}>
-                        {state.status === 'computing' ? 'COMPUTING VECTORS...' : 'EXECUTE INFERENCE'}
-                    </TerminalButton>
-                </form>
-
-                <div className="space-y-8">
-                    <div>
-                        <TerminalLabel>Execution Status</TerminalLabel>
-                        <div className={`p-4 border font-mono text-sm ${state.status === 'idle' ? 'border-muted text-muted' :
-                            state.status === 'computing' ? 'border-accent text-accent animate-pulse' :
-                                state.status === 'error' ? 'border-danger text-danger' :
-                                    'border-accent text-accent'
+                <div className="space-y-6">
+                    <ConsoleCard title="Execution Status">
+                        <div className={`p-4 border font-mono text-sm flex items-center gap-3 ${state.status === 'idle' ? 'border-muted text-muted' :
+                                state.status === 'computing' ? 'border-accent text-accent animate-pulse bg-accent/5' :
+                                    state.status === 'error' ? 'border-danger text-danger bg-danger/5' :
+                                        'border-accent text-accent'
                             }`}>
-                            {state.status === 'idle' && 'AWAITING INPUT'}
+                            {state.status === 'idle' && <AlertTriangle className="w-4 h-4" />}
+                            {state.status === 'computing' && <Activity className="w-4 h-4 animate-spin" />}
+                            {state.status === 'error' && <AlertTriangle className="w-4 h-4" />}
+                            {state.status === 'success' && <ShieldCheck className="w-4 h-4" />}
+
+                            {state.status === 'idle' && 'AWAITING VECTORS...'}
                             {state.status === 'computing' && 'CALCULATING PROBABILITIES...'}
                             {state.status === 'error' && `ERR: ${state.errorMessage}`}
                             {state.status === 'success' && 'VECTORS GENERATED'}
                         </div>
-                    </div>
+                    </ConsoleCard>
 
-                    {state.status === 'success' && state.eventId && (
+                    {state.status === 'success' && state.eventId && state.explainability && (
                         <div className="space-y-6 animate-in fade-in duration-500">
-                            <div className="p-6 border border-accent bg-accent/5">
-                                <TerminalLabel>Inference Event ID (Immutable)</TerminalLabel>
-                                <div className="font-mono text-xl text-accent tracking-wider font-bold">
+                            <ConsoleCard title="Event Identity">
+                                <div className="font-mono text-2xl text-accent tracking-wider font-bold">
                                     {state.eventId}
                                 </div>
-                                <p className="text-xs text-muted mt-2 font-mono">
-                                    Copy this ID to attach outcomes or run adversarial simulations.
+                                <p className="text-[10px] text-muted uppercase mt-2 font-mono">
+                                    Immutable Reference Hash. Copy this ID to attach outcomes or run adversarial simulations.
                                 </p>
-                            </div>
+                            </ConsoleCard>
 
-                            <div>
-                                <TerminalLabel>Calculated Probabilities</TerminalLabel>
-                                <div className="space-y-2 border border-grid p-4">
+                            <ConsoleCard title="Probability Vectors (Top 3)">
+                                <div className="space-y-4">
                                     {state.probabilities.map((p, i) => (
-                                        <div key={i} className="flex items-center gap-4">
-                                            <div className="w-48 font-mono text-xs text-muted max-w-full truncate">{p.label}</div>
-                                            <div className="flex-1 h-2 bg-dim overflow-hidden">
-                                                <div className="h-full bg-accent" style={{ width: `${p.value * 100}%` }} />
+                                        <div key={i} className="flex flex-col gap-1">
+                                            <div className="flex items-center justify-between font-mono text-xs">
+                                                <span className={`${i === 0 ? 'text-accent' : 'text-muted'}`}>{p.label}</span>
+                                                <span className={`${i === 0 ? 'text-accent' : 'text-muted'}`}>{(p.value * 100).toFixed(0)}%</span>
                                             </div>
-                                            <div className="w-12 text-right font-mono text-xs">{(p.value * 100).toFixed(0)}%</div>
+                                            <div className="w-full h-1.5 bg-dim overflow-hidden">
+                                                <div className={`h-full ${i === 0 ? 'bg-accent' : 'bg-muted'}`} style={{ width: `${p.value * 100}%` }} />
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
+                            </ConsoleCard>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <ConsoleCard title="Feature Importance Heatmap" className="border-muted/30">
+                                    <div className="space-y-3">
+                                        {state.explainability.featureImportance.map((f, i) => (
+                                            <div key={i} className="flex flex-col gap-1">
+                                                <div className="flex justify-between font-mono text-[10px] uppercase text-muted">
+                                                    <span>{f.feature}</span>
+                                                    <span>{(f.impact * 100).toFixed(0)}</span>
+                                                </div>
+                                                <div className="w-full h-[2px] bg-dim flex">
+                                                    <div className="bg-accent h-full" style={{ width: `${f.impact * 100}%`, opacity: f.impact }} />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Symptom Impact Analysis" className="border-muted/30">
+                                    <div className="space-y-2">
+                                        {state.explainability.symptomScores.map((s, i) => (
+                                            <DataRow
+                                                key={i}
+                                                label={s.symptom}
+                                                value={<span className="text-accent">+{s.score} weight</span>}
+                                            />
+                                        ))}
+                                    </div>
+                                </ConsoleCard>
                             </div>
                         </div>
                     )}
