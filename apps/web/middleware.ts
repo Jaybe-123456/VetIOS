@@ -14,6 +14,11 @@ const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback'];
 export async function middleware(request: NextRequest) {
     let supabaseResponse = NextResponse.next({ request });
 
+    // ── DEV BYPASS: skip auth entirely in local development ──
+    if (process.env.NODE_ENV === 'development') {
+        return supabaseResponse;
+    }
+
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
