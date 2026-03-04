@@ -29,8 +29,7 @@ export async function POST(req: Request) {
     // ── Auth check ──
     const session = await resolveSessionTenant();
 
-    // ── DEV BYPASS: avoid 401 locally ──
-    if (!session && process.env.NODE_ENV !== 'development') {
+    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     const tenantId = session?.tenantId || 'dev_tenant_001';

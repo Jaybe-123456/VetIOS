@@ -1,180 +1,129 @@
 # VetIOS
 
-**VetIOS is an AI-native veterinary intelligence and autonomy infrastructure platform developing computational systems for clinical diagnostics, machine-assisted decision-making, and real-world autonomy research in animal health.**
+**AI-native veterinary intelligence and autonomy infrastructure.** Computational systems for clinical diagnostics, machine-assisted decision-making, and real-world autonomy research in animal health.
 
-The platform treats veterinary medicine as a computational problem—a system of decisions, uncertainty, workflows, and real-world feedback loops—rather than a collection of software tools.
-
-## Why This Matters
-
-Veterinary medicine today operates on:
-*   **fragmented data**
-*   **non-computable clinical workflows**
-*   **human-only reasoning loops**
-*   **limited intelligence feedback systems**
-
-As AI, robotics, and autonomy advance, animal health will inevitably transition into machine-assisted, inference-driven environments where diagnostics, interventions, and workflows are partially computable.
-
-**VetIOS exists to build the underlying intelligence substrate for that transition.**
-
-> **Not an app.**
-> **Not a dashboard.**
-> **Infrastructure.**
+> **Not an app. Not a dashboard. Infrastructure.**
 
 ---
 
 ## Core Thesis
 
 Clinical intelligence compounds when:
-1.  **Inference is captured** with context and uncertainty
-2.  **Decisions are logged**, not just outcomes
-3.  **Real-world feedback loops** inform models
-4.  **Rare and adversarial cases** are simulated and studied
-5.  **Intelligence is aggregated safely** across systems
 
-**VetIOS is designed to own this compounding loop.**
+1. **Inference is captured** with context and uncertainty
+2. **Decisions are logged**, not just outcomes
+3. **Real-world feedback loops** inform models
+4. **Rare and adversarial cases** are simulated and studied
+5. **Intelligence is aggregated safely** across systems
 
----
-
-## Research Direction
-
-VetIOS operates at the intersection of:
-*   Clinical AI systems
-*   Robotics and autonomy research
-*   Structured medical data architectures
-*   Simulation-driven safety modeling
-*   Machine-assisted diagnostic reasoning
-
-The objective is to enable **persistent intelligence systems** capable of operating within real-world veterinary environments.
+**VetIOS owns this compounding loop.**
 
 ---
 
-## System Architecture Philosophy
+## Repository Structure
 
-The platform is organized around a layered intelligence model:
-
-### Inference Layer
-*   Model cognition
-*   Uncertainty mapping
-*   Decision traces
-
-### Outcome Layer
-*   Real-world clinical feedback
-*   Intervention results
-*   Model calibration signals
-
-### Simulation Layer
-*   Adversarial scenarios
-*   Rare case stress testing
-*   Safety research primitives
-
-### Network Intelligence Layer
-*   Privacy-preserving aggregation
-*   Cross-system learning signals
-*   Compounding performance effects
-
-*This architecture generates unique, unreplicable datasets that improve system intelligence over time.*
+```
+vetios/
+├── apps/
+│   ├── web/                    # Next.js 15 console (TypeScript)
+│   └── ml-training/            # TensorFlow training pipeline (Python)
+├── docs/
+│   └── tensorflow-autograd-expert-guide.md
+├── .env / .env.local           # Environment configuration
+└── package.json                # pnpm monorepo root
+```
 
 ---
 
-## Relation to Physical Intelligence & Robotics
+## Web Console (`apps/web`)
 
-As shown in this repository’s robotics context, VetIOS aligns with a broader shift:
-*   **AI moving from software → physical environments**
-*   **Autonomy systems needing real-world feedback loops**
-*   **Robotics requiring structured, inference-aware data**
-*   **Teleoperation and simulation generating training signals**
+Next.js 15 + Supabase + Tailwind v4 application. Multi-tenant, RLS-enforced.
 
-Animal health environments represent a high-entropy, real-world domain ideal for autonomy research and intelligence system development.
+### Pages
 
----
+| Route | Purpose |
+|-------|---------|
+| `/dashboard` | System overview, telemetry metrics, recent activity |
+| `/inference` | Inference Console — structured clinical input → AI reasoning + ML risk assessment |
+| `/outcome-learning` | Outcome event submission and feedback loop |
+| `/adversarial-sim` | Edge simulation engine — adversarial scenario generation |
+| `/clinical-dataset` | Clinical dataset manager — browsing and annotation |
+| `/experiment-track` | Experiment tracking — model evaluation comparison |
+| `/model-registry` | Model registry — versioned model lifecycle management |
+| `/telemetry` | System telemetry — latency, throughput, error rates |
+| `/network` | Network intelligence map — cross-system metrics |
 
-## Strategic Direction
+### API Routes
 
-VetIOS is designed to become:
-*   The **intelligence layer** for veterinary clinical environments
-*   A **research substrate** for autonomy and safety modeling
-*   A **data architecture** for machine-assisted medicine
-*   A platform where diagnostics, workflows, and decisions become **computable**
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/inference` | POST | AI inference with ML risk enrichment |
+| `/api/outcome` | POST | Clinical outcome event logging |
+| `/api/simulate` | POST | Adversarial simulation execution |
+| `/api/ml/predict` | POST/GET | ML risk prediction proxy + health check |
+| `/api/ml/shadow-report` | GET | Shadow evaluation + drift + calibration dashboard |
 
-Over time, the system becomes harder to replace because:
-*   **Intelligence compounds**
-*   **Workflows standardize around it**
-*   **Data becomes longitudinal and unique**
-*   **Models improve within its ecosystem**
+### Quick Start
 
-**This creates inevitability through infrastructure, not features.**
-
----
-
-## Status
-
-**Early-stage architecture and research platform development.**
-
-Current focus:
-*   Data models
-*   RLS and multi-tenant safety
-*   Inference logging
-*   Simulation frameworks
-*   AI-in-the-loop workflows
-
-**Interfaces come later. Intelligence comes first.**
-
----
-
-## Guiding Principles
-
-*   **Append-only intelligence logs**
-*   **Safety and isolation by default**
-*   **Infrastructure before UI**
-*   **Systems thinking over feature velocity**
-*   **Research-grade architecture from day one**
-
----
-
-## Long-Term Vision
-
-Veterinary medicine evolves from:
-
-`manual` → `software-assisted` → `intelligence-mediated`
-
-**VetIOS is being built for the final stage.**
-
-> **Not as a product.**
-> **As the system beneath it.**
-
----
-
-## Implementation Guides
-
-- [TensorFlow Autograd for VetIOS: Expert Execution Guide](docs/tensorflow-autograd-expert-guide.md)
+```bash
+cd apps/web
+pnpm install
+npm run dev          # → http://localhost:3000
+```
 
 ---
 
 ## ML Training Pipeline (`apps/ml-training`)
 
-Production-grade TensorFlow training pipeline implementing the full execution roadmap.
+Production-grade TensorFlow pipeline powered by `tf.GradientTape`. Implements the full 8-week execution roadmap.
+
+### Modules
+
+| Module | Phase | Purpose |
+|--------|-------|---------|
+| `train.py` | 1 | Baseline `GradientTape` training loop with gradient clipping |
+| `evaluate.py` | 1 | AUROC, ECE, Brier score, abstention rate |
+| `calibration.py` | 2 | Temperature scaling + isotonic regression |
+| `drift.py` | 2 | PSI feature drift + chi-squared label drift |
+| `augmented_train.py` | 3 | Simulation-augmented training with safety penalty |
+| `shadow_mode.py` | 4 | Shadow evaluation + safety gates + promotion decision |
+| `explainability.py` | — | Integrated Gradients feature attribution |
+| `retrain.py` | — | Full 6-stage pipeline orchestrator |
+| `serve.py` | — | FastAPI inference server (8 endpoints) |
 
 ### Quick Start
 
 ```bash
 cd apps/ml-training
-python -m venv .venv && .venv\Scripts\activate  # Windows
+python -m venv .venv && .venv\Scripts\activate    # Windows
 pip install -e ".[dev]"
 
-# Run individual stages
-python -m vetios_ml.train              # Baseline GradientTape training
-python -m vetios_ml.calibration        # Temperature scaling + isotonic regression
-python -m vetios_ml.drift              # Feature + label drift detection
+# Individual stages
+python -m vetios_ml.train              # Baseline training
+python -m vetios_ml.calibration        # Probability calibration
+python -m vetios_ml.drift              # Drift detection
 python -m vetios_ml.augmented_train    # Simulation-augmented training
-python -m vetios_ml.shadow_mode        # Shadow evaluation + safety gates
-python -m vetios_ml.explainability     # Gradient-based feature attribution
+python -m vetios_ml.shadow_mode        # Shadow evaluation
+python -m vetios_ml.explainability     # Feature attribution
 
-# Or run the full pipeline
-python -m vetios_ml.retrain            # All 6 stages in sequence
+# Full pipeline (all 6 stages)
+python -m vetios_ml.retrain
 
-# Start inference server
-python -m vetios_ml.serve              # FastAPI on :8000
+# Inference server
+python -m vetios_ml.serve              # → http://localhost:8000
 ```
+
+### API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/predict` | POST | Calibrated risk prediction |
+| `/explain` | POST | Gradient-based feature attribution |
+| `/health` | GET | Server health + model status |
+| `/model` | GET | Model metadata |
+| `/calibration` | GET | Calibration curve data |
+| `/drift` | GET | Drift detection report |
+| `/shadow` | GET | Shadow evaluation report |
 
 ### Pipeline Architecture
 
@@ -190,14 +139,91 @@ Supabase ──→ Dataset Builder ──→ Train (GradientTape) ──→ Eval
                                 Explainability (Integrated Gradients)
                                       │
                                  Serve (FastAPI)
-                                   /predict · /explain · /health
-                                   /calibration · /drift · /shadow
 ```
 
-### Production Guardrails
+---
 
-*   **Temporal leakage checks** — no future data in features
-*   **Safety-penalized loss** — penalizes overconfident predictions with clinician overrides
-*   **Circuit-breaker client** — Next.js ↔ ML server with timeout + fallback
+## Supabase Schema
+
+| Table | Purpose |
+|-------|---------|
+| `ai_inference_events` | Inference logs with context, uncertainty, and decision traces |
+| `clinical_outcome_events` | Real-world clinical feedback and intervention results |
+| `edge_simulation_events` | Adversarial scenario results and degradation scores |
+| `network_intelligence_metrics` | Cross-system aggregation signals |
+| `user_documents` | Document storage and annotations |
+
+All tables enforce **row-level security (RLS)** with tenant isolation.
+
+---
+
+## Production Guardrails
+
+*   **Temporal leakage checks** — no future data in training features
+*   **Safety-penalized loss** — penalizes overconfident predictions on clinician overrides
+*   **Circuit-breaker client** — Next.js ↔ ML server with timeout + graceful fallback
 *   **Shadow-mode evaluation** — model must pass safety gates before promotion
 *   **Drift detection** — PSI for feature drift, chi-squared for label drift
+*   **Model abstention** — refuses to predict when confidence is below threshold
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS v4 |
+| Backend | Supabase (PostgreSQL 17, RLS, Edge Functions) |
+| ML Training | TensorFlow 2.20, Python 3.13, `tf.GradientTape` |
+| ML Inference | FastAPI, Uvicorn |
+| ML Calibration | scipy, scikit-learn |
+| Monorepo | pnpm workspaces |
+| Deployment | Vercel (web), dedicated runtime (ML) |
+
+---
+
+## Environment Setup
+
+Copy `.env.example` to `.env.local` and configure:
+
+```
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+AI_PROVIDER_API_KEY=your-openai-key
+```
+
+For the ML pipeline, create `apps/ml-training/.env`:
+
+```
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+```
+
+---
+
+## Documentation
+
+- [TensorFlow Autograd Expert Guide](docs/tensorflow-autograd-expert-guide.md) — full execution roadmap
+
+---
+
+## Guiding Principles
+
+*   **Append-only intelligence logs**
+*   **Safety and isolation by default**
+*   **Infrastructure before UI**
+*   **Systems thinking over feature velocity**
+*   **Research-grade architecture from day one**
+
+---
+
+## Vision
+
+Veterinary medicine evolves from:
+
+`manual` → `software-assisted` → `intelligence-mediated`
+
+**VetIOS is being built for the final stage.**
+
+> **Not as a product. As the system beneath it.**

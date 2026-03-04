@@ -14,8 +14,8 @@ const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback'];
 export async function middleware(request: NextRequest) {
     let supabaseResponse = NextResponse.next({ request });
 
-    // ── DEV BYPASS: skip auth entirely in local development ──
-    if (process.env.NODE_ENV === 'development') {
+    // ── DEV BYPASS: require explicit opt-in via env var ──
+    if (process.env.VETIOS_DEV_BYPASS === 'true') {
         return supabaseResponse;
     }
 

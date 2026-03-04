@@ -22,7 +22,7 @@ async function fetchML(path: string) {
 
 export async function GET() {
     const session = await resolveSessionTenant();
-    if (!session && process.env.NODE_ENV !== 'development') {
+    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
