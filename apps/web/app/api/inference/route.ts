@@ -102,6 +102,19 @@ export async function POST(req: Request) {
             console.warn('[POST /api/inference] Evaluation auto-trigger failed (non-fatal):', evalErr);
         }
 
+        // ── ML Risk Enrichment (non-blocking, circuit-breaker protected) ──
+        let mlRisk = null;
+        try {
+            const { mlPredict } = await import('@/lib/ml/mlClient');
+            mlRisk = await mlPredict({
+                decision_count: 1,
+                override_count: 0,
+                species: (body.input.input_signature as Record<string, string>).species || 'canine',
+            });
+        } catch (mlErr) {
+            console.warn('[POST /api/inference] ML risk enrichment failed (non-fatal):', mlErr);
+        }
+
         return NextResponse.json({
             inference_event_id: inferenceEventId,
             output: inferenceResult.output_payload,
@@ -109,6 +122,7 @@ export async function POST(req: Request) {
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
             inference_latency_ms: latencyMs,
             evaluation: evalResult,
+            ml_risk: mlRisk,
         });
     } catch (err) {
         console.error('[POST /api/inference] Error:', err);
