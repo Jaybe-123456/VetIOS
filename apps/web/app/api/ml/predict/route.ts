@@ -1,73 +1,82 @@
 /**
- * POST /api/ml/predict
+ * POST /api/ml/predict — proxies risk prediction to ML server.
+ * GET  /api/ml/predict — ML server health check.
  *
- * Proxies risk prediction requests to the Python ML inference server.
- * Includes circuit-breaker, timeout, and fallback behavior.
- *
- * Request body:
- *   { decision_count: number, override_count: number, species: string }
- *
- * Response:
- *   { risk_score, confidence, abstain, model_version, _fallback?, _reason? }
+ * Protections:
+ *   - Rate limit: 20 req/min per IP
+ *   - Zod schema validation (POST)
+ *   - Request ID tracing
+ *   - Error sanitization
  */
 
 import { NextResponse } from 'next/server';
 import { resolveSessionTenant } from '@/lib/supabaseServer';
-import { mlPredict, type MLPredictRequest } from '@/lib/ml/mlClient';
+import { mlPredict, mlHealth, mlModelInfo } from '@/lib/ml/mlClient';
+import { apiGuard } from '@/lib/http/apiGuard';
+import { withRequestHeaders } from '@/lib/http/requestId';
+import { MLPredictRequestSchema, formatZodErrors } from '@/lib/http/schemas';
+import { safeJson } from '@/lib/http/safeJson';
 
 export async function POST(req: Request) {
-    // ── Auth check ──
+    const guard = await apiGuard(req, { maxRequests: 20, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+    const { requestId, startTime } = guard;
+
     const session = await resolveSessionTenant();
-
     if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        return NextResponse.json(
+            { error: 'Unauthorized', request_id: requestId },
+            { status: 401 }
+        );
     }
 
-    // ── Parse request ──
-    let body: MLPredictRequest;
-    try {
-        body = await req.json();
-    } catch {
+    const parsed = await safeJson(req);
+    if (!parsed.ok) {
         return NextResponse.json(
-            { error: 'Invalid JSON body' },
+            { error: parsed.error, request_id: requestId },
             { status: 400 }
         );
     }
 
-    // ── Validate required fields ──
-    if (typeof body.decision_count !== 'number' || typeof body.override_count !== 'number') {
+    const result = MLPredictRequestSchema.safeParse(parsed.data);
+    if (!result.success) {
         return NextResponse.json(
-            { error: 'decision_count and override_count are required numbers' },
+            { error: formatZodErrors(result.error), request_id: requestId },
             { status: 400 }
         );
     }
+    const body = result.data;
 
-    // ── Call ML server (with circuit-breaker + fallback) ──
     const prediction = await mlPredict({
         decision_count: body.decision_count,
         override_count: body.override_count,
         species: body.species || 'canine',
     });
 
-    return NextResponse.json(prediction);
+    const response = NextResponse.json({
+        ...prediction,
+        request_id: requestId,
+    });
+    withRequestHeaders(response.headers, requestId, startTime);
+    return response;
 }
 
-/**
- * GET /api/ml/predict
- *
- * Returns ML server status for health-check dashboards.
- */
-export async function GET() {
-    const { mlHealth, mlModelInfo } = await import('@/lib/ml/mlClient');
+export async function GET(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+    const { requestId, startTime } = guard;
 
     const [health, model] = await Promise.all([
         mlHealth(),
         mlModelInfo(),
     ]);
 
-    return NextResponse.json({
+    const response = NextResponse.json({
         ml_server_reachable: health !== null,
         health,
         model,
+        request_id: requestId,
     });
+    withRequestHeaders(response.headers, requestId, startTime);
+    return response;
 }

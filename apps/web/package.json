@@ -24,7 +24,8 @@
         "reactflow": "^11.11.4",
         "recharts": "^3.7.0",
         "tailwindcss": "^4.2.0",
-        "uuid": "^13.0.0"
+        "uuid": "^13.0.0",
+        "zod": "^4.3.6"
     },
     "devDependencies": {
         "@types/node": "^20.14.0",
