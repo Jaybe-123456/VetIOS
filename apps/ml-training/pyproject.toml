@@ -1,0 +1,30 @@
+[project]
+name = "vetios-ml-training"
+version = "0.1.0"
+description = "VetIOS ML training pipeline — TensorFlow Autograd for clinical intelligence"
+requires-python = ">=3.10"
+dependencies = [
+    "tensorflow>=2.15,<2.18",
+    "supabase>=2.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "scikit-learn>=1.4",
+    "pandas>=2.2",
+    "numpy>=1.26",
+    "pydantic>=2.6",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vetios_ml*"]
