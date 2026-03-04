@@ -165,3 +165,53 @@ Track these by tenant, cohort, and time window:
 `tf.GradientTape` is not just a training API—it is the mechanism that lets VetIOS convert longitudinal outcomes, simulation feedback, and clinical overrides into compounding intelligence.
 
 That directly aligns with your architecture thesis: **capture inference, log decisions, close real-world loops, and improve system behavior over time**.
+
+## 10) What to do immediately after this guide
+
+If you're asking "what next?", do this in order:
+
+1. **Start local first (Week 1)**
+   - Build the training pipeline locally.
+   - Train/evaluate on a small backfill dataset.
+   - Validate leakage, cohort slicing, and metric logging.
+2. **Run cloud shadow-mode next (Week 2-4)**
+   - Deploy inference in shadow mode (no clinician-facing actions).
+   - Compare model vs incumbent/reasoning pipeline.
+   - Log false positives/false negatives + overrides.
+3. **Promote only after safety gates pass (Week 5+)**
+   - Require calibration, utility, and safety thresholds.
+   - Roll out by tenant/cohort in controlled phases.
+
+## 11) Vercel vs localhost vs dedicated ML runtime
+
+Use this decision rule:
+
+- **Localhost**: correct for initial development, data-contract hardening, and first training runs.
+- **Vercel**: good for front-end and lightweight API orchestration, but generally **not ideal** for heavy TensorFlow training jobs due to runtime/resource constraints.
+- **Dedicated ML runtime** (recommended for production TF): Cloud Run, ECS, Kubernetes, Fly.io machines, or a GPU-enabled worker.
+
+### Recommended VetIOS split
+
+- Keep TypeScript orchestration/UI on Vercel if desired.
+- Run TensorFlow training + scheduled retraining on dedicated worker infrastructure.
+- Host inference on a persistent service (FastAPI/TF Serving) behind a stable internal API.
+
+## 12) Concrete 7-day execution plan
+
+### Day 1-2
+- Create `apps/ml-training` (Python package).
+- Implement dataset extraction from Supabase feature views.
+
+### Day 3-4
+- Implement baseline `train.py` and `evaluate.py`.
+- Save model artifacts + metrics into model-evaluation events.
+
+### Day 5
+- Stand up an inference API (`/predict`) with model version tagging.
+
+### Day 6
+- Integrate VetIOS TS service call path with timeout + circuit-breaker + fallback behavior.
+
+### Day 7
+- Run a shadow evaluation report and decide go/no-go for phased rollout.
+
