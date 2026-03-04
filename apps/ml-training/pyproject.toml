@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "VetIOS ML training pipeline — TensorFlow Autograd for clinical intelligence"
 requires-python = ">=3.10"
 dependencies = [
-    "tensorflow>=2.15,<2.18",
+    "tensorflow>=2.16",
     "supabase>=2.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",

@@ -112,22 +112,23 @@ def build_tf_dataset(
     Handles categorical encoding for string columns.
     """
     df_encoded = df.copy()
+    cols = list(feature_cols)  # Don't mutate the original list
 
     # One-hot encode string columns
-    for col in feature_cols:
-        if df_encoded[col].dtype == object:
-            dummies = pd.get_dummies(df_encoded[col], prefix=col)
+    for col in list(cols):
+        if pd.api.types.is_string_dtype(df_encoded[col]):
+            dummies = pd.get_dummies(df_encoded[col], prefix=col, dtype=float)
             df_encoded = pd.concat([df_encoded, dummies], axis=1)
             df_encoded.drop(columns=[col], inplace=True)
-            feature_cols = [c for c in feature_cols if c != col] + list(dummies.columns)
+            cols = [c for c in cols if c != col] + list(dummies.columns)
 
-    features = df_encoded[feature_cols].values.astype(np.float32)
+    features = df_encoded[cols].values.astype(np.float32)
     labels = df_encoded[label_col].values.astype(np.float32).reshape(-1, 1)
 
     dataset = tf.data.Dataset.from_tensor_slices((features, labels))
     dataset = dataset.shuffle(buffer_size=len(df)).batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
-    return dataset, feature_cols
+    return dataset, cols
 
 
 # ── CLI entrypoint ────────────────────────────────────────────────────────────

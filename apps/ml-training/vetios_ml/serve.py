@@ -30,11 +30,19 @@ async def lifespan(app: FastAPI):
     """Load the model on startup."""
     global _model, _model_meta
 
-    model_path = ARTIFACTS_DIR / "risk_model_v1"
+    model_path = ARTIFACTS_DIR / "risk_model_v1.weights.h5"
     meta_path = ARTIFACTS_DIR / "training_metrics.json"
 
-    if model_path.exists():
-        _model = tf.keras.models.load_model(model_path)
+    if meta_path.exists():
+        with open(meta_path) as f:
+            _model_meta = json.load(f)
+
+    if model_path.exists() and _model_meta:
+        import numpy as np
+        from vetios_ml.models.risk_model import VetRiskModel
+        _model = VetRiskModel(input_dim=_model_meta["input_dim"])
+        _model(np.zeros((1, _model_meta["input_dim"]), dtype=np.float32))
+        _model.load_weights(model_path)
         print(f"[serve] Model loaded from {model_path}")
     else:
         print(f"[serve] WARNING: No model at {model_path}. /predict will return errors.")
