@@ -8,7 +8,9 @@
         "start": "next start",
         "lint": "next lint",
         "typecheck": "tsc --noEmit",
-        "test:api": "bash scripts/test-api-local.sh"
+        "test:api": "bash scripts/test-api-local.sh",
+        "test:load": "bash scripts/load-test.sh",
+        "test:shadow": "bash scripts/shadow-mode.sh"
     },
     "dependencies": {
         "@supabase/ssr": "^0.8.0",
