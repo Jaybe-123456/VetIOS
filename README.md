@@ -141,3 +141,9 @@ Veterinary medicine evolves from:
 
 > **Not as a product.**
 > **As the system beneath it.**
+
+---
+
+## Implementation Guides
+
+- [TensorFlow Autograd for VetIOS: Expert Execution Guide](docs/tensorflow-autograd-expert-guide.md)
