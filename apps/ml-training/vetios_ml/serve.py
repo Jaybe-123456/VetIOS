@@ -23,6 +23,7 @@ from vetios_ml.config import ARTIFACTS_DIR
 # ── Global model reference ────────────────────────────────────────────────────
 _model = None
 _model_meta = None
+_calibration = None
 
 
 @asynccontextmanager
@@ -47,9 +48,12 @@ async def lifespan(app: FastAPI):
     else:
         print(f"[serve] WARNING: No model at {model_path}. /predict will return errors.")
 
-    if meta_path.exists():
-        with open(meta_path) as f:
-            _model_meta = json.load(f)
+    # Load calibration if available
+    cal_path = ARTIFACTS_DIR / "calibration_results.json"
+    if cal_path.exists():
+        with open(cal_path) as f:
+            _calibration = json.load(f)
+        print(f"[serve] Calibration loaded (T={_calibration.get('temperature', 1.0)})")
 
     yield
 
@@ -129,7 +133,14 @@ async def predict(req: PredictRequest):
     )
 
     logits = _model(features, training=False)
+    logit_val = float(logits.numpy()[0][0])
     risk_score = float(tf.nn.sigmoid(logits).numpy()[0][0])
+
+    # Apply temperature scaling if calibration is available
+    if _calibration and "temperature" in _calibration:
+        T = _calibration["temperature"]
+        calibrated_score = 1.0 / (1.0 + np.exp(-logit_val / T))
+        risk_score = calibrated_score
 
     # Confidence = distance from 0.5 (higher = more confident)
     confidence = abs(risk_score - 0.5) * 2.0
@@ -145,6 +156,38 @@ async def predict(req: PredictRequest):
         abstain=abstain,
         model_version=model_version,
     )
+
+
+# ── Calibration + Drift + Shadow endpoints ────────────────────────────────────
+
+@app.get("/calibration")
+async def calibration_data():
+    """Return calibration curve data."""
+    cal_path = ARTIFACTS_DIR / "calibration_results.json"
+    if not cal_path.exists():
+        raise HTTPException(status_code=404, detail="No calibration data. Run calibration first.")
+    with open(cal_path) as f:
+        return json.load(f)
+
+
+@app.get("/drift")
+async def drift_data():
+    """Return latest drift detection report."""
+    drift_path = ARTIFACTS_DIR / "drift_report.json"
+    if not drift_path.exists():
+        raise HTTPException(status_code=404, detail="No drift report. Run drift detection first.")
+    with open(drift_path) as f:
+        return json.load(f)
+
+
+@app.get("/shadow")
+async def shadow_report():
+    """Return latest shadow evaluation report."""
+    shadow_path = ARTIFACTS_DIR / "shadow_evaluation_report.json"
+    if not shadow_path.exists():
+        raise HTTPException(status_code=404, detail="No shadow report. Run shadow evaluation first.")
+    with open(shadow_path) as f:
+        return json.load(f)
 
 
 # ── CLI entrypoint ────────────────────────────────────────────────────────────
