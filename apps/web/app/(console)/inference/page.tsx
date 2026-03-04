@@ -3,7 +3,16 @@
 import { useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel } from '@/components/ui/terminal';
 import { InferenceForm } from '@/components/InferenceForm';
-import { ShieldCheck, Activity, AlertTriangle } from 'lucide-react';
+import { ShieldCheck, Activity, AlertTriangle, Brain } from 'lucide-react';
+
+interface MLRiskData {
+    risk_score: number;
+    confidence: number;
+    abstain: boolean;
+    model_version: string;
+    _fallback?: boolean;
+    _reason?: string;
+}
 
 interface InferenceState {
     status: 'idle' | 'computing' | 'success' | 'error';
@@ -13,6 +22,7 @@ interface InferenceState {
         featureImportance: Array<{ feature: string; impact: number }>;
         symptomScores: Array<{ symptom: string; score: number }>;
     } | null;
+    mlRisk: MLRiskData | null;
     errorMessage: string | null;
 }
 
@@ -22,12 +32,13 @@ export default function InferenceConsole() {
         eventId: null,
         probabilities: [],
         explainability: null,
+        mlRisk: null,
         errorMessage: null
     });
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
-        setState({ status: 'computing', eventId: null, probabilities: [], explainability: null, errorMessage: null });
+        setState({ status: 'computing', eventId: null, probabilities: [], explainability: null, mlRisk: null, errorMessage: null });
 
         const formData = new FormData(e.currentTarget);
 
@@ -80,6 +91,7 @@ export default function InferenceConsole() {
                         { symptom: data.input.input_signature.symptoms[1] || 'Vomiting', score: 76 },
                     ]
                 },
+                mlRisk: result.ml_risk || null,
                 errorMessage: null
             });
         } catch (err: any) {
@@ -102,9 +114,9 @@ export default function InferenceConsole() {
                 <div className="space-y-6">
                     <ConsoleCard title="Execution Status">
                         <div className={`p-4 border font-mono text-sm flex items-center gap-3 ${state.status === 'idle' ? 'border-muted text-muted' :
-                                state.status === 'computing' ? 'border-accent text-accent animate-pulse bg-accent/5' :
-                                    state.status === 'error' ? 'border-danger text-danger bg-danger/5' :
-                                        'border-accent text-accent'
+                            state.status === 'computing' ? 'border-accent text-accent animate-pulse bg-accent/5' :
+                                state.status === 'error' ? 'border-danger text-danger bg-danger/5' :
+                                    'border-accent text-accent'
                             }`}>
                             {state.status === 'idle' && <AlertTriangle className="w-4 h-4" />}
                             {state.status === 'computing' && <Activity className="w-4 h-4 animate-spin" />}
@@ -174,6 +186,65 @@ export default function InferenceConsole() {
                                     </div>
                                 </ConsoleCard>
                             </div>
+
+                            {/* ML Risk Assessment Panel */}
+                            {state.mlRisk && (
+                                <ConsoleCard title="ML Risk Assessment" className="border-accent/40">
+                                    <div className="space-y-4">
+                                        <div className="flex items-center gap-3">
+                                            <Brain className="w-5 h-5 text-accent" />
+                                            <span className="font-mono text-xs text-muted uppercase">TensorFlow Autograd Risk Model</span>
+                                            {state.mlRisk._fallback && (
+                                                <span className="font-mono text-[10px] text-yellow-400 bg-yellow-400/10 px-2 py-0.5 border border-yellow-400/30">
+                                                    FALLBACK
+                                                </span>
+                                            )}
+                                        </div>
+
+                                        {/* Risk Score Bar */}
+                                        <div className="flex flex-col gap-1">
+                                            <div className="flex items-center justify-between font-mono text-xs">
+                                                <span className="text-muted">Risk Score</span>
+                                                <span className={`font-bold ${state.mlRisk.risk_score > 0.7 ? 'text-red-400' :
+                                                        state.mlRisk.risk_score > 0.4 ? 'text-yellow-400' : 'text-green-400'
+                                                    }`}>
+                                                    {(state.mlRisk.risk_score * 100).toFixed(1)}%
+                                                </span>
+                                            </div>
+                                            <div className="w-full h-2 bg-dim overflow-hidden">
+                                                <div
+                                                    className={`h-full transition-all duration-700 ${state.mlRisk.risk_score > 0.7 ? 'bg-red-400' :
+                                                            state.mlRisk.risk_score > 0.4 ? 'bg-yellow-400' : 'bg-green-400'
+                                                        }`}
+                                                    style={{ width: `${state.mlRisk.risk_score * 100}%` }}
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Confidence + Abstain */}
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div className="font-mono">
+                                                <span className="text-[10px] text-muted uppercase block">Confidence</span>
+                                                <span className="text-sm text-foreground">{(state.mlRisk.confidence * 100).toFixed(1)}%</span>
+                                            </div>
+                                            <div className="font-mono">
+                                                <span className="text-[10px] text-muted uppercase block">Abstain</span>
+                                                <span className={`text-sm ${state.mlRisk.abstain ? 'text-yellow-400' : 'text-green-400'}`}>
+                                                    {state.mlRisk.abstain ? 'YES — LOW CONFIDENCE' : 'NO — CONFIDENT'}
+                                                </span>
+                                            </div>
+                                        </div>
+
+                                        {/* Model Version */}
+                                        <div className="font-mono text-[10px] text-muted border-t border-grid pt-2">
+                                            MODEL: {state.mlRisk.model_version}
+                                            {state.mlRisk._reason && (
+                                                <span className="ml-2 text-yellow-400/70">({state.mlRisk._reason})</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                </ConsoleCard>
+                            )}
                         </div>
                     )}
                 </div>
