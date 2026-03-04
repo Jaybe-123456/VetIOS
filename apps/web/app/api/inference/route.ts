@@ -3,71 +3,75 @@
  *
  * Runs AI inference, logs it to ai_inference_events, returns result.
  *
- * Critical rule: Log the inference EVERY TIME the model successfully returns.
- * Auth: Requires authenticated session. tenant_id = auth.uid().
+ * Protections:
+ *   - Rate limit: 10 req/min per IP
+ *   - Zod schema validation
+ *   - Request ID tracing
+ *   - AI provider timeout (15s)
+ *   - Error sanitization (no stack traces in production)
  */
 
 import { NextResponse } from 'next/server';
-import { safeJson } from '@/lib/http/safeJson';
-import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
+import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { runInference } from '@/lib/ai/provider';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
+import { apiGuard } from '@/lib/http/apiGuard';
+import { withRequestHeaders } from '@/lib/http/requestId';
+import { InferenceRequestSchema, formatZodErrors } from '@/lib/http/schemas';
+import { safeJson } from '@/lib/http/safeJson';
 
-interface InferenceRequestBody {
-    tenant_id?: string; // Deprecated: now derived from session
-    clinic_id?: string;
-    case_id?: string;
-    model: {
-        name: string;
-        version: string;
-    };
-    input: {
-        input_signature: Record<string, unknown>;
-    };
-}
+const AI_TIMEOUT_MS = 15_000;
 
 export async function POST(req: Request) {
-    // ── Auth check ──
-    const session = await resolveSessionTenant();
+    // ── Guard: rate limit + size ──
+    const guard = await apiGuard(req, { maxRequests: 10, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+    const { requestId, startTime } = guard;
 
+    // ── Auth ──
+    const session = await resolveSessionTenant();
     if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        return NextResponse.json(
+            { error: 'Unauthorized', request_id: requestId },
+            { status: 401 }
+        );
     }
     const tenantId = session?.tenantId || 'dev_tenant_001';
 
-    // ── Safe JSON parse (returns 400, never 500) ──
-    const parsed = await safeJson<InferenceRequestBody>(req);
+    // ── Parse + validate ──
+    const parsed = await safeJson(req);
     if (!parsed.ok) {
-        return NextResponse.json({ error: parsed.error }, { status: 400 });
+        return NextResponse.json(
+            { error: parsed.error, request_id: requestId },
+            { status: 400 }
+        );
     }
-    const body = parsed.data;
+
+    const result = InferenceRequestSchema.safeParse(parsed.data);
+    if (!result.success) {
+        return NextResponse.json(
+            { error: formatZodErrors(result.error), request_id: requestId },
+            { status: 400 }
+        );
+    }
+    const body = result.data;
 
     try {
-        // ── Validate required fields ──
-        if (!body.model?.name || !body.model?.version) {
-            return NextResponse.json(
-                { error: 'Missing model.name or model.version' },
-                { status: 400 },
-            );
-        }
-        if (!body.input?.input_signature) {
-            return NextResponse.json({ error: 'Missing input.input_signature' }, { status: 400 });
-        }
+        // ── AI inference with timeout ──
+        const inferenceResult = await Promise.race([
+            runInference({
+                model: body.model.name,
+                input_signature: body.input.input_signature,
+            }),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS)
+            ),
+        ]);
 
-        // ── Start timer ──
-        const startTime = Date.now();
-
-        // ── Call runInference (the ONLY place that touches the LLM) ──
-        const inferenceResult = await runInference({
-            model: body.model.name,
-            input_signature: body.input.input_signature,
-        });
-
-        // ── Stop timer ──
         const latencyMs = Date.now() - startTime;
 
-        // ── Log to ai_inference_events (service_role bypasses RLS for inserts) ──
+        // ── Log to Supabase ──
         const supabase = getSupabaseServer();
         const inferenceEventId = await logInference(supabase, {
             tenant_id: tenantId,
@@ -82,7 +86,7 @@ export async function POST(req: Request) {
             inference_latency_ms: latencyMs,
         });
 
-        // ── Evaluation Engine: Auto-trigger baseline evaluation ──
+        // ── Evaluation (non-blocking) ──
         let evalResult = null;
         try {
             const recentEvals = await getRecentEvaluations(
@@ -98,10 +102,10 @@ export async function POST(req: Request) {
                 recent_evaluations: recentEvals,
             });
         } catch (evalErr) {
-            console.warn('[POST /api/inference] Evaluation auto-trigger failed (non-fatal):', evalErr);
+            console.warn(`[${requestId}] Evaluation auto-trigger failed (non-fatal):`, evalErr);
         }
 
-        // ── ML Risk Enrichment (non-blocking, circuit-breaker protected) ──
+        // ── ML Risk enrichment (non-blocking) ──
         let mlRisk = null;
         try {
             const { mlPredict } = await import('@/lib/ml/mlClient');
@@ -111,10 +115,10 @@ export async function POST(req: Request) {
                 species: (body.input.input_signature as Record<string, string>).species || 'canine',
             });
         } catch (mlErr) {
-            console.warn('[POST /api/inference] ML risk enrichment failed (non-fatal):', mlErr);
+            console.warn(`[${requestId}] ML risk enrichment failed (non-fatal):`, mlErr);
         }
 
-        return NextResponse.json({
+        const response = NextResponse.json({
             inference_event_id: inferenceEventId,
             output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
@@ -122,13 +126,29 @@ export async function POST(req: Request) {
             inference_latency_ms: latencyMs,
             evaluation: evalResult,
             ml_risk: mlRisk,
+            request_id: requestId,
         });
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
     } catch (err) {
-        console.error('[POST /api/inference] Error:', err);
+        console.error(`[${requestId}] POST /api/inference Error:`, err);
+
+        // ── Timeout ──
+        if (err instanceof Error && err.message === 'AI_TIMEOUT') {
+            return NextResponse.json(
+                { error: 'AI inference timed out', request_id: requestId },
+                { status: 504 }
+            );
+        }
+
+        // ── Sanitized error ──
+        const message = process.env.NODE_ENV === 'production'
+            ? 'Internal server error'
+            : err instanceof Error ? err.message : 'Unknown error';
+
         return NextResponse.json(
-            { error: err instanceof Error ? err.message : 'Internal server error' },
-            { status: 500 },
+            { error: message, request_id: requestId },
+            { status: 500 }
         );
     }
 }
-
