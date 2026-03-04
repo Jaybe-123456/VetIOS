@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: vetios-ml-training
+Version: 0.1.0
+Summary: VetIOS ML training pipeline — TensorFlow Autograd for clinical intelligence
+Requires-Python: >=3.10
+Requires-Dist: tensorflow>=2.16
+Requires-Dist: supabase>=2.0
+Requires-Dist: fastapi>=0.110
+Requires-Dist: uvicorn[standard]>=0.27
+Requires-Dist: scikit-learn>=1.4
+Requires-Dist: pandas>=2.2
+Requires-Dist: numpy>=1.26
+Requires-Dist: pydantic>=2.6
+Requires-Dist: python-dotenv>=1.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: httpx>=0.27; extra == "dev"

@@ -106,8 +106,8 @@ def train() -> dict:
     duration = time.time() - start_time
 
     # ── Step 4: Save model + metrics ──────────────────────────────────────
-    model_path = ARTIFACTS_DIR / "risk_model_v1"
-    model.save(model_path)
+    model_path = ARTIFACTS_DIR / "risk_model_v1.weights.h5"
+    model.save_weights(model_path)
 
     metrics_path = ARTIFACTS_DIR / "training_metrics.json"
     training_result = {

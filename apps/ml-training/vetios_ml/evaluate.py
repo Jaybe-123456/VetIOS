@@ -55,14 +55,27 @@ def evaluate() -> dict:
     print("=" * 60)
 
     # ── Load model ────────────────────────────────────────────────────────
-    model_path = ARTIFACTS_DIR / "risk_model_v1"
+    model_path = ARTIFACTS_DIR / "risk_model_v1.weights.h5"
 
     if not model_path.exists():
         print(f"[evaluate] No model found at {model_path}. Run `python -m vetios_ml.train` first.")
         return {}
 
-    model = tf.keras.models.load_model(model_path)
-    print(f"[evaluate] Loaded model from {model_path}")
+    # Load training metrics to get input_dim
+    meta_path = ARTIFACTS_DIR / "training_metrics.json"
+    if not meta_path.exists():
+        print("[evaluate] No training_metrics.json found.")
+        return {}
+
+    with open(meta_path) as f:
+        meta = json.load(f)
+
+    from vetios_ml.models.risk_model import VetRiskModel
+    model = VetRiskModel(input_dim=meta["input_dim"])
+    # Build model by passing a dummy input
+    import numpy as np
+    model(np.zeros((1, meta["input_dim"]), dtype=np.float32))
+    model.load_weights(model_path)
 
     # ── Load evaluation data ──────────────────────────────────────────────
     # Use a held-out synthetic set (in production, use a temporal split)
