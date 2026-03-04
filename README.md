@@ -147,3 +147,57 @@ Veterinary medicine evolves from:
 ## Implementation Guides
 
 - [TensorFlow Autograd for VetIOS: Expert Execution Guide](docs/tensorflow-autograd-expert-guide.md)
+
+---
+
+## ML Training Pipeline (`apps/ml-training`)
+
+Production-grade TensorFlow training pipeline implementing the full execution roadmap.
+
+### Quick Start
+
+```bash
+cd apps/ml-training
+python -m venv .venv && .venv\Scripts\activate  # Windows
+pip install -e ".[dev]"
+
+# Run individual stages
+python -m vetios_ml.train              # Baseline GradientTape training
+python -m vetios_ml.calibration        # Temperature scaling + isotonic regression
+python -m vetios_ml.drift              # Feature + label drift detection
+python -m vetios_ml.augmented_train    # Simulation-augmented training
+python -m vetios_ml.shadow_mode        # Shadow evaluation + safety gates
+python -m vetios_ml.explainability     # Gradient-based feature attribution
+
+# Or run the full pipeline
+python -m vetios_ml.retrain            # All 6 stages in sequence
+
+# Start inference server
+python -m vetios_ml.serve              # FastAPI on :8000
+```
+
+### Pipeline Architecture
+
+```
+Supabase ──→ Dataset Builder ──→ Train (GradientTape) ──→ Evaluate
+                                      │
+                Simulation Sampler ──→ Augmented Train (safety penalty)
+                                      │
+                                 Calibrate ──→ Drift Detection
+                                      │
+                                Shadow Eval ──→ Safety Gates ──→ Promote?
+                                      │
+                                Explainability (Integrated Gradients)
+                                      │
+                                 Serve (FastAPI)
+                                   /predict · /explain · /health
+                                   /calibration · /drift · /shadow
+```
+
+### Production Guardrails
+
+*   **Temporal leakage checks** — no future data in features
+*   **Safety-penalized loss** — penalizes overconfident predictions with clinician overrides
+*   **Circuit-breaker client** — Next.js ↔ ML server with timeout + fallback
+*   **Shadow-mode evaluation** — model must pass safety gates before promotion
+*   **Drift detection** — PSI for feature drift, chi-squared for label drift

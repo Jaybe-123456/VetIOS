@@ -190,6 +190,28 @@ async def shadow_report():
         return json.load(f)
 
 
+@app.post("/explain")
+async def explain(req: PredictRequest):
+    """
+    Explain a prediction using gradient-based feature attribution.
+    Returns ranked features with attribution scores.
+    """
+    if _model is None or _model_meta is None:
+        raise HTTPException(status_code=503, detail="Model not loaded.")
+
+    from vetios_ml.explainability import explain_prediction
+
+    species_options = ["avian", "canine", "equine", "feline"]
+    species_encoded = [1.0 if req.species == s else 0.0 for s in species_options]
+
+    features = np.array(
+        [[float(req.decision_count), float(req.override_count)] + species_encoded],
+        dtype=np.float32,
+    )
+
+    return explain_prediction(_model, features, _model_meta["feature_cols"])
+
+
 # ── CLI entrypoint ────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
