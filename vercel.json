@@ -1,5 +1,5 @@
 {
     "framework": "nextjs",
-    "buildCommand": "pnpm run build --filter=@vetios/web",
-    "outputDirectory": "apps/web/.next"
+    "buildCommand": "cd ../.. && pnpm run build --filter=@vetios/web",
+    "outputDirectory": ".next"
 }
