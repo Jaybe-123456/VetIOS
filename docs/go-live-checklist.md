@@ -47,7 +47,7 @@
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | *(from .env.local)* | Production + Preview |
 | `SUPABASE_SERVICE_ROLE_KEY` | *(from .env.local)* | Production only |
 | `AI_PROVIDER_API_KEY` | Your OpenAI key | Production only |
-| `ML_SERVER_URL` | URL of deployed ML server | Production only |
+| `ML_SERVER_URL` | `https://vetios-production.up.railway.app` | Production only |
 | ⚠️ `VETIOS_DEV_BYPASS` | **DO NOT SET** | — |
 
 ---
