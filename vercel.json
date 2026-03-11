@@ -1,6 +1,5 @@
 {
     "framework": "nextjs",
-    "installCommand": "corepack pnpm install --frozen-lockfile",
-    "buildCommand": "cd ../.. && corepack pnpm run build --filter=@vetios/web",
-    "outputDirectory": ".next"
+    "buildCommand": "pnpm run build --filter=@vetios/web",
+    "outputDirectory": "apps/web/.next"
 }
