@@ -22,8 +22,14 @@ export default function OutcomeLearning() {
         const formData = new FormData(e.currentTarget);
         const data = {
             inference_event_id: formData.get('eventId'),
-            actual_diagnosis: formData.get('actualDiagnosis'),
-            notes: formData.get('notes')
+            outcome: {
+                type: 'clinical_diagnosis',
+                payload: {
+                    actual_diagnosis: formData.get('actualDiagnosis'),
+                    notes: formData.get('notes'),
+                },
+                timestamp: new Date().toISOString(),
+            }
         };
 
         try {
