@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel } from '@/components/ui/terminal';
+import { Container, PageHeader, ConsoleCard, DataRow } from '@/components/ui/terminal';
 import { InferenceForm } from '@/components/InferenceForm';
 import { ShieldCheck, Activity, AlertTriangle, Brain } from 'lucide-react';
 
@@ -14,9 +15,18 @@ interface MLRiskData {
     _reason?: string;
 }
 
+interface UploadedArtifact {
+    file_name: string;
+    mime_type: string;
+    size_bytes: number;
+    content_base64: string;
+}
+
 interface InferenceState {
     status: 'idle' | 'computing' | 'success' | 'error';
     eventId: string | null;
+    requestPayload: Record<string, unknown> | null;
+    responsePayload: Record<string, unknown> | null;
     probabilities: Array<{ label: string; value: number }>;
     explainability: {
         featureImportance: Array<{ feature: string; impact: number }>;
@@ -30,17 +40,45 @@ export default function InferenceConsole() {
     const [state, setState] = useState<InferenceState>({
         status: 'idle',
         eventId: null,
+        requestPayload: null,
+        responsePayload: null,
         probabilities: [],
         explainability: null,
         mlRisk: null,
         errorMessage: null
     });
 
+    async function readFilesAsBase64(files: FormDataEntryValue[]): Promise<UploadedArtifact[]> {
+        const validFiles = files.filter((entry): entry is File => entry instanceof File && entry.size > 0);
+
+        return Promise.all(
+            validFiles.map(async (file) => {
+                const buffer = await file.arrayBuffer();
+                const bytes = new Uint8Array(buffer);
+                let binary = '';
+                bytes.forEach((byte) => {
+                    binary += String.fromCharCode(byte);
+                });
+
+                return {
+                    file_name: file.name,
+                    mime_type: file.type || 'application/octet-stream',
+                    size_bytes: file.size,
+                    content_base64: btoa(binary),
+                };
+            }),
+        );
+    }
+
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
         setState({ status: 'computing', eventId: null, probabilities: [], explainability: null, mlRisk: null, errorMessage: null });
+        setState({ status: 'computing', eventId: null, requestPayload: null, responsePayload: null, probabilities: [], explainability: null, mlRisk: null, errorMessage: null });
 
         const formData = new FormData(e.currentTarget);
+
+        const diagnosticImages = await readFilesAsBase64(formData.getAll('diagnosticImages'));
+        const labResults = await readFilesAsBase64(formData.getAll('labResults'));
 
         const data = {
             model: {
@@ -53,6 +91,10 @@ export default function InferenceConsole() {
                     breed: formData.get('breed'),
                     symptoms: formData.get('symptoms')?.toString().split(',').map(s => s.trim()) || [],
                     metadata: formData.get('metadata') ? JSON.parse(formData.get('metadata') as string) : {}
+                    symptoms: formData.get('symptoms')?.toString().split(',').map((symptom) => symptom.trim()) || [],
+                    metadata: formData.get('metadata') ? JSON.parse(formData.get('metadata') as string) : {},
+                    diagnostic_images: diagnosticImages,
+                    lab_results: labResults,
                 }
             }
         };
@@ -74,6 +116,9 @@ export default function InferenceConsole() {
             setState({
                 status: 'success',
                 eventId: result.inference_event_id || `evt_${Math.random().toString(36).substr(2, 9)}`,
+                eventId: result.inference_event_id ?? null,
+                requestPayload: data.input.input_signature as Record<string, unknown>,
+                responsePayload: result.output || null,
                 probabilities: result.probabilities || [
                     { label: 'Primary Pathogen', value: 0.82 },
                     { label: 'Secondary Opportunistic', value: 0.14 },
@@ -97,6 +142,29 @@ export default function InferenceConsole() {
         } catch (err: any) {
             setState(prev => ({ ...prev, status: 'error', errorMessage: err.message }));
         }
+    }
+
+
+    function handleExport() {
+        if (!state.eventId || !state.requestPayload || !state.responsePayload) return;
+
+        const examinationBundle = {
+            inference_event_id: state.eventId,
+            captured_at: new Date().toISOString(),
+            examination_input: state.requestPayload,
+            analysis_output: state.responsePayload,
+            probabilities: state.probabilities,
+            explainability: state.explainability,
+            ml_risk: state.mlRisk,
+        };
+
+        const blob = new Blob([JSON.stringify(examinationBundle, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `vetios-examination-${state.eventId}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
     }
 
     return (
@@ -141,6 +209,15 @@ export default function InferenceConsole() {
                                 </p>
                             </ConsoleCard>
 
+
+                            <button
+                                type="button"
+                                onClick={handleExport}
+                                className="w-full border border-accent/50 bg-accent/10 text-accent font-mono text-xs uppercase tracking-wider py-3 hover:bg-accent/20 transition-colors"
+                            >
+                                Export Examination + Analysis File
+                            </button>
+
                             <ConsoleCard title="Probability Vectors (Top 3)">
                                 <div className="space-y-4">
                                     {state.probabilities.map((p, i) => (
@@ -166,89 +243,3 @@ export default function InferenceConsole() {
                                                     <span>{f.feature}</span>
                                                     <span>{(f.impact * 100).toFixed(0)}</span>
                                                 </div>
-                                                <div className="w-full h-[2px] bg-dim flex">
-                                                    <div className="bg-accent h-full" style={{ width: `${f.impact * 100}%`, opacity: f.impact }} />
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </ConsoleCard>
-
-                                <ConsoleCard title="Symptom Impact Analysis" className="border-muted/30">
-                                    <div className="space-y-2">
-                                        {state.explainability.symptomScores.map((s, i) => (
-                                            <DataRow
-                                                key={i}
-                                                label={s.symptom}
-                                                value={<span className="text-accent">+{s.score} weight</span>}
-                                            />
-                                        ))}
-                                    </div>
-                                </ConsoleCard>
-                            </div>
-
-                            {/* ML Risk Assessment Panel */}
-                            {state.mlRisk && (
-                                <ConsoleCard title="ML Risk Assessment" className="border-accent/40">
-                                    <div className="space-y-4">
-                                        <div className="flex items-center gap-3">
-                                            <Brain className="w-5 h-5 text-accent" />
-                                            <span className="font-mono text-xs text-muted uppercase">TensorFlow Autograd Risk Model</span>
-                                            {state.mlRisk._fallback && (
-                                                <span className="font-mono text-[10px] text-yellow-400 bg-yellow-400/10 px-2 py-0.5 border border-yellow-400/30">
-                                                    FALLBACK
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        {/* Risk Score Bar */}
-                                        <div className="flex flex-col gap-1">
-                                            <div className="flex items-center justify-between font-mono text-xs">
-                                                <span className="text-muted">Risk Score</span>
-                                                <span className={`font-bold ${state.mlRisk.risk_score > 0.7 ? 'text-red-400' :
-                                                        state.mlRisk.risk_score > 0.4 ? 'text-yellow-400' : 'text-green-400'
-                                                    }`}>
-                                                    {(state.mlRisk.risk_score * 100).toFixed(1)}%
-                                                </span>
-                                            </div>
-                                            <div className="w-full h-2 bg-dim overflow-hidden">
-                                                <div
-                                                    className={`h-full transition-all duration-700 ${state.mlRisk.risk_score > 0.7 ? 'bg-red-400' :
-                                                            state.mlRisk.risk_score > 0.4 ? 'bg-yellow-400' : 'bg-green-400'
-                                                        }`}
-                                                    style={{ width: `${state.mlRisk.risk_score * 100}%` }}
-                                                />
-                                            </div>
-                                        </div>
-
-                                        {/* Confidence + Abstain */}
-                                        <div className="grid grid-cols-2 gap-4">
-                                            <div className="font-mono">
-                                                <span className="text-[10px] text-muted uppercase block">Confidence</span>
-                                                <span className="text-sm text-foreground">{(state.mlRisk.confidence * 100).toFixed(1)}%</span>
-                                            </div>
-                                            <div className="font-mono">
-                                                <span className="text-[10px] text-muted uppercase block">Abstain</span>
-                                                <span className={`text-sm ${state.mlRisk.abstain ? 'text-yellow-400' : 'text-green-400'}`}>
-                                                    {state.mlRisk.abstain ? 'YES — LOW CONFIDENCE' : 'NO — CONFIDENT'}
-                                                </span>
-                                            </div>
-                                        </div>
-
-                                        {/* Model Version */}
-                                        <div className="font-mono text-[10px] text-muted border-t border-grid pt-2">
-                                            MODEL: {state.mlRisk.model_version}
-                                            {state.mlRisk._reason && (
-                                                <span className="ml-2 text-yellow-400/70">({state.mlRisk._reason})</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                </ConsoleCard>
-                            )}
-                        </div>
-                    )}
-                </div>
-            </div>
-        </Container>
-    );
-}
