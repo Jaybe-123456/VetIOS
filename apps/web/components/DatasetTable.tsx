@@ -10,6 +10,25 @@ interface DatasetTableProps {
 }
 
 export function DatasetTable({ title, columns, data }: DatasetTableProps) {
+    const handleExport = () => {
+        if (!data || data.length === 0) return;
+
+        const jsonString = JSON.stringify(data, null, 2);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        const filename = title.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+        a.download = `vetios_export_${filename}.json`;
+        
+        document.body.appendChild(a);
+        a.click();
+        
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
     return (
         <div className="border border-grid bg-background/50 flex flex-col">
             <div className="flex items-center justify-between p-4 border-b border-grid bg-dim">
@@ -21,7 +40,7 @@ export function DatasetTable({ title, columns, data }: DatasetTableProps) {
                     <button className="p-2 border border-grid text-muted hover:text-foreground hover:border-accent transition-colors">
                         <Filter className="w-4 h-4" />
                     </button>
-                    <button className="px-3 py-1.5 border border-grid text-xs font-mono uppercase text-muted hover:text-foreground hover:border-accent transition-colors flex items-center gap-2">
+                    <button onClick={handleExport} className="px-3 py-1.5 border border-grid text-xs font-mono uppercase text-muted hover:text-foreground hover:border-accent transition-colors flex items-center gap-2">
                         <DownloadCloud className="w-3 h-3" />
                         Export
                     </button>
