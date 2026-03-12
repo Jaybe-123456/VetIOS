@@ -14,7 +14,7 @@ import { getRequestId } from './requestId';
 
 // ── Configuration ────────────────────────────────────────────────────────────
 
-const MAX_BODY_SIZE = 128 * 1024; // 128 KB
+const MAX_BODY_SIZE = 4 * 1024 * 1024; // 4 MB
 
 // ── In-memory rate limit store ───────────────────────────────────────────────
 
