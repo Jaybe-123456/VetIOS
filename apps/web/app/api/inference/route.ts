@@ -21,7 +21,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { InferenceRequestSchema, formatZodErrors } from '@/lib/http/schemas';
 import { safeJson } from '@/lib/http/safeJson';
 
-const AI_TIMEOUT_MS = 15_000;
+const AI_TIMEOUT_MS = 55_000;
 
 export async function POST(req: Request) {
     // ── Guard: rate limit + size ──
