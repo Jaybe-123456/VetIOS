@@ -72,7 +72,37 @@ const initialEdges: Edge[] = [
     { id: 'e-c4', source: 'data_2', target: 'clinic_4', style: { stroke: '#333' } },
 ];
 
+import { useRouter } from 'next/navigation';
+import { useState } from 'react';
+
+// ... (keep node styles and initial nodes)
+
 export default function AINetworkMap() {
+    const router = useRouter();
+    const [actionState, setActionState] = useState<{ active: boolean; message: string; type: 'info' | 'success' | 'warning' } | null>(null);
+
+    const handleNodeClick = (_: React.MouseEvent, node: Node) => {
+        if (node.id.startsWith('sim_')) {
+            setActionState({ active: true, message: `Booting ${node.data.label} connection... Routing to Adversarial Console.`, type: 'warning' });
+            setTimeout(() => {
+                router.push('/simulate');
+            }, 1500);
+        } else if (node.id.startsWith('model_')) {
+            setActionState({ active: true, message: `Accessing ${node.data.label} parameters... Routing to Registry.`, type: 'info' });
+            setTimeout(() => {
+                router.push('/models');
+            }, 1500);
+        } else if (node.id.startsWith('data_')) {
+            setActionState({ active: true, message: `Connecting to ${node.data.label}... Routing to Dataset Manager.`, type: 'success' });
+            setTimeout(() => {
+                router.push('/dataset');
+            }, 1500);
+        } else {
+            setActionState({ active: true, message: `Pinging ${node.data.label}... Node is healthy and responding.`, type: 'info' });
+            setTimeout(() => setActionState(null), 3000);
+        }
+    };
+
     return (
         <Container className="max-w-7xl h-full pb-0 flex flex-col mb-4 bg-background">
             <PageHeader
@@ -80,12 +110,24 @@ export default function AINetworkMap() {
                 description="Live orbital view of intelligence nodes, model deployments, active clinics, and adversarial simulation clusters."
             />
 
+            {actionState && (
+                <div className={`mb-6 p-4 border font-mono text-sm flex items-center gap-3 animate-in fade-in duration-300 ${
+                    actionState.type === 'info' ? 'border-accent text-accent animate-pulse bg-accent/5' :
+                    actionState.type === 'success' ? 'border-accent text-accent' :
+                    'border-danger text-danger bg-danger/5 animate-pulse'
+                }`}>
+                    <div className="w-2 h-2 rounded-full bg-current" />
+                    {actionState.message}
+                </div>
+            )}
+
             <div className="w-full min-h-[600px] border border-grid bg-background/50 relative overflow-hidden" style={{ minHeight: '65vh' }}>
                 <ReactFlow
                     nodes={initialNodes}
                     edges={initialEdges}
                     fitView
-                    className="bg-background !pointer-events-auto"
+                    onNodeClick={handleNodeClick}
+                    className="bg-background !pointer-events-auto cursor-crosshair"
                 >
                     <Background color="#111" gap={20} size={1} />
                     <Controls className="fill-accent border-accent !bg-black" />
