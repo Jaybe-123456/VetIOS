@@ -1,7 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import { TerminalLabel, TerminalInput, TerminalTextarea, TerminalButton } from '@/components/ui/terminal';
-import { UploadCloud } from 'lucide-react';
+import { UploadCloud, File, Image } from 'lucide-react';
 
 interface InferenceFormProps {
     onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
@@ -9,6 +10,9 @@ interface InferenceFormProps {
 }
 
 export function InferenceForm({ onSubmit, isComputing }: InferenceFormProps) {
+    const [imgFile, setImgFile] = useState<File | null>(null);
+    const [docFile, setDocFile] = useState<File | null>(null);
+
     return (
         <form onSubmit={onSubmit} className="space-y-6">
             <div>
@@ -27,14 +31,49 @@ export function InferenceForm({ onSubmit, isComputing }: InferenceFormProps) {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="border border-dashed border-grid bg-background/50 p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-accent transition-colors group">
-                    <UploadCloud className="w-6 h-6 text-muted group-hover:text-accent transition-colors" />
-                    <span className="font-mono text-xs text-muted uppercase tracking-wider group-hover:text-accent">Upload Diagnostic Img</span>
-                </div>
-                <div className="border border-dashed border-grid bg-background/50 p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-accent transition-colors group">
-                    <UploadCloud className="w-6 h-6 text-muted group-hover:text-accent transition-colors" />
-                    <span className="font-mono text-xs text-muted uppercase tracking-wider group-hover:text-accent">Attach Lab Results</span>
-                </div>
+                <label className="border border-dashed border-grid bg-background/50 p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-accent transition-colors group relative">
+                    <input 
+                        type="file" 
+                        id="diagnostic-img" 
+                        name="diagnostic-img" 
+                        accept="image/*" 
+                        className="hidden" 
+                        onChange={(e) => setImgFile(e.target.files?.[0] || null)}
+                    />
+                    {imgFile ? (
+                        <>
+                            <Image className="w-6 h-6 text-accent" />
+                            <span className="font-mono text-xs text-accent uppercase tracking-wider truncate max-w-[150px]">{imgFile.name}</span>
+                        </>
+                    ) : (
+                        <>
+                            <UploadCloud className="w-6 h-6 text-muted group-hover:text-accent transition-colors" />
+                            <span className="font-mono text-xs text-muted uppercase tracking-wider group-hover:text-accent text-center">Upload Diagnostic Img</span>
+                        </>
+                    )}
+                </label>
+                
+                <label className="border border-dashed border-grid bg-background/50 p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-accent transition-colors group relative">
+                    <input 
+                        type="file" 
+                        id="lab-results" 
+                        name="lab-results" 
+                        accept=".pdf,.xml,.json,.txt" 
+                        className="hidden"
+                        onChange={(e) => setDocFile(e.target.files?.[0] || null)}
+                    />
+                    {docFile ? (
+                        <>
+                            <File className="w-6 h-6 text-accent" />
+                            <span className="font-mono text-xs text-accent uppercase tracking-wider truncate max-w-[150px]">{docFile.name}</span>
+                        </>
+                    ) : (
+                        <>
+                            <UploadCloud className="w-6 h-6 text-muted group-hover:text-accent transition-colors" />
+                            <span className="font-mono text-xs text-muted uppercase tracking-wider group-hover:text-accent text-center">Attach Lab Results</span>
+                        </>
+                    )}
+                </label>
             </div>
 
             <div>
