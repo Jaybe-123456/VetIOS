@@ -77,12 +77,28 @@ export async function POST(req: Request) {
         const latencyMs = Date.now() - startTime;
         const supabase = getSupabaseServer();
 
+        const signatureForLog = { ...inputSignature };
+        if (Array.isArray(signatureForLog.diagnostic_images)) {
+            signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map(img => ({
+                file_name: img.file_name,
+                mime_type: img.mime_type,
+                size_bytes: img.size_bytes
+            }));
+        }
+        if (Array.isArray(signatureForLog.lab_results)) {
+            signatureForLog.lab_results = signatureForLog.lab_results.map(doc => ({
+                file_name: doc.file_name,
+                mime_type: doc.mime_type,
+                size_bytes: doc.size_bytes
+            }));
+        }
+
         // ── Log inference ──
         const triggeredInferenceId = await logInference(supabase, {
             tenant_id: tenantId,
             model_name: body.inference.model,
             model_version: body.inference.model_version ?? body.inference.model,
-            input_signature: inputSignature,
+            input_signature: signatureForLog,
             output_payload: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,

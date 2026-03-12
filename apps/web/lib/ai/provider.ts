@@ -57,7 +57,46 @@ Respond ONLY with valid JSON. Include:
 - "confidence_score": number 0-1
 - "uncertainty_notes": array of strings describing uncertainties`;
 
-    const userPrompt = JSON.stringify(input.input_signature, null, 2);
+    const signatureOriginal = { ...input.input_signature };
+    
+    // Extract heavy attachments to prevent massive base64 strings from blowing up the text token context
+    const images: any[] = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
+    const docs: any[] = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];
+    
+    delete signatureOriginal.diagnostic_images;
+    delete signatureOriginal.lab_results;
+
+    const userPromptText = JSON.stringify(signatureOriginal, null, 2);
+    
+    const userMessageContent: any[] = [
+        { type: "text", text: userPromptText }
+    ];
+
+    for (const img of images) {
+        if (img.content_base64 && img.mime_type) {
+            userMessageContent.push({
+                type: "image_url",
+                image_url: {
+                    url: `data:${img.mime_type};base64,${img.content_base64}`
+                }
+            });
+        }
+    }
+
+    for (const doc of docs) {
+        if (doc.content_base64) {
+            try {
+                // Decode documents and truncate to 5000 chars to avoid token limits
+                const decodedText = Buffer.from(doc.content_base64, 'base64').toString('utf-8');
+                userMessageContent.push({
+                    type: "text", 
+                    text: `\n--- Document: ${doc.file_name} ---\n${decodedText.substring(0, 5000)}...`
+                });
+            } catch (e) {
+                console.warn("Failed to decode document base64");
+            }
+        }
+    }
 
     let response: Response;
     try {
@@ -71,7 +110,7 @@ Respond ONLY with valid JSON. Include:
                 model,
                 messages: [
                     { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userPrompt },
+                    { role: 'user', content: userMessageContent },
                 ],
                 temperature: 0.3,
                 max_tokens: 2048,
