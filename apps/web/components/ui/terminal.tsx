@@ -78,14 +78,19 @@ export function DataRow({ label, value }: { label: string, value: React.ReactNod
 export function ConsoleCard({
     title,
     children,
-    className = ''
+    className = '',
+    onClick
 }: {
     title?: string,
     children: React.ReactNode,
-    className?: string
+    className?: string,
+    onClick?: () => void
 }) {
     return (
-        <div className={`border border-grid bg-background p-6 flex flex-col gap-4 ${className}`}>
+        <div 
+            onClick={onClick}
+            className={`border border-grid bg-background p-6 flex flex-col gap-4 ${className}`}
+        >
             {title && (
                 <div className="font-mono text-xs text-muted uppercase tracking-widest border-b border-grid pb-4 mb-2 flex items-center gap-2">
                     <div className="w-1.5 h-1.5 bg-accent" />
