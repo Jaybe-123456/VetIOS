@@ -71,6 +71,23 @@ export async function POST(req: Request) {
 
         const latencyMs = Date.now() - startTime;
 
+        // Sanitize input signature to remove base64 payloads before logging to database
+        const signatureForLog = { ...body.input.input_signature };
+        if (Array.isArray(signatureForLog.diagnostic_images)) {
+            signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map(img => ({
+                file_name: img.file_name,
+                mime_type: img.mime_type,
+                size_bytes: img.size_bytes
+            }));
+        }
+        if (Array.isArray(signatureForLog.lab_results)) {
+            signatureForLog.lab_results = signatureForLog.lab_results.map(doc => ({
+                file_name: doc.file_name,
+                mime_type: doc.mime_type,
+                size_bytes: doc.size_bytes
+            }));
+        }
+
         // ── Log to Supabase ──
         const supabase = getSupabaseServer();
         const inferenceEventId = await logInference(supabase, {
@@ -79,7 +96,7 @@ export async function POST(req: Request) {
             case_id: body.case_id ?? null,
             model_name: body.model.name,
             model_version: body.model.version,
-            input_signature: body.input.input_signature,
+            input_signature: signatureForLog,
             output_payload: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
