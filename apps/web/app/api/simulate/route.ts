@@ -134,9 +134,7 @@ export async function POST(req: Request) {
             );
         }
 
-        const message = process.env.NODE_ENV === 'production'
-            ? 'Internal server error'
-            : err instanceof Error ? err.message : 'Unknown error';
+        const message = err instanceof Error ? err.stack || err.message : 'Unknown error';
         return NextResponse.json(
             { error: message, request_id: requestId },
             { status: 500 }
