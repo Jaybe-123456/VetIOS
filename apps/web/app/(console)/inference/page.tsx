@@ -73,28 +73,39 @@ export default function InferenceConsole() {
         e.preventDefault();
         setState({ status: 'computing', eventId: null, requestPayload: null, responsePayload: null, probabilities: [], explainability: null, mlRisk: null, errorMessage: null });
 
-        const formData = new FormData(e.currentTarget);
+        try {
+            const formData = new FormData(e.currentTarget);
 
-        const diagnosticImages = await readFilesAsBase64(formData.getAll('diagnostic-img'));
-        const labResults = await readFilesAsBase64(formData.getAll('lab-results'));
+            const diagnosticImages = await readFilesAsBase64(formData.getAll('diagnostic-img'));
+            const labResults = await readFilesAsBase64(formData.getAll('lab-results'));
 
-        const data = {
-            model: {
-                name: "gpt-4-turbo",
-                version: "1.0.0"
-            },
-            input: {
-                input_signature: {
-                    species: formData.get('species'),
-                    breed: formData.get('breed'),
-                    symptoms: formData.get('symptoms')?.toString().split(',').map((symptom) => symptom.trim()) || [],
-                    metadata: formData.get('metadata') ? JSON.parse(formData.get('metadata') as string) : {},
-                    diagnostic_images: diagnosticImages,
-                    lab_results: labResults,
+            const metadataRaw = formData.get('metadata')?.toString().trim();
+            let metadata: Record<string, unknown> = {};
+            if (metadataRaw) {
+                try {
+                    metadata = JSON.parse(metadataRaw) as Record<string, unknown>;
+                } catch {
+                    throw new Error('Metadata must be valid JSON. Please fix the patient history field and retry.');
                 }
             }
-        };
-        try {
+
+            const data = {
+                model: {
+                    name: "gpt-4-turbo",
+                    version: "1.0.0"
+                },
+                input: {
+                    input_signature: {
+                        species: formData.get('species'),
+                        breed: formData.get('breed'),
+                        symptoms: formData.get('symptoms')?.toString().split(',').map((symptom) => symptom.trim()) || [],
+                        metadata,
+                        diagnostic_images: diagnosticImages,
+                        lab_results: labResults,
+                    }
+                }
+            };
+
             const res = await fetch('/api/inference', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -139,8 +150,9 @@ export default function InferenceConsole() {
                 mlRisk: result.ml_risk || null,
                 errorMessage: null
             });
-        } catch (err: any) {
-            setState(prev => ({ ...prev, status: 'error', errorMessage: err.message }));
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : 'Unknown inference error.';
+            setState(prev => ({ ...prev, status: 'error', errorMessage }));
         }
     }
 
