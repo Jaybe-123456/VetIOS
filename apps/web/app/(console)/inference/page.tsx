@@ -51,21 +51,21 @@ export default function InferenceConsole() {
         const validFiles = files.filter((entry): entry is File => entry instanceof File && entry.size > 0);
 
         return Promise.all(
-            validFiles.map(async (file) => {
-                const buffer = await file.arrayBuffer();
-                const bytes = new Uint8Array(buffer);
-                let binary = '';
-                bytes.forEach((byte) => {
-                    binary += String.fromCharCode(byte);
-                });
-
-                return {
-                    file_name: file.name,
-                    mime_type: file.type || 'application/octet-stream',
-                    size_bytes: file.size,
-                    content_base64: btoa(binary),
+            validFiles.map((file) => new Promise<UploadedArtifact>((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const dataUrl = reader.result as string;
+                    const base64 = dataUrl.split(',')[1] || '';
+                    resolve({
+                        file_name: file.name,
+                        mime_type: file.type || 'application/octet-stream',
+                        size_bytes: file.size,
+                        content_base64: base64,
+                    });
                 };
-            }),
+                reader.onerror = () => reject(new Error(`Failed to read file: ${file.name}`));
+                reader.readAsDataURL(file);
+            }))
         );
     }
 
@@ -101,9 +101,15 @@ export default function InferenceConsole() {
                 body: JSON.stringify(data)
             });
 
-            const result = await res.json();
+            const textResult = await res.text();
+            let result;
+            try {
+                result = JSON.parse(textResult);
+            } catch {
+                throw new Error(`Server returned HTTP ${res.status} (Not JSON). Potential Vercel Timeout or Edge Error.`);
+            }
 
-            if (!res.ok) throw new Error(result.error || 'Inference computation failed');
+            if (!res.ok) throw new Error(result.error || `Inference computation failed (HTTP ${res.status})`);
 
             // Simulate slight delay for computational heavy feel
             await new Promise(r => setTimeout(r, 800));

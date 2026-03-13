@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { TerminalLabel, TerminalInput, TerminalTextarea, TerminalButton } from '@/components/ui/terminal';
-import { UploadCloud, File, Image } from 'lucide-react';
+import { UploadCloud, File, Image as ImageIcon } from 'lucide-react';
 
 interface InferenceFormProps {
     onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
@@ -42,7 +42,7 @@ export function InferenceForm({ onSubmit, isComputing }: InferenceFormProps) {
                     />
                     {imgFile ? (
                         <>
-                            <Image className="w-6 h-6 text-accent" />
+                            <ImageIcon className="w-6 h-6 text-accent" />
                             <span className="font-mono text-xs text-accent uppercase tracking-wider truncate max-w-[150px]">{imgFile.name}</span>
                         </>
                     ) : (
