@@ -255,8 +255,8 @@ export default function InferenceConsole() {
                 description="Inject clinical context in any format — structured fields, natural language, or raw JSON — and generate probability vectors."
             />
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
-                <div className="border-r border-grid xl:pr-12 space-y-6">
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8 xl:gap-12">
+                <div className="xl:border-r xl:border-grid xl:pr-12 space-y-4 sm:space-y-6">
                     <InferenceForm
                         onSubmit={handleSubmit}
                         isComputing={state.status === 'computing'}
@@ -274,9 +274,9 @@ export default function InferenceConsole() {
                     )}
                 </div>
 
-                <div className="space-y-6">
+                <div className="space-y-4 sm:space-y-6">
                     <ConsoleCard title="Execution Status">
-                        <div className={`p-4 border font-mono text-sm flex items-center gap-3 ${state.status === 'idle' ? 'border-muted text-muted' :
+                        <div className={`p-3 sm:p-4 border font-mono text-xs sm:text-sm flex items-center gap-2 sm:gap-3 ${state.status === 'idle' ? 'border-muted text-muted' :
                             state.status === 'previewing' ? 'border-blue-400 text-blue-400 bg-blue-400/5' :
                             state.status === 'computing' ? 'border-accent text-accent animate-pulse bg-accent/5' :
                                 state.status === 'error' ? 'border-danger text-danger bg-danger/5' :
