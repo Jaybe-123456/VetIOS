@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel } from '@/components/ui/terminal';
+import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel, TerminalInput, TerminalTextarea, TerminalButton } from '@/components/ui/terminal';
 import { InferenceForm } from '@/components/InferenceForm';
 import { NormalizedPreview } from '@/components/NormalizedPreview';
 import { normalizeInferenceInput, type InputMode, type NormalizedInput } from '@/lib/input/inputNormalizer';
-import { ShieldCheck, Activity, AlertTriangle, Brain } from 'lucide-react';
+import { ShieldCheck, Activity, AlertTriangle, Brain, CheckCircle2, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface MLRiskData {
     risk_score: number;
@@ -21,6 +21,18 @@ interface UploadedArtifact {
     mime_type: string;
     size_bytes: number;
     content_base64: string;
+}
+
+interface OutcomeState {
+    status: 'idle' | 'expanded' | 'submitting' | 'submitted' | 'error';
+    evaluation?: {
+        id: string;
+        calibration_error: number | null;
+        drift_score: number | null;
+        outcome_alignment_delta: number | null;
+    };
+    outcomeEventId?: string;
+    errorMessage?: string;
 }
 
 interface InferenceState {
@@ -56,6 +68,7 @@ export default function InferenceConsole() {
     });
 
     const [inputMode, setInputMode] = useState<InputMode>('structured');
+    const [outcomeState, setOutcomeState] = useState<OutcomeState>({ status: 'idle' });
 
     // ── File reader ──────────────────────────────────────────────────────────
 
@@ -222,6 +235,48 @@ export default function InferenceConsole() {
         setState(prev => ({ ...prev, status: 'idle', normalizedInput: null }));
     }
 
+    // ── Ground Truth / Outcome Attachment ──────────────────────────────────────
+
+    async function handleOutcomeSubmit(e: React.FormEvent<HTMLFormElement>) {
+        e.preventDefault();
+        if (!state.eventId) return;
+
+        setOutcomeState(prev => ({ ...prev, status: 'submitting' }));
+
+        const formData = new FormData(e.currentTarget);
+        const data = {
+            inference_event_id: state.eventId,
+            outcome: {
+                type: 'clinical_diagnosis',
+                payload: {
+                    actual_diagnosis: formData.get('actualDiagnosis'),
+                    notes: formData.get('notes'),
+                },
+                timestamp: new Date().toISOString(),
+            },
+        };
+
+        try {
+            const res = await fetch('/api/outcome', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            });
+
+            const result = await res.json();
+            if (!res.ok) throw new Error(result.error || 'Failed to attach outcome');
+
+            setOutcomeState({
+                status: 'submitted',
+                outcomeEventId: result.outcome_event_id,
+                evaluation: result.evaluation || undefined,
+            });
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : 'Unknown error';
+            setOutcomeState({ status: 'error', errorMessage: msg });
+        }
+    }
+
     // ── Export ────────────────────────────────────────────────────────────────
 
     function handleExport() {
@@ -308,13 +363,114 @@ export default function InferenceConsole() {
                             </ConsoleCard>
 
 
-                            <button
-                                type="button"
-                                onClick={handleExport}
-                                className="w-full border border-accent/50 bg-accent/10 text-accent font-mono text-xs uppercase tracking-wider py-3 hover:bg-accent/20 transition-colors"
-                            >
-                                Export Examination + Analysis File
-                            </button>
+                            <div className="flex flex-col sm:flex-row gap-3">
+                                <button
+                                    type="button"
+                                    onClick={handleExport}
+                                    className="flex-1 border border-accent/50 bg-accent/10 text-accent font-mono text-xs uppercase tracking-wider py-3 hover:bg-accent/20 transition-colors"
+                                >
+                                    Export Analysis
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setOutcomeState(prev => ({
+                                        ...prev,
+                                        status: prev.status === 'expanded' ? 'idle' : prev.status === 'idle' ? 'expanded' : prev.status,
+                                    }))}
+                                    className={`flex-1 border font-mono text-xs uppercase tracking-wider py-3 transition-colors flex items-center justify-center gap-2 ${
+                                        outcomeState.status === 'submitted'
+                                            ? 'border-green-500/50 bg-green-500/10 text-green-400 cursor-default'
+                                            : 'border-blue-400/50 bg-blue-400/10 text-blue-400 hover:bg-blue-400/20'
+                                    }`}
+                                    disabled={outcomeState.status === 'submitted'}
+                                >
+                                    {outcomeState.status === 'submitted' ? (
+                                        <><CheckCircle2 className="w-3.5 h-3.5" /> Ground Truth Confirmed</>
+                                    ) : (
+                                        <>Confirm Ground Truth {outcomeState.status === 'expanded' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</>
+                                    )}
+                                </button>
+                            </div>
+
+                            {/* ── Inline Ground Truth Form ─────────────────── */}
+                            {outcomeState.status === 'expanded' && (
+                                <ConsoleCard title="Attach Ground Truth" className="border-blue-400/30 animate-in slide-in-from-top duration-300">
+                                    <form onSubmit={handleOutcomeSubmit} className="space-y-4">
+                                        <div>
+                                            <TerminalLabel htmlFor="gt-eventId">Inference Event ID</TerminalLabel>
+                                            <TerminalInput
+                                                id="gt-eventId"
+                                                value={state.eventId || ''}
+                                                disabled
+                                                className="opacity-60"
+                                            />
+                                        </div>
+                                        <div>
+                                            <TerminalLabel htmlFor="gt-diagnosis">Actual Diagnosis</TerminalLabel>
+                                            <TerminalInput
+                                                id="gt-diagnosis"
+                                                name="actualDiagnosis"
+                                                placeholder="e.g. Pancreatitis, Parvoviral Enteritis"
+                                                required
+                                            />
+                                        </div>
+                                        <div>
+                                            <TerminalLabel htmlFor="gt-notes">Clinician Notes (optional)</TerminalLabel>
+                                            <TerminalTextarea
+                                                id="gt-notes"
+                                                name="notes"
+                                                placeholder="Additional context, lab confirmation, treatment response..."
+                                                rows={2}
+                                            />
+                                        </div>
+                                        <TerminalButton type="submit" disabled={outcomeState.status === 'submitting'}>
+                                            {outcomeState.status === 'submitting' ? 'SUBMITTING...' : 'CONFIRM GROUND TRUTH'}
+                                        </TerminalButton>
+                                    </form>
+                                </ConsoleCard>
+                            )}
+
+                            {/* ── Outcome Confirmation Result ─────────────── */}
+                            {outcomeState.status === 'submitted' && outcomeState.evaluation && (
+                                <ConsoleCard title="Feedback Loop — Evaluation Result" className="border-green-500/30 animate-in fade-in duration-500">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
+                                        <div className="border border-accent/20 p-3">
+                                            <div className="text-muted uppercase text-[9px] mb-1">Calibration Error</div>
+                                            <div className="text-accent text-sm font-bold">
+                                                {outcomeState.evaluation.calibration_error != null
+                                                    ? `${(outcomeState.evaluation.calibration_error * 100).toFixed(2)}%`
+                                                    : 'N/A'}
+                                            </div>
+                                        </div>
+                                        <div className="border border-accent/20 p-3">
+                                            <div className="text-muted uppercase text-[9px] mb-1">Drift Score</div>
+                                            <div className="text-accent text-sm font-bold">
+                                                {outcomeState.evaluation.drift_score != null
+                                                    ? outcomeState.evaluation.drift_score.toFixed(3)
+                                                    : 'Insufficient data'}
+                                            </div>
+                                        </div>
+                                        <div className="border border-accent/20 p-3">
+                                            <div className="text-muted uppercase text-[9px] mb-1">Outcome Alignment</div>
+                                            <div className="text-accent text-sm font-bold">
+                                                {outcomeState.evaluation.outcome_alignment_delta != null
+                                                    ? `Δ ${(outcomeState.evaluation.outcome_alignment_delta * 100).toFixed(1)}%`
+                                                    : 'N/A'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="mt-3 text-[10px] text-muted font-mono">
+                                        Outcome: <span className="text-accent">{outcomeState.outcomeEventId}</span>
+                                        {' | '}Eval: <span className="text-accent">{outcomeState.evaluation.id}</span>
+                                    </div>
+                                </ConsoleCard>
+                            )}
+
+                            {outcomeState.status === 'error' && (
+                                <div className="text-danger font-mono text-xs border border-danger p-3 bg-danger/5">
+                                    ERR: {outcomeState.errorMessage}
+                                </div>
+                            )}
 
                             <ConsoleCard title="Probability Vectors (Top 3)">
                                 <div className="space-y-4">
