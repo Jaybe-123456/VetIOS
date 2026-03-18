@@ -68,17 +68,28 @@ Respond ONLY with valid JSON. Include:
 
     const userPromptText = JSON.stringify(signatureOriginal, null, 2);
     
+    // Only vision-capable models can accept image_url content blocks
+    const VISION_MODELS = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision-preview'];
+    const isVisionCapable = VISION_MODELS.some(vm => model.startsWith(vm));
+
     const userMessageContent: any[] = [
         { type: "text", text: userPromptText }
     ];
 
     for (const img of images) {
-        if (img.content_base64 && img.mime_type) {
+        if (img.content_base64 && img.mime_type && isVisionCapable) {
+            // Vision model: send actual image data
             userMessageContent.push({
                 type: "image_url",
                 image_url: {
                     url: `data:${img.mime_type};base64,${img.content_base64}`
                 }
+            });
+        } else if (img.file_name) {
+            // Non-vision model: describe the image as text metadata
+            userMessageContent.push({
+                type: "text",
+                text: `\n[Attached Image: ${img.file_name} (${img.mime_type || 'unknown type'}, ${img.size_bytes ? Math.round(img.size_bytes / 1024) + 'KB' : 'unknown size'})]`
             });
         }
     }
