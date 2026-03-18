@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel } from '@/components/ui/terminal';
 import { InferenceForm } from '@/components/InferenceForm';
+import { NormalizedPreview } from '@/components/NormalizedPreview';
+import { normalizeInferenceInput, type InputMode, type NormalizedInput } from '@/lib/input/inputNormalizer';
 import { ShieldCheck, Activity, AlertTriangle, Brain } from 'lucide-react';
 
 interface MLRiskData {
@@ -22,7 +24,7 @@ interface UploadedArtifact {
 }
 
 interface InferenceState {
-    status: 'idle' | 'computing' | 'success' | 'error';
+    status: 'idle' | 'previewing' | 'computing' | 'success' | 'error';
     eventId: string | null;
     requestPayload: Record<string, unknown> | null;
     responsePayload: Record<string, unknown> | null;
@@ -33,6 +35,9 @@ interface InferenceState {
     } | null;
     mlRisk: MLRiskData | null;
     errorMessage: string | null;
+    normalizedInput: NormalizedInput | null;
+    diagnosticImages: UploadedArtifact[];
+    labResults: UploadedArtifact[];
 }
 
 export default function InferenceConsole() {
@@ -44,8 +49,15 @@ export default function InferenceConsole() {
         probabilities: [],
         explainability: null,
         mlRisk: null,
-        errorMessage: null
+        errorMessage: null,
+        normalizedInput: null,
+        diagnosticImages: [],
+        labResults: [],
     });
+
+    const [inputMode, setInputMode] = useState<InputMode>('structured');
+
+    // ── File reader ──────────────────────────────────────────────────────────
 
     async function readFilesAsBase64(files: FormDataEntryValue[]): Promise<UploadedArtifact[]> {
         const validFiles = files.filter((entry): entry is File => entry instanceof File && entry.size > 0);
@@ -69,26 +81,74 @@ export default function InferenceConsole() {
         );
     }
 
+    // ── Step 1: Normalize & Preview ──────────────────────────────────────────
+
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
-        setState({ status: 'computing', eventId: null, requestPayload: null, responsePayload: null, probabilities: [], explainability: null, mlRisk: null, errorMessage: null });
 
         try {
             const formData = new FormData(e.currentTarget);
+            let rawInput = '';
+            let diagnosticImages: UploadedArtifact[] = [];
+            let labResults: UploadedArtifact[] = [];
 
-            const diagnosticImages = await readFilesAsBase64(formData.getAll('diagnostic-img'));
-            const labResults = await readFilesAsBase64(formData.getAll('lab-results'));
+            if (inputMode === 'structured') {
+                // Build text from structured fields
+                const species = formData.get('species')?.toString().trim() || '';
+                const breed = formData.get('breed')?.toString().trim() || '';
+                const symptoms = formData.get('symptoms')?.toString().trim() || '';
+                const metadata = formData.get('metadata')?.toString().trim() || '';
 
-            const metadataRaw = formData.get('metadata')?.toString().trim();
-            let metadata: Record<string, unknown> = {};
-            if (metadataRaw) {
-                try {
-                    metadata = JSON.parse(metadataRaw) as Record<string, unknown>;
-                } catch {
-                    throw new Error('Metadata must be valid JSON. Please fix the patient history field and retry.');
-                }
+                // Combine into a structured text for the normalizer
+                const parts: string[] = [];
+                if (species) parts.push(`Species: ${species}`);
+                if (breed) parts.push(`Breed: ${breed}`);
+                if (symptoms) parts.push(`Symptoms: ${symptoms}`);
+                if (metadata) parts.push(metadata);
+                rawInput = parts.join(' | ');
+
+                // Read files
+                diagnosticImages = await readFilesAsBase64(formData.getAll('diagnostic-img'));
+                labResults = await readFilesAsBase64(formData.getAll('lab-results'));
+            } else if (inputMode === 'freetext') {
+                rawInput = formData.get('freetext-input')?.toString().trim() || '';
+            } else if (inputMode === 'json') {
+                rawInput = formData.get('json-input')?.toString().trim() || '';
             }
 
+            if (!rawInput) {
+                setState(prev => ({ ...prev, status: 'error', errorMessage: 'No input provided.' }));
+                return;
+            }
+
+            // Run normalizer
+            const normalized = normalizeInferenceInput(rawInput, inputMode);
+
+            setState(prev => ({
+                ...prev,
+                status: 'previewing',
+                normalizedInput: normalized,
+                diagnosticImages,
+                labResults,
+                errorMessage: null,
+            }));
+        } catch (err: unknown) {
+            const errorMessage = err instanceof Error ? err.message : 'Normalization failed.';
+            setState(prev => ({ ...prev, status: 'error', errorMessage }));
+        }
+    }
+
+    // ── Step 2: User confirms preview → call API ─────────────────────────────
+
+    async function handleConfirmSubmit(finalInput: NormalizedInput) {
+        setState(prev => ({
+            ...prev,
+            status: 'computing',
+            normalizedInput: finalInput,
+            errorMessage: null,
+        }));
+
+        try {
             const data = {
                 model: {
                     name: "gpt-4-turbo",
@@ -96,12 +156,12 @@ export default function InferenceConsole() {
                 },
                 input: {
                     input_signature: {
-                        species: formData.get('species'),
-                        breed: formData.get('breed'),
-                        symptoms: formData.get('symptoms')?.toString().split(',').map((symptom) => symptom.trim()) || [],
-                        metadata,
-                        diagnostic_images: diagnosticImages,
-                        lab_results: labResults,
+                        species: finalInput.species,
+                        breed: finalInput.breed,
+                        symptoms: finalInput.symptoms,
+                        metadata: finalInput.metadata,
+                        diagnostic_images: state.diagnosticImages,
+                        lab_results: state.labResults,
                     }
                 }
             };
@@ -122,7 +182,6 @@ export default function InferenceConsole() {
 
             if (!res.ok) throw new Error(result.error || `Inference computation failed (HTTP ${res.status})`);
 
-            // Simulate slight delay for computational heavy feel
             await new Promise(r => setTimeout(r, 800));
 
             setState({
@@ -143,12 +202,15 @@ export default function InferenceConsole() {
                         { feature: 'Metadata Age Correlation', impact: 0.21 },
                     ],
                     symptomScores: [
-                        { symptom: data.input.input_signature.symptoms[0] || 'Lethargy', score: 92 },
-                        { symptom: data.input.input_signature.symptoms[1] || 'Vomiting', score: 76 },
+                        { symptom: finalInput.symptoms[0] || 'Lethargy', score: 92 },
+                        { symptom: finalInput.symptoms[1] || 'Vomiting', score: 76 },
                     ]
                 },
                 mlRisk: result.ml_risk || null,
-                errorMessage: null
+                errorMessage: null,
+                normalizedInput: finalInput,
+                diagnosticImages: [],
+                labResults: [],
             });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Unknown inference error.';
@@ -156,6 +218,11 @@ export default function InferenceConsole() {
         }
     }
 
+    function handleCancelPreview() {
+        setState(prev => ({ ...prev, status: 'idle', normalizedInput: null }));
+    }
+
+    // ── Export ────────────────────────────────────────────────────────────────
 
     function handleExport() {
         if (!state.eventId || !state.requestPayload || !state.responsePayload) return;
@@ -179,31 +246,50 @@ export default function InferenceConsole() {
         URL.revokeObjectURL(url);
     }
 
+    // ── Render ────────────────────────────────────────────────────────────────
+
     return (
         <Container className="max-w-7xl">
             <PageHeader
                 title="INFERENCE CONSOLE"
-                description="Inject structured clinical context and medical artifacts to generate probability vectors."
+                description="Inject clinical context in any format — structured fields, natural language, or raw JSON — and generate probability vectors."
             />
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-12">
-                <div className="border-r border-grid xl:pr-12">
-                    <InferenceForm onSubmit={handleSubmit} isComputing={state.status === 'computing'} />
+                <div className="border-r border-grid xl:pr-12 space-y-6">
+                    <InferenceForm
+                        onSubmit={handleSubmit}
+                        isComputing={state.status === 'computing'}
+                        inputMode={inputMode}
+                        onModeChange={setInputMode}
+                    />
+
+                    {/* Normalized Preview (shown between form submit and API call) */}
+                    {state.status === 'previewing' && state.normalizedInput && (
+                        <NormalizedPreview
+                            normalized={state.normalizedInput}
+                            onConfirm={handleConfirmSubmit}
+                            onCancel={handleCancelPreview}
+                        />
+                    )}
                 </div>
 
                 <div className="space-y-6">
                     <ConsoleCard title="Execution Status">
                         <div className={`p-4 border font-mono text-sm flex items-center gap-3 ${state.status === 'idle' ? 'border-muted text-muted' :
+                            state.status === 'previewing' ? 'border-blue-400 text-blue-400 bg-blue-400/5' :
                             state.status === 'computing' ? 'border-accent text-accent animate-pulse bg-accent/5' :
                                 state.status === 'error' ? 'border-danger text-danger bg-danger/5' :
                                     'border-accent text-accent'
                             }`}>
                             {state.status === 'idle' && <AlertTriangle className="w-4 h-4" />}
+                            {state.status === 'previewing' && <Activity className="w-4 h-4" />}
                             {state.status === 'computing' && <Activity className="w-4 h-4 animate-spin" />}
                             {state.status === 'error' && <AlertTriangle className="w-4 h-4" />}
                             {state.status === 'success' && <ShieldCheck className="w-4 h-4" />}
 
                             {state.status === 'idle' && 'AWAITING VECTORS...'}
+                            {state.status === 'previewing' && 'INPUT NORMALIZED — REVIEW & CONFIRM'}
                             {state.status === 'computing' && 'CALCULATING PROBABILITIES...'}
                             {state.status === 'error' && `ERR: ${state.errorMessage}`}
                             {state.status === 'success' && 'VECTORS GENERATED'}
@@ -290,7 +376,6 @@ export default function InferenceConsole() {
                                             )}
                                         </div>
 
-                                        {/* Risk Score Bar */}
                                         <div className="flex flex-col gap-1">
                                             <div className="flex items-center justify-between font-mono text-xs">
                                                 <span className="text-muted">Risk Score</span>
@@ -310,7 +395,6 @@ export default function InferenceConsole() {
                                             </div>
                                         </div>
 
-                                        {/* Confidence + Abstain */}
                                         <div className="grid grid-cols-2 gap-4">
                                             <div className="font-mono">
                                                 <span className="text-[10px] text-muted uppercase block">Confidence</span>
@@ -324,7 +408,6 @@ export default function InferenceConsole() {
                                             </div>
                                         </div>
 
-                                        {/* Model Version */}
                                         <div className="font-mono text-[10px] text-muted border-t border-grid pt-2">
                                             MODEL: {state.mlRisk.model_version}
                                             {state.mlRisk._reason && (
