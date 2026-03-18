@@ -48,7 +48,35 @@ export async function POST(req: Request) {
         );
     }
 
-    const result = InferenceRequestSchema.safeParse(parsed.data);
+    // ── Server-side normalization safety net ──
+    // Coerce semi-structured payloads before Zod validation
+    const rawBody = parsed.data as Record<string, unknown>;
+    if (rawBody.input && typeof rawBody.input === 'object') {
+        const inp = rawBody.input as Record<string, unknown>;
+        // If input_signature is a raw string, wrap it
+        if (typeof inp.input_signature === 'string') {
+            inp.input_signature = {
+                species: null,
+                breed: null,
+                symptoms: [],
+                metadata: { raw_note: inp.input_signature },
+            };
+        }
+        // Ensure input_signature is an object
+        if (inp.input_signature && typeof inp.input_signature === 'object') {
+            const sig = inp.input_signature as Record<string, unknown>;
+            // Coerce string symptoms to array
+            if (typeof sig.symptoms === 'string') {
+                sig.symptoms = (sig.symptoms as string).split(/[,;]/).map((s: string) => s.trim()).filter(Boolean);
+            }
+            // Ensure metadata exists
+            if (!sig.metadata || typeof sig.metadata !== 'object') {
+                sig.metadata = {};
+            }
+        }
+    }
+
+    const result = InferenceRequestSchema.safeParse(rawBody);
     if (!result.success) {
         return NextResponse.json(
             { error: formatZodErrors(result.error), request_id: requestId },

@@ -22,7 +22,19 @@ export const InferenceRequestSchema = z.object({
         version: z.string().min(1),
     }),
     input: z.object({
-        input_signature: z.record(z.string(), z.unknown()),
+        input_signature: z.object({
+            species: z.string().nullable().optional(),
+            breed: z.string().nullable().optional(),
+            symptoms: z.preprocess(
+                (val) => {
+                    if (typeof val === 'string') return val.split(/[,;]/).map((s: string) => s.trim()).filter(Boolean);
+                    if (Array.isArray(val)) return val;
+                    return [];
+                },
+                z.array(z.string())
+            ),
+            metadata: z.record(z.string(), z.unknown()).optional().default({}),
+        }).passthrough(),
     }),
 });
 
