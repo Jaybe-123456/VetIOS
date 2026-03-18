@@ -180,3 +180,92 @@ export async function mlModelInfo(): Promise<MLModelInfo | null> {
         return null;
     }
 }
+
+
+// ── Fix 1 + 3 + 5: Extended types ────────────────────────────────────────────
+
+export type EmergencyLevel = 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW';
+
+export type ConditionClass =
+  | 'mechanical_emergency'
+  | 'infectious'
+  | 'inflammatory_autoimmune'
+  | 'metabolic_toxic'
+  | 'neoplastic'
+  | 'cardiovascular_shock';
+
+export interface MLPredictResponseV2 extends MLPredictResponse {
+  emergency_level: EmergencyLevel;   // Fix 3
+  override_applied: boolean;         // Fix 2
+}
+
+export interface MLDiagnosisRequest {
+  decision_count: number;
+  override_count: number;
+  species: string;
+  symptom_vector_similarity?: number;
+  breed_predisposition_score?: number;
+}
+
+export interface MLDiagnosisResponse {                    // Fix 1 + 5
+  primary_class: ConditionClass;
+  primary_label: string;
+  primary_probability: number;
+  secondary_class?: ConditionClass;
+  secondary_probability?: number;
+  requires_emergency_triage: boolean;
+  model_version: string;
+}
+
+export interface MLFullPredictResponse extends MLPredictResponseV2, MLDiagnosisResponse {}
+
+/**
+ * Call /predict/diagnosis — Fix 5: diagnosis model only.
+ * Returns condition class (Fix 1), not "Primary Pathogen".
+ */
+export async function mlPredictDiagnosis(
+  input: MLDiagnosisRequest,
+): Promise<MLDiagnosisResponse | MLFallbackResponse> {
+  if (isCircuitOpen()) {
+    return fallbackPrediction('Circuit breaker open');
+  }
+  try {
+    const response = await fetchWithTimeout(
+      `${ML_SERVER_URL}/predict/diagnosis`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
+      ML_TIMEOUT_MS,
+    );
+    if (!response.ok) { recordFailure(); return fallbackPrediction(`ML server returned ${response.status}`); }
+    const data: MLDiagnosisResponse = await response.json();
+    recordSuccess();
+    return data;
+  } catch (error) {
+    recordFailure();
+    return fallbackPrediction(`ML diagnosis error: ${error instanceof Error ? error.message : 'unknown'}`);
+  }
+}
+
+/**
+ * Call /predict/full — Fix 5: both models in one call.
+ */
+export async function mlPredictFull(
+  input: MLPredictRequest,
+): Promise<MLFullPredictResponse | MLFallbackResponse> {
+  if (isCircuitOpen()) {
+    return fallbackPrediction('Circuit breaker open');
+  }
+  try {
+    const response = await fetchWithTimeout(
+      `${ML_SERVER_URL}/predict/full`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) },
+      ML_TIMEOUT_MS,
+    );
+    if (!response.ok) { recordFailure(); return fallbackPrediction(`ML server returned ${response.status}`); }
+    const data: MLFullPredictResponse = await response.json();
+    recordSuccess();
+    return data;
+  } catch (error) {
+    recordFailure();
+    return fallbackPrediction(`ML full predict error: ${error instanceof Error ? error.message : 'unknown'}`);
+  }
+}
