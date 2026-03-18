@@ -68,16 +68,16 @@ export function NormalizedPreview({ normalized, onConfirm, onCancel }: Normalize
                         <textarea
                             value={editText}
                             onChange={(e) => setEditText(e.target.value)}
-                            className="w-full bg-black border border-accent/30 p-3 font-mono text-xs text-green-400 min-h-[180px] resize-y focus:outline-none focus:border-accent"
+                            className="w-full bg-black border border-accent/30 p-3 font-mono text-[10px] sm:text-xs text-green-400 min-h-[140px] sm:min-h-[180px] resize-y focus:outline-none focus:border-accent"
                         />
                     ) : (
-                        <pre className="bg-black border border-grid p-3 font-mono text-xs text-green-400 overflow-x-auto max-h-[250px] overflow-y-auto">
+                        <pre className="bg-black border border-grid p-3 font-mono text-[10px] sm:text-xs text-green-400 overflow-x-auto max-h-[180px] sm:max-h-[250px] overflow-y-auto">
                             {jsonPreview}
                         </pre>
                     )}
 
                     {/* Buttons */}
-                    <div className="flex gap-2">
+                    <div className="flex flex-col sm:flex-row gap-2">
                         {editing ? (
                             <button
                                 type="button"

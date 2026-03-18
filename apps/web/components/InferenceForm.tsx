@@ -33,14 +33,14 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                             key={m.key}
                             type="button"
                             onClick={() => onModeChange(m.key)}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 font-mono text-xs uppercase tracking-wider transition-all
+                            className={`flex-1 flex items-center justify-center gap-1.5 sm:gap-2 py-3 sm:py-2.5 px-2 sm:px-3 font-mono text-[10px] sm:text-xs uppercase tracking-wider transition-all
                                 ${inputMode === m.key
                                     ? 'bg-accent/15 text-accent border-b-2 border-accent'
                                     : 'text-muted hover:text-foreground hover:bg-dim'
                                 }`}
                         >
                             {m.icon}
-                            <span className="hidden sm:inline">{m.label}</span>
+                            <span>{m.label}</span>
                         </button>
                     ))}
                 </div>
@@ -67,7 +67,7 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                         <TerminalInput id="symptoms" name="symptoms" placeholder="lethargy, vomiting, fever" />
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                         <label className="border border-dashed border-grid bg-background/50 p-6 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-accent transition-colors group relative">
                             <input
                                 type="file"
@@ -128,7 +128,7 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                         id="freetext-input"
                         name="freetext-input"
                         placeholder={`Type naturally, e.g.:\n\nGolden Retriever, 7 years old, vomiting and lethargy for 2 days\n\nor\n\nSpecies: dog | Breed: German Shepherd | Symptoms: fever, cough`}
-                        className="min-h-[200px]"
+                        className="min-h-[160px] sm:min-h-[200px]"
                     />
                     <p className="font-mono text-[10px] text-muted mt-2">
                         VetIOS will automatically extract species, breed, symptoms, and metadata from your notes.
@@ -144,7 +144,7 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                         id="json-input"
                         name="json-input"
                         placeholder={`{\n  "species": "canine",\n  "breed": "Golden Retriever",\n  "symptoms": ["vomiting", "fever"],\n  "metadata": {\n    "age_months": 84,\n    "weight_kg": 32.5\n  }\n}`}
-                        className="min-h-[240px] font-mono text-xs"
+                        className="min-h-[180px] sm:min-h-[240px] font-mono text-xs"
                     />
                     <p className="font-mono text-[10px] text-muted mt-2">
                         Partial or malformed JSON will be auto-repaired. Unknown keys are preserved in metadata.

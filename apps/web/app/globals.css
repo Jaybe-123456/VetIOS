@@ -24,10 +24,71 @@
   }
 }
 
-/* Custom scrollbar */
+/* ── Animations ────────────────────────────────────────────────────────────── */
+
+@keyframes slideInLeft {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(0); }
+}
+
+@keyframes slideOutLeft {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-100%); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.95); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 8px rgba(0, 255, 65, 0.3); }
+  50%      { box-shadow: 0 0 20px rgba(0, 255, 65, 0.6); }
+}
+
+.animate-slide-in  { animation: slideInLeft 0.25s ease-out forwards; }
+.animate-slide-out { animation: slideOutLeft 0.2s ease-in forwards; }
+.animate-fade-in   { animation: fadeIn 0.2s ease-out forwards; }
+.animate-fade-out  { animation: fadeOut 0.15s ease-in forwards; }
+.animate-scale-in  { animation: scaleIn 0.3s ease-out forwards; }
+.animate-pulse-glow { animation: pulseGlow 2s ease-in-out infinite; }
+
+/* ── Sidebar Overlay ───────────────────────────────────────────────────────── */
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 40;
+}
+
+.sidebar-drawer {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 50;
+  width: 280px;
+  max-width: 85vw;
+}
+
+/* ── Custom Scrollbar ──────────────────────────────────────────────────────── */
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
@@ -35,9 +96,21 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-muted border border-background;
+  @apply bg-muted/50 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted;
 }
 
 ::-webkit-scrollbar-corner {
   @apply bg-background;
+}
+
+/* ── Touch-friendly overrides ──────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  input, textarea, select, button {
+    font-size: 16px !important; /* Prevent iOS zoom on focus */
+  }
 }
