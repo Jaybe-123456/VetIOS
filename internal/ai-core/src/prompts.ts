@@ -120,18 +120,30 @@ export const differentialDiagnosisTemplate: PromptTemplate = {
 
         userContent += `\n\nProvide your differential diagnoses in JSON format:
 {
+  "condition_class": "mechanical_emergency|infectious|inflammatory_autoimmune|metabolic_toxic|neoplastic|cardiovascular_shock",
+  "symptoms": ["snake_case_symptom_key"],
   "differentials": [
     {
       "diagnosis": "string",
+      "condition_class": "mechanical_emergency|infectious|inflammatory_autoimmune|metabolic_toxic|neoplastic|cardiovascular_shock",
       "likelihood": "high|medium|low",
       "reasoning": "string",
+      "key_symptoms": ["snake_case_symptom_key"],
       "recommended_tests": ["string"],
-      "urgency": "emergency|urgent|routine"
+      "urgency": "emergency|urgent|routine",
+      "emergency_level": "CRITICAL|HIGH|MODERATE|LOW"
     }
   ],
   "additional_data_needed": ["string"],
   "confidence_note": "string"
-}`;
+}
+
+CRITICAL TAXONOMY RULE: condition_class must reflect the PRIMARY pathophysiological mechanism.
+- GDV, bloat, torsion, obstruction, fracture → mechanical_emergency
+- Bacteraemia, viral, fungal, parasitic → infectious
+- IMHA, IBD, polyarthritis → inflammatory_autoimmune
+- DKA, toxin, hepatic → metabolic_toxic
+- DO NOT label surgical emergencies as infectious.`;
 
         messages.push({ role: 'user', content: userContent });
 
