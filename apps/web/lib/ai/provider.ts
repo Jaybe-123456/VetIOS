@@ -77,16 +77,32 @@ Respond ONLY with valid JSON. Include:
     ];
 
     for (const img of images) {
-        if (img.content_base64 && img.mime_type && isVisionCapable) {
-            // Vision model: send actual image data
+        const isActualImage = typeof img.mime_type === 'string' && img.mime_type.startsWith('image/');
+
+        if (img.content_base64 && isActualImage && isVisionCapable) {
+            // Vision model + actual image: send as image_url
             userMessageContent.push({
                 type: "image_url",
                 image_url: {
                     url: `data:${img.mime_type};base64,${img.content_base64}`
                 }
             });
+        } else if (img.content_base64 && !isActualImage) {
+            // Non-image file (PDF, etc.) uploaded via images field: try to decode as text
+            try {
+                const decodedText = Buffer.from(img.content_base64, 'base64').toString('utf-8');
+                userMessageContent.push({
+                    type: "text",
+                    text: `\n--- Attached File: ${img.file_name || 'unknown'} (${img.mime_type}) ---\n${decodedText.substring(0, 5000)}`
+                });
+            } catch {
+                userMessageContent.push({
+                    type: "text",
+                    text: `\n[Attached File: ${img.file_name || 'unknown'} (${img.mime_type || 'unknown type'}, ${img.size_bytes ? Math.round(img.size_bytes / 1024) + 'KB' : 'unknown size'}) — binary content, not decodable as text]`
+                });
+            }
         } else if (img.file_name) {
-            // Non-vision model: describe the image as text metadata
+            // Non-vision model with image: describe as text metadata
             userMessageContent.push({
                 type: "text",
                 text: `\n[Attached Image: ${img.file_name} (${img.mime_type || 'unknown type'}, ${img.size_bytes ? Math.round(img.size_bytes / 1024) + 'KB' : 'unknown size'})]`
