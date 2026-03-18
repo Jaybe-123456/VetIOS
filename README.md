@@ -1,229 +1,209 @@
-# VetIOS
+# VetIOS — AI-Native Veterinary Intelligence Infrastructure
 
-**AI-native veterinary intelligence and autonomy infrastructure.** Computational systems for clinical diagnostics, machine-assisted decision-making, and real-world autonomy research in animal health.
-
-> **Not an app. Not a dashboard. Infrastructure.**
+> A simulation-first, inference-driven platform for structured clinical intelligence and adaptive veterinary diagnostics.
 
 ---
 
-## Core Thesis
+## 2. Overview
 
-Clinical intelligence compounds when:
+VetIOS is a production-grade infrastructure layer designed to bring structured clinical intelligence and adaptive machine reasoning to veterinary medicine. Traditional veterinary systems act as passive datastores, relying entirely on unstructured free-text and offering zero active computational assistance. VetIOS replaces this paradigm by enforcing structured data capture and routing it through probabilistic inference models. 
 
-1. **Inference is captured** with context and uncertainty
-2. **Decisions are logged**, not just outcomes
-3. **Real-world feedback loops** inform models
-4. **Rare and adversarial cases** are simulated and studied
-5. **Intelligence is aggregated safely** across systems
-
-**VetIOS owns this compounding loop.**
+By treating diagnostic reasoning as a computable graph of structured priors, VetIOS transforms veterinary software from digital filing cabinets into active intelligence systems. Structured, simulated data is the future of clinical medicine—it enables high-velocity model calibration, adversarial safety bounds, and continuous learning that unstructured records can never achieve.
 
 ---
 
-## Repository Structure
+## 3. Core System Architecture
 
+The VetIOS architecture is composed of three interconnected pipelines:
+
+### Inference Layer
+- Accepts strict, structured clinical input (symptoms, vitals, patient demographics).
+- Generates probabilistic diagnostic outputs and intervention recommendations.
+- Logs all inference events inherently, associating them with deep computational traces and uncertainty metrics before any action is taken.
+
+### Outcome Layer
+- Attaches real-world ground truth outcomes to prior inference events.
+- Enables continuous model calibration through outcome alignment deltas.
+- Builds longitudinal clinical intelligence by closing the open-loop prediction cycle into a supervised learning dataset.
+
+### Simulation Layer
+- Generates adversarial clinical scenarios and boundary probes.
+- Stress-tests model behavior by intentionally injecting noise and contradictory signals.
+- Maps failure modes and degradation bounds in a synthetic environment to prevent real-world catastrophic failure.
+
+---
+
+## 4. Data Flywheel
+
+The defining architectural moat of VetIOS is its compounding data flywheel:
+
+**Inference → Outcome → Simulation → Improved Inference**
+
+Every prediction made by the inference layer is eventually grounded by the outcome layer. When variances or low-confidence edge cases are identified, the simulation layer programmatically synthesizes permutations of that specific clinical presentation. This automatically generates thousands of labeled synthetic edge cases, which are fed back to calibrate the underlying models, resulting in continuously compounding clinical accuracy. 
+
+---
+
+## 5. API Design
+
+VetIOS exposes a robust, serverless API designed for integration into clinical dashboards and edge computing systems.
+
+### `POST /api/inference`
+**Purpose**: Executes AI inference against structured clinical input to generate differential diagnoses and confidence scores.
+**Example Payload**:
+```json
+{
+  "tenant_id": "clinic_123",
+  "patient": {
+    "species": "canine",
+    "weight_kg": 24.5
+  },
+  "encounter": {
+    "symptoms": ["lethargy", "vomiting"],
+    "vitals": { "temperature_c": 39.2 }
+  }
+}
 ```
-vetios/
-├── apps/
-│   ├── web/                    # Next.js 15 console (TypeScript)
-│   └── ml-training/            # TensorFlow training pipeline (Python)
-├── docs/
-│   └── tensorflow-autograd-expert-guide.md
-├── .env / .env.local           # Environment configuration
-└── package.json                # pnpm monorepo root
+**Expected Response**: Diagnostic probabilities, uncertainty metrics, and a tracking `inference_event_id`.
+
+### `POST /api/outcome`
+**Purpose**: Injects real-world ground truth data to close the loop on a prior inference event.
+**Example Payload**:
+```json
+{
+  "inference_event_id": "uuid-of-prior-inference",
+  "outcome": {
+    "type": "clinical_diagnosis",
+    "payload": { "actual_diagnosis": "Pancreatitis" }
+  }
+}
 ```
+**Expected Response**: Evaluation event ID, calibration error, and outcome alignment delta.
+
+### `POST /api/simulate`
+**Purpose**: Executes an adversarial simulation through the inference pipeline to map degradation curves.
+**Example Payload**:
+```json
+{
+  "simulation": {
+    "type": "adversarial_scenario",
+    "parameters": {
+      "edge_cases": "contradictory lab results",
+      "iterations": 100
+    }
+  },
+  "inference": { "model": "gpt-4o-mini" }
+}
+```
+**Expected Response**: Simulation tracking ID, aggregated confidence scores, and safety bounds mapping.
 
 ---
 
-## Web Console (`apps/web`)
+## 6. Technology Stack
 
-Next.js 15 + Supabase + Tailwind v4 application. Multi-tenant, RLS-enforced.
+VetIOS is built on a modern, highly scalable stack optimized for type safety and edge execution:
+- **Application Framework**: Next.js (App Router)
+- **Database & Auth**: Supabase (PostgreSQL + RLS Auth)
+- **AI Core**: OpenAI-compatible inference layer
+- **Language**: TypeScript (end-to-end type safety)
+- **Deployment**: Vercel Serverless Edge
 
-### Pages
+---
 
-| Route | Purpose |
-|-------|---------|
-| `/dashboard` | System overview, telemetry metrics, recent activity |
-| `/inference` | Inference Console — structured clinical input → AI reasoning + ML risk assessment |
-| `/outcome-learning` | Outcome event submission and feedback loop |
-| `/adversarial-sim` | Edge simulation engine — adversarial scenario generation |
-| `/clinical-dataset` | Clinical dataset manager — browsing and annotation |
-| `/experiment-track` | Experiment tracking — model evaluation comparison |
-| `/model-registry` | Model registry — versioned model lifecycle management |
-| `/telemetry` | System telemetry — latency, throughput, error rates |
-| `/network` | Network intelligence map — cross-system metrics |
+## 7. Environment Setup
 
-### API Routes
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/inference` | POST | AI inference with ML risk enrichment |
-| `/api/outcome` | POST | Clinical outcome event logging |
-| `/api/simulate` | POST | Adversarial simulation execution |
-| `/api/ml/predict` | POST/GET | ML risk prediction proxy + health check |
-| `/api/ml/shadow-report` | GET | Shadow evaluation + drift + calibration dashboard |
-
-### Quick Start
+To configure the environment, create a `.env.local` file at the root:
 
 ```bash
-cd apps/web
-pnpm install
-npm run dev          # → http://localhost:3000
-```
-
----
-
-## ML Training Pipeline (`apps/ml-training`)
-
-Production-grade TensorFlow pipeline powered by `tf.GradientTape`. Implements the full 8-week execution roadmap.
-
-### Modules
-
-| Module | Phase | Purpose |
-|--------|-------|---------|
-| `train.py` | 1 | Baseline `GradientTape` training loop with gradient clipping |
-| `evaluate.py` | 1 | AUROC, ECE, Brier score, abstention rate |
-| `calibration.py` | 2 | Temperature scaling + isotonic regression |
-| `drift.py` | 2 | PSI feature drift + chi-squared label drift |
-| `augmented_train.py` | 3 | Simulation-augmented training with safety penalty |
-| `shadow_mode.py` | 4 | Shadow evaluation + safety gates + promotion decision |
-| `explainability.py` | — | Integrated Gradients feature attribution |
-| `retrain.py` | — | Full 6-stage pipeline orchestrator |
-| `serve.py` | — | FastAPI inference server (8 endpoints) |
-
-### Quick Start
-
-```bash
-cd apps/ml-training
-python -m venv .venv && .venv\Scripts\activate    # Windows
-pip install -e ".[dev]"
-
-# Individual stages
-python -m vetios_ml.train              # Baseline training
-python -m vetios_ml.calibration        # Probability calibration
-python -m vetios_ml.drift              # Drift detection
-python -m vetios_ml.augmented_train    # Simulation-augmented training
-python -m vetios_ml.shadow_mode        # Shadow evaluation
-python -m vetios_ml.explainability     # Feature attribution
-
-# Full pipeline (all 6 stages)
-python -m vetios_ml.retrain
-
-# Inference server
-python -m vetios_ml.serve              # → http://localhost:8000
-```
-
-### API Endpoints
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/predict` | POST | Calibrated risk prediction |
-| `/explain` | POST | Gradient-based feature attribution |
-| `/health` | GET | Server health + model status |
-| `/model` | GET | Model metadata |
-| `/calibration` | GET | Calibration curve data |
-| `/drift` | GET | Drift detection report |
-| `/shadow` | GET | Shadow evaluation report |
-
-### Pipeline Architecture
-
-```
-Supabase ──→ Dataset Builder ──→ Train (GradientTape) ──→ Evaluate
-                                      │
-                Simulation Sampler ──→ Augmented Train (safety penalty)
-                                      │
-                                 Calibrate ──→ Drift Detection
-                                      │
-                                Shadow Eval ──→ Safety Gates ──→ Promote?
-                                      │
-                                Explainability (Integrated Gradients)
-                                      │
-                                 Serve (FastAPI)
-```
-
----
-
-## Supabase Schema
-
-| Table | Purpose |
-|-------|---------|
-| `ai_inference_events` | Inference logs with context, uncertainty, and decision traces |
-| `clinical_outcome_events` | Real-world clinical feedback and intervention results |
-| `edge_simulation_events` | Adversarial scenario results and degradation scores |
-| `network_intelligence_metrics` | Cross-system aggregation signals |
-| `user_documents` | Document storage and annotations |
-
-All tables enforce **row-level security (RLS)** with tenant isolation.
-
----
-
-## Production Guardrails
-
-*   **Temporal leakage checks** — no future data in training features
-*   **Safety-penalized loss** — penalizes overconfident predictions on clinician overrides
-*   **Circuit-breaker client** — Next.js ↔ ML server with timeout + graceful fallback
-*   **Shadow-mode evaluation** — model must pass safety gates before promotion
-*   **Drift detection** — PSI for feature drift, chi-squared for label drift
-*   **Model abstention** — refuses to predict when confidence is below threshold
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS v4 |
-| Backend | Supabase (PostgreSQL 17, RLS, Edge Functions) |
-| ML Training | TensorFlow 2.20, Python 3.13, `tf.GradientTape` |
-| ML Inference | FastAPI, Uvicorn |
-| ML Calibration | scipy, scikit-learn |
-| Monorepo | pnpm workspaces |
-| Deployment | Vercel (web), dedicated runtime (ML) |
-
----
-
-## Environment Setup
-
-Copy `.env.example` to `.env.local` and configure:
-
-```
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-AI_PROVIDER_API_KEY=your-openai-key
-```
-
-For the ML pipeline, create `apps/ml-training/.env`:
-
-```
+# .env.local
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+OPENAI_API_KEY=sk-your-openai-api-key
 ```
 
 ---
 
-## Documentation
+## 8. Local Development
 
-- [TensorFlow Autograd Expert Guide](docs/tensorflow-autograd-expert-guide.md) — full execution roadmap
+Start the VetIOS platform locally and verify its endpoints:
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start the development server
+pnpm -C apps/web dev
+```
+
+To run local system checks and verify API route health:
+```bash
+bash apps/web/scripts/test-api-local.sh
+```
 
 ---
 
-## Guiding Principles
+## 9. Database Schema Philosophy
 
-*   **Append-only intelligence logs**
-*   **Safety and isolation by default**
-*   **Infrastructure before UI**
-*   **Systems thinking over feature velocity**
-*   **Research-grade architecture from day one**
+The VetIOS schema is built around immutable, event-sourcing principles rather than CRUD mutations.
+
+- **Append-only logging**: Data is never updated or deleted in-place; all system states are reconstructed from an immutable event log.
+- **Auditability**: Every diagnostic recommendation maintains absolute cryptographic and temporal provenance.
+- **Event-based design**: Subsystems react to events rather than mutating shared state.
+- **No destructive updates**: Prevents historical revisionism of clinical decisions to ensure ML tracing integrity.
+
+**Core Tables:**
+- `ai_inference_events`
+- `clinical_outcome_events`
+- `edge_simulation_events`
 
 ---
 
-## Vision
+## 10. Design Principles
 
-Veterinary medicine evolves from:
+1. **Simulation-first**: We do not wait for edge cases to happen in the real world; we synthesize them.
+2. **Data compounding**: Every interaction must uniquely contribute to the long-term value of the models.
+3. **Observability by default**: Telemetry, uncertainty metrics, and latency are first-class citizens.
+4. **Failure-driven testing**: Adversarial stress-testing exposes model boundaries to define safe operational zones.
+5. **Structured over unstructured**: Free text is an operational liability; enforced schema is an asset.
 
-`manual` → `software-assisted` → `intelligence-mediated`
+---
 
-**VetIOS is being built for the final stage.**
+## 11. Roadmap
 
-> **Not as a product. As the system beneath it.**
+- **Autonomous Diagnostic Agents**: Multi-agent systems capable of requesting specific diagnostic labs autonomously based on incomplete probability matrices.
+- **Clinical Knowledge Graph**: Dynamic relational mapping of species-specific pharmacological interactions and symptom clusters.
+- **Multimodal Inputs**: Processing real-time diagnostic imaging (radiographs, ultrasound) alongside structured telemetry.
+- **Reinforcement Learning from Outcomes**: Automated weight updating based on high-confidence clinician outcome signals.
+- **Real-Time Decision Systems**: Edge-deployed inference targeting sub-100ms response times for critical care environments.
+
+---
+
+## 12. Use Cases
+
+- **Veterinary Clinics**: Powering intelligent PMS interfaces with real-time diagnostic decision support.
+- **Research Labs**: In-silico modeling of pharmacological efficacy across diverse veterinary cohorts.
+- **Pharmaceutical Trials**: Accelerated adverse event detection via simulated cohort intersections.
+- **Epidemiology Tracking**: Aggregation of localized symptom clusters to detect regional pathogenic outbreaks.
+
+---
+
+## 13. Deployment
+
+VetIOS is designed for global scale and zero-maintenance architecture:
+- **Deployed via Vercel**: Global edge network ensuring minimal latency regardless of endpoint location.
+- **Serverless API Routes**: Auto-scaling compute that handles bursts of complex inference tasks efficiently.
+- **Scalable Inference Layer**: Horizontally scalable abstraction separating the interface from underlying transformer models.
+
+---
+
+## 14. Contribution Guidelines
+
+- Keep changes minimal, documented, and professional.
+- Use explicit, structured commits (e.g., `feat:`, `fix:`, `refactor:`).
+- Extensive unit and integration testing is mandatory prior to generating any PR affecting the inference or evaluation logic.
+
+---
+
+## 15. License
+
+MIT License.
