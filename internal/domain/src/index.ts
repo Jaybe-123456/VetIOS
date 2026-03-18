@@ -10,3 +10,6 @@ export * from './outcome';
 export * from './constraints';
 export * from './flywheel';
 export * from './workflow-capture';
+export * from './condition_taxonomy';
+export * from './urgency_layer';
+export * from './contradiction_detector';
