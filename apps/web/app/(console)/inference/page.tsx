@@ -393,7 +393,7 @@ export default function InferenceConsole() {
                             </div>
 
                             {/* ── Inline Ground Truth Form ─────────────────── */}
-                            {outcomeState.status === 'expanded' && (
+                            {(outcomeState.status === 'expanded' || outcomeState.status === 'submitting') && (
                                 <ConsoleCard title="Attach Ground Truth" className="border-blue-400/30 animate-in slide-in-from-top duration-300">
                                     <form onSubmit={handleOutcomeSubmit} className="space-y-4">
                                         <div>
