@@ -12,6 +12,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
@@ -99,6 +100,14 @@ export async function POST(req: Request) {
         ]);
 
         const latencyMs = Date.now() - startTime;
+        const inferenceEventId = randomUUID();
+
+        const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
+            ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
+            : {};
+        telemetry.model_version = body.model.version;
+        telemetry.inference_id = inferenceEventId;
+        inferenceResult.output_payload.telemetry = telemetry;
 
         // Sanitize input signature to remove base64 payloads before logging to database
         const signatureForLog = { ...inferenceResult.normalizedInput };
@@ -119,7 +128,8 @@ export async function POST(req: Request) {
 
         // ── Log to Supabase ──
         const supabase = getSupabaseServer();
-        const inferenceEventId = await logInference(supabase, {
+        const persistedInferenceEventId = await logInference(supabase, {
+            id: inferenceEventId,
             tenant_id: tenantId,
             clinic_id: body.clinic_id ?? null,
             case_id: body.case_id ?? null,
@@ -129,6 +139,7 @@ export async function POST(req: Request) {
             output_payload: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
+            compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
 
@@ -141,7 +152,7 @@ export async function POST(req: Request) {
             evalResult = await createEvaluationEvent(supabase, {
                 tenant_id: tenantId,
                 trigger_type: 'inference',
-                inference_event_id: inferenceEventId,
+                inference_event_id: persistedInferenceEventId,
                 model_name: body.model.name,
                 model_version: body.model.version,
                 predicted_confidence: inferenceResult.confidence_score,
@@ -152,10 +163,12 @@ export async function POST(req: Request) {
         }
 
         const response = NextResponse.json({
-            inference_event_id: inferenceEventId,
+            inference_event_id: persistedInferenceEventId,
             output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
+            contradiction_analysis: inferenceResult.contradiction_analysis,
+            differential_spread: inferenceResult.output_payload.differential_spread ?? null,
             inference_latency_ms: latencyMs,
             evaluation: evalResult,
             ml_risk: inferenceResult.mlRisk,

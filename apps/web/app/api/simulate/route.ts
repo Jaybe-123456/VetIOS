@@ -12,6 +12,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
@@ -84,6 +85,16 @@ export async function POST(req: Request) {
 
         const latencyMs = Date.now() - startTime;
         const supabase = getSupabaseServer();
+        const inferenceEventId = randomUUID();
+        const simulationEventId = randomUUID();
+
+        const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
+            ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
+            : {};
+        telemetry.model_version = body.inference.model_version ?? body.inference.model;
+        telemetry.inference_id = inferenceEventId;
+        telemetry.simulation_id = simulationEventId;
+        inferenceResult.output_payload.telemetry = telemetry;
 
         const signatureForLog = { ...inferenceResult.normalizedInput };
         if (Array.isArray(signatureForLog.diagnostic_images)) {
@@ -103,6 +114,7 @@ export async function POST(req: Request) {
 
         // ── Log inference ──
         const triggeredInferenceId = await logInference(supabase, {
+            id: inferenceEventId,
             tenant_id: tenantId,
             model_name: body.inference.model,
             model_version: body.inference.model_version ?? body.inference.model,
@@ -110,11 +122,13 @@ export async function POST(req: Request) {
             output_payload: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
+            compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
 
         // ── Log simulation ──
-        const simulationEventId = await logSimulation(supabase, {
+        const persistedSimulationEventId = await logSimulation(supabase, {
+            id: simulationEventId,
             simulation_type: body.simulation.type,
             simulation_parameters: body.simulation.parameters,
             triggered_inference_id: triggeredInferenceId,
@@ -136,17 +150,19 @@ export async function POST(req: Request) {
             : null;
 
         // Compute differential spread (how close top-3 are)
-        const differentialSpread = differentialDiagnosis.length >= 2
-            ? {
-                top_1_probability: differentialDiagnosis[0]?.probability ?? null,
-                top_2_probability: differentialDiagnosis[1]?.probability ?? null,
-                top_3_probability: differentialDiagnosis[2]?.probability ?? null,
-                spread: ((differentialDiagnosis[0]?.probability ?? 0) - (differentialDiagnosis[1]?.probability ?? 0)).toFixed(3),
-            }
-            : null;
+        const differentialSpread = (inferenceResult.output_payload.differential_spread as Record<string, unknown> | null) ?? (
+            differentialDiagnosis.length >= 2
+                ? {
+                    top_1_probability: differentialDiagnosis[0]?.probability ?? null,
+                    top_2_probability: differentialDiagnosis[1]?.probability ?? null,
+                    top_3_probability: differentialDiagnosis[2]?.probability ?? null,
+                    spread: Number(((differentialDiagnosis[0]?.probability ?? 0) - (differentialDiagnosis[1]?.probability ?? 0)).toFixed(3)),
+                }
+                : null
+        );
 
         const response = NextResponse.json({
-            simulation_event_id: simulationEventId,
+            simulation_event_id: persistedSimulationEventId,
             triggered_inference_event_id: triggeredInferenceId,
             inference_output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,

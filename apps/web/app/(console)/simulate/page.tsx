@@ -9,12 +9,13 @@ import { ShieldAlert, Activity, AlertTriangle, AlertOctagon, CheckCircle2, XCirc
 // ── Types ────────────────────────────────────────────────────────────────────
 
 interface ContradictionAnalysis {
-    score: number;
+    contradiction_score: number;
     contradiction_reasons: string[];
     is_plausible: boolean;
     confidence_cap: number;
     confidence_was_capped: boolean;
     original_confidence: number | null;
+    abstain: boolean;
 }
 
 interface DifferentialEntry {
@@ -28,7 +29,7 @@ interface DifferentialSpread {
     top_1_probability: number | null;
     top_2_probability: number | null;
     top_3_probability: number | null;
-    spread: string;
+    spread: number | null;
 }
 
 interface TargetEvaluation {
@@ -231,8 +232,8 @@ export default function AdversarialSimulation() {
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                                 <div className="font-mono">
                                     <div className="text-[9px] text-muted uppercase">Score</div>
-                                    <div className={`text-lg font-bold ${ca.score > 0.5 ? 'text-danger' : ca.score > 0 ? 'text-yellow-400' : 'text-accent'}`}>
-                                        {(ca.score * 100).toFixed(0)}%
+                                    <div className={`text-lg font-bold ${ca.contradiction_score > 0.5 ? 'text-danger' : ca.contradiction_score > 0 ? 'text-yellow-400' : 'text-accent'}`}>
+                                        {(ca.contradiction_score * 100).toFixed(0)}%
                                     </div>
                                 </div>
                                 <div className="font-mono">

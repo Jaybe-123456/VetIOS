@@ -1,6 +1,8 @@
-import { InputMode, normalizeInferenceInput } from '@/lib/input/inputNormalizer';
+import { normalizeInferenceInput } from '@/lib/input/inputNormalizer';
+import type { InputMode } from '@/lib/input/inputNormalizer';
+import { extractClinicalSignals } from '@/lib/ai/clinicalSignals';
 import { runInference } from '@/lib/ai/provider';
-import { detectContradictions } from '@/lib/ai/contradictionDetector';
+import { applyDiagnosticSafetyLayer, buildSeverityFeatureImportance } from '@/lib/ai/diagnosticSafety';
 import { evaluateEmergencyRules } from '@/lib/ai/emergencyRules';
 import { mlPredict } from '@/lib/ml/mlClient';
 
@@ -12,23 +14,15 @@ export interface OrchestratorParams {
 
 export async function runInferencePipeline({ model, rawInput, inputMode }: OrchestratorParams) {
     let normalizedSig: Record<string, unknown>;
-    
-    // 1. Normalize Input
+
     if (typeof rawInput === 'string') {
         normalizedSig = normalizeInferenceInput(rawInput, inputMode) as unknown as Record<string, unknown>;
+    } else if (rawInput.input_signature && typeof rawInput.input_signature === 'object') {
+        normalizedSig = rawInput.input_signature as Record<string, unknown>;
     } else {
-        // Assume already structured by the frontend (except checking inner shape)
-        if (rawInput.input_signature) {
-            normalizedSig = rawInput.input_signature as Record<string, unknown>;
-        } else {
-            normalizedSig = rawInput;
-        }
+        normalizedSig = rawInput;
     }
 
-    // 2. Contradiction Engine (now ran explicitly for payload metrics, though also embedded in runInference,
-    //    we rely on the provider's enriched output)
-
-    // 3. AI Inference
     const inferenceResult = await runInference({
         model,
         input_signature: normalizedSig,
@@ -37,14 +31,13 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     const payload = inferenceResult.output_payload;
     const contradiction = inferenceResult.contradiction_analysis;
 
-    // Set up safe default blocks if AI flaked
     if (!payload.diagnosis || typeof payload.diagnosis !== 'object') {
         payload.diagnosis = {
             primary_condition_class: 'Idiopathic / Unknown',
             condition_class_probabilities: {},
             top_differentials: [],
-            confidence_score: inferenceResult.confidence_score ?? 0,
-            analysis: 'Parsing failure or model issue.'
+            confidence_score: inferenceResult.confidence_score ?? 0.45,
+            analysis: 'Deterministic diagnostic safety layer supplied the differential because provider output was incomplete.',
         };
     }
     if (!payload.risk_assessment || typeof payload.risk_assessment !== 'object') {
@@ -53,91 +46,89 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
             emergency_level: 'MODERATE',
         };
     }
-    
+
     const diagnosis = payload.diagnosis as Record<string, unknown>;
     const risk = payload.risk_assessment as Record<string, unknown>;
 
-    // 4. ML Severity Model (External)
     const species = typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine';
     const mlRisk = await mlPredict({
         decision_count: 1,
-        override_count: 0, 
+        override_count: 0,
         species,
     });
 
-    // 5. Emergency Rule Engine
-    const emergencyEval = evaluateEmergencyRules(normalizedSig);
-
-    // 6. Apply Overrides
-    
-    // Apply ML adjustments
     if (!('_fallback' in mlRisk)) {
-        // Blend AI severity with ML risk score softly
         const currentSeverity = typeof risk.severity_score === 'number' ? risk.severity_score : 0.5;
         risk.severity_score = (currentSeverity * 0.7) + (mlRisk.risk_score * 0.3);
     }
 
-    // Apply Emergency Overrides
-    const ruleOverrides: string[] = [];
+    const emergencyEval = evaluateEmergencyRules(normalizedSig);
     if (emergencyEval.emergency_rule_triggered) {
-        ruleOverrides.push(...emergencyEval.emergency_rule_reasons);
-        
-        // Boost severity
         const currentSeverity = typeof risk.severity_score === 'number' ? risk.severity_score : 0.5;
         risk.severity_score = Math.min(1.0, currentSeverity + emergencyEval.severity_boost);
-        
-        // Force emergency level
-        const levels = ['LOW', 'MODERATE', 'HIGH', 'CRITICAL'];
-        const currentLevel = String(risk.emergency_level).toUpperCase();
-        let currentIdx = levels.indexOf(currentLevel);
-        if (currentIdx === -1) currentIdx = 1;
-        
-        const targetIdx = levels.indexOf(emergencyEval.emergency_level);
-        if (targetIdx > currentIdx) {
-            risk.emergency_level = emergencyEval.emergency_level;
-        }
-
-        // Promote differentials
-        const diffs = Array.isArray(diagnosis.top_differentials) ? diagnosis.top_differentials : [];
-        for (const pd of emergencyEval.promoted_differentials) {
-            // Check if already in diffs
-            const exists = diffs.some((d: any) => typeof d.name === 'string' && d.name.toLowerCase().includes(pd.toLowerCase()));
-            if (!exists) {
-                diffs.unshift({ name: pd, probability: 0.85 }); // Insert at top
-                diagnosis.top_differentials = diffs;
-            } else {
-                // Boost existing
-                for (const d of diffs) {
-                    if (typeof d.name === 'string' && d.name.toLowerCase().includes(pd.toLowerCase())) {
-                        d.probability = Math.min(1.0, (typeof d.probability === 'number' ? d.probability : 0) + 0.3);
-                    }
-                }
-            }
-        }
+        risk.emergency_level = elevateEmergencyLevel(String(risk.emergency_level), emergencyEval.emergency_level);
     }
 
-    payload.rule_overrides = ruleOverrides;
-    
-    // 7. Abstention & Global Output Mappings
-    if (contradiction?.abstain) {
-        payload.abstain_recommendation = true;
-    } else {
-        payload.abstain_recommendation = false;
-    }
-    
-    // Ensure feature mappings are populated
-    if (!payload.diagnosis_feature_importance) payload.diagnosis_feature_importance = {};
-    if (!payload.severity_feature_importance) payload.severity_feature_importance = {};
-    if (typeof payload.contradiction_score === 'undefined') {
-        payload.contradiction_score = contradiction?.contradiction_score ?? 0;
-    }
+    const safetyLayer = applyDiagnosticSafetyLayer({
+        inputSignature: normalizedSig,
+        diagnosis,
+        contradiction,
+        emergencyEval,
+        modelVersion: model,
+        existingDiagnosisFeatureImportance: payload.diagnosis_feature_importance as Record<string, unknown> | null,
+        existingUncertaintyNotes: payload.uncertainty_notes,
+    });
+
+    payload.diagnosis = safetyLayer.diagnosis;
+    payload.diagnosis_feature_importance = safetyLayer.diagnosis_feature_importance;
+    payload.severity_feature_importance =
+        payload.severity_feature_importance && typeof payload.severity_feature_importance === 'object'
+            ? payload.severity_feature_importance
+            : buildSeverityFeatureImportance(extractClinicalSignals(normalizedSig));
+    payload.uncertainty_notes = safetyLayer.uncertainty_notes;
+    payload.contradiction_score = contradiction?.contradiction_score ?? 0;
+    payload.contradiction_reasons = contradiction?.contradiction_reasons ?? [];
+    payload.confidence_cap = safetyLayer.confidence_cap;
+    payload.was_capped = safetyLayer.was_capped;
+    payload.abstain_recommendation = safetyLayer.abstain_recommendation;
+    payload.abstain_reason = safetyLayer.abstain_reason ?? null;
+    payload.rule_overrides = safetyLayer.rule_overrides;
+    payload.differential_spread = safetyLayer.differential_spread;
+    payload.telemetry = safetyLayer.telemetry;
+    payload.contradiction_analysis = {
+        contradiction_score: contradiction?.contradiction_score ?? 0,
+        contradiction_reasons: contradiction?.contradiction_reasons ?? [],
+        is_plausible: contradiction?.is_plausible ?? true,
+        confidence_cap: safetyLayer.confidence_cap,
+        confidence_was_capped: safetyLayer.was_capped,
+        original_confidence: contradiction?.original_confidence ?? inferenceResult.confidence_score ?? null,
+        abstain: safetyLayer.abstain_recommendation,
+    };
+
+    const finalDiagnosis = payload.diagnosis as Record<string, unknown>;
+    const finalConfidence = typeof finalDiagnosis.confidence_score === 'number' ? finalDiagnosis.confidence_score : null;
+
+    const uncertaintyMetrics = {
+        ...(inferenceResult.uncertainty_metrics ?? {}),
+        contradiction_score: contradiction?.contradiction_score ?? 0,
+        contradiction_triggers: contradiction?.contradiction_reasons ?? [],
+        pre_cap_confidence: safetyLayer.telemetry.pre_cap_confidence ?? null,
+        post_cap_confidence: safetyLayer.telemetry.post_cap_confidence ?? null,
+        persistence_rule_triggers: safetyLayer.telemetry.persistence_rule_triggers ?? [],
+    };
 
     return {
         normalizedInput: normalizedSig,
         output_payload: payload,
-        confidence_score: diagnosis.confidence_score as number,
-        uncertainty_metrics: inferenceResult.uncertainty_metrics,
-        contradiction_analysis: contradiction,
-        mlRisk
+        confidence_score: finalConfidence,
+        uncertainty_metrics: uncertaintyMetrics,
+        contradiction_analysis: payload.contradiction_analysis,
+        mlRisk,
     };
+}
+
+function elevateEmergencyLevel(currentRaw: string, target: string): string {
+    const levels = ['LOW', 'MODERATE', 'HIGH', 'CRITICAL'];
+    const current = currentRaw.toUpperCase();
+    return levels.indexOf(target) > levels.indexOf(current) ? target : current;
 }
