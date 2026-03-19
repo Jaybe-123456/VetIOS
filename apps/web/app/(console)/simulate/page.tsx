@@ -10,7 +10,7 @@ import { ShieldAlert, Activity, AlertTriangle, AlertOctagon, CheckCircle2, XCirc
 
 interface ContradictionAnalysis {
     score: number;
-    contradictions: string[];
+    contradiction_reasons: string[];
     is_plausible: boolean;
     confidence_cap: number;
     confidence_was_capped: boolean;
@@ -18,7 +18,8 @@ interface ContradictionAnalysis {
 }
 
 interface DifferentialEntry {
-    condition: string;
+    name?: string;
+    condition?: string;
     probability: number;
     key_drivers?: { feature: string; weight: number }[];
 }
@@ -55,7 +56,7 @@ interface HistoryEntry {
     type: string;
     confidence: number | null;
     latency: number;
-    contradictions: number;
+    contradiction_reasons_count: number;
     time: string;
 }
 
@@ -115,7 +116,7 @@ export default function AdversarialSimulation() {
                 type: payload.simulation.type,
                 confidence: result.confidence_score,
                 latency: result.inference_latency_ms,
-                contradictions: result.contradiction_analysis?.contradictions?.length ?? 0,
+                contradiction_reasons_count: result.contradiction_analysis?.contradiction_reasons?.length ?? 0,
                 time: new Date().toLocaleTimeString(),
             };
 
@@ -226,7 +227,7 @@ export default function AdversarialSimulation() {
 
                     {/* ── Contradiction Analysis ── */}
                     {state.status === 'success' && ca && (
-                        <ConsoleCard title="Contradiction Analysis" className={`border-${ca.contradictions.length > 0 ? 'danger' : 'accent'}/30`}>
+                        <ConsoleCard title="Contradiction Analysis" className={`border-${(ca.contradiction_reasons?.length || 0) > 0 ? 'danger' : 'accent'}/30`}>
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
                                 <div className="font-mono">
                                     <div className="text-[9px] text-muted uppercase">Score</div>
@@ -253,9 +254,9 @@ export default function AdversarialSimulation() {
                                     </div>
                                 </div>
                             </div>
-                            {ca.contradictions.length > 0 && (
+                            {(ca.contradiction_reasons?.length || 0) > 0 && (
                                 <div className="border-t border-grid pt-3 space-y-1">
-                                    {ca.contradictions.map((c, i) => (
+                                    {ca.contradiction_reasons.map((c, i) => (
                                         <div key={i} className="flex items-start gap-2 text-xs font-mono text-danger/80">
                                             <XCircle className="w-3 h-3 mt-0.5 shrink-0" />
                                             <span>{c}</span>
@@ -274,7 +275,7 @@ export default function AdversarialSimulation() {
                                     <div key={i} className="border-b border-grid/30 pb-3 last:border-0">
                                         <div className="flex items-center justify-between mb-1">
                                             <span className={`font-mono text-xs sm:text-sm ${i === 0 ? 'text-accent font-bold' : 'text-foreground'}`}>
-                                                {d.condition}
+                                                {d.name || d.condition}
                                             </span>
                                             <span className={`font-mono text-sm font-bold ${i === 0 ? 'text-accent' : 'text-muted'}`}>
                                                 {(d.probability * 100).toFixed(1)}%
@@ -381,8 +382,8 @@ export default function AdversarialSimulation() {
                                         <td className={`p-2 sm:p-3 ${(sim.confidence ?? 0) < 0.5 ? 'text-danger' : 'text-accent'}`}>
                                             {sim.confidence != null ? `${(sim.confidence * 100).toFixed(1)}%` : 'N/A'}
                                         </td>
-                                        <td className={`p-2 sm:p-3 ${sim.contradictions > 0 ? 'text-yellow-400' : 'text-muted'}`}>
-                                            {sim.contradictions}
+                                        <td className={`p-2 sm:p-3 ${sim.contradiction_reasons_count > 0 ? 'text-yellow-400' : 'text-muted'}`}>
+                                            {sim.contradiction_reasons_count}
                                         </td>
                                         <td className="p-2 sm:p-3 text-muted">{sim.latency}ms</td>
                                         <td className="p-2 sm:p-3 text-muted text-xs">{sim.time}</td>
