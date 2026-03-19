@@ -106,7 +106,7 @@ export default function AdversarialSimulation() {
             const result = await res.json() as SimResult;
 
             if (!res.ok) {
-                throw new Error((result as Record<string, string>).error || 'Simulation engine failed');
+                throw new Error((result as unknown as Record<string, string>).error || 'Simulation engine failed');
             }
 
             const newEntry: HistoryEntry = {
