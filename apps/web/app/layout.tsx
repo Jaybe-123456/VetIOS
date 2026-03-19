@@ -1,28 +1,39 @@
 import type { Metadata } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
+import { localFont } from 'next/font/local';
 import './globals.css';
 import AppShell from '@/components/AppShell';
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
-const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-geist-mono' });
+const inter = localFont({
+  src: [
+    {
+      path: '../../../public/fonts/inter-variable.woff2',
+      weight: '100 900',
+      style: 'normal',
+    },
+  ],
+  variable: '--font-inter',
+});
+
+const jetbrainsMono = localFont({
+  src: [
+    {
+      path: '../../../public/fonts/jetbrains-mono-variable.woff2',
+      weight: '100 800',
+      style: 'normal',
+    },
+  ],
+  variable: '--font-geist-mono',
+});
 
 export const metadata: Metadata = {
-    title: 'VetIOS Inference Console',
-    description: 'Intelligence infrastructure for veterinary medicine.',
+  title: 'VetIOS Inference Console',
+  description: 'Intelligence infrastructure for veterinary medicine.',
 };
 
 export default function RootLayout({
-    children,
+  children,
 }: {
-    children: React.ReactNode;
+  children: React.ReactNode;
 }) {
-    return (
-        <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
-            <body className="h-screen w-screen overflow-hidden flex bg-background text-foreground">
-                <AppShell>
-                    {children}
-                </AppShell>
-            </body>
-        </html>
-    );
-}
+  return (
+    <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>\n      <body className="h-screen w-screen overflow-hidden flex bg-background text-foreground">\n        <AppShell>\n          {children}\n        </AppShell>\n      </body>\n    </html>\n  );\n}
