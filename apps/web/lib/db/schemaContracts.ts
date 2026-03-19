@@ -26,6 +26,30 @@ export const AI_INFERENCE_EVENTS = {
 } as const;
 
 // ─── clinical_outcome_events ────────────────────────────────────────────────
+export const CLINICAL_CASES = {
+    TABLE: 'clinical_cases',
+    COLUMNS: {
+        id: 'id',                                 // uuid, PK
+        tenant_id: 'tenant_id',                   // uuid, NOT NULL
+        clinic_id: 'clinic_id',                   // uuid, nullable
+        case_key: 'case_key',                     // text, NOT NULL
+        source_case_reference: 'source_case_reference', // text, nullable
+        species: 'species',                       // text, nullable
+        species_raw: 'species_raw',               // text, nullable
+        breed: 'breed',                           // text, nullable
+        symptom_vector: 'symptom_vector',         // text[], NOT NULL
+        symptom_summary: 'symptom_summary',       // text, nullable
+        metadata: 'metadata',                     // jsonb, NOT NULL
+        latest_input_signature: 'latest_input_signature', // jsonb, NOT NULL
+        latest_inference_event_id: 'latest_inference_event_id', // uuid, nullable
+        inference_event_count: 'inference_event_count', // integer, NOT NULL
+        first_inference_at: 'first_inference_at', // timestamptz, NOT NULL
+        last_inference_at: 'last_inference_at',   // timestamptz, NOT NULL
+        created_at: 'created_at',                 // timestamptz, NOT NULL
+        updated_at: 'updated_at',                 // timestamptz, NOT NULL
+    },
+} as const;
+
 export const CLINICAL_OUTCOME_EVENTS = {
     TABLE: 'clinical_outcome_events',
     COLUMNS: {

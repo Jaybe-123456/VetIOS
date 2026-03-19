@@ -13,10 +13,16 @@
 
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
+import { revalidatePath } from 'next/cache';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { logSimulation } from '@/lib/logging/simulationLogger';
+import {
+    createSupabaseClinicalCaseStore,
+    ensureCanonicalClinicalCase,
+    finalizeClinicalCaseAfterInference,
+} from '@/lib/clinicalCases/clinicalCaseManager';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { SimulateRequestSchema, formatZodErrors } from '@/lib/http/schemas';
@@ -38,7 +44,7 @@ export async function POST(req: Request) {
             { status: 401 }
         );
     }
-    const tenantId = session?.tenantId || 'dev_tenant_001';
+    const tenantId = session?.tenantId || process.env.VETIOS_DEV_TENANT_ID || 'dev_tenant_001';
 
     // ── Parse + validate ──
     const parsed = await safeJson(req);
@@ -113,9 +119,19 @@ export async function POST(req: Request) {
         }
 
         // ── Log inference ──
+        const caseStore = createSupabaseClinicalCaseStore(supabase);
+        const observedAt = new Date().toISOString();
+        const canonicalClinicalCase = await ensureCanonicalClinicalCase(caseStore, {
+            tenantId,
+            clinicId: null,
+            requestedCaseId: null,
+            inputSignature: signatureForLog,
+            observedAt,
+        });
         const triggeredInferenceId = await logInference(supabase, {
             id: inferenceEventId,
             tenant_id: tenantId,
+            case_id: canonicalClinicalCase.id,
             model_name: body.inference.model,
             model_version: body.inference.model_version ?? body.inference.model,
             input_signature: signatureForLog,
@@ -125,6 +141,13 @@ export async function POST(req: Request) {
             compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
+        await finalizeClinicalCaseAfterInference(
+            caseStore,
+            canonicalClinicalCase,
+            triggeredInferenceId,
+            observedAt,
+        );
+        revalidatePath('/dataset');
 
         // ── Log simulation ──
         const persistedSimulationEventId = await logSimulation(supabase, {
@@ -164,6 +187,7 @@ export async function POST(req: Request) {
         const response = NextResponse.json({
             simulation_event_id: persistedSimulationEventId,
             triggered_inference_event_id: triggeredInferenceId,
+            clinical_case_id: canonicalClinicalCase.id,
             inference_output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             inference_latency_ms: latencyMs,

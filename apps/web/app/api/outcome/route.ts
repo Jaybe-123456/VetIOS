@@ -38,7 +38,7 @@ export async function POST(req: Request) {
             { status: 401 }
         );
     }
-    const tenantId = session?.tenantId || 'dev_tenant_001';
+    const tenantId = session?.tenantId || process.env.VETIOS_DEV_TENANT_ID || 'dev_tenant_001';
 
     // ── Idempotency key ──
     const idempotencyKey = req.headers.get('x-idempotency-key');
@@ -87,7 +87,7 @@ export async function POST(req: Request) {
         // ── Verify inference exists AND belongs to tenant ──
         const { data: inferenceRecord, error: lookupError } = await supabase
             .from('ai_inference_events')
-            .select('id, tenant_id')
+            .select('id, tenant_id, case_id')
             .eq('id', body.inference_event_id)
             .single();
 
@@ -109,7 +109,7 @@ export async function POST(req: Request) {
         const outcomeEventId = await logOutcome(supabase, {
             tenant_id: tenantId,
             clinic_id: body.clinic_id ?? null,
-            case_id: body.case_id ?? null,
+            case_id: body.case_id ?? (inferenceRecord as { case_id?: string | null }).case_id ?? null,
             inference_event_id: body.inference_event_id,
             outcome_type: body.outcome.type,
             outcome_payload: body.outcome.payload,

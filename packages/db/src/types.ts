@@ -769,6 +769,83 @@ export interface Database {
 
             // ─── API Event Tables (Migration 014) ──────────────────────────
 
+            clinical_cases: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    case_key: string;
+                    source_case_reference: string | null;
+                    species: string | null;
+                    species_raw: string | null;
+                    breed: string | null;
+                    symptom_vector: string[];
+                    symptom_summary: string | null;
+                    metadata: Json;
+                    latest_input_signature: Json;
+                    latest_inference_event_id: string | null;
+                    inference_event_count: number;
+                    first_inference_at: string;
+                    last_inference_at: string;
+                    created_at: string;
+                    updated_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    case_key: string;
+                    source_case_reference?: string | null;
+                    species?: string | null;
+                    species_raw?: string | null;
+                    breed?: string | null;
+                    symptom_vector?: string[];
+                    symptom_summary?: string | null;
+                    metadata?: Json;
+                    latest_input_signature?: Json;
+                    latest_inference_event_id?: string | null;
+                    inference_event_count?: number;
+                    first_inference_at?: string;
+                    last_inference_at?: string;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    case_key?: string;
+                    source_case_reference?: string | null;
+                    species?: string | null;
+                    species_raw?: string | null;
+                    breed?: string | null;
+                    symptom_vector?: string[];
+                    symptom_summary?: string | null;
+                    metadata?: Json;
+                    latest_input_signature?: Json;
+                    latest_inference_event_id?: string | null;
+                    inference_event_count?: number;
+                    first_inference_at?: string;
+                    last_inference_at?: string;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "clinical_cases_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "clinical_cases_latest_inference_event_id_fkey";
+                        columns: ["latest_inference_event_id"];
+                        referencedRelation: "ai_inference_events";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
             ai_inference_events: {
                 Row: {
                     id: string;
@@ -781,6 +858,7 @@ export interface Database {
                     output_payload: Json;
                     confidence_score: number | null;
                     uncertainty_metrics: Json | null;
+                    compute_profile: Json | null;
                     inference_latency_ms: number;
                     created_at: string;
                 };
@@ -795,6 +873,7 @@ export interface Database {
                     output_payload: Json;
                     confidence_score?: number | null;
                     uncertainty_metrics?: Json | null;
+                    compute_profile?: Json | null;
                     inference_latency_ms: number;
                     created_at?: string;
                 };
@@ -809,6 +888,7 @@ export interface Database {
                     output_payload?: Json;
                     confidence_score?: number | null;
                     uncertainty_metrics?: Json | null;
+                    compute_profile?: Json | null;
                     inference_latency_ms?: number;
                     created_at?: string;
                 };
@@ -817,6 +897,12 @@ export interface Database {
                         foreignKeyName: "ai_inference_events_tenant_id_fkey";
                         columns: ["tenant_id"];
                         referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "ai_inference_events_case_id_fkey";
+                        columns: ["case_id"];
+                        referencedRelation: "clinical_cases";
                         referencedColumns: ["id"];
                     }
                 ];
@@ -867,6 +953,12 @@ export interface Database {
                         foreignKeyName: "clinical_outcome_events_inference_event_id_fkey";
                         columns: ["inference_event_id"];
                         referencedRelation: "ai_inference_events";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "clinical_outcome_events_case_id_fkey";
+                        columns: ["case_id"];
+                        referencedRelation: "clinical_cases";
                         referencedColumns: ["id"];
                     }
                 ];
@@ -996,6 +1088,7 @@ export type DataGenerationEvent = Database['public']['Tables']['data_generation_
 export type WorkflowSnapshot = Database['public']['Tables']['workflow_snapshots']['Row'];
 export type IntelligenceMetric = Database['public']['Tables']['intelligence_metrics']['Row'];
 export type EdgeSimulation = Database['public']['Tables']['edge_simulations']['Row'];
+export type ClinicalCase = Database['public']['Tables']['clinical_cases']['Row'];
 export type AIInferenceEvent = Database['public']['Tables']['ai_inference_events']['Row'];
 export type ClinicalOutcomeEvent = Database['public']['Tables']['clinical_outcome_events']['Row'];
 export type EdgeSimulationEvent = Database['public']['Tables']['edge_simulation_events']['Row'];
