@@ -11,6 +11,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { AI_INFERENCE_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface InferenceLogInput {
+    id?: string;
     tenant_id: string;
     clinic_id?: string | null;
     case_id?: string | null;
@@ -20,6 +21,7 @@ export interface InferenceLogInput {
     output_payload: Record<string, unknown>;
     confidence_score?: number | null;
     uncertainty_metrics?: Record<string, unknown> | null;
+    compute_profile?: Record<string, unknown> | null;
     inference_latency_ms: number;
 }
 
@@ -32,6 +34,7 @@ export async function logInference(
     const { data, error } = await client
         .from(AI_INFERENCE_EVENTS.TABLE)
         .insert({
+            [C.id]: input.id,
             [C.tenant_id]: input.tenant_id,
             [C.clinic_id]: input.clinic_id ?? null,
             [C.case_id]: input.case_id ?? null,
@@ -41,6 +44,7 @@ export async function logInference(
             [C.output_payload]: input.output_payload,
             [C.confidence_score]: input.confidence_score ?? null,
             [C.uncertainty_metrics]: input.uncertainty_metrics ?? null,
+            [C.compute_profile]: input.compute_profile ?? null,
             [C.inference_latency_ms]: input.inference_latency_ms,
         })
         .select('id')

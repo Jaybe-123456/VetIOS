@@ -13,6 +13,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { EDGE_SIMULATION_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface SimulationLogInput {
+    id?: string;
     simulation_type: string;
     simulation_parameters: Record<string, unknown>;
     triggered_inference_id: string | null;
@@ -30,6 +31,7 @@ export async function logSimulation(
     const { data, error } = await client
         .from(EDGE_SIMULATION_EVENTS.TABLE)
         .insert({
+            [C.id]: input.id,
             [C.simulation_type]: input.simulation_type,
             [C.simulation_parameters]: input.simulation_parameters,
             [C.triggered_inference_id]: input.triggered_inference_id,

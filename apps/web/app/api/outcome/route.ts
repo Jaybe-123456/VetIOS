@@ -178,7 +178,10 @@ export async function POST(req: Request) {
                     actual_class: actualClass,
                     predicted_severity: predictedSeverity,
                     actual_severity: actualSeverity,
-                    had_contradictions: (inf.output_payload?.contradiction_analysis as any)?.is_plausible === false
+                    had_contradictions:
+                        typeof inf.output_payload?.contradiction_score === 'number'
+                            ? (inf.output_payload.contradiction_score as number) > 0
+                            : ((inf.output_payload?.contradiction_analysis as any)?.is_plausible === false)
                 });
 
                 // 4. Structured Reinforcement Pipeline

@@ -1,10 +1,4 @@
-/**
- * Emergency Rule Engine
- *
- * Safety layer that evaluates rigid clinical invariants (e.g. GDV pattern, shock signs).
- * Operates independently of the probabilistic AI model to ensure
- * critical situations are escalated even if the AI is uncertain.
- */
+import { extractClinicalSignals, getFeatureLabel, type SignalKey } from '@/lib/ai/clinicalSignals';
 
 export type EmergencyLevel = 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW';
 
@@ -14,82 +8,78 @@ export interface EmergencyRuleResult {
     emergency_rule_triggered: boolean;
     emergency_rule_reasons: string[];
     promoted_differentials: string[];
+    persistence_boosts: Record<string, number>;
 }
 
-// ── Escalation keywords ───────────────────────────────────────────────────────
-const ESCALATION_SIGNS = [
+const ESCALATION_SIGNS: SignalKey[] = [
     'collapse',
-    'pale mucous membranes',
-    'pale gums',
+    'pale_mucous_membranes',
     'tachycardia',
     'dyspnea',
-    'difficulty breathing',
     'weakness',
-    'shock',
-    'cyanosis',
     'seizures',
-    'status epilepticus',
-    'unresponsive',
-    'obtunded',
-    'hemorrhage'
 ];
 
 export function evaluateEmergencyRules(inputSignature: Record<string, unknown>): EmergencyRuleResult {
+    const signals = extractClinicalSignals(inputSignature);
     const reasons: string[] = [];
-    const promoted_differentials: string[] = [];
+    const promotedDifferentials = new Set<string>();
+    const persistenceBoosts: Record<string, number> = {};
     let maxLevel: EmergencyLevel = 'LOW';
     let severityBoost = 0;
 
-    const symptoms = extractAllText(inputSignature).toLowerCase();
-    const isDog = (typeof inputSignature.species === 'string' && inputSignature.species.toLowerCase().includes('canine')) || 
-                  (typeof inputSignature.species === 'string' && inputSignature.species.toLowerCase().includes('dog')) ||
-                  (inputSignature.species == null); // Assume dog if unknown for safety if GDV signs present
+    const gdvPersistenceTriggered =
+        signals.gdv_cluster_count >= 3 ||
+        (
+            signals.evidence.unproductive_retching.present &&
+            signals.evidence.abdominal_distension.present &&
+            (signals.evidence.collapse.present || signals.shock_pattern_strength >= 2)
+        ) ||
+        (
+            signals.has_deep_chested_breed_risk &&
+            signals.evidence.abdominal_distension.present &&
+            signals.evidence.unproductive_retching.present
+        );
 
-    // ── Rule 1: GDV (Gastric Dilatation-Volvulus) ─────────────────────────────
-    // IF: acute onset OR duration_hours <= 6
-    // AND: abdominal distension OR symptom contains "abdominal distension"
-    // AND: unproductive vomiting OR symptom contains "unproductive retching"
-    const hasAbdominalDistension = symptoms.includes('abdominal distension') || symptoms.includes('bloated') || symptoms.includes('swollen abdomen');
-    const hasUnproductiveVomiting = symptoms.includes('unproductive retching') || symptoms.includes('trying to vomit') || symptoms.includes('dry heaving');
-    const hasAcuteOnset = symptoms.includes('acute') || symptoms.includes('sudden');
-    let isAcuteDuration = false;
-    
-    // Check duration in metadata if present
-    if (inputSignature.metadata && typeof inputSignature.metadata === 'object') {
-        const meta = inputSignature.metadata as Record<string, unknown>;
-        if (typeof meta.duration === 'string') {
-            const dur = meta.duration.toLowerCase();
-            if (dur.includes('hour') && parseInt(dur) <= 6) {
-                isAcuteDuration = true;
-            }
+    if (gdvPersistenceTriggered) {
+        reasons.push('GDV persistence rule activated due to clustered high-risk abdominal emergency signals');
+        for (const differential of [
+            'Gastric Dilatation-Volvulus (GDV)',
+            'Acute Mechanical Emergency',
+            'Simple Gastric Dilatation',
+            'Mesenteric Volvulus',
+        ]) {
+            promotedDifferentials.add(differential);
         }
-    }
-
-    if (isDog && hasAbdominalDistension && hasUnproductiveVomiting && (hasAcuteOnset || isAcuteDuration || symptoms.includes('hours'))) {
-        reasons.push('GDV emergency rule activated: Abdominal distension + unproductive retching + acute onset.');
-        promoted_differentials.push('Gastric Dilatation-Volvulus');
+        persistenceBoosts['Gastric Dilatation-Volvulus (GDV)'] = 0.32;
+        persistenceBoosts['Acute Mechanical Emergency'] = 0.28;
+        persistenceBoosts['Simple Gastric Dilatation'] = 0.18;
+        persistenceBoosts['Mesenteric Volvulus'] = 0.14;
         maxLevel = 'CRITICAL';
-        severityBoost = Math.max(severityBoost, 0.5);
+        severityBoost = Math.max(severityBoost, 0.6);
     }
 
-    // ── Rule 2: Escalation Features ───────────────────────────────────────────
-    for (const sign of ESCALATION_SIGNS) {
-        if (symptoms.includes(sign)) {
-            reasons.push(`High-risk sign detected: ${sign}`);
-            if (maxLevel !== 'CRITICAL') maxLevel = 'HIGH';
-            severityBoost = Math.max(severityBoost, 0.3);
-        }
+    for (const signal of ESCALATION_SIGNS) {
+        if (!signals.evidence[signal].present) continue;
+        reasons.push(`High-risk sign detected: ${getFeatureLabel(signal)}`);
+        maxLevel = elevateLevel(maxLevel, signal === 'collapse' || signal === 'pale_mucous_membranes' ? 'CRITICAL' : 'HIGH');
+        severityBoost = Math.max(severityBoost, signal === 'collapse' ? 0.35 : 0.25);
     }
 
-    // ── Rule 3: Toxins ────────────────────────────────────────────────────────
-    const toxinKeywords = ['chocolate', 'grapes', 'raisins', 'xylitol', 'rat poison', 'antifreeze', 'lily', 'toxic ingestion', 'poisoning'];
-    for (const toxin of toxinKeywords) {
-        if (symptoms.includes(toxin)) {
-            reasons.push(`Potential toxin ingestion detected: ${toxin}`);
-            if (maxLevel !== 'CRITICAL') maxLevel = 'HIGH';
-            severityBoost = Math.max(severityBoost, 0.25);
-            promoted_differentials.push('Toxic Ingestion');
-        }
+    if (signals.evidence.hypersalivation.present && signals.evidence.seizures.present) {
+        reasons.push('Potential toxin syndrome detected from hypersalivation plus neurologic collapse');
+        promotedDifferentials.add('Toxic Ingestion');
+        persistenceBoosts['Toxic Ingestion'] = 0.18;
+        maxLevel = elevateLevel(maxLevel, 'HIGH');
+        severityBoost = Math.max(severityBoost, 0.25);
+    }
+
+    if (signals.distemper_pattern_strength >= 2.5) {
+        reasons.push('Neuro-respiratory infectious emergency pattern detected');
+        promotedDifferentials.add('Canine Distemper');
+        persistenceBoosts['Canine Distemper'] = 0.16;
+        maxLevel = elevateLevel(maxLevel, 'HIGH');
+        severityBoost = Math.max(severityBoost, 0.2);
     }
 
     return {
@@ -97,28 +87,12 @@ export function evaluateEmergencyRules(inputSignature: Record<string, unknown>):
         severity_boost: severityBoost,
         emergency_rule_triggered: reasons.length > 0,
         emergency_rule_reasons: reasons,
-        promoted_differentials,
+        promoted_differentials: [...promotedDifferentials],
+        persistence_boosts: persistenceBoosts,
     };
 }
 
-function extractAllText(input: Record<string, unknown>): string {
-    let combined = '';
-    
-    if (typeof input.species === 'string') combined += input.species + ' ';
-    if (typeof input.breed === 'string') combined += input.breed + ' ';
-    
-    if (Array.isArray(input.symptoms)) {
-        combined += input.symptoms.join(' ') + ' ';
-    } else if (typeof input.symptoms === 'string') {
-        combined += input.symptoms + ' ';
-    }
-    
-    if (input.metadata && typeof input.metadata === 'object') {
-        const meta = input.metadata as Record<string, unknown>;
-        if (typeof meta.raw_note === 'string') {
-            combined += meta.raw_note + ' ';
-        }
-    }
-    
-    return combined;
+function elevateLevel(current: EmergencyLevel, target: EmergencyLevel): EmergencyLevel {
+    const levels: EmergencyLevel[] = ['LOW', 'MODERATE', 'HIGH', 'CRITICAL'];
+    return levels.indexOf(target) > levels.indexOf(current) ? target : current;
 }
