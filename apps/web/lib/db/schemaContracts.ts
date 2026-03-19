@@ -39,7 +39,73 @@ export const CLINICAL_OUTCOME_EVENTS = {
         outcome_timestamp: 'outcome_timestamp',   // timestamptz, NOT NULL
         clinician_feedback_score: 'clinician_feedback_score', // double precision, nullable
         clinician_notes: 'clinician_notes',       // text, nullable
+        label_type: 'label_type',                 // text, nullable (synthetic, expert, confirmed)
         created_at: 'created_at',                 // timestamptz, NOT NULL
+    },
+} as const;
+
+// ─── outcome_calibrations ───────────────────────────────────────────────────
+export const OUTCOME_CALIBRATIONS = {
+    TABLE: 'outcome_calibrations',
+    COLUMNS: {
+        id: 'id',                                 // uuid, PK
+        tenant_id: 'tenant_id',                   // uuid, NOT NULL
+        inference_event_id: 'inference_event_id', // uuid, NOT NULL
+        outcome_event_id: 'outcome_event_id',     // uuid, NOT NULL
+        predicted_confidence: 'predicted_confidence', // double precision, nullable
+        actual_correctness: 'actual_correctness', // double precision, nullable
+        calibration_error: 'calibration_error',   // double precision, nullable
+        brier_score: 'brier_score',               // double precision, nullable
+        created_at: 'created_at',                 // timestamptz, NOT NULL
+    },
+} as const;
+
+// ─── learning_reinforcements ─────────────────────────────────────────────────
+export const LEARNING_REINFORCEMENTS = {
+    TABLE: 'learning_reinforcements',
+    COLUMNS: {
+        id: 'id',                                 // uuid, PK
+        tenant_id: 'tenant_id',                   // uuid, NOT NULL
+        inference_event_id: 'inference_event_id', // uuid, NOT NULL
+        diagnosis_label: 'diagnosis_label',       // text, nullable
+        condition_class: 'condition_class',       // text, nullable
+        severity_label: 'severity_label',         // text, nullable
+        features: 'features',                     // jsonb, NOT NULL
+        reinforcement_type: 'reinforcement_type', // text, NOT NULL (Diagnosis | Severity | Calibration)
+        impact_delta: 'impact_delta',             // double precision, NOT NULL
+        created_at: 'created_at',                 // timestamptz, NOT NULL
+    },
+} as const;
+
+// ─── model_improvement_audits ───────────────────────────────────────────────
+export const MODEL_IMPROVEMENT_AUDITS = {
+    TABLE: 'model_improvement_audits',
+    COLUMNS: {
+        id: 'id',                                 // uuid, PK
+        tenant_id: 'tenant_id',                   // uuid, NOT NULL
+        inference_event_id: 'inference_event_id', // uuid, NOT NULL
+        pre_update_prediction: 'pre_update_prediction', // jsonb, nullable
+        post_update_prediction: 'post_update_prediction', // jsonb, nullable
+        pre_confidence: 'pre_confidence',         // double precision, nullable
+        post_confidence: 'post_confidence',       // double precision, nullable
+        improvement_delta: 'improvement_delta',   // double precision, NOT NULL
+        created_at: 'created_at',                 // timestamptz, NOT NULL
+    },
+} as const;
+
+// ─── error_clusters ─────────────────────────────────────────────────────────
+export const ERROR_CLUSTERS = {
+    TABLE: 'error_clusters',
+    COLUMNS: {
+        id: 'id',                                       // uuid, PK
+        tenant_id: 'tenant_id',                         // uuid, NOT NULL
+        cluster_signature: 'cluster_signature',         // text, NOT NULL
+        misclassification_type: 'misclassification_type', // text, nullable
+        severity_error: 'severity_error',               // double precision, nullable
+        contradiction_presence: 'contradiction_presence', // boolean, nullable
+        frequency: 'frequency',                         // integer, NOT NULL
+        created_at: 'created_at',                       // timestamptz, NOT NULL
+        updated_at: 'updated_at',                       // timestamptz, NOT NULL
     },
 } as const;
 
