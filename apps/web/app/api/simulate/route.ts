@@ -13,7 +13,7 @@
 
 import { NextResponse } from 'next/server';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
-import { runInference } from '@/lib/ai/provider';
+import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { logSimulation } from '@/lib/logging/simulationLogger';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -63,11 +63,19 @@ export async function POST(req: Request) {
             ...body.simulation.parameters,
         };
 
+        // ── FIX: Neutralize target bias ──
+        // Strip target_disease from inference payload so it does NOT influence the prediction.
+        // Preserve it separately for post-hoc evaluation only.
+        const targetDisease = inputSignature.target_disease ?? inputSignature.target_rare_disease_profile ?? null;
+        delete inputSignature.target_disease;
+        delete inputSignature.target_rare_disease_profile;
+
         // ── AI inference with timeout ──
         const inferenceResult = await Promise.race([
-            runInference({
+            runInferencePipeline({
                 model: body.inference.model,
-                input_signature: inputSignature,
+                rawInput: inputSignature,
+                inputMode: 'json',
             }),
             new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS)
@@ -77,16 +85,16 @@ export async function POST(req: Request) {
         const latencyMs = Date.now() - startTime;
         const supabase = getSupabaseServer();
 
-        const signatureForLog = { ...inputSignature };
+        const signatureForLog = { ...inferenceResult.normalizedInput };
         if (Array.isArray(signatureForLog.diagnostic_images)) {
-            signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map(img => ({
+            signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map((img: any) => ({
                 file_name: img.file_name,
                 mime_type: img.mime_type,
                 size_bytes: img.size_bytes
             }));
         }
         if (Array.isArray(signatureForLog.lab_results)) {
-            signatureForLog.lab_results = signatureForLog.lab_results.map(doc => ({
+            signatureForLog.lab_results = signatureForLog.lab_results.map((doc: any) => ({
                 file_name: doc.file_name,
                 mime_type: doc.mime_type,
                 size_bytes: doc.size_bytes
@@ -110,9 +118,32 @@ export async function POST(req: Request) {
             simulation_type: body.simulation.type,
             simulation_parameters: body.simulation.parameters,
             triggered_inference_id: triggeredInferenceId,
-            stress_metrics: inferenceResult.output_payload,
+            stress_metrics: {
+                ...inferenceResult.output_payload,
+                contradiction_analysis: inferenceResult.contradiction_analysis,
+            },
             is_real_world: false,
         });
+
+        // ── Post-hoc target evaluation ──
+        const parsedDiag = inferenceResult.output_payload.diagnosis as Record<string, unknown>;
+        const differentialDiagnosis = parsedDiag && Array.isArray(parsedDiag.top_differentials)
+            ? parsedDiag.top_differentials
+            : [];
+        const topDiagnosis = differentialDiagnosis[0]?.name ?? null;
+        const targetMatch = targetDisease
+            ? topDiagnosis?.toLowerCase().includes(String(targetDisease).toLowerCase()) ?? false
+            : null;
+
+        // Compute differential spread (how close top-3 are)
+        const differentialSpread = differentialDiagnosis.length >= 2
+            ? {
+                top_1_probability: differentialDiagnosis[0]?.probability ?? null,
+                top_2_probability: differentialDiagnosis[1]?.probability ?? null,
+                top_3_probability: differentialDiagnosis[2]?.probability ?? null,
+                spread: ((differentialDiagnosis[0]?.probability ?? 0) - (differentialDiagnosis[1]?.probability ?? 0)).toFixed(3),
+            }
+            : null;
 
         const response = NextResponse.json({
             simulation_event_id: simulationEventId,
@@ -120,6 +151,15 @@ export async function POST(req: Request) {
             inference_output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             inference_latency_ms: latencyMs,
+            // Enhanced adversarial metrics
+            contradiction_analysis: inferenceResult.contradiction_analysis,
+            differential_diagnosis: differentialDiagnosis,
+            differential_spread: differentialSpread,
+            target_evaluation: targetDisease ? {
+                target_disease: targetDisease,
+                top_diagnosis: topDiagnosis,
+                target_matched_top: targetMatch,
+            } : null,
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);

@@ -13,7 +13,7 @@
 
 import { NextResponse } from 'next/server';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
-import { runInference } from '@/lib/ai/provider';
+import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -88,9 +88,10 @@ export async function POST(req: Request) {
     try {
         // ── AI inference with timeout ──
         const inferenceResult = await Promise.race([
-            runInference({
+            runInferencePipeline({
                 model: body.model.name,
-                input_signature: body.input.input_signature,
+                rawInput: body.input,
+                inputMode: 'json', // We pass the validated JSON input
             }),
             new Promise<never>((_, reject) =>
                 setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS)
@@ -100,16 +101,16 @@ export async function POST(req: Request) {
         const latencyMs = Date.now() - startTime;
 
         // Sanitize input signature to remove base64 payloads before logging to database
-        const signatureForLog = { ...body.input.input_signature };
+        const signatureForLog = { ...inferenceResult.normalizedInput };
         if (Array.isArray(signatureForLog.diagnostic_images)) {
-            signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map(img => ({
+            signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map((img: any) => ({
                 file_name: img.file_name,
                 mime_type: img.mime_type,
                 size_bytes: img.size_bytes
             }));
         }
         if (Array.isArray(signatureForLog.lab_results)) {
-            signatureForLog.lab_results = signatureForLog.lab_results.map(doc => ({
+            signatureForLog.lab_results = signatureForLog.lab_results.map((doc: any) => ({
                 file_name: doc.file_name,
                 mime_type: doc.mime_type,
                 size_bytes: doc.size_bytes
@@ -150,19 +151,6 @@ export async function POST(req: Request) {
             console.warn(`[${requestId}] Evaluation auto-trigger failed (non-fatal):`, evalErr);
         }
 
-        // ── ML Risk enrichment (non-blocking) ──
-        let mlRisk = null;
-        try {
-            const { mlPredict } = await import('@/lib/ml/mlClient');
-            mlRisk = await mlPredict({
-                decision_count: 1,
-                override_count: 0,
-                species: (body.input.input_signature as Record<string, string>).species || 'canine',
-            });
-        } catch (mlErr) {
-            console.warn(`[${requestId}] ML risk enrichment failed (non-fatal):`, mlErr);
-        }
-
         const response = NextResponse.json({
             inference_event_id: inferenceEventId,
             output: inferenceResult.output_payload,
@@ -170,7 +158,7 @@ export async function POST(req: Request) {
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
             inference_latency_ms: latencyMs,
             evaluation: evalResult,
-            ml_risk: mlRisk,
+            ml_risk: inferenceResult.mlRisk,
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);

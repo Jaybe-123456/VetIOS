@@ -43,9 +43,13 @@ interface InferenceState {
     probabilities: Array<{ label: string; value: number }>;
     explainability: {
         featureImportance: Array<{ feature: string; impact: number }>;
-        symptomScores: Array<{ symptom: string; score: number }>;
+        severityFeatureImportance: Array<{ feature: string; impact: number }>;
     } | null;
     mlRisk: MLRiskData | null;
+    riskAssessment: {
+        severity_score: number;
+        emergency_level: string;
+    } | null;
     errorMessage: string | null;
     normalizedInput: NormalizedInput | null;
     diagnosticImages: UploadedArtifact[];
@@ -61,6 +65,7 @@ export default function InferenceConsole() {
         probabilities: [],
         explainability: null,
         mlRisk: null,
+        riskAssessment: null,
         errorMessage: null,
         normalizedInput: null,
         diagnosticImages: [],
@@ -197,29 +202,41 @@ export default function InferenceConsole() {
 
             await new Promise(r => setTimeout(r, 800));
 
+            const output = result.output as Record<string, unknown> | undefined;
+            const diagnosis = output?.diagnosis as Record<string, unknown> | undefined;
+            const riskAssessment = output?.risk_assessment as Record<string, unknown> | undefined;
+            
+            const diffs = Array.isArray(diagnosis?.top_differentials) ? diagnosis.top_differentials : [];
+            const mappedProbabilities = diffs.map((d: any) => ({
+                label: d.name || 'Unknown',
+                value: typeof d.probability === 'number' ? d.probability : 0,
+            }));
+
+            const diagFeatures = output?.diagnosis_feature_importance as Record<string, number> || {};
+            const sevFeatures = output?.severity_feature_importance as Record<string, number> || {};
+
+            const mapFeatures = (featObj: Record<string, number>) => 
+                Object.entries(featObj)
+                    .map(([k, v]) => ({ feature: k, impact: typeof v === 'number' ? v : Number(v) || 0 }))
+                    .sort((a, b) => b.impact - a.impact);
+
             setState({
                 status: 'success',
                 eventId: result.inference_event_id || `evt_${Math.random().toString(36).substr(2, 9)}`,
                 requestPayload: data.input.input_signature as Record<string, unknown>,
                 responsePayload: result.output || null,
-                probabilities: result.probabilities || [
-                    { label: 'Primary Pathogen', value: 0.82 },
-                    { label: 'Secondary Opportunistic', value: 0.14 },
-                    { label: 'Autoimmune', value: 0.04 }
+                probabilities: mappedProbabilities.length > 0 ? mappedProbabilities : [
+                    { label: 'Unknown', value: 0 }
                 ],
                 explainability: {
-                    featureImportance: [
-                        { feature: 'Symptom Vector Similarity', impact: 0.88 },
-                        { feature: 'Breed Predisposition History', impact: 0.65 },
-                        { feature: 'Diagnostic Image Analysis', impact: 0.42 },
-                        { feature: 'Metadata Age Correlation', impact: 0.21 },
-                    ],
-                    symptomScores: [
-                        { symptom: finalInput.symptoms[0] || 'Lethargy', score: 92 },
-                        { symptom: finalInput.symptoms[1] || 'Vomiting', score: 76 },
-                    ]
+                    featureImportance: mapFeatures(diagFeatures),
+                    severityFeatureImportance: mapFeatures(sevFeatures),
                 },
                 mlRisk: result.ml_risk || null,
+                riskAssessment: riskAssessment ? {
+                    severity_score: typeof riskAssessment.severity_score === 'number' ? riskAssessment.severity_score : 0,
+                    emergency_level: typeof riskAssessment.emergency_level === 'string' ? riskAssessment.emergency_level : 'UNKNOWN',
+                } : null,
                 errorMessage: null,
                 normalizedInput: finalInput,
                 diagnosticImages: [],
@@ -489,9 +506,9 @@ export default function InferenceConsole() {
                             </ConsoleCard>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <ConsoleCard title="Feature Importance Heatmap" className="border-muted/30">
+                                <ConsoleCard title="Diagnostic Feature Weights" className="border-muted/30">
                                     <div className="space-y-3">
-                                        {state.explainability.featureImportance.map((f, i) => (
+                                        {state.explainability.featureImportance.length > 0 ? state.explainability.featureImportance.map((f, i) => (
                                             <div key={i} className="flex flex-col gap-1">
                                                 <div className="flex justify-between font-mono text-[10px] uppercase text-muted">
                                                     <span>{f.feature}</span>
@@ -501,22 +518,57 @@ export default function InferenceConsole() {
                                                     <div className="bg-accent h-full" style={{ width: `${f.impact * 100}%`, opacity: f.impact }} />
                                                 </div>
                                             </div>
-                                        ))}
+                                        )) : <span className="font-mono text-xs text-muted">No diagnostic features weighted.</span>}
                                     </div>
                                 </ConsoleCard>
 
-                                <ConsoleCard title="Symptom Impact Analysis" className="border-muted/30">
-                                    <div className="space-y-2">
-                                        {state.explainability.symptomScores.map((s, i) => (
-                                            <DataRow
-                                                key={i}
-                                                label={s.symptom}
-                                                value={<span className="text-accent">+{s.score} weight</span>}
-                                            />
-                                        ))}
+                                <ConsoleCard title="Severity Feature Weights" className="border-muted/30">
+                                    <div className="space-y-3">
+                                        {state.explainability.severityFeatureImportance.length > 0 ? state.explainability.severityFeatureImportance.map((f, i) => (
+                                            <div key={i} className="flex flex-col gap-1">
+                                                <div className="flex justify-between font-mono text-[10px] uppercase text-muted">
+                                                    <span>{f.feature}</span>
+                                                    <span>{(f.impact * 100).toFixed(0)}</span>
+                                                </div>
+                                                <div className="w-full h-[2px] bg-dim flex">
+                                                    <div className="bg-orange-500 h-full" style={{ width: `${f.impact * 100}%`, opacity: f.impact }} />
+                                                </div>
+                                            </div>
+                                        )) : <span className="font-mono text-xs text-muted">No severity features weighted.</span>}
                                     </div>
                                 </ConsoleCard>
                             </div>
+
+                            {/* Risk Assessment Panel */}
+                            {state.riskAssessment && (
+                                <ConsoleCard title="Risk & Severity Assessment" className={`${state.riskAssessment.emergency_level === 'CRITICAL' ? 'border-red-500 bg-red-500/5' : state.riskAssessment.emergency_level === 'HIGH' ? 'border-orange-500 bg-orange-500/5' : 'border-accent/40'}`}>
+                                    <div className="space-y-4">
+                                        <div className="flex items-center gap-3">
+                                            <AlertTriangle className={`w-5 h-5 ${state.riskAssessment.emergency_level === 'CRITICAL' || state.riskAssessment.emergency_level === 'HIGH' ? 'text-red-500' : 'text-accent'}`} />
+                                            <span className="font-mono text-xs text-muted uppercase">Emergency Level: <strong className={state.riskAssessment.emergency_level === 'CRITICAL' || state.riskAssessment.emergency_level === 'HIGH' ? 'text-red-500' : 'text-accent'}>{state.riskAssessment.emergency_level}</strong></span>
+                                        </div>
+
+                                        <div className="flex flex-col gap-1">
+                                            <div className="flex items-center justify-between font-mono text-xs">
+                                                <span className="text-muted">Severity Score</span>
+                                                <span className={`font-bold ${state.riskAssessment.severity_score > 0.7 ? 'text-red-400' :
+                                                        state.riskAssessment.severity_score > 0.4 ? 'text-yellow-400' : 'text-green-400'
+                                                    }`}>
+                                                    {(state.riskAssessment.severity_score * 100).toFixed(1)}%
+                                                </span>
+                                            </div>
+                                            <div className="w-full h-2 bg-dim overflow-hidden">
+                                                <div
+                                                    className={`h-full transition-all duration-700 ${state.riskAssessment.severity_score > 0.7 ? 'bg-red-400' :
+                                                            state.riskAssessment.severity_score > 0.4 ? 'bg-yellow-400' : 'bg-green-400'
+                                                        }`}
+                                                    style={{ width: `${state.riskAssessment.severity_score * 100}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </ConsoleCard>
+                            )}
 
                             {/* ML Risk Assessment Panel */}
                             {state.mlRisk && (
