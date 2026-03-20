@@ -23,6 +23,7 @@ export interface ClinicalCaseLiveRecord {
     symptom_vector_normalized: Record<string, boolean>;
     primary_condition_class: string | null;
     top_diagnosis: string | null;
+    predicted_diagnosis: string | null;
     confirmed_diagnosis: string | null;
     label_type: string | null;
     diagnosis_confidence: number | null;
@@ -35,6 +36,12 @@ export interface ClinicalCaseLiveRecord {
     case_cluster: string | null;
     model_version: string | null;
     telemetry_status: string | null;
+    calibration_status: string | null;
+    prediction_correct: boolean | null;
+    confidence_error: number | null;
+    calibration_bucket: string | null;
+    degraded_confidence: number | null;
+    differential_spread: Record<string, unknown> | null;
     ingestion_status: string;
     invalid_case: boolean;
     validation_error_code: string | null;
@@ -80,9 +87,17 @@ export interface TenantClinicalDatasetSummary {
     live_count: number;
     quarantined_count: number;
     unlabeled_count: number;
+    label_coverage_count: number;
     adversarial_count: number;
     severity_coverage_count: number;
     contradiction_coverage_count: number;
+    calibration_ready_count: number;
+    label_coverage_pct: number;
+    severity_coverage_pct: number;
+    contradiction_coverage_pct: number;
+    adversarial_coverage_pct: number;
+    invalid_quarantined_pct: number;
+    calibration_readiness_pct: number;
 }
 
 export interface TenantClinicalDataset {
@@ -134,14 +149,7 @@ export async function getTenantClinicalDataset(
         clinicalCases: liveRows,
         quarantinedCases: quarantinedRows,
         inferenceEvents: inferenceRows,
-        summary: {
-            live_count: liveRows.length,
-            quarantined_count: quarantinedRows.length,
-            unlabeled_count: liveRows.filter((row) => row.label_type === 'inferred_only' && !row.confirmed_diagnosis).length,
-            adversarial_count: liveRows.filter((row) => row.adversarial_case).length,
-            severity_coverage_count: liveRows.filter((row) => row.severity_score !== null && row.latest_emergency_level).length,
-            contradiction_coverage_count: [...liveRows, ...quarantinedRows].filter((row) => row.contradiction_score !== null || row.contradiction_flags.length > 0).length,
-        },
+        summary: buildDatasetSummary(liveRows, quarantinedRows),
         refreshedAt: new Date().toISOString(),
     };
 }
@@ -162,7 +170,7 @@ export function buildClinicalDatasetExport(dataset: TenantClinicalDataset, mode:
                 .map(serializeCaseForExport);
         case 'calibration_audit_set':
             return dataset.clinicalCases
-                .filter((row) => row.diagnosis_confidence !== null && Boolean(row.top_diagnosis))
+                .filter((row) => row.diagnosis_confidence !== null && Boolean(row.predicted_diagnosis) && Boolean(row.confirmed_diagnosis))
                 .map(serializeCaseForExport);
         case 'quarantined_invalid_cases':
             return dataset.quarantinedCases.map(serializeCaseForExport);
@@ -190,6 +198,7 @@ export function createSupabaseClinicalDatasetStore(client: SupabaseClient): Clin
                     liveCaseColumns.symptom_vector_normalized,
                     liveCaseColumns.primary_condition_class,
                     liveCaseColumns.top_diagnosis,
+                    liveCaseColumns.predicted_diagnosis,
                     liveCaseColumns.confirmed_diagnosis,
                     liveCaseColumns.label_type,
                     liveCaseColumns.diagnosis_confidence,
@@ -202,6 +211,12 @@ export function createSupabaseClinicalDatasetStore(client: SupabaseClient): Clin
                     liveCaseColumns.case_cluster,
                     liveCaseColumns.model_version,
                     liveCaseColumns.telemetry_status,
+                    liveCaseColumns.calibration_status,
+                    liveCaseColumns.prediction_correct,
+                    liveCaseColumns.confidence_error,
+                    liveCaseColumns.calibration_bucket,
+                    liveCaseColumns.degraded_confidence,
+                    liveCaseColumns.differential_spread,
                     liveCaseColumns.ingestion_status,
                     liveCaseColumns.invalid_case,
                     liveCaseColumns.validation_error_code,
@@ -238,6 +253,7 @@ export function createSupabaseClinicalDatasetStore(client: SupabaseClient): Clin
                     caseColumns.symptom_vector_normalized,
                     caseColumns.primary_condition_class,
                     caseColumns.top_diagnosis,
+                    caseColumns.predicted_diagnosis,
                     caseColumns.confirmed_diagnosis,
                     caseColumns.label_type,
                     caseColumns.diagnosis_confidence,
@@ -250,6 +266,12 @@ export function createSupabaseClinicalDatasetStore(client: SupabaseClient): Clin
                     caseColumns.case_cluster,
                     caseColumns.model_version,
                     caseColumns.telemetry_status,
+                    caseColumns.calibration_status,
+                    caseColumns.prediction_correct,
+                    caseColumns.confidence_error,
+                    caseColumns.calibration_bucket,
+                    caseColumns.degraded_confidence,
+                    caseColumns.differential_spread,
                     caseColumns.ingestion_status,
                     caseColumns.invalid_case,
                     caseColumns.validation_error_code,
@@ -347,6 +369,7 @@ function serializeCaseForExport(row: ClinicalCaseDatasetRow): Record<string, unk
         symptoms_summary: row.symptoms_summary,
         symptom_vector_normalized: row.symptom_vector_normalized,
         top_diagnosis: row.top_diagnosis,
+        predicted_diagnosis: row.predicted_diagnosis,
         confirmed_diagnosis: row.confirmed_diagnosis,
         primary_condition_class: row.primary_condition_class,
         label_type: row.label_type,
@@ -360,6 +383,12 @@ function serializeCaseForExport(row: ClinicalCaseDatasetRow): Record<string, unk
         adversarial_case: row.adversarial_case,
         adversarial_case_type: row.adversarial_case_type,
         case_cluster: row.case_cluster,
+        calibration_status: row.calibration_status,
+        prediction_correct: row.prediction_correct,
+        confidence_error: row.confidence_error,
+        calibration_bucket: row.calibration_bucket,
+        degraded_confidence: row.degraded_confidence,
+        differential_spread: row.differential_spread,
         ingestion_status: row.ingestion_status,
         invalid_case: row.invalid_case,
         validation_error_code: row.validation_error_code,
@@ -378,7 +407,7 @@ function mapClinicalCaseRecord(row: Record<string, unknown>, forceQuarantined = 
         case_id: String(row.case_id ?? row.id),
         tenant_id: String(row.tenant_id),
         user_id: readString(row.user_id),
-        species: readString(row.species) ?? readString(row.species_canonical),
+        species: readString(row.species) ?? readString(row.species_display) ?? readString(row.species_canonical),
         breed: readString(row.breed),
         symptoms_summary: readString(row.symptoms_summary) ?? readString(row.symptom_summary),
         symptom_vector_normalized: isRecord(row.symptom_vector_normalized)
@@ -386,6 +415,7 @@ function mapClinicalCaseRecord(row: Record<string, unknown>, forceQuarantined = 
             : {},
         primary_condition_class: readString(row.primary_condition_class),
         top_diagnosis: readString(row.top_diagnosis),
+        predicted_diagnosis: readString(row.predicted_diagnosis) ?? readString(row.top_diagnosis),
         confirmed_diagnosis: readString(row.confirmed_diagnosis),
         label_type: readString(row.label_type),
         diagnosis_confidence: typeof row.diagnosis_confidence === 'number' ? row.diagnosis_confidence : typeof row.latest_confidence === 'number' ? row.latest_confidence : null,
@@ -398,6 +428,12 @@ function mapClinicalCaseRecord(row: Record<string, unknown>, forceQuarantined = 
         case_cluster: readString(row.case_cluster),
         model_version: readString(row.model_version),
         telemetry_status: readString(row.telemetry_status),
+        calibration_status: readString(row.calibration_status),
+        prediction_correct: typeof row.prediction_correct === 'boolean' ? row.prediction_correct : null,
+        confidence_error: typeof row.confidence_error === 'number' ? row.confidence_error : null,
+        calibration_bucket: readString(row.calibration_bucket),
+        degraded_confidence: typeof row.degraded_confidence === 'number' ? row.degraded_confidence : null,
+        differential_spread: isRecord(row.differential_spread) ? row.differential_spread : null,
         ingestion_status: forceQuarantined ? (readString(row.ingestion_status) ?? 'quarantined') : (readString(row.ingestion_status) ?? 'accepted'),
         invalid_case: forceQuarantined ? true : row.invalid_case === true,
         validation_error_code: readString(row.validation_error_code),
@@ -445,7 +481,7 @@ function readStringArray(value: unknown): string[] {
 }
 
 function formatDatasetTimestamp(value: string): string {
-    if (!value) return '-';
+    if (!value) return 'Unavailable';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) {
         return value;
@@ -458,6 +494,59 @@ function formatDatasetTimestamp(value: string): string {
     const minutes = String(date.getMinutes()).padStart(2, '0');
 
     return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+function buildDatasetSummary(
+    liveRows: ClinicalCaseDatasetRow[],
+    quarantinedRows: ClinicalCaseDatasetRow[],
+): TenantClinicalDatasetSummary {
+    const totalRows = liveRows.length + quarantinedRows.length;
+    const labelCoverageCount = liveRows.filter((row) => hasLabelCoverage(row)).length;
+    const severityCoverageCount = liveRows.filter((row) => hasSeverityCoverage(row)).length;
+    const contradictionCoverageCount = [...liveRows, ...quarantinedRows].filter((row) => hasContradictionCoverage(row)).length;
+    const adversarialCount = liveRows.filter((row) => row.adversarial_case).length;
+    const calibrationReadyCount = liveRows.filter((row) => hasCalibrationCoverage(row)).length;
+
+    return {
+        live_count: liveRows.length,
+        quarantined_count: quarantinedRows.length,
+        unlabeled_count: liveRows.filter((row) => row.label_type === 'inferred_only' && !row.confirmed_diagnosis).length,
+        label_coverage_count: labelCoverageCount,
+        adversarial_count: adversarialCount,
+        severity_coverage_count: severityCoverageCount,
+        contradiction_coverage_count: contradictionCoverageCount,
+        calibration_ready_count: calibrationReadyCount,
+        label_coverage_pct: percentage(labelCoverageCount, liveRows.length),
+        severity_coverage_pct: percentage(severityCoverageCount, liveRows.length),
+        contradiction_coverage_pct: percentage(contradictionCoverageCount, totalRows),
+        adversarial_coverage_pct: percentage(adversarialCount, liveRows.length),
+        invalid_quarantined_pct: percentage(quarantinedRows.length, totalRows),
+        calibration_readiness_pct: percentage(calibrationReadyCount, liveRows.length),
+    };
+}
+
+function hasLabelCoverage(row: ClinicalCaseDatasetRow): boolean {
+    return Boolean(row.confirmed_diagnosis) || row.label_type !== 'inferred_only';
+}
+
+function hasSeverityCoverage(row: ClinicalCaseDatasetRow): boolean {
+    return row.severity_score !== null && Boolean(row.latest_emergency_level);
+}
+
+function hasContradictionCoverage(row: ClinicalCaseDatasetRow): boolean {
+    return row.contradiction_score !== null || row.contradiction_flags.length > 0 || row.adversarial_case;
+}
+
+function hasCalibrationCoverage(row: ClinicalCaseDatasetRow): boolean {
+    return Boolean(row.predicted_diagnosis) &&
+        Boolean(row.confirmed_diagnosis) &&
+        row.prediction_correct !== null &&
+        row.confidence_error !== null;
+}
+
+function percentage(value: number, total: number): number {
+    if (total <= 0) return 0;
+    return Number(((value / total) * 100).toFixed(1));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

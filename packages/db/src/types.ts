@@ -797,6 +797,7 @@ export interface Database {
                     validation_error_code: string | null;
                     primary_condition_class: string | null;
                     top_diagnosis: string | null;
+                    predicted_diagnosis: string | null;
                     confirmed_diagnosis: string | null;
                     label_type: string;
                     diagnosis_confidence: number | null;
@@ -811,6 +812,12 @@ export interface Database {
                     case_cluster: string | null;
                     model_version: string | null;
                     telemetry_status: string | null;
+                    calibration_status: string | null;
+                    prediction_correct: boolean | null;
+                    confidence_error: number | null;
+                    calibration_bucket: string | null;
+                    degraded_confidence: number | null;
+                    differential_spread: Json | null;
                     latest_inference_event_id: string | null;
                     latest_outcome_event_id: string | null;
                     latest_simulation_event_id: string | null;
@@ -847,6 +854,7 @@ export interface Database {
                     validation_error_code?: string | null;
                     primary_condition_class?: string | null;
                     top_diagnosis?: string | null;
+                    predicted_diagnosis?: string | null;
                     confirmed_diagnosis?: string | null;
                     label_type?: string;
                     diagnosis_confidence?: number | null;
@@ -861,6 +869,12 @@ export interface Database {
                     case_cluster?: string | null;
                     model_version?: string | null;
                     telemetry_status?: string | null;
+                    calibration_status?: string | null;
+                    prediction_correct?: boolean | null;
+                    confidence_error?: number | null;
+                    calibration_bucket?: string | null;
+                    degraded_confidence?: number | null;
+                    differential_spread?: Json | null;
                     latest_inference_event_id?: string | null;
                     latest_outcome_event_id?: string | null;
                     latest_simulation_event_id?: string | null;
@@ -897,6 +911,7 @@ export interface Database {
                     validation_error_code?: string | null;
                     primary_condition_class?: string | null;
                     top_diagnosis?: string | null;
+                    predicted_diagnosis?: string | null;
                     confirmed_diagnosis?: string | null;
                     label_type?: string;
                     diagnosis_confidence?: number | null;
@@ -911,6 +926,12 @@ export interface Database {
                     case_cluster?: string | null;
                     model_version?: string | null;
                     telemetry_status?: string | null;
+                    calibration_status?: string | null;
+                    prediction_correct?: boolean | null;
+                    confidence_error?: number | null;
+                    calibration_bucket?: string | null;
+                    degraded_confidence?: number | null;
+                    differential_spread?: Json | null;
                     latest_inference_event_id?: string | null;
                     latest_outcome_event_id?: string | null;
                     latest_simulation_event_id?: string | null;
@@ -1202,6 +1223,7 @@ export interface Database {
                     symptom_vector_normalized: Json | null;
                     primary_condition_class: string | null;
                     top_diagnosis: string | null;
+                    predicted_diagnosis: string | null;
                     confirmed_diagnosis: string | null;
                     label_type: string | null;
                     diagnosis_confidence: number | null;
@@ -1213,6 +1235,12 @@ export interface Database {
                     case_cluster: string | null;
                     model_version: string | null;
                     telemetry_status: string | null;
+                    calibration_status: string | null;
+                    prediction_correct: boolean | null;
+                    confidence_error: number | null;
+                    calibration_bucket: string | null;
+                    degraded_confidence: number | null;
+                    differential_spread: Json | null;
                     ingestion_status: string | null;
                     invalid_case: boolean | null;
                     validation_error_code: string | null;

@@ -5,6 +5,7 @@ import {
     buildOutcomeLearningPatch,
     buildSimulationLearningPatch,
     deriveTelemetryStatus,
+    type ClinicalCalibrationStatus,
     type ClinicalCaseIngestionStatus,
     type ClinicalCaseLabelType,
     type ClinicalEmergencyLevel,
@@ -74,6 +75,7 @@ export interface ClinicalCaseRecord {
     validation_error_code: string | null;
     primary_condition_class: string | null;
     top_diagnosis: string | null;
+    predicted_diagnosis: string | null;
     confirmed_diagnosis: string | null;
     label_type: ClinicalCaseLabelType;
     diagnosis_confidence: number | null;
@@ -88,6 +90,12 @@ export interface ClinicalCaseRecord {
     case_cluster: string | null;
     model_version: string | null;
     telemetry_status: string | null;
+    calibration_status: ClinicalCalibrationStatus | null;
+    prediction_correct: boolean | null;
+    confidence_error: number | null;
+    calibration_bucket: string | null;
+    degraded_confidence: number | null;
+    differential_spread: Record<string, unknown> | null;
     latest_inference_event_id: string | null;
     latest_outcome_event_id: string | null;
     latest_simulation_event_id: string | null;
@@ -119,7 +127,7 @@ export interface EnsureCanonicalClinicalCaseInput {
     observedAt: string;
 }
 
-interface ClinicalCaseEventContext {
+export interface ClinicalCaseEventContext {
     observedAt: string;
     userId?: string | null;
     sourceModule?: string | null;
@@ -130,6 +138,9 @@ export interface ClinicalCaseInferenceContext extends ClinicalCaseEventContext {
     outputPayload?: Record<string, unknown>;
     confidenceScore?: number | null;
     modelVersion?: string | null;
+    syncMode?: 'live' | 'backfill';
+    inferenceHistoryCount?: number;
+    firstObservedAt?: string;
 }
 
 export interface ClinicalCaseOutcomeContext extends ClinicalCaseEventContext {
@@ -295,6 +306,7 @@ export async function ensureCanonicalClinicalCase(
         validation_error_code: validation.validation_error_code,
         primary_condition_class: learning.primary_condition_class,
         top_diagnosis: learning.top_diagnosis,
+        predicted_diagnosis: learning.predicted_diagnosis,
         confirmed_diagnosis: learning.confirmed_diagnosis,
         label_type: learning.label_type,
         diagnosis_confidence: learning.diagnosis_confidence,
@@ -309,6 +321,12 @@ export async function ensureCanonicalClinicalCase(
         case_cluster: learning.case_cluster,
         model_version: learning.model_version,
         telemetry_status: telemetryStatus,
+        calibration_status: learning.calibration_status,
+        prediction_correct: learning.prediction_correct,
+        confidence_error: learning.confidence_error,
+        calibration_bucket: learning.calibration_bucket,
+        degraded_confidence: learning.degraded_confidence,
+        differential_spread: learning.differential_spread,
         latest_inference_event_id: existingCase?.latest_inference_event_id ?? null,
         latest_outcome_event_id: existingCase?.latest_outcome_event_id ?? null,
         latest_simulation_event_id: existingCase?.latest_simulation_event_id ?? null,
@@ -324,19 +342,35 @@ export async function finalizeClinicalCaseAfterInference(
     inferenceEventId: string,
     context: ClinicalCaseInferenceContext,
 ): Promise<ClinicalCaseRecord> {
+    const shouldPromoteInference =
+        !clinicalCase.latest_inference_event_id ||
+        context.syncMode === 'backfill' ||
+        context.observedAt >= clinicalCase.last_inference_at;
     const learningPatch = context.outputPayload
         ? buildInferenceLearningPatch({
             outputPayload: context.outputPayload,
             confidenceScore: context.confidenceScore ?? null,
             modelVersion: context.modelVersion ?? null,
             sourceModule: context.sourceModule ?? clinicalCase.source_module ?? null,
+            symptomKeys: clinicalCase.symptoms_normalized,
+            existing: pickExistingLearningState(clinicalCase),
+            preferIncoming: shouldPromoteInference,
         })
         : null;
 
     return updateClinicalCaseActivity(store, clinicalCase, {
-        latest_inference_event_id: inferenceEventId,
-        inference_event_count: clinicalCase.inference_event_count + 1,
-        last_inference_at: context.observedAt,
+        latest_inference_event_id: shouldPromoteInference
+            ? inferenceEventId
+            : clinicalCase.latest_inference_event_id,
+        inference_event_count: context.syncMode === 'backfill'
+            ? Math.max(context.inferenceHistoryCount ?? clinicalCase.inference_event_count, clinicalCase.inference_event_count)
+            : clinicalCase.inference_event_count + 1,
+        first_inference_at: context.syncMode === 'backfill'
+            ? (context.firstObservedAt ?? clinicalCase.first_inference_at)
+            : clinicalCase.first_inference_at,
+        last_inference_at: shouldPromoteInference
+            ? context.observedAt
+            : clinicalCase.last_inference_at,
     }, context, learningPatch);
 }
 
@@ -374,6 +408,16 @@ export async function finalizeClinicalCaseAfterSimulation(
     return updateClinicalCaseActivity(store, clinicalCase, {
         latest_simulation_event_id: simulationEventId,
     }, context, learningPatch);
+}
+
+export async function applyClinicalCaseLearningSync(
+    store: ClinicalCaseStore,
+    clinicalCase: ClinicalCaseRecord,
+    context: ClinicalCaseEventContext,
+    patch: Partial<ClinicalCaseUpsertRecord>,
+    learningPatch: Partial<ClinicalLearningPatch> | null,
+): Promise<ClinicalCaseRecord> {
+    return updateClinicalCaseActivity(store, clinicalCase, patch, context, learningPatch);
 }
 
 export function createSupabaseClinicalCaseStore(client: SupabaseClient): ClinicalCaseStore {
@@ -513,7 +557,7 @@ function normalizeFingerprintMetadata(metadata: Record<string, unknown>): Record
     });
 }
 
-function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRecord {
+export function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRecord {
     const symptomsNormalized = readStringArray(row.symptoms_normalized, row.symptom_vector);
     const symptomVectorNormalized = isRecord(row.symptom_vector_normalized)
         ? booleanRecord(row.symptom_vector_normalized)
@@ -556,6 +600,7 @@ function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRecord {
         primary_condition_class: normalizeText(row.primary_condition_class),
         top_diagnosis: normalizeText(row.top_diagnosis),
         confirmed_diagnosis: normalizeText(row.confirmed_diagnosis),
+        predicted_diagnosis: normalizeText(row.predicted_diagnosis) ?? normalizeText(row.top_diagnosis),
         label_type: normalizeLabelType(row.label_type),
         diagnosis_confidence: normalizeNumber(row.diagnosis_confidence),
         severity_score: normalizeNumber(row.severity_score),
@@ -569,6 +614,12 @@ function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRecord {
         case_cluster: normalizeText(row.case_cluster),
         model_version: normalizeText(row.model_version),
         telemetry_status: normalizeText(row.telemetry_status),
+        calibration_status: normalizeCalibrationStatus(row.calibration_status),
+        prediction_correct: typeof row.prediction_correct === 'boolean' ? row.prediction_correct : null,
+        confidence_error: normalizeNumber(row.confidence_error),
+        calibration_bucket: normalizeText(row.calibration_bucket),
+        degraded_confidence: normalizeNumber(row.degraded_confidence),
+        differential_spread: isRecord(row.differential_spread) ? row.differential_spread : null,
         latest_inference_event_id: normalizeText(row.latest_inference_event_id),
         latest_outcome_event_id: normalizeText(row.latest_outcome_event_id),
         latest_simulation_event_id: normalizeText(row.latest_simulation_event_id),
@@ -611,6 +662,7 @@ async function updateClinicalCaseActivity(
         metadata,
         primary_condition_class: nextLearning.primary_condition_class,
         top_diagnosis: nextLearning.top_diagnosis,
+        predicted_diagnosis: nextLearning.predicted_diagnosis,
         confirmed_diagnosis: nextLearning.confirmed_diagnosis,
         label_type: nextLearning.label_type,
         diagnosis_confidence: nextLearning.diagnosis_confidence,
@@ -625,6 +677,12 @@ async function updateClinicalCaseActivity(
         case_cluster: nextLearning.case_cluster,
         model_version: nextLearning.model_version,
         telemetry_status: telemetryStatus,
+        calibration_status: nextLearning.calibration_status,
+        prediction_correct: nextLearning.prediction_correct,
+        confidence_error: nextLearning.confidence_error,
+        calibration_bucket: nextLearning.calibration_bucket,
+        degraded_confidence: nextLearning.degraded_confidence,
+        differential_spread: nextLearning.differential_spread,
     });
 }
 
@@ -632,6 +690,7 @@ function pickExistingLearningState(clinicalCase: ClinicalCaseRecord | null): Cli
     return {
         primary_condition_class: clinicalCase?.primary_condition_class ?? null,
         top_diagnosis: clinicalCase?.top_diagnosis ?? null,
+        predicted_diagnosis: clinicalCase?.predicted_diagnosis ?? clinicalCase?.top_diagnosis ?? null,
         confirmed_diagnosis: clinicalCase?.confirmed_diagnosis ?? null,
         label_type: clinicalCase?.label_type ?? 'inferred_only',
         diagnosis_confidence: clinicalCase?.diagnosis_confidence ?? null,
@@ -646,6 +705,12 @@ function pickExistingLearningState(clinicalCase: ClinicalCaseRecord | null): Cli
         case_cluster: clinicalCase?.case_cluster ?? null,
         model_version: clinicalCase?.model_version ?? null,
         telemetry_status: clinicalCase?.telemetry_status ?? clinicalCase?.ingestion_status ?? 'pending',
+        calibration_status: clinicalCase?.calibration_status ?? null,
+        prediction_correct: clinicalCase?.prediction_correct ?? null,
+        confidence_error: clinicalCase?.confidence_error ?? null,
+        calibration_bucket: clinicalCase?.calibration_bucket ?? null,
+        degraded_confidence: clinicalCase?.degraded_confidence ?? null,
+        differential_spread: clinicalCase?.differential_spread ?? null,
     };
 }
 
@@ -665,11 +730,12 @@ function chooseValidationState(
 }
 
 function resolveSpeciesDisplay(speciesRaw: string | null, speciesCanonical: string | null): string | null {
-    const normalizedRaw = normalizeText(speciesRaw);
-    if (normalizedRaw && !SPECIES_DISPLAY_LABELS[normalizedRaw]) {
-        return normalizedRaw;
+    if (speciesCanonical) {
+        return SPECIES_DISPLAY_LABELS[speciesCanonical] ?? speciesCanonical;
     }
-    return speciesCanonical ? SPECIES_DISPLAY_LABELS[speciesCanonical] ?? speciesCanonical : normalizedRaw;
+
+    const normalizedRaw = normalizeText(speciesRaw);
+    return normalizedRaw;
 }
 
 function vectorFromKeys(keys: string[]): Record<string, boolean> {
@@ -774,6 +840,12 @@ function normalizeLabelType(value: unknown): ClinicalCaseLabelType {
     return value === 'inferred_only' || value === 'synthetic' || value === 'expert_reviewed' || value === 'lab_confirmed'
         ? value
         : 'inferred_only';
+}
+
+function normalizeCalibrationStatus(value: unknown): ClinicalCalibrationStatus | null {
+    return value === 'pending_outcome' || value === 'calibrated_match' || value === 'calibrated_mismatch' || value === 'no_prediction_anchor'
+        ? value
+        : null;
 }
 
 function normalizeEmergencyLevel(value: unknown): ClinicalEmergencyLevel | null {

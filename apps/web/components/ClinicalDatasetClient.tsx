@@ -113,24 +113,29 @@ export function ClinicalDatasetClient({
 
     const caseColumns: Array<DatasetColumn<ClinicalCaseDatasetRow>> = [
         { key: 'case_id', label: 'CASE_ID', render: (row) => row.case_id },
-        { key: 'species', label: 'SPECIES', render: (row) => row.species ?? 'Unresolved' },
-        { key: 'breed', label: 'BREED', render: (row) => row.breed ?? '-' },
-        { key: 'symptoms', label: 'SYMPTOMS', render: (row) => row.symptoms_summary ?? '-' },
-        { key: 'top_diagnosis', label: 'TOP_DIAGNOSIS', render: (row) => row.top_diagnosis ?? row.confirmed_diagnosis ?? '-' },
-        { key: 'condition_class', label: 'CONDITION_CLASS', render: (row) => row.primary_condition_class ?? '-' },
-        { key: 'emergency', label: 'EMERGENCY_LEVEL', render: (row) => row.latest_emergency_level ?? '-' },
-        { key: 'label_type', label: 'LABEL_TYPE', render: (row) => row.label_type ?? '-' },
+        { key: 'species', label: 'SPECIES', render: (row) => renderText(row.species, 'Unresolved species') },
+        { key: 'breed', label: 'BREED', render: (row) => renderText(row.breed, 'Breed unspecified') },
+        { key: 'symptoms', label: 'SYMPTOMS', render: (row) => renderText(row.symptoms_summary, 'No clinical signal captured') },
+        { key: 'top_diagnosis', label: 'TOP_DIAGNOSIS', render: (row) => renderDiagnosis(row) },
+        { key: 'confirmed_diagnosis', label: 'CONFIRMED_DIAGNOSIS', render: (row) => renderText(row.confirmed_diagnosis, 'Outcome pending') },
+        { key: 'condition_class', label: 'CONDITION_CLASS', render: (row) => renderText(row.primary_condition_class, 'Undifferentiated') },
+        { key: 'emergency', label: 'EMERGENCY_LEVEL', render: (row) => renderText(row.latest_emergency_level, row.latest_inference_event_id ? 'Backfill pending' : 'Awaiting inference') },
+        { key: 'severity', label: 'SEVERITY_SCORE', render: (row) => formatPercent(row.severity_score, 'Unscored') },
+        { key: 'contradiction', label: 'CONTRADICTION_SCORE', render: (row) => formatPercent(row.contradiction_score, row.adversarial_case ? 'Backfill pending' : 'No contradictions') },
+        { key: 'adversarial', label: 'ADVERSARIAL', render: (row) => row.adversarial_case ? 'YES' : 'NO' },
+        { key: 'model_version', label: 'MODEL_VERSION', render: (row) => renderText(row.model_version, 'Unknown model') },
+        { key: 'label_type', label: 'LABEL_TYPE', render: (row) => renderLabelType(row.label_type) },
         { key: 'timestamp', label: 'TIMESTAMP', render: (row) => row.timestamp },
     ];
 
     const inferenceColumns: Array<DatasetColumn<DatasetInferenceEventView>> = [
         { key: 'event_id', label: 'EVENT_ID', render: (row) => row.event_id },
-        { key: 'case_id', label: 'CASE_ID', render: (row) => row.case_id ?? '-' },
-        { key: 'top_prediction', label: 'TOP_PRED', render: (row) => row.top_prediction ?? '-' },
-        { key: 'condition_class', label: 'CONDITION_CLASS', render: (row) => row.primary_condition_class ?? '-' },
-        { key: 'confidence', label: 'CONFIDENCE', render: (row) => formatPercent(row.confidence) },
-        { key: 'emergency', label: 'EMERGENCY_LEVEL', render: (row) => row.emergency_level ?? '-' },
-        { key: 'contradiction', label: 'CONTRADICTION', render: (row) => formatPercent(row.contradiction_score) },
+        { key: 'case_id', label: 'CASE_ID', render: (row) => renderText(row.case_id, 'Case linkage missing') },
+        { key: 'top_prediction', label: 'TOP_PRED', render: (row) => renderText(row.top_prediction, 'Undifferentiated') },
+        { key: 'condition_class', label: 'CONDITION_CLASS', render: (row) => renderText(row.primary_condition_class, 'Undifferentiated') },
+        { key: 'confidence', label: 'CONFIDENCE', render: (row) => formatPercent(row.confidence, 'Unscored') },
+        { key: 'emergency', label: 'EMERGENCY_LEVEL', render: (row) => renderText(row.emergency_level, 'Awaiting severity sync') },
+        { key: 'contradiction', label: 'CONTRADICTION', render: (row) => formatPercent(row.contradiction_score, 'No contradictions') },
         { key: 'model_version', label: 'MODEL_V', render: (row) => row.model_version },
         { key: 'timestamp', label: 'TIMESTAMP', render: (row) => row.timestamp },
     ];
@@ -176,6 +181,15 @@ export function ClinicalDatasetClient({
                     <SummaryCard label="Unlabeled" value={summary.unlabeled_count} />
                     <SummaryCard label="Severity Ready" value={summary.severity_coverage_count} />
                     <SummaryCard label="Contradiction Ready" value={summary.contradiction_coverage_count} />
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                    <SummaryCard label="Label Coverage" value={`${summary.label_coverage_pct}%`} />
+                    <SummaryCard label="Severity Coverage" value={`${summary.severity_coverage_pct}%`} />
+                    <SummaryCard label="Contradiction Coverage" value={`${summary.contradiction_coverage_pct}%`} />
+                    <SummaryCard label="Adversarial Coverage" value={`${summary.adversarial_coverage_pct}%`} tone="accent" />
+                    <SummaryCard label="Quarantined %" value={`${summary.invalid_quarantined_pct}%`} tone={summary.invalid_quarantined_pct > 0 ? 'warn' : 'default'} />
+                    <SummaryCard label="Calibration Ready" value={`${summary.calibration_readiness_pct}%`} />
                 </div>
 
                 <div className="flex items-center justify-between gap-4">
@@ -233,22 +247,29 @@ function renderCaseDetail(row: ClinicalCaseDatasetRow) {
         <div className="grid gap-4 xl:grid-cols-[1.3fr,1fr]">
             <div className="space-y-3">
                 <DetailBlock label="Normalized Symptom Vector" value={JSON.stringify(row.symptom_vector_normalized, null, 2)} code />
-                <DetailBlock label="Uncertainty Notes" value={row.uncertainty_notes.length > 0 ? row.uncertainty_notes.join(', ') : 'None'} />
-                <DetailBlock label="Contradiction Flags" value={row.contradiction_flags.length > 0 ? row.contradiction_flags.join(', ') : 'None'} />
+                <DetailBlock label="Differential Spread" value={row.differential_spread ? JSON.stringify(row.differential_spread, null, 2) : 'No spread telemetry stored'} code />
+                <DetailBlock label="Uncertainty Notes" value={row.uncertainty_notes.length > 0 ? row.uncertainty_notes.join(', ') : 'No uncertainty notes recorded'} />
+                <DetailBlock label="Contradiction Flags" value={row.contradiction_flags.length > 0 ? row.contradiction_flags.join(', ') : 'No contradiction flags recorded'} />
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-                <DetailStat label="Confirmed Diagnosis" value={row.confirmed_diagnosis ?? '-'} />
-                <DetailStat label="Severity Score" value={formatPercent(row.severity_score)} />
-                <DetailStat label="Contradiction Score" value={formatPercent(row.contradiction_score)} />
-                <DetailStat label="Case Cluster" value={row.case_cluster ?? '-'} />
+                <DetailStat label="Predicted Diagnosis" value={renderText(row.predicted_diagnosis ?? row.top_diagnosis, 'Undifferentiated')} />
+                <DetailStat label="Confirmed Diagnosis" value={renderText(row.confirmed_diagnosis, 'Outcome pending')} />
+                <DetailStat label="Severity Score" value={formatPercent(row.severity_score, 'Unscored')} />
+                <DetailStat label="Contradiction Score" value={formatPercent(row.contradiction_score, row.adversarial_case ? 'Backfill pending' : 'No contradiction score')} />
+                <DetailStat label="Case Cluster" value={renderText(row.case_cluster, 'Unknown / Mixed')} />
                 <DetailStat label="Adversarial" value={row.adversarial_case ? `YES (${row.adversarial_case_type ?? 'flagged'})` : 'NO'} />
-                <DetailStat label="Telemetry Status" value={row.telemetry_status ?? '-'} />
-                <DetailStat label="Inference ID" value={row.latest_inference_event_id ?? '-'} />
-                <DetailStat label="Outcome ID" value={row.latest_outcome_event_id ?? '-'} />
-                <DetailStat label="Simulation ID" value={row.latest_simulation_event_id ?? '-'} />
+                <DetailStat label="Telemetry Status" value={renderText(row.telemetry_status, 'Pending')} />
+                <DetailStat label="Calibration Status" value={renderText(row.calibration_status, 'Pending outcome')} />
+                <DetailStat label="Prediction Correct" value={formatPredictionCorrect(row.prediction_correct)} />
+                <DetailStat label="Confidence Error" value={formatPercent(row.confidence_error, 'Awaiting outcome')} />
+                <DetailStat label="Calibration Bucket" value={renderText(row.calibration_bucket, 'Unbucketed')} />
+                <DetailStat label="Degraded Confidence" value={formatPercent(row.degraded_confidence, 'Not degraded')} />
+                <DetailStat label="Inference ID" value={renderText(row.latest_inference_event_id, 'No linked inference')} />
+                <DetailStat label="Outcome ID" value={renderText(row.latest_outcome_event_id, 'No linked outcome')} />
+                <DetailStat label="Simulation ID" value={renderText(row.latest_simulation_event_id, 'No linked simulation')} />
                 <DetailStat label="Validation" value={row.validation_error_code ?? row.ingestion_status} />
-                <DetailStat label="Model Version" value={row.model_version ?? '-'} />
-                <DetailStat label="Triage Priority" value={row.triage_priority ?? '-'} />
+                <DetailStat label="Model Version" value={renderText(row.model_version, 'Unknown model')} />
+                <DetailStat label="Triage Priority" value={renderText(row.triage_priority, 'Unassigned')} />
             </div>
         </div>
     );
@@ -269,6 +290,7 @@ function matchesCaseFilters(row: ClinicalCaseDatasetRow, query: string, filters:
         breed: row.breed,
         symptoms: row.symptoms_summary,
         top_diagnosis: row.top_diagnosis,
+        predicted_diagnosis: row.predicted_diagnosis,
         confirmed_diagnosis: row.confirmed_diagnosis,
         condition_class: row.primary_condition_class,
         emergency: row.latest_emergency_level,
@@ -323,8 +345,35 @@ function downloadJson(payload: unknown, filename: string) {
     URL.revokeObjectURL(url);
 }
 
-function formatPercent(value: number | null) {
-    return typeof value === 'number' ? `${Math.round(value * 100)}%` : '-';
+function formatPercent(value: number | null, fallback = 'Unavailable') {
+    return typeof value === 'number' ? `${Math.round(value * 100)}%` : fallback;
+}
+
+function renderText(value: string | null, fallback: string) {
+    return value ?? fallback;
+}
+
+function renderDiagnosis(row: ClinicalCaseDatasetRow) {
+    if (row.top_diagnosis) return row.top_diagnosis;
+    if (row.predicted_diagnosis) return row.predicted_diagnosis;
+    if (row.confirmed_diagnosis) return row.confirmed_diagnosis;
+    if (row.latest_inference_event_id) return 'Backfill pending';
+    return 'Undifferentiated';
+}
+
+function renderLabelType(value: string | null) {
+    if (!value) return 'Outcome pending';
+    if (value === 'inferred_only') return 'Inferred only';
+    if (value === 'expert_reviewed') return 'Expert reviewed';
+    if (value === 'lab_confirmed') return 'Lab confirmed';
+    if (value === 'synthetic') return 'Synthetic';
+    return value;
+}
+
+function formatPredictionCorrect(value: boolean | null) {
+    if (value === true) return 'Yes';
+    if (value === false) return 'No';
+    return 'Awaiting outcome';
 }
 
 function formatRefreshTimestamp(value: string): string {
@@ -339,7 +388,7 @@ function formatRefreshTimestamp(value: string): string {
     return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
-function SummaryCard({ label, value, tone = 'default' }: { label: string; value: number; tone?: 'default' | 'warn' | 'accent' }) {
+function SummaryCard({ label, value, tone = 'default' }: { label: string; value: number | string; tone?: 'default' | 'warn' | 'accent' }) {
     const toneClass = tone === 'warn' ? 'text-amber-400' : tone === 'accent' ? 'text-accent' : 'text-foreground';
     return (
         <div className="border border-grid bg-black/20 p-3 font-mono">

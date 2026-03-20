@@ -4,6 +4,11 @@ export type ClinicalCaseIngestionStatus = 'accepted' | 'rejected' | 'quarantined
 export type ClinicalCaseLabelType = 'inferred_only' | 'synthetic' | 'expert_reviewed' | 'lab_confirmed';
 export type ClinicalEmergencyLevel = 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW';
 export type ClinicalTriagePriority = 'immediate' | 'urgent' | 'standard' | 'low';
+export type ClinicalCalibrationStatus =
+    | 'pending_outcome'
+    | 'calibrated_match'
+    | 'calibrated_mismatch'
+    | 'no_prediction_anchor';
 
 export interface ClinicalCaseValidationResult {
     ingestion_status: ClinicalCaseIngestionStatus;
@@ -14,6 +19,7 @@ export interface ClinicalCaseValidationResult {
 export interface ClinicalLearningPatch {
     primary_condition_class: string | null;
     top_diagnosis: string | null;
+    predicted_diagnosis: string | null;
     confirmed_diagnosis: string | null;
     label_type: ClinicalCaseLabelType;
     diagnosis_confidence: number | null;
@@ -28,6 +34,12 @@ export interface ClinicalLearningPatch {
     case_cluster: string | null;
     model_version: string | null;
     telemetry_status: string;
+    calibration_status: ClinicalCalibrationStatus | null;
+    prediction_correct: boolean | null;
+    confidence_error: number | null;
+    calibration_bucket: string | null;
+    degraded_confidence: number | null;
+    differential_spread: Record<string, unknown> | null;
 }
 
 export interface InferenceLearningInput {
@@ -35,6 +47,34 @@ export interface InferenceLearningInput {
     confidenceScore?: number | null;
     modelVersion?: string | null;
     sourceModule?: string | null;
+    symptomKeys?: string[];
+    preferIncoming?: boolean;
+    existing?: Pick<
+        ClinicalLearningPatch,
+        | 'primary_condition_class'
+        | 'top_diagnosis'
+        | 'predicted_diagnosis'
+        | 'confirmed_diagnosis'
+        | 'label_type'
+        | 'diagnosis_confidence'
+        | 'severity_score'
+        | 'emergency_level'
+        | 'triage_priority'
+        | 'contradiction_score'
+        | 'contradiction_flags'
+        | 'adversarial_case'
+        | 'adversarial_case_type'
+        | 'uncertainty_notes'
+        | 'case_cluster'
+        | 'model_version'
+        | 'telemetry_status'
+        | 'calibration_status'
+        | 'prediction_correct'
+        | 'confidence_error'
+        | 'calibration_bucket'
+        | 'degraded_confidence'
+        | 'differential_spread'
+    >;
 }
 
 export interface OutcomeLearningInput {
@@ -43,9 +83,11 @@ export interface OutcomeLearningInput {
     existing: Pick<
         ClinicalLearningPatch,
         | 'top_diagnosis'
+        | 'predicted_diagnosis'
         | 'primary_condition_class'
         | 'confirmed_diagnosis'
         | 'label_type'
+        | 'diagnosis_confidence'
         | 'severity_score'
         | 'emergency_level'
         | 'contradiction_score'
@@ -56,6 +98,12 @@ export interface OutcomeLearningInput {
         | 'telemetry_status'
         | 'adversarial_case'
         | 'adversarial_case_type'
+        | 'calibration_status'
+        | 'prediction_correct'
+        | 'confidence_error'
+        | 'calibration_bucket'
+        | 'degraded_confidence'
+        | 'differential_spread'
     >;
 }
 
@@ -65,6 +113,7 @@ export interface SimulationLearningInput {
     existing: Pick<
         ClinicalLearningPatch,
         | 'top_diagnosis'
+        | 'predicted_diagnosis'
         | 'primary_condition_class'
         | 'confirmed_diagnosis'
         | 'label_type'
@@ -78,6 +127,12 @@ export interface SimulationLearningInput {
         | 'case_cluster'
         | 'model_version'
         | 'telemetry_status'
+        | 'calibration_status'
+        | 'prediction_correct'
+        | 'confidence_error'
+        | 'calibration_bucket'
+        | 'degraded_confidence'
+        | 'differential_spread'
     >;
 }
 
@@ -133,80 +188,165 @@ export function buildInferenceLearningPatch(input: InferenceLearningInput): Clin
     const riskAssessment = readObject(input.outputPayload.risk_assessment);
     const contradiction = readObject(input.outputPayload.contradiction_analysis);
     const topDifferential = readTopDifferential(diagnosis.top_differentials);
+    const existing = input.existing ?? null;
+    const preferIncoming = input.preferIncoming ?? true;
 
-    const topDiagnosis = readText(topDifferential?.name);
-    const primaryConditionClass = readText(diagnosis.primary_condition_class);
-    const emergencyLevel = normalizeEmergencyLevel(readText(riskAssessment.emergency_level));
-    const severityScore = readNumber(riskAssessment.severity_score);
-    const contradictionFlags = readStringArray(
-        input.outputPayload.contradiction_reasons ?? contradiction.contradiction_reasons,
+    const parsedTopDiagnosis = readText(topDifferential?.name);
+    const parsedConditionClass =
+        readText(diagnosis.primary_condition_class) ??
+        inferConditionClassFromDiagnosis(parsedTopDiagnosis);
+    let emergencyLevel =
+        normalizeEmergencyLevel(readText(riskAssessment.emergency_level)) ??
+        deriveEmergencyLevelFromSeverity(readNumber(riskAssessment.severity_score)) ??
+        existing?.emergency_level ??
+        null;
+    let severityScore =
+        readNumber(riskAssessment.severity_score) ??
+        deriveSeverityScoreFromEmergencyLevel(emergencyLevel) ??
+        existing?.severity_score ??
+        null;
+    const contradictionFlags = mergeStringArrays(
+        existing?.contradiction_flags ?? [],
+        mergeStringArrays(
+            readStringArray(input.outputPayload.contradiction_reasons),
+            readStringArray(contradiction.contradiction_reasons),
+        ),
     );
-    const uncertaintyNotes = readStringArray(input.outputPayload.uncertainty_notes);
+    const uncertaintyNotes = mergeStringArrays(
+        existing?.uncertainty_notes ?? [],
+        readStringArray(input.outputPayload.uncertainty_notes),
+    );
     const contradictionScore = readNumber(
         input.outputPayload.contradiction_score ?? contradiction.contradiction_score,
     );
     const adversarialCase = (input.sourceModule ?? '') === 'adversarial_simulation';
     const adversarialType = adversarialCase ? 'simulated_adversarial_case' : null;
-    const diagnosisConfidence =
-        readNumber(input.confidenceScore) ??
+    let diagnosisConfidence =
+        normalizeProbability(readNumber(input.confidenceScore)) ??
         readNumber(diagnosis.confidence_score) ??
-        readNumber(topDifferential?.probability);
+        readNumber(topDifferential?.probability) ??
+        existing?.diagnosis_confidence ??
+        null;
+    let topDiagnosis = mergeScalar(existing?.top_diagnosis ?? null, parsedTopDiagnosis, preferIncoming);
+    let primaryConditionClass = mergeScalar(
+        existing?.primary_condition_class ?? null,
+        parsedConditionClass,
+        preferIncoming,
+    );
+
+    if (!topDiagnosis || !primaryConditionClass) {
+        const lowSignalFallback = deriveLowSignalFallback(input.symptomKeys ?? []);
+        topDiagnosis = topDiagnosis ?? lowSignalFallback.topDiagnosis;
+        primaryConditionClass = primaryConditionClass ?? lowSignalFallback.primaryConditionClass;
+        diagnosisConfidence = capConfidence(
+            diagnosisConfidence ?? lowSignalFallback.diagnosisConfidence,
+            lowSignalFallback.diagnosisConfidence,
+        );
+        severityScore = severityScore ?? lowSignalFallback.severityScore;
+        emergencyLevel = emergencyLevel ?? lowSignalFallback.emergencyLevel;
+    }
+
+    const predictedDiagnosis = topDiagnosis ?? existing?.predicted_diagnosis ?? null;
+    const normalizedContradictionScore = normalizeContradictionScore(
+        contradictionScore,
+        contradictionFlags.length,
+        adversarialCase || existing?.adversarial_case === true,
+    );
+    const degradedConfidence = adversarialCase || normalizedContradictionScore !== null
+        ? diagnosisConfidence ?? existing?.degraded_confidence ?? null
+        : existing?.degraded_confidence ?? null;
+    const differentialSpread = chooseJsonPatch(
+        existing?.differential_spread ?? null,
+        deriveDifferentialSpread(input.outputPayload, diagnosis),
+        preferIncoming,
+    );
+    const calibrationState = deriveCalibrationState({
+        predictedDiagnosis,
+        confirmedDiagnosis: existing?.confirmed_diagnosis ?? null,
+        diagnosisConfidence,
+    });
 
     return {
         primary_condition_class: primaryConditionClass,
         top_diagnosis: topDiagnosis,
-        confirmed_diagnosis: null,
-        label_type: 'inferred_only',
+        predicted_diagnosis: predictedDiagnosis,
+        confirmed_diagnosis: existing?.confirmed_diagnosis ?? null,
+        label_type: existing?.confirmed_diagnosis
+            ? (existing.label_type ?? 'expert_reviewed')
+            : (existing?.label_type ?? 'inferred_only'),
         diagnosis_confidence: diagnosisConfidence,
         severity_score: severityScore,
         emergency_level: emergencyLevel,
         triage_priority: deriveTriagePriority(emergencyLevel, severityScore),
-        contradiction_score: contradictionScore,
+        contradiction_score: normalizedContradictionScore,
         contradiction_flags: contradictionFlags,
-        adversarial_case: adversarialCase,
-        adversarial_case_type: adversarialType,
+        adversarial_case: adversarialCase || existing?.adversarial_case === true,
+        adversarial_case_type: adversarialType ?? existing?.adversarial_case_type ?? null,
         uncertainty_notes: uncertaintyNotes,
         case_cluster: deriveCaseCluster({
             topDiagnosis,
-            confirmedDiagnosis: null,
+            confirmedDiagnosis: existing?.confirmed_diagnosis ?? null,
             primaryConditionClass,
-            adversarialCase,
-            adversarialCaseType: adversarialType,
+            adversarialCase: adversarialCase || existing?.adversarial_case === true,
+            adversarialCaseType: adversarialType ?? existing?.adversarial_case_type ?? null,
         }),
-        model_version: readText(input.modelVersion),
+        model_version: readText(input.modelVersion) ?? existing?.model_version ?? null,
         telemetry_status: deriveTelemetryStatus({
-            hasDiagnosis: Boolean(topDiagnosis || primaryConditionClass),
+            hasDiagnosis: Boolean(topDiagnosis || primaryConditionClass || existing?.confirmed_diagnosis),
             hasSeverity: Boolean(emergencyLevel || severityScore !== null),
             isInvalid: false,
-            adversarialCase,
+            adversarialCase: adversarialCase || existing?.adversarial_case === true,
         }),
+        calibration_status: calibrationState.calibrationStatus,
+        prediction_correct: calibrationState.predictionCorrect,
+        confidence_error: calibrationState.confidenceError,
+        calibration_bucket: deriveCalibrationBucket(diagnosisConfidence),
+        degraded_confidence: degradedConfidence,
+        differential_spread: differentialSpread,
     };
 }
 
 export function buildOutcomeLearningPatch(input: OutcomeLearningInput): Partial<ClinicalLearningPatch> {
     const confirmedDiagnosis = readText(
-        input.outcomePayload.confirmed_diagnosis ?? input.outcomePayload.diagnosis,
+        input.outcomePayload.confirmed_diagnosis ??
+        input.outcomePayload.final_diagnosis ??
+        input.outcomePayload.diagnosis,
     );
     const primaryConditionClass = readText(
-        input.outcomePayload.primary_condition_class,
-    ) ?? input.existing.primary_condition_class;
+        input.outcomePayload.primary_condition_class ?? input.outcomePayload.condition_class,
+    ) ??
+        input.existing.primary_condition_class ??
+        inferConditionClassFromDiagnosis(confirmedDiagnosis ?? input.existing.predicted_diagnosis ?? input.existing.top_diagnosis);
     const severityScore = readNumber(input.outcomePayload.severity_score) ?? input.existing.severity_score;
     const emergencyLevel = normalizeEmergencyLevel(
         readText(input.outcomePayload.emergency_level),
-    ) ?? input.existing.emergency_level;
+    ) ??
+        deriveEmergencyLevelFromSeverity(severityScore) ??
+        input.existing.emergency_level;
     const contradictionScore = readNumber(input.outcomePayload.contradiction_score) ?? input.existing.contradiction_score;
     const contradictionFlags = mergeStringArrays(
         input.existing.contradiction_flags,
-        readStringArray(input.outcomePayload.contradiction_flags),
+        mergeStringArrays(
+            readStringArray(input.outcomePayload.contradiction_flags),
+            readStringArray(input.outcomePayload.contradiction_reasons),
+        ),
     );
     const uncertaintyNotes = mergeStringArrays(
         input.existing.uncertainty_notes,
         readStringArray(input.outcomePayload.uncertainty_notes),
     );
     const labelType = deriveOutcomeLabelType(input.outcomePayload, input.outcomeType);
+    const predictedDiagnosis = input.existing.predicted_diagnosis ?? input.existing.top_diagnosis;
+    const diagnosisConfidence = input.existing.degraded_confidence ?? input.existing.diagnosis_confidence;
+    const calibrationState = deriveCalibrationState({
+        predictedDiagnosis,
+        confirmedDiagnosis: confirmedDiagnosis ?? input.existing.confirmed_diagnosis,
+        diagnosisConfidence,
+    });
 
     return {
         confirmed_diagnosis: confirmedDiagnosis ?? input.existing.confirmed_diagnosis,
+        predicted_diagnosis: predictedDiagnosis,
         primary_condition_class: primaryConditionClass,
         label_type: labelType,
         severity_score: severityScore,
@@ -228,12 +368,30 @@ export function buildOutcomeLearningPatch(input: OutcomeLearningInput): Partial<
             isInvalid: false,
             adversarialCase: input.existing.adversarial_case,
         }),
+        calibration_status: calibrationState.calibrationStatus,
+        prediction_correct: calibrationState.predictionCorrect,
+        confidence_error: calibrationState.confidenceError,
+        calibration_bucket: deriveCalibrationBucket(diagnosisConfidence),
     };
 }
 
 export function buildSimulationLearningPatch(input: SimulationLearningInput): Partial<ClinicalLearningPatch> {
     const stressMetrics = readObject(input.stressMetrics);
     const contradictionAnalysis = readObject(stressMetrics.contradiction_analysis);
+    const diagnosis = readObject(stressMetrics.diagnosis);
+    const riskAssessment = readObject(stressMetrics.risk_assessment);
+    const topDifferential = readTopDifferential(diagnosis.top_differentials);
+    const parsedTopDiagnosis = readText(topDifferential?.name);
+    const parsedConditionClass =
+        readText(diagnosis.primary_condition_class) ??
+        inferConditionClassFromDiagnosis(parsedTopDiagnosis);
+    const severityScore =
+        readNumber(riskAssessment.severity_score) ??
+        input.existing.severity_score;
+    const emergencyLevel =
+        normalizeEmergencyLevel(readText(riskAssessment.emergency_level)) ??
+        deriveEmergencyLevelFromSeverity(severityScore) ??
+        input.existing.emergency_level;
     const contradictionScore =
         readNumber(stressMetrics.contradiction_score) ??
         readNumber(contradictionAnalysis.contradiction_score) ??
@@ -252,22 +410,34 @@ export function buildSimulationLearningPatch(input: SimulationLearningInput): Pa
     return {
         adversarial_case: true,
         adversarial_case_type: normalizeSimulationCaseType(input.simulationType),
+        top_diagnosis: input.existing.top_diagnosis ?? parsedTopDiagnosis,
+        predicted_diagnosis: input.existing.predicted_diagnosis ?? input.existing.top_diagnosis ?? parsedTopDiagnosis,
+        primary_condition_class: input.existing.primary_condition_class ?? parsedConditionClass,
+        severity_score: severityScore,
+        emergency_level: emergencyLevel,
+        triage_priority: deriveTriagePriority(emergencyLevel, severityScore),
         contradiction_score: contradictionScore,
         contradiction_flags: contradictionFlags,
         uncertainty_notes: uncertaintyNotes,
         case_cluster: deriveCaseCluster({
-            topDiagnosis: input.existing.top_diagnosis,
+            topDiagnosis: input.existing.top_diagnosis ?? parsedTopDiagnosis,
             confirmedDiagnosis: input.existing.confirmed_diagnosis,
-            primaryConditionClass: input.existing.primary_condition_class,
+            primaryConditionClass: input.existing.primary_condition_class ?? parsedConditionClass,
             adversarialCase: true,
             adversarialCaseType: normalizeSimulationCaseType(input.simulationType),
         }),
         telemetry_status: deriveTelemetryStatus({
-            hasDiagnosis: Boolean(input.existing.top_diagnosis || input.existing.confirmed_diagnosis || input.existing.primary_condition_class),
-            hasSeverity: Boolean(input.existing.emergency_level || input.existing.severity_score !== null),
+            hasDiagnosis: Boolean(input.existing.top_diagnosis || parsedTopDiagnosis || input.existing.confirmed_diagnosis || input.existing.primary_condition_class || parsedConditionClass),
+            hasSeverity: Boolean(emergencyLevel || severityScore !== null),
             isInvalid: false,
             adversarialCase: true,
         }),
+        degraded_confidence: input.existing.degraded_confidence ?? input.existing.diagnosis_confidence ?? readNumber(stressMetrics.confidence_score),
+        differential_spread: chooseJsonPatch(
+            input.existing.differential_spread,
+            deriveDifferentialSpread(stressMetrics, diagnosis),
+            true,
+        ),
     };
 }
 
@@ -356,6 +526,33 @@ function deriveOutcomeLabelType(
     return 'expert_reviewed';
 }
 
+function deriveLowSignalFallback(symptomKeys: string[]): {
+    primaryConditionClass: string;
+    topDiagnosis: string;
+    diagnosisConfidence: number;
+    severityScore: number;
+    emergencyLevel: ClinicalEmergencyLevel;
+} {
+    const signalCount = symptomKeys.length;
+    if (signalCount <= 1) {
+        return {
+            primaryConditionClass: 'Undifferentiated',
+            topDiagnosis: 'Undifferentiated low-signal presentation',
+            diagnosisConfidence: 0.22,
+            severityScore: 0.2,
+            emergencyLevel: 'LOW',
+        };
+    }
+
+    return {
+        primaryConditionClass: 'Undifferentiated',
+        topDiagnosis: 'Undifferentiated clinical syndrome',
+        diagnosisConfidence: 0.35,
+        severityScore: 0.42,
+        emergencyLevel: 'MODERATE',
+    };
+}
+
 function isMissingSpecies(speciesCanonical: string | null, speciesRaw: string | null): boolean {
     const normalizedCanonical = (speciesCanonical ?? '').trim().toLowerCase();
     const normalizedRaw = (speciesRaw ?? '').trim().toLowerCase();
@@ -392,6 +589,43 @@ function normalizeSimulationCaseType(value: string): string {
         .toLowerCase();
 }
 
+function deriveEmergencyLevelFromSeverity(value: number | null): ClinicalEmergencyLevel | null {
+    if (value === null) return null;
+    if (value >= 0.85) return 'CRITICAL';
+    if (value >= 0.6) return 'HIGH';
+    if (value >= 0.3) return 'MODERATE';
+    return 'LOW';
+}
+
+function deriveSeverityScoreFromEmergencyLevel(value: ClinicalEmergencyLevel | null): number | null {
+    if (value === 'CRITICAL') return 0.95;
+    if (value === 'HIGH') return 0.72;
+    if (value === 'MODERATE') return 0.42;
+    if (value === 'LOW') return 0.2;
+    return null;
+}
+
+function inferConditionClassFromDiagnosis(value: string | null): string | null {
+    const normalized = (value ?? '').toLowerCase();
+    if (!normalized) return null;
+    if (normalized.includes('gdv') || normalized.includes('dilatation') || normalized.includes('volvulus') || normalized.includes('obstruction')) {
+        return 'Mechanical';
+    }
+    if (normalized.includes('parvo') || normalized.includes('distemper') || normalized.includes('infect')) {
+        return 'Infectious';
+    }
+    if (normalized.includes('toxic')) {
+        return 'Toxicology';
+    }
+    if (normalized.includes('pancreatitis')) {
+        return 'Inflammatory';
+    }
+    if (normalized.includes('undifferentiated')) {
+        return 'Undifferentiated';
+    }
+    return null;
+}
+
 function readTopDifferential(value: unknown): Record<string, unknown> | null {
     if (!Array.isArray(value) || value.length === 0) return null;
     const candidate = value[0];
@@ -426,4 +660,138 @@ function readStringArray(value: unknown): string[] {
 
 function mergeStringArrays(left: string[], right: string[]): string[] {
     return Array.from(new Set([...left, ...right]));
+}
+
+function mergeScalar<T extends string | number | boolean | null>(
+    existing: T,
+    incoming: T,
+    preferIncoming: boolean,
+): T {
+    if (incoming === null) return existing;
+    if (existing === null) return incoming;
+    return preferIncoming ? incoming : existing;
+}
+
+function chooseJsonPatch(
+    existing: Record<string, unknown> | null,
+    incoming: Record<string, unknown> | null,
+    preferIncoming: boolean,
+): Record<string, unknown> | null {
+    if (!incoming || Object.keys(incoming).length === 0) {
+        return existing;
+    }
+    if (!existing || Object.keys(existing).length === 0) {
+        return incoming;
+    }
+    return preferIncoming ? incoming : existing;
+}
+
+function normalizeProbability(value: number | null): number | null {
+    if (value === null) return null;
+    if (value < 0) return 0;
+    if (value > 1) return 1;
+    return value;
+}
+
+function capConfidence(value: number, cap: number): number {
+    return Math.min(normalizeProbability(value) ?? cap, cap);
+}
+
+function normalizeContradictionScore(
+    value: number | null,
+    contradictionFlagCount: number,
+    adversarialCase: boolean,
+): number | null {
+    if (value !== null) return normalizeProbability(value);
+    if (contradictionFlagCount > 0) {
+        return adversarialCase ? 0.55 : 0.35;
+    }
+    if (adversarialCase) {
+        return 0.25;
+    }
+    return null;
+}
+
+function deriveDifferentialSpread(
+    payload: Record<string, unknown>,
+    diagnosis: Record<string, unknown>,
+): Record<string, unknown> | null {
+    const explicitSpread = readObject(payload.differential_spread);
+    if (Object.keys(explicitSpread).length > 0) {
+        return explicitSpread;
+    }
+
+    const topDifferentials = Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials
+        : [];
+    if (topDifferentials.length < 2) {
+        return null;
+    }
+
+    const topOne = readObject(topDifferentials[0]);
+    const topTwo = readObject(topDifferentials[1]);
+    const topThree = readObject(topDifferentials[2]);
+    const firstProbability = normalizeProbability(readNumber(topOne.probability));
+    const secondProbability = normalizeProbability(readNumber(topTwo.probability));
+
+    return {
+        top_1_probability: firstProbability,
+        top_2_probability: secondProbability,
+        top_3_probability: normalizeProbability(readNumber(topThree.probability)),
+        spread: firstProbability !== null && secondProbability !== null
+            ? Number((firstProbability - secondProbability).toFixed(3))
+            : null,
+    };
+}
+
+function deriveCalibrationState(input: {
+    predictedDiagnosis: string | null;
+    confirmedDiagnosis: string | null;
+    diagnosisConfidence: number | null;
+}): {
+    calibrationStatus: ClinicalCalibrationStatus;
+    predictionCorrect: boolean | null;
+    confidenceError: number | null;
+} {
+    if (!input.predictedDiagnosis) {
+        return {
+            calibrationStatus: 'no_prediction_anchor',
+            predictionCorrect: null,
+            confidenceError: null,
+        };
+    }
+
+    if (!input.confirmedDiagnosis) {
+        return {
+            calibrationStatus: 'pending_outcome',
+            predictionCorrect: null,
+            confidenceError: null,
+        };
+    }
+
+    const predictionCorrect = diagnosesMatch(input.predictedDiagnosis, input.confirmedDiagnosis);
+    const confidence = normalizeProbability(input.diagnosisConfidence);
+    return {
+        calibrationStatus: predictionCorrect ? 'calibrated_match' : 'calibrated_mismatch',
+        predictionCorrect,
+        confidenceError: confidence === null ? null : Number(Math.abs((predictionCorrect ? 1 : 0) - confidence).toFixed(3)),
+    };
+}
+
+function deriveCalibrationBucket(confidence: number | null): string | null {
+    const normalized = normalizeProbability(confidence);
+    if (normalized === null) return null;
+    if (normalized < 0.2) return '0-20';
+    if (normalized < 0.4) return '20-40';
+    if (normalized < 0.6) return '40-60';
+    if (normalized < 0.8) return '60-80';
+    return '80-100';
+}
+
+function diagnosesMatch(left: string, right: string): boolean {
+    const normalizedLeft = left.toLowerCase();
+    const normalizedRight = right.toLowerCase();
+    return normalizedLeft === normalizedRight ||
+        normalizedLeft.includes(normalizedRight) ||
+        normalizedRight.includes(normalizedLeft);
 }
