@@ -18,7 +18,6 @@ import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
-import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
 import {
     createSupabaseClinicalCaseStore,
     ensureCanonicalClinicalCase,
@@ -236,24 +235,6 @@ export async function POST(req: Request) {
         revalidatePath('/dataset');
 
         // ── Evaluation (non-blocking) ──
-        let evalResult = null;
-        try {
-            const recentEvals = await getRecentEvaluations(
-                supabase, tenantId, body.model.name, 20,
-            );
-            evalResult = await createEvaluationEvent(supabase, {
-                tenant_id: tenantId,
-                trigger_type: 'inference',
-                inference_event_id: persistedInferenceEventId,
-                model_name: body.model.name,
-                model_version: body.model.version,
-                predicted_confidence: inferenceResult.confidence_score,
-                recent_evaluations: recentEvals,
-            });
-        } catch (evalErr) {
-            console.warn(`[${requestId}] Evaluation auto-trigger failed (non-fatal):`, evalErr);
-        }
-
         const response = NextResponse.json({
             inference_event_id: persistedInferenceEventId,
             clinical_case_id: canonicalClinicalCase.id,
@@ -263,7 +244,7 @@ export async function POST(req: Request) {
             contradiction_analysis: inferenceResult.contradiction_analysis,
             differential_spread: inferenceResult.output_payload.differential_spread ?? null,
             inference_latency_ms: measuredLatencyMs,
-            evaluation: evalResult,
+            evaluation: null,
             ml_risk: inferenceResult.mlRisk,
             request_id: requestId,
         });

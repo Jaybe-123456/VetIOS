@@ -28,6 +28,8 @@ export interface EmitTelemetryEventInput {
     event_id: string;
     tenant_id: string;
     linked_event_id?: string | null;
+    source_id?: string | null;
+    source_table?: string | null;
     event_type: TelemetryEventRecord['event_type'];
     timestamp?: string;
     model_version: string;
@@ -55,6 +57,8 @@ export async function emitTelemetryEvent(
         [C.event_id]: input.event_id,
         [C.tenant_id]: input.tenant_id,
         [C.linked_event_id]: input.linked_event_id ?? null,
+        [C.source_id]: input.source_id ?? null,
+        [C.source_table]: textOrNull(input.source_table),
         [C.event_type]: input.event_type,
         [C.timestamp]: eventTimestamp,
         [C.model_version]: input.model_version,
@@ -184,6 +188,14 @@ export function telemetryOutcomeEventId(outcomeEventId: string) {
     return `evt_outcome_${outcomeEventId}`;
 }
 
+export function telemetryEvaluationEventId(evaluationEventId: string) {
+    return `evt_evaluation_${evaluationEventId}`;
+}
+
+export function telemetrySimulationEventId(simulationEventId: string) {
+    return `evt_simulation_${simulationEventId}`;
+}
+
 export function resolveTelemetryRunId(modelVersion: string, candidate: unknown) {
     const explicit = textOrNull(candidate);
     return explicit ?? modelVersion;
@@ -256,6 +268,7 @@ export function finishTelemetryExecutionSample(sample: TelemetryExecutionSample)
 function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapshot {
     const inferenceEvents = events.filter((event) => event.event_type === 'inference');
     const outcomeEvents = events.filter((event) => event.event_type === 'outcome');
+    const evaluationEvents = events.filter((event) => event.event_type === 'evaluation');
     const inferenceById = new Map(inferenceEvents.map((event) => [event.event_id, event]));
 
     const validLatencyEvents = inferenceEvents.filter((event) => {
@@ -293,6 +306,26 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
             };
         })
         .filter((value): value is { timestamp: string; prediction: string; groundTruth: string; correct: boolean } => value != null);
+    const evaluationPairs = evaluationEvents
+        .map((event) => {
+            const prediction = textOrNull(event.metrics.prediction);
+            const groundTruth = textOrNull(event.metrics.ground_truth);
+            const correct = booleanOrNull(event.metrics.correct);
+
+            if (!prediction || !groundTruth || correct == null) {
+                return null;
+            }
+
+            return {
+                timestamp: event.timestamp,
+                prediction,
+                groundTruth,
+                correct,
+            };
+        })
+        .filter((value): value is { timestamp: string; prediction: string; groundTruth: string; correct: boolean } => value != null);
+    const accuracyPairs = evaluationPairs.length > 0 ? evaluationPairs : outcomePairs;
+    const driftPairs = evaluationPairs.length > 0 ? evaluationPairs : outcomePairs;
 
     const lastEvent = events.at(-1) ?? null;
     const lastEventTimestamp = lastEvent?.timestamp ?? null;
@@ -302,11 +335,11 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
 
     const p95Latency = percentile(latencies, 95);
     const avgConfidence = mean(confidences);
-    const accuracy = outcomePairs.length > 0
-        ? outcomePairs.filter((entry) => entry.correct).length / outcomePairs.length
+    const accuracy = accuracyPairs.length > 0
+        ? accuracyPairs.filter((entry) => entry.correct).length / accuracyPairs.length
         : null;
-    const driftScore = outcomePairs.length >= MIN_OUTCOMES_FOR_DRIFT
-        ? computeDriftScore(outcomePairs)
+    const driftScore = driftPairs.length >= MIN_OUTCOMES_FOR_DRIFT
+        ? computeDriftScore(driftPairs)
         : null;
 
     return {
@@ -325,8 +358,8 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
         metric_states: {
             p95_latency: latencies.length > 0 ? 'READY' : 'NO_DATA',
             avg_confidence: confidences.length > 0 ? 'READY' : 'NO_DATA',
-            accuracy: outcomePairs.length > 0 ? 'READY' : 'INSUFFICIENT_OUTCOMES',
-            drift_score: outcomePairs.length >= MIN_OUTCOMES_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_OUTCOMES',
+            accuracy: accuracyPairs.length > 0 ? 'READY' : 'INSUFFICIENT_OUTCOMES',
+            drift_score: driftPairs.length >= MIN_OUTCOMES_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_OUTCOMES',
         },
         latest_system: findLatestSystemMetrics(events),
         charts: {
@@ -334,7 +367,7 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
                 time: formatChartTime(event.timestamp),
                 value: numberOrNull(event.metrics.latency_ms) ?? 0,
             })),
-            drift: buildDriftTimeline(outcomePairs),
+            drift: buildDriftTimeline(driftPairs),
         },
         logs: buildLogs(events, {
             p95Latency,
@@ -396,6 +429,24 @@ function mapEventToLog(event: TelemetryEventRecord): TelemetryLogEntry {
             level: 'INFO',
             timestamp: event.timestamp,
             message: `[INFO] OUTCOME ${event.linked_event_id ?? event.event_id} correct=${String(booleanOrNull(event.metrics.correct) ?? false)} ground_truth=${textOrNull(event.metrics.ground_truth) ?? 'NO DATA'}`,
+        };
+    }
+
+    if (event.event_type === 'evaluation') {
+        return {
+            id: event.event_id,
+            level: booleanOrNull(event.metrics.correct) === false ? 'WARN' : 'INFO',
+            timestamp: event.timestamp,
+            message: `[${booleanOrNull(event.metrics.correct) === false ? 'WARN' : 'INFO'}] EVALUATION ${event.source_id ?? event.event_id} correct=${String(booleanOrNull(event.metrics.correct) ?? false)} prediction=${textOrNull(event.metrics.prediction) ?? 'NO DATA'} ground_truth=${textOrNull(event.metrics.ground_truth) ?? 'NO DATA'}`,
+        };
+    }
+
+    if (event.event_type === 'simulation') {
+        return {
+            id: event.event_id,
+            level: 'WARN',
+            timestamp: event.timestamp,
+            message: `[WARN] SIMULATION ${event.source_id ?? event.event_id} target=${textOrNull(event.metrics.prediction) ?? 'NO DATA'} latency=${formatLatencyValue(numberOrNull(event.metrics.latency_ms))}`,
         };
     }
 
@@ -490,6 +541,8 @@ function mapTelemetryEventRow(row: Record<string, unknown>): TelemetryEventRecor
         event_id: textOrNull(row.event_id) ?? `evt_${randomUUID()}`,
         tenant_id: textOrNull(row.tenant_id) ?? '',
         linked_event_id: textOrNull(row.linked_event_id),
+        source_id: textOrNull(row.source_id),
+        source_table: textOrNull(row.source_table),
         event_type: resolveEventType(textOrNull(row.event_type)),
         timestamp: textOrNull(row.timestamp) ?? new Date().toISOString(),
         model_version: textOrNull(row.model_version) ?? 'unknown',
@@ -502,7 +555,7 @@ function mapTelemetryEventRow(row: Record<string, unknown>): TelemetryEventRecor
 }
 
 function resolveEventType(value: string | null): TelemetryEventRecord['event_type'] {
-    if (value === 'outcome' || value === 'system' || value === 'training') return value;
+    if (value === 'outcome' || value === 'evaluation' || value === 'simulation' || value === 'system' || value === 'training') return value;
     return 'inference';
 }
 

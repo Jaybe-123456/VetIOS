@@ -142,12 +142,24 @@ export interface LearningSimulationEvent {
 
 export interface LearningEvaluationEvent {
     id: string;
+    evaluation_event_id: string | null;
     tenant_id: string;
     trigger_type: string;
     inference_event_id: string | null;
     outcome_event_id: string | null;
+    case_id: string | null;
     model_name: string | null;
     model_version: string | null;
+    prediction: string | null;
+    prediction_confidence: number | null;
+    ground_truth: string | null;
+    prediction_correct: boolean | null;
+    condition_class_pred: string | null;
+    condition_class_true: string | null;
+    severity_pred: string | null;
+    severity_true: string | null;
+    contradiction_score: number | null;
+    adversarial_case: boolean;
     calibration_error: number | null;
     drift_score: number | null;
     outcome_alignment_delta: number | null;

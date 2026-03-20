@@ -38,6 +38,7 @@ import {
     finishTelemetryExecutionSample,
     resolveTelemetryRunId,
     telemetryInferenceEventId,
+    telemetrySimulationEventId,
 } from '@/lib/telemetry/service';
 
 const AI_TIMEOUT_MS = 55_000;
@@ -213,6 +214,37 @@ export async function POST(req: Request) {
             },
             is_real_world: false,
         });
+        try {
+            await emitTelemetryEvent(supabase, {
+                event_id: telemetrySimulationEventId(persistedSimulationEventId),
+                tenant_id: tenantId,
+                linked_event_id: telemetryInferenceEventId(triggeredInferenceId),
+                source_id: persistedSimulationEventId,
+                source_table: 'edge_simulation_events',
+                event_type: 'simulation',
+                timestamp: observedAt,
+                model_version: modelVersion,
+                run_id: telemetryRunId,
+                metrics: {
+                    latency_ms: measuredLatencyMs,
+                    confidence: inferenceResult.confidence_score,
+                    prediction: typeof targetDisease === 'string' ? targetDisease : body.simulation.type,
+                },
+                system: extractSystemTelemetry(telemetry, executionMetrics.system),
+                metadata: {
+                    source_module: 'adversarial_simulation',
+                    request_id: requestId,
+                    inference_event_id: triggeredInferenceId,
+                    simulation_event_id: persistedSimulationEventId,
+                    case_id: canonicalClinicalCase.id,
+                    simulation_type: body.simulation.type,
+                    target_disease: targetDisease,
+                    synthetic: true,
+                },
+            });
+        } catch (telemetryErr) {
+            console.error(`[${requestId}] Simulation telemetry emission failed (non-fatal):`, telemetryErr);
+        }
         await finalizeClinicalCaseAfterSimulation(caseStore, inferredClinicalCase, persistedSimulationEventId, {
             observedAt,
             userId,

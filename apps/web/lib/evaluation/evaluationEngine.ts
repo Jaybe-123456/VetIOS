@@ -18,8 +18,17 @@ export interface EvaluationInput {
     trigger_type: 'inference' | 'outcome' | 'simulation';
     inference_event_id?: string;
     outcome_event_id?: string;
+    case_id?: string | null;
     model_name: string;
     model_version: string;
+    prediction?: string | null;
+    ground_truth?: string | null;
+    condition_class_pred?: string | null;
+    condition_class_true?: string | null;
+    severity_pred?: string | null;
+    severity_true?: string | null;
+    contradiction_score?: number | null;
+    adversarial_case?: boolean;
 
     // Raw signals for computation
     predicted_confidence?: number | null;
@@ -39,11 +48,25 @@ export interface SimulationSignal {
 export interface PriorEvaluation {
     calibration_error: number | null;
     drift_score: number | null;
+    prediction: string | null;
+    ground_truth: string | null;
     created_at: string;
 }
 
 export interface EvaluationResult {
     id: string;
+    evaluation_event_id: string;
+    case_id: string | null;
+    prediction: string | null;
+    prediction_confidence: number | null;
+    ground_truth: string | null;
+    prediction_correct: boolean | null;
+    condition_class_pred: string | null;
+    condition_class_true: string | null;
+    severity_pred: string | null;
+    severity_true: string | null;
+    contradiction_score: number | null;
+    adversarial_case: boolean;
     calibration_error: number | null;
     drift_score: number | null;
     outcome_alignment_delta: number | null;
@@ -85,24 +108,29 @@ export function computeDriftScore(
 ): number | null {
     if (!recentEvaluations || recentEvaluations.length < 3) return null;
 
-    const errors = recentEvaluations
-        .map(e => e.calibration_error)
-        .filter((e): e is number => e != null);
+    const predicted = new Map<string, number>();
+    const actual = new Map<string, number>();
 
-    if (errors.length < 3) return null;
+    for (const evaluation of recentEvaluations) {
+        const prediction = normalizeLabel(evaluation.prediction);
+        const groundTruth = normalizeLabel(evaluation.ground_truth);
+        if (!prediction || !groundTruth) continue;
+        predicted.set(prediction, (predicted.get(prediction) ?? 0) + 1);
+        actual.set(groundTruth, (actual.get(groundTruth) ?? 0) + 1);
+    }
 
-    // Split into baseline (older half) and recent (newer half)
-    const midpoint = Math.floor(errors.length / 2);
-    const baseline = errors.slice(0, midpoint);
-    const recent = errors.slice(midpoint);
+    const sampleCount = Array.from(actual.values()).reduce((sum, count) => sum + count, 0);
+    if (sampleCount < 3) return null;
 
-    const baselineMean = baseline.reduce((a, b) => a + b, 0) / baseline.length;
-    const recentMean = recent.reduce((a, b) => a + b, 0) / recent.length;
+    const labels = new Set([...predicted.keys(), ...actual.keys()]);
+    let squaredDistance = 0;
+    for (const label of labels) {
+        const predictedProbability = (predicted.get(label) ?? 0) / sampleCount;
+        const actualProbability = (actual.get(label) ?? 0) / sampleCount;
+        squaredDistance += (predictedProbability - actualProbability) ** 2;
+    }
 
-    // Drift = how much worse the recent errors are vs baseline
-    // Normalized to [0, 1] with sigmoid-like clamping
-    const rawDrift = recentMean - baselineMean;
-    return Math.max(0, Math.min(1, rawDrift * 2)); // Scale factor
+    return Math.max(0, Math.min(1, Math.sqrt(squaredDistance)));
 }
 
 /**
@@ -217,13 +245,36 @@ export async function createEvaluationEvent(
     supabase: SupabaseClient,
     input: EvaluationInput,
 ): Promise<EvaluationResult> {
+    const prediction = normalizeLabel(
+        input.prediction
+        ?? extractPredictionLabel(input.predicted_output)
+        ?? null,
+    );
+    const groundTruth = normalizeLabel(
+        input.ground_truth
+        ?? extractOutcomeLabel(input.actual_outcome)
+        ?? null,
+    );
+    const predictionCorrect = prediction && groundTruth
+        ? prediction === groundTruth
+        : null;
+
     // Compute metrics based on trigger type
     const calibrationError = computeCalibrationError(
         input.predicted_confidence,
-        input.actual_correctness,
+        input.actual_correctness ?? (predictionCorrect == null ? null : (predictionCorrect ? 1 : 0)),
     );
 
-    const driftScore = computeDriftScore(input.recent_evaluations);
+    const driftScore = computeDriftScore([
+        ...(input.recent_evaluations ?? []),
+        {
+            calibration_error: calibrationError,
+            drift_score: null,
+            prediction,
+            ground_truth: groundTruth,
+            created_at: new Date().toISOString(),
+        },
+    ]);
 
     const outcomeAlignmentDelta = computeOutcomeAlignmentDelta(
         input.predicted_output,
@@ -245,10 +296,21 @@ export async function createEvaluationEvent(
             trigger_type: input.trigger_type,
             inference_event_id: input.inference_event_id ?? null,
             outcome_event_id: input.outcome_event_id ?? null,
+            case_id: input.case_id ?? null,
             calibration_error: calibrationError,
             drift_score: driftScore,
             outcome_alignment_delta: outcomeAlignmentDelta,
             simulation_degradation: simulationDegradation,
+            prediction,
+            prediction_confidence: input.predicted_confidence ?? null,
+            ground_truth: groundTruth,
+            prediction_correct: predictionCorrect,
+            condition_class_pred: normalizeLabel(input.condition_class_pred),
+            condition_class_true: normalizeLabel(input.condition_class_true),
+            severity_pred: normalizeLabel(input.severity_pred),
+            severity_true: normalizeLabel(input.severity_true),
+            contradiction_score: input.contradiction_score ?? null,
+            adversarial_case: input.adversarial_case === true,
             calibrated_confidence: stratified.calibrated_confidence,
             epistemic_uncertainty: stratified.epistemic_uncertainty,
             aleatoric_uncertainty: stratified.aleatoric_uncertainty,
@@ -257,10 +319,13 @@ export async function createEvaluationEvent(
             evaluation_payload: {
                 raw_confidence: confidence,
                 trigger_type: input.trigger_type,
+                prediction,
+                ground_truth: groundTruth,
+                prediction_correct: predictionCorrect,
                 computed_at: new Date().toISOString(),
             },
         })
-        .select('id')
+        .select('id,evaluation_event_id,case_id,prediction,prediction_confidence,ground_truth,prediction_correct,condition_class_pred,condition_class_true,severity_pred,severity_true,contradiction_score,adversarial_case')
         .single();
 
     if (error) {
@@ -269,6 +334,18 @@ export async function createEvaluationEvent(
 
     return {
         id: data.id,
+        evaluation_event_id: data.evaluation_event_id ?? data.id,
+        case_id: data.case_id ?? null,
+        prediction: data.prediction ?? null,
+        prediction_confidence: data.prediction_confidence ?? null,
+        ground_truth: data.ground_truth ?? null,
+        prediction_correct: data.prediction_correct ?? null,
+        condition_class_pred: data.condition_class_pred ?? null,
+        condition_class_true: data.condition_class_true ?? null,
+        severity_pred: data.severity_pred ?? null,
+        severity_true: data.severity_true ?? null,
+        contradiction_score: data.contradiction_score ?? null,
+        adversarial_case: data.adversarial_case === true,
         calibration_error: calibrationError,
         drift_score: driftScore,
         outcome_alignment_delta: outcomeAlignmentDelta,
@@ -291,7 +368,7 @@ export async function getRecentEvaluations(
 ): Promise<PriorEvaluation[]> {
     const { data, error } = await supabase
         .from('model_evaluation_events')
-        .select('calibration_error, drift_score, created_at')
+        .select('calibration_error, drift_score, prediction, ground_truth, created_at')
         .eq('tenant_id', tenantId)
         .eq('model_name', modelName)
         .order('created_at', { ascending: false })
@@ -303,4 +380,41 @@ export async function getRecentEvaluations(
     }
 
     return (data ?? []) as PriorEvaluation[];
+}
+
+function extractPredictionLabel(output?: Record<string, unknown>) {
+    if (!output) return null;
+    const diagnosis = asRecord(output.diagnosis);
+    const topDifferentials = Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials
+        : [];
+    const topDiagnosis = topDifferentials[0];
+    if (typeof topDiagnosis === 'object' && topDiagnosis !== null) {
+        const candidate = normalizeLabel((topDiagnosis as Record<string, unknown>).name);
+        if (candidate) return candidate;
+    }
+    return normalizeLabel(diagnosis.primary_condition_class);
+}
+
+function extractOutcomeLabel(output?: Record<string, unknown>) {
+    if (!output) return null;
+    return normalizeLabel(
+        output.confirmed_diagnosis
+        ?? output.final_diagnosis
+        ?? output.diagnosis
+        ?? output.primary_condition_class
+        ?? null,
+    );
+}
+
+function normalizeLabel(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    return normalized.length > 0 ? normalized : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
 }
