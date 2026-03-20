@@ -261,7 +261,21 @@ function RunDetail({
     const [registryError, setRegistryError] = useState<string | null>(null);
     const [isApplyingAction, startRegistryActionTransition] = useTransition();
     const emptyMetricMessage = getEmptyMetricStateMessage(detail.run, detail.metrics);
-    const promotionDisabled = isApplyingAction || !detail.promotion_gating.can_promote;
+    const canStage = !isApplyingAction && (
+        detail.model_registry?.lifecycle_status === 'candidate' ||
+        detail.model_registry?.lifecycle_status === 'training'
+    );
+    const canPromoteProduction = !isApplyingAction &&
+        detail.model_registry?.lifecycle_status === 'staging' &&
+        detail.model_registry?.registry_role === 'challenger' &&
+        detail.promotion_gating.can_promote &&
+        detail.deployment_decision?.decision === 'approved';
+    const canArchive = !isApplyingAction &&
+        !(detail.model_registry?.lifecycle_status === 'production' && detail.model_registry?.registry_role === 'champion');
+    const canRollback = !isApplyingAction &&
+        detail.model_registry?.lifecycle_status === 'production' &&
+        detail.model_registry?.registry_role === 'champion' &&
+        (detail.model_registry.rollback_target != null || detail.last_stable_model != null);
     const promotionTooltip = detail.promotion_gating.tooltip;
     const gradientSeries = useMemo(() => [{
         runId: detail.run.run_id,
@@ -349,20 +363,43 @@ function RunDetail({
                         <DetailStat label="Registry Role" value={detail.registry_role ?? 'Unlinked'} />
                         <DetailStat label="Calibration Gate" value={renderGateStatus(detail.calibration_metrics?.calibration_pass)} />
                         <DetailStat label="Adversarial Gate" value={renderGateStatus(detail.adversarial_metrics?.adversarial_pass)} />
+                        <DetailStat label="Benchmark Gate" value={renderGateStatus(detail.promotion_requirements?.benchmark_pass)} />
+                        <DetailStat label="Manual Approval" value={renderGateStatus(detail.promotion_requirements?.manual_approval)} />
                         <DetailStat label="Safety Coverage" value={detail.safety_coverage.toUpperCase()} />
+                        <DetailStat label="Promotion Eligibility" value={detail.decision_panel.promotion_eligibility ? 'YES' : 'NO'} />
                         <DetailStat label="Deployment Decision" value={detail.deployment_decision ? detail.deployment_decision.decision.toUpperCase() : 'Pending'} />
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
-                        <TerminalButton variant="secondary" disabled={promotionDisabled} title={promotionTooltip} onClick={() => handleRegistryAction('promote_to_staging')}>
+                        <TerminalButton
+                            variant="secondary"
+                            disabled={!canStage}
+                            title={canStage ? 'Move this artifact into governed staging.' : 'Only training or candidate artifacts can enter staging.'}
+                            onClick={() => handleRegistryAction('promote_to_staging')}
+                        >
                             Promote Staging
                         </TerminalButton>
-                        <TerminalButton variant="secondary" disabled={promotionDisabled || detail.deployment_decision?.decision !== 'approved'} title={detail.deployment_decision?.decision === 'approved' ? promotionTooltip : detail.deployment_decision?.reason ?? promotionTooltip} onClick={() => handleRegistryAction('promote_to_production')}>
+                        <TerminalButton
+                            variant="secondary"
+                            disabled={!canPromoteProduction}
+                            title={canPromoteProduction ? 'Promote this staging challenger into production.' : detail.deployment_decision?.reason ?? promotionTooltip}
+                            onClick={() => handleRegistryAction('promote_to_production')}
+                        >
                             Promote Production
                         </TerminalButton>
-                        <TerminalButton variant="secondary" disabled={isApplyingAction} onClick={() => handleRegistryAction('archive')}>
+                        <TerminalButton
+                            variant="secondary"
+                            disabled={!canArchive}
+                            title={canArchive ? 'Archive this artifact.' : 'Archive is disabled for the active production champion.'}
+                            onClick={() => handleRegistryAction('archive')}
+                        >
                             Archive
                         </TerminalButton>
-                        <TerminalButton variant="secondary" disabled={isApplyingAction} onClick={() => handleRegistryAction('rollback')}>
+                        <TerminalButton
+                            variant="secondary"
+                            disabled={!canRollback}
+                            title={canRollback ? 'Restore the last stable model.' : 'Rollback is unavailable until a rollback target exists.'}
+                            onClick={() => handleRegistryAction('rollback')}
+                        >
                             Rollback
                         </TerminalButton>
                     </div>
@@ -376,6 +413,11 @@ function RunDetail({
                     <div className="mt-4 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
                         {detail.deployment_decision?.reason ?? 'Deployment decision will populate once calibration, adversarial, and clinical safety gates have all been evaluated.'}
                     </div>
+                    {detail.decision_panel.reasons.length > 0 ? (
+                        <div className="mt-3 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
+                            {detail.decision_panel.reasons.join(' ')}
+                        </div>
+                    ) : null}
                 </ConsoleInset>
             </div>
 

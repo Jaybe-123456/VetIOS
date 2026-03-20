@@ -40,7 +40,10 @@ export async function POST(
     const { requestId, startTime } = guard;
 
     const body = await safeJson<{
-        action?: 'promote_to_staging' | 'promote_to_production' | 'archive' | 'rollback';
+        action?: 'promote_to_staging' | 'promote_to_production' | 'set_manual_approval' | 'archive' | 'rollback';
+        manual_approval?: boolean;
+        reason?: string;
+        incident_id?: string | null;
     }>(req);
     if (!body.ok) {
         return NextResponse.json({ error: body.error, request_id: requestId }, { status: 400 });
@@ -60,7 +63,18 @@ export async function POST(
     const tenantId = actor?.tenantId ?? process.env.VETIOS_DEV_TENANT_ID ?? 'dev_tenant_001';
     const { runId } = await context.params;
     const store = createSupabaseExperimentTrackingStore(getSupabaseServer());
-    const registry = await applyExperimentRegistryAction(store, tenantId, runId, body.data.action, actor?.userId ?? null);
+    const registry = await applyExperimentRegistryAction(
+        store,
+        tenantId,
+        runId,
+        body.data.action,
+        actor?.userId ?? null,
+        {
+            manualApproval: body.data.manual_approval,
+            reason: body.data.reason,
+            incidentId: body.data.incident_id ?? null,
+        },
+    );
 
     const response = NextResponse.json({
         registry,

@@ -15,12 +15,16 @@ import {
     LEARNING_CALIBRATION_REPORTS,
     LEARNING_DATASET_VERSIONS,
     MODEL_REGISTRY,
+    MODEL_REGISTRY_ROUTING,
     MODEL_REGISTRY_ENTRIES,
+    PROMOTION_REQUIREMENTS,
+    REGISTRY_AUDIT_LOG,
     SUBGROUP_METRICS,
 } from '@/lib/db/schemaContracts';
 import type {
     AdversarialMetricRecord,
     CalibrationMetricRecord,
+    ClinicalMetricsRecord,
     DeploymentDecisionRecord,
     ExperimentArtifactRecord,
     ExperimentAuditEventRecord,
@@ -30,6 +34,11 @@ import type {
     ExperimentRegistryLinkRecord,
     ExperimentRunRecord,
     ModelRegistryRecord,
+    PromotionRequirementsRecord,
+    RegistryAuditLogRecord,
+    RegistryLineageRecord,
+    RegistryRoutingPointerRecord,
+    RollbackMetadataRecord,
     SubgroupMetricRecord,
     ExperimentTrackingStore,
     ListExperimentRunsOptions,
@@ -265,6 +274,21 @@ export function createSupabaseExperimentTrackingStore(
             return mapExperimentRegistryLink(asRecord(data));
         },
 
+        async listModelRegistry(tenantId) {
+            const { data, error } = await client
+                .from(MODEL_REGISTRY.TABLE)
+                .select('*')
+                .eq(MODEL_REGISTRY.COLUMNS.tenant_id, tenantId)
+                .order(MODEL_REGISTRY.COLUMNS.model_family, { ascending: true })
+                .order(MODEL_REGISTRY.COLUMNS.updated_at, { ascending: false });
+
+            if (error) {
+                throw new Error(`Failed to list model registry records: ${error.message}`);
+            }
+
+            return (data ?? []).map((row) => mapModelRegistry(asRecord(row)));
+        },
+
         async getModelRegistryForRun(tenantId, runId) {
             const { data, error } = await client
                 .from(MODEL_REGISTRY.TABLE)
@@ -294,6 +318,51 @@ export function createSupabaseExperimentTrackingStore(
             }
 
             return mapModelRegistry(asRecord(data));
+        },
+
+        async getPromotionRequirements(tenantId, runId) {
+            const { data, error } = await client
+                .from(PROMOTION_REQUIREMENTS.TABLE)
+                .select('*')
+                .eq(PROMOTION_REQUIREMENTS.COLUMNS.tenant_id, tenantId)
+                .eq(PROMOTION_REQUIREMENTS.COLUMNS.run_id, runId)
+                .maybeSingle();
+
+            if (error) {
+                throw new Error(`Failed to load promotion requirements: ${error.message}`);
+            }
+
+            return data ? mapPromotionRequirements(asRecord(data)) : null;
+        },
+
+        async listPromotionRequirements(tenantId) {
+            const { data, error } = await client
+                .from(PROMOTION_REQUIREMENTS.TABLE)
+                .select('*')
+                .eq(PROMOTION_REQUIREMENTS.COLUMNS.tenant_id, tenantId)
+                .order(PROMOTION_REQUIREMENTS.COLUMNS.updated_at, { ascending: false });
+
+            if (error) {
+                throw new Error(`Failed to list promotion requirements: ${error.message}`);
+            }
+
+            return (data ?? []).map((row) => mapPromotionRequirements(asRecord(row)));
+        },
+
+        async upsertPromotionRequirements(record) {
+            const { data, error } = await client
+                .from(PROMOTION_REQUIREMENTS.TABLE)
+                .upsert(stripUndefined(record), {
+                    onConflict: `${PROMOTION_REQUIREMENTS.COLUMNS.tenant_id},${PROMOTION_REQUIREMENTS.COLUMNS.registry_id}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to upsert promotion requirements: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapPromotionRequirements(asRecord(data));
         },
 
         async getCalibrationMetrics(tenantId, runId) {
@@ -458,6 +527,108 @@ export function createSupabaseExperimentTrackingStore(
             }
 
             return mapAuditLog(asRecord(data));
+        },
+
+        async listRegistryAuditLog(tenantId, limit = 200) {
+            const { data, error } = await client
+                .from(REGISTRY_AUDIT_LOG.TABLE)
+                .select('*')
+                .eq(REGISTRY_AUDIT_LOG.COLUMNS.tenant_id, tenantId)
+                .order(REGISTRY_AUDIT_LOG.COLUMNS.timestamp, { ascending: false })
+                .limit(limit);
+
+            if (error) {
+                throw new Error(`Failed to list registry audit log: ${error.message}`);
+            }
+
+            return (data ?? []).map((row) => mapRegistryAuditLog(asRecord(row)));
+        },
+
+        async createRegistryAuditLog(record) {
+            const { data, error } = await client
+                .from(REGISTRY_AUDIT_LOG.TABLE)
+                .upsert({
+                    event_id: record.event_id,
+                    tenant_id: record.tenant_id,
+                    registry_id: record.registry_id,
+                    run_id: record.run_id,
+                    event_type: record.event_type,
+                    actor: record.actor,
+                    metadata: record.metadata,
+                    timestamp: record.timestamp,
+                }, {
+                    onConflict: `${REGISTRY_AUDIT_LOG.COLUMNS.event_id}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to create registry audit log event: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapRegistryAuditLog(asRecord(data));
+        },
+
+        async listRegistryRoutingPointers(tenantId) {
+            const { data, error } = await client
+                .from(MODEL_REGISTRY_ROUTING.TABLE)
+                .select('*')
+                .eq(MODEL_REGISTRY_ROUTING.COLUMNS.tenant_id, tenantId)
+                .order(MODEL_REGISTRY_ROUTING.COLUMNS.model_family, { ascending: true });
+
+            if (error) {
+                throw new Error(`Failed to list registry routing pointers: ${error.message}`);
+            }
+
+            return (data ?? []).map((row) => mapRegistryRoutingPointer(asRecord(row)));
+        },
+
+        async upsertRegistryRoutingPointer(record) {
+            const { data, error } = await client
+                .from(MODEL_REGISTRY_ROUTING.TABLE)
+                .upsert(stripUndefined(record), {
+                    onConflict: `${MODEL_REGISTRY_ROUTING.COLUMNS.tenant_id},${MODEL_REGISTRY_ROUTING.COLUMNS.model_family}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to upsert registry routing pointer: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapRegistryRoutingPointer(asRecord(data));
+        },
+
+        async promoteRegistryToProduction({ tenantId, runId, actor }) {
+            const { data, error } = await client.rpc('promote_registry_model_to_production' as never, {
+                p_tenant_id: tenantId,
+                p_run_id: runId,
+                p_actor: actor,
+            });
+
+            const row = Array.isArray(data) ? data[0] : data;
+            if (error || !row) {
+                throw new Error(`Failed to promote registry record to production: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapModelRegistry(asRecord(row));
+        },
+
+        async rollbackRegistryToTarget({ tenantId, runId, actor, reason, incidentId }) {
+            const { data, error } = await client.rpc('rollback_registry_model_to_target' as never, {
+                p_tenant_id: tenantId,
+                p_run_id: runId,
+                p_actor: actor,
+                p_reason: reason,
+                p_incident_id: incidentId ?? null,
+            });
+
+            const row = Array.isArray(data) ? data[0] : data;
+            if (error || !row) {
+                throw new Error(`Failed to roll back registry record: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapModelRegistry(asRecord(row));
         },
 
         async listModelRegistryEntries(tenantId) {
@@ -699,6 +870,8 @@ function mapExperimentRegistryLink(row: Record<string, unknown>): ExperimentRegi
         promotion_status: readString(row.promotion_status),
         calibration_status: readString(row.calibration_status),
         adversarial_gate_status: readString(row.adversarial_gate_status),
+        benchmark_status: readString(row.benchmark_status),
+        manual_approval_status: readString(row.manual_approval_status),
         deployment_eligibility: readString(row.deployment_eligibility),
         linked_at: String(row.linked_at),
         updated_at: String(row.updated_at),
@@ -706,14 +879,31 @@ function mapExperimentRegistryLink(row: Record<string, unknown>): ExperimentRegi
 }
 
 function mapModelRegistry(row: Record<string, unknown>): ModelRegistryRecord {
+    const lifecycleStatus = (readString(row.lifecycle_status) ?? readString(row.status) ?? 'candidate') as ModelRegistryRecord['lifecycle_status'];
+    const registryRole = (readString(row.registry_role) ?? readString(row.role) ?? 'experimental') as ModelRegistryRecord['registry_role'];
     return {
         registry_id: String(row.registry_id),
         tenant_id: String(row.tenant_id),
         run_id: String(row.run_id),
+        model_name: readString(row.model_name) ?? readString(row.model_version) ?? 'unknown_model',
         model_version: readString(row.model_version) ?? 'unknown_model_version',
-        artifact_path: readString(row.artifact_path),
-        status: (readString(row.status) ?? 'candidate') as ModelRegistryRecord['status'],
-        role: (readString(row.role) ?? 'experimental') as ModelRegistryRecord['role'],
+        model_family: (readString(row.model_family) ?? 'diagnostics') as ModelRegistryRecord['model_family'],
+        artifact_uri: readString(row.artifact_uri) ?? readString(row.artifact_path),
+        dataset_version: readString(row.dataset_version),
+        feature_schema_version: readString(row.feature_schema_version),
+        label_policy_version: readString(row.label_policy_version),
+        lifecycle_status: lifecycleStatus,
+        registry_role: registryRole,
+        deployed_at: readString(row.deployed_at),
+        archived_at: readString(row.archived_at),
+        promoted_from: readString(row.promoted_from),
+        rollback_target: readString(row.rollback_target),
+        clinical_metrics: asClinicalMetricsRecord(row.clinical_metrics),
+        lineage: asRegistryLineageRecord(row.lineage, String(row.run_id)),
+        rollback_metadata: asRollbackMetadataRecord(row.rollback_metadata),
+        artifact_path: readString(row.artifact_path) ?? readString(row.artifact_uri),
+        status: lifecycleStatus,
+        role: registryRole,
         created_at: String(row.created_at),
         created_by: readString(row.created_by),
         updated_at: String(row.updated_at ?? row.created_at),
@@ -766,10 +956,54 @@ function mapDeploymentDecision(row: Record<string, unknown>): DeploymentDecision
         calibration_pass: typeof row.calibration_pass === 'boolean' ? row.calibration_pass : null,
         adversarial_pass: typeof row.adversarial_pass === 'boolean' ? row.adversarial_pass : null,
         safety_pass: typeof row.safety_pass === 'boolean' ? row.safety_pass : null,
+        benchmark_pass: typeof row.benchmark_pass === 'boolean' ? row.benchmark_pass : null,
+        manual_approval: typeof row.manual_approval === 'boolean' ? row.manual_approval : null,
         approved_by: readString(row.approved_by),
         timestamp: String(row.timestamp ?? row.created_at),
         created_at: String(row.created_at),
         updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapPromotionRequirements(row: Record<string, unknown>): PromotionRequirementsRecord {
+    return {
+        id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        registry_id: String(row.registry_id),
+        run_id: String(row.run_id),
+        calibration_pass: typeof row.calibration_pass === 'boolean' ? row.calibration_pass : null,
+        adversarial_pass: typeof row.adversarial_pass === 'boolean' ? row.adversarial_pass : null,
+        safety_pass: typeof row.safety_pass === 'boolean' ? row.safety_pass : null,
+        benchmark_pass: typeof row.benchmark_pass === 'boolean' ? row.benchmark_pass : null,
+        manual_approval: typeof row.manual_approval === 'boolean' ? row.manual_approval : null,
+        created_at: String(row.created_at),
+        updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapRegistryAuditLog(row: Record<string, unknown>): RegistryAuditLogRecord {
+    return {
+        event_id: String(row.event_id),
+        tenant_id: String(row.tenant_id),
+        registry_id: String(row.registry_id),
+        run_id: readString(row.run_id),
+        event_type: readString(row.event_type) ?? 'unknown_event',
+        timestamp: String(row.timestamp ?? row.created_at),
+        actor: readString(row.actor),
+        metadata: asRecord(row.metadata),
+        created_at: String(row.created_at ?? row.timestamp),
+    };
+}
+
+function mapRegistryRoutingPointer(row: Record<string, unknown>): RegistryRoutingPointerRecord {
+    return {
+        id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        model_family: (readString(row.model_family) ?? 'diagnostics') as RegistryRoutingPointerRecord['model_family'],
+        active_registry_id: readString(row.active_registry_id),
+        active_run_id: readString(row.active_run_id),
+        updated_at: String(row.updated_at ?? row.created_at),
+        updated_by: readString(row.updated_by),
     };
 }
 
@@ -871,6 +1105,49 @@ function asConfidenceHistogramBin(value: unknown): CalibrationMetricRecord['conf
     return {
         confidence,
         count,
+    };
+}
+
+function asClinicalMetricsRecord(value: unknown): ClinicalMetricsRecord {
+    const record = asRecord(value);
+    return {
+        global_accuracy: readNumber(record.global_accuracy),
+        macro_f1: readNumber(record.macro_f1),
+        critical_recall: readNumber(record.critical_recall),
+        false_reassurance_rate: readNumber(record.false_reassurance_rate),
+        fn_critical_rate: readNumber(record.fn_critical_rate),
+        ece: readNumber(record.ece),
+        brier_score: readNumber(record.brier_score),
+        adversarial_degradation: readNumber(record.adversarial_degradation),
+        latency_p99: readNumber(record.latency_p99),
+    };
+}
+
+function asRegistryLineageRecord(value: unknown, runId: string): RegistryLineageRecord {
+    const record = asRecord(value);
+    return {
+        run_id: readString(record.run_id) ?? runId,
+        experiment_group: readString(record.experiment_group),
+        dataset_version: readString(record.dataset_version),
+        benchmark_id: readString(record.benchmark_id),
+        calibration_report_uri: readString(record.calibration_report_uri),
+        adversarial_report_uri: readString(record.adversarial_report_uri),
+    };
+}
+
+function asRollbackMetadataRecord(value: unknown): RollbackMetadataRecord | null {
+    const record = asRecord(value);
+    const triggeredAt = readString(record.triggered_at);
+    const reason = readString(record.reason);
+    if (!triggeredAt || !reason) {
+        return null;
+    }
+
+    return {
+        triggered_at: triggeredAt,
+        triggered_by: readString(record.triggered_by),
+        reason,
+        incident_id: readString(record.incident_id),
     };
 }
 
