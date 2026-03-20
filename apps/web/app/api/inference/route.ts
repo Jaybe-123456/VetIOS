@@ -29,6 +29,15 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { InferenceRequestSchema, formatZodErrors } from '@/lib/http/schemas';
 import { safeJson } from '@/lib/http/safeJson';
+import {
+    beginTelemetryExecutionSample,
+    emitTelemetryEvent,
+    extractPredictionLabel,
+    extractSystemTelemetry,
+    finishTelemetryExecutionSample,
+    resolveTelemetryRunId,
+    telemetryInferenceEventId,
+} from '@/lib/telemetry/service';
 
 const AI_TIMEOUT_MS = 55_000;
 
@@ -96,6 +105,7 @@ export async function POST(req: Request) {
 
     try {
         // ── AI inference with timeout ──
+        const executionSample = beginTelemetryExecutionSample();
         const inferenceResult = await Promise.race([
             runInferencePipeline({
                 model: body.model.name,
@@ -107,14 +117,21 @@ export async function POST(req: Request) {
             ),
         ]);
 
-        const latencyMs = Date.now() - startTime;
+        const executionMetrics = finishTelemetryExecutionSample(executionSample);
+        const measuredLatencyMs = executionMetrics.latencyMs;
+        const latencyMs = Math.max(1, Math.round(measuredLatencyMs));
         const inferenceEventId = randomUUID();
+        const telemetryRunId = resolveTelemetryRunId(
+            body.model.version,
+            resolveTelemetryRunCandidate(body.input.input_signature),
+        );
 
         const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
             ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
             : {};
         telemetry.model_version = body.model.version;
         telemetry.inference_id = inferenceEventId;
+        telemetry.run_id = telemetryRunId;
         inferenceResult.output_payload.telemetry = telemetry;
 
         // Sanitize input signature to remove base64 payloads before logging to database
@@ -163,6 +180,31 @@ export async function POST(req: Request) {
             compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
+        try {
+            await emitTelemetryEvent(supabase, {
+                event_id: telemetryInferenceEventId(persistedInferenceEventId),
+                tenant_id: tenantId,
+                event_type: 'inference',
+                timestamp: observedAt,
+                model_version: body.model.version,
+                run_id: telemetryRunId,
+                metrics: {
+                    latency_ms: measuredLatencyMs,
+                    confidence: inferenceResult.confidence_score,
+                    prediction: extractPredictionLabel(inferenceResult.output_payload),
+                },
+                system: extractSystemTelemetry(telemetry, executionMetrics.system),
+                metadata: {
+                    source_module: 'inference_console',
+                    request_id: requestId,
+                    inference_event_id: persistedInferenceEventId,
+                    clinic_id: body.clinic_id ?? null,
+                    case_id: canonicalClinicalCase.id,
+                },
+            });
+        } catch (telemetryErr) {
+            console.error(`[${requestId}] Telemetry emission failed (non-fatal):`, telemetryErr);
+        }
         await finalizeClinicalCaseAfterInference(
             caseStore,
             canonicalClinicalCase,
@@ -220,7 +262,7 @@ export async function POST(req: Request) {
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
             contradiction_analysis: inferenceResult.contradiction_analysis,
             differential_spread: inferenceResult.output_payload.differential_spread ?? null,
-            inference_latency_ms: latencyMs,
+            inference_latency_ms: measuredLatencyMs,
             evaluation: evalResult,
             ml_risk: inferenceResult.mlRisk,
             request_id: requestId,
@@ -262,4 +304,15 @@ function extractEmergencyLevel(outputPayload: Record<string, unknown>): string |
     return typeof (riskAssessment as Record<string, unknown>).emergency_level === 'string'
         ? (riskAssessment as Record<string, unknown>).emergency_level as string
         : null;
+}
+
+function resolveTelemetryRunCandidate(inputSignature: Record<string, unknown>): unknown {
+    const metadata = asRecord(inputSignature.metadata);
+    return inputSignature.run_id ?? metadata.run_id ?? null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
 }

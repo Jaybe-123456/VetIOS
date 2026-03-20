@@ -30,6 +30,15 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { SimulateRequestSchema, formatZodErrors } from '@/lib/http/schemas';
 import { safeJson } from '@/lib/http/safeJson';
+import {
+    beginTelemetryExecutionSample,
+    emitTelemetryEvent,
+    extractPredictionLabel,
+    extractSystemTelemetry,
+    finishTelemetryExecutionSample,
+    resolveTelemetryRunId,
+    telemetryInferenceEventId,
+} from '@/lib/telemetry/service';
 
 const AI_TIMEOUT_MS = 55_000;
 
@@ -74,6 +83,7 @@ export async function POST(req: Request) {
         delete inputSignature.target_disease;
         delete inputSignature.target_rare_disease_profile;
 
+        const executionSample = beginTelemetryExecutionSample();
         const inferenceResult = await Promise.race([
             runInferencePipeline({
                 model: body.inference.model,
@@ -85,17 +95,22 @@ export async function POST(req: Request) {
             ),
         ]);
 
-        const latencyMs = Date.now() - startTime;
+        const executionMetrics = finishTelemetryExecutionSample(executionSample);
+        const measuredLatencyMs = executionMetrics.latencyMs;
+        const latencyMs = Math.max(1, Math.round(measuredLatencyMs));
         const supabase = getSupabaseServer();
         const inferenceEventId = randomUUID();
         const simulationEventId = randomUUID();
+        const modelVersion = body.inference.model_version ?? body.inference.model;
+        const telemetryRunId = resolveTelemetryRunId(modelVersion, resolveTelemetryRunCandidate(inputSignature));
 
         const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
             ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
             : {};
-        telemetry.model_version = body.inference.model_version ?? body.inference.model;
+        telemetry.model_version = modelVersion;
         telemetry.inference_id = inferenceEventId;
         telemetry.simulation_id = simulationEventId;
+        telemetry.run_id = telemetryRunId;
         inferenceResult.output_payload.telemetry = telemetry;
 
         const signatureForLog = { ...inferenceResult.normalizedInput };
@@ -132,7 +147,7 @@ export async function POST(req: Request) {
             case_id: canonicalClinicalCase.id,
             source_module: 'adversarial_simulation',
             model_name: body.inference.model,
-            model_version: body.inference.model_version ?? body.inference.model,
+            model_version: modelVersion,
             input_signature: signatureForLog,
             output_payload: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
@@ -140,17 +155,44 @@ export async function POST(req: Request) {
             compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
+        try {
+            await emitTelemetryEvent(supabase, {
+                event_id: telemetryInferenceEventId(triggeredInferenceId),
+                tenant_id: tenantId,
+                event_type: 'inference',
+                timestamp: observedAt,
+                model_version: modelVersion,
+                run_id: telemetryRunId,
+                metrics: {
+                    latency_ms: measuredLatencyMs,
+                    confidence: inferenceResult.confidence_score,
+                    prediction: extractPredictionLabel(inferenceResult.output_payload),
+                },
+                system: extractSystemTelemetry(telemetry, executionMetrics.system),
+                metadata: {
+                    source_module: 'adversarial_simulation',
+                    request_id: requestId,
+                    inference_event_id: triggeredInferenceId,
+                    simulation_event_id: simulationEventId,
+                    case_id: canonicalClinicalCase.id,
+                    simulation_type: body.simulation.type,
+                    target_disease: targetDisease,
+                },
+            });
+        } catch (telemetryErr) {
+            console.error(`[${requestId}] Telemetry emission failed (non-fatal):`, telemetryErr);
+        }
         const inferredClinicalCase = await finalizeClinicalCaseAfterInference(caseStore, canonicalClinicalCase, triggeredInferenceId, {
             observedAt,
             userId,
             sourceModule: 'adversarial_simulation',
             outputPayload: inferenceResult.output_payload,
             confidenceScore: inferenceResult.confidence_score,
-            modelVersion: body.inference.model_version ?? body.inference.model,
+            modelVersion: modelVersion,
             metadataPatch: {
                 latest_inference_confidence: inferenceResult.confidence_score,
                 latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
-                latest_inference_model_version: body.inference.model_version ?? body.inference.model,
+                latest_inference_model_version: modelVersion,
                 latest_inference_source: 'adversarial_simulation',
             },
         });
@@ -224,7 +266,7 @@ export async function POST(req: Request) {
             clinical_case_id: canonicalClinicalCase.id,
             inference_output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
-            inference_latency_ms: latencyMs,
+            inference_latency_ms: measuredLatencyMs,
             contradiction_analysis: inferenceResult.contradiction_analysis,
             differential_diagnosis: differentialDiagnosis,
             differential_spread: differentialSpread,
@@ -268,4 +310,15 @@ function extractEmergencyLevel(outputPayload: Record<string, unknown>): string |
     return typeof (riskAssessment as Record<string, unknown>).emergency_level === 'string'
         ? (riskAssessment as Record<string, unknown>).emergency_level as string
         : null;
+}
+
+function resolveTelemetryRunCandidate(inputSignature: Record<string, unknown>): unknown {
+    const metadata = asRecord(inputSignature.metadata);
+    return inputSignature.run_id ?? metadata.run_id ?? null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
 }

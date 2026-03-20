@@ -31,6 +31,13 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { OutcomeRequestSchema, formatZodErrors } from '@/lib/http/schemas';
 import { safeJson } from '@/lib/http/safeJson';
+import {
+    emitTelemetryEvent,
+    extractPredictionLabel,
+    resolveTelemetryRunId,
+    telemetryInferenceEventId,
+    telemetryOutcomeEventId,
+} from '@/lib/telemetry/service';
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
@@ -201,6 +208,34 @@ export async function POST(req: Request) {
                 const actualClass = actualOutcome.primary_condition_class as string | undefined;
                 const actualDiagnosis = actualOutcome.diagnosis as string | undefined;
                 const actualSeverity = actualOutcome.severity_score as number | undefined;
+                const telemetryRecord = asRecord(inf.output_payload.telemetry);
+                const predictedLabel = extractPredictionLabel(inf.output_payload);
+                const groundTruthLabel = resolveOutcomeGroundTruth(actualOutcome);
+                const telemetryCorrect = predictedLabel && groundTruthLabel
+                    ? areLabelsEqual(predictedLabel, groundTruthLabel)
+                    : null;
+
+                await emitTelemetryEvent(supabase, {
+                    event_id: telemetryOutcomeEventId(outcomeEventId),
+                    tenant_id: tenantId,
+                    linked_event_id: telemetryInferenceEventId(body.inference_event_id),
+                    event_type: 'outcome',
+                    timestamp: body.outcome.timestamp,
+                    model_version: inf.model_version,
+                    run_id: resolveTelemetryRunId(inf.model_version, telemetryRecord.run_id),
+                    metrics: {
+                        ground_truth: groundTruthLabel,
+                        correct: telemetryCorrect,
+                    },
+                    metadata: {
+                        source_module: 'outcome_learning',
+                        request_id: requestId,
+                        inference_event_id: body.inference_event_id,
+                        outcome_event_id: outcomeEventId,
+                        outcome_type: body.outcome.type,
+                        predicted_label: predictedLabel,
+                    },
+                });
 
                 const recentEvals = await getRecentEvaluations(supabase, tenantId, inf.model_name, 20);
                 pipelineResult.evaluation = await createEvaluationEvent(supabase, {
@@ -314,4 +349,37 @@ function deriveOutcomeLabelType(
     }
 
     return 'expert_reviewed';
+}
+
+function resolveOutcomeGroundTruth(payload: Record<string, unknown>): string | null {
+    const directDiagnosis = typeof payload.diagnosis === 'string' ? payload.diagnosis : null;
+    if (directDiagnosis && directDiagnosis.trim().length > 0) {
+        return directDiagnosis.trim();
+    }
+
+    const diagnosisName = typeof payload.diagnosis_name === 'string' ? payload.diagnosis_name : null;
+    if (diagnosisName && diagnosisName.trim().length > 0) {
+        return diagnosisName.trim();
+    }
+
+    const primaryConditionClass = typeof payload.primary_condition_class === 'string'
+        ? payload.primary_condition_class
+        : null;
+    return primaryConditionClass && primaryConditionClass.trim().length > 0
+        ? primaryConditionClass.trim()
+        : null;
+}
+
+function areLabelsEqual(left: string, right: string) {
+    return normalizeLabel(left) === normalizeLabel(right);
+}
+
+function normalizeLabel(value: string) {
+    return value.trim().toLowerCase();
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
 }

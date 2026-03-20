@@ -1,219 +1,234 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Container, PageHeader, ConsoleCard } from '@/components/ui/terminal';
+import type { ReactNode } from 'react';
+import { useEffect, useState } from 'react';
+import { Container, PageHeader, ConsoleCard, DataRow, TerminalButton } from '@/components/ui/terminal';
 import { TelemetryChart } from '@/components/ui/TelemetryChart';
-import { Activity, Terminal, RefreshCw, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import type {
+    TelemetryLogEntry,
+    TelemetryMetricState,
+    TelemetrySnapshot,
+    TelemetryStreamPayload,
+} from '@/lib/telemetry/types';
+import {
+    Activity,
+    AlertTriangle,
+    CheckCircle2,
+    RefreshCw,
+    Terminal,
+    Wifi,
+    WifiOff,
+} from 'lucide-react';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+type StreamStatus = 'connecting' | 'live' | 'disconnected';
 
-interface TelemetryMetrics {
-    total_inferences_24h: number;
-    avg_confidence: number | null;
-    p95_latency_ms: number | null;
-    confidence_drift_24h: number | null;
-    total_simulations: number;
-    total_outcomes: number;
-}
-
-interface ChartPoint {
-    time: string;
-    [key: string]: string | number;
-}
-
-interface TelemetryData {
-    metrics: TelemetryMetrics;
-    charts: {
-        latency: ChartPoint[];
-        drift: ChartPoint[];
-    };
-}
-
-interface TelemetryState {
-    status: 'loading' | 'live' | 'error';
-    data?: TelemetryData;
-    errorMessage?: string;
-    lastRefreshed?: Date;
-}
-
-// ── Page ─────────────────────────────────────────────────────────────────────
-
-export default function TelemetrySystem() {
-    const [state, setState] = useState<TelemetryState>({ status: 'loading' });
-    const [logs, setLogs] = useState<string[]>([]);
-
-    const fetchTelemetry = useCallback(async () => {
-        try {
-            const res = await fetch('/api/telemetry');
-            const data = await res.json();
-
-            if (!res.ok) {
-                throw new Error(data.error || 'Failed to fetch telemetry');
-            }
-
-            setState({
-                status: 'live',
-                data,
-                lastRefreshed: new Date(),
-            });
-
-            // Push a real log entry
-            const m = data.metrics;
-            setLogs(prev => [
-                `[INFO] TELEMETRY_REFRESH: ${m.total_inferences_24h} inferences | p95=${m.p95_latency_ms ?? '—'}ms | confidence=${m.avg_confidence != null ? (m.avg_confidence * 100).toFixed(1) + '%' : '—'}`,
-                ...prev,
-            ].slice(0, 15));
-        } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : 'Unknown error';
-            setState(prev => ({ ...prev, status: 'error', errorMessage: msg }));
-            setLogs(prev => [
-                `[ERROR] TELEMETRY_FETCH: ${msg}`,
-                ...prev,
-            ].slice(0, 15));
-        }
-    }, []);
+export default function TelemetryObserverPage() {
+    const [snapshot, setSnapshot] = useState<TelemetrySnapshot | null>(null);
+    const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
+    const [streamError, setStreamError] = useState<string | null>(null);
+    const [simulationMode, setSimulationMode] = useState(false);
+    const [streamNonce, setStreamNonce] = useState(0);
+    const [lastStreamUpdate, setLastStreamUpdate] = useState<Date | null>(null);
 
     useEffect(() => {
-        fetchTelemetry();
-        const interval = setInterval(fetchTelemetry, 30_000); // Auto-refresh every 30s
-        return () => clearInterval(interval);
-    }, [fetchTelemetry]);
+        setStreamStatus('connecting');
+        setStreamError(null);
 
-    const m = state.data?.metrics;
-    const charts = state.data?.charts;
+        const params = new URLSearchParams();
+        if (simulationMode) {
+            params.set('simulation', '1');
+        }
+
+        const source = new EventSource(`/telemetry/stream${params.toString() ? `?${params}` : ''}`);
+
+        source.onmessage = (event) => {
+            const payload = JSON.parse(event.data) as TelemetryStreamPayload;
+            setSnapshot(payload.snapshot);
+            setStreamStatus('live');
+            setStreamError(null);
+            setLastStreamUpdate(new Date());
+        };
+
+        source.addEventListener('stream-error', (event) => {
+            const messageEvent = event as MessageEvent<string>;
+            try {
+                const payload = JSON.parse(messageEvent.data) as { error?: string };
+                setStreamError(payload.error ?? 'Telemetry stream failure');
+            } catch {
+                setStreamError('Telemetry stream failure');
+            }
+            setStreamStatus('disconnected');
+        });
+
+        source.onerror = () => {
+            setStreamStatus('disconnected');
+            setStreamError('STREAM DISCONNECTED');
+        };
+
+        return () => {
+            source.close();
+        };
+    }, [simulationMode, streamNonce]);
+
+    const hasSnapshot = snapshot !== null;
+    const disconnectedWithoutData = streamStatus === 'disconnected' && !hasSnapshot;
+    const stale = snapshot?.system_state === 'STALE';
 
     return (
         <Container>
             <PageHeader
-                title="TELEMETRY OBSERVATOR"
-                description="Live system health, metric streaming, and model drift telemetry."
+                title="TELEMETRY OBSERVER"
+                description="Real-time clinical telemetry, event streaming, drift monitoring, and observer health."
             />
 
-            {/* Refresh control */}
-            <div className="flex items-center gap-3 mb-4 sm:mb-6 font-mono text-xs text-muted">
-                <button
-                    onClick={fetchTelemetry}
-                    className="flex items-center gap-1.5 hover:text-accent transition-colors"
-                    disabled={state.status === 'loading'}
-                >
-                    <RefreshCw className={`w-3 h-3 ${state.status === 'loading' ? 'animate-spin' : ''}`} />
-                    REFRESH
-                </button>
-                {state.lastRefreshed && (
-                    <span className="text-muted">
-                        Last: {state.lastRefreshed.toLocaleTimeString()}
+            <div className="flex flex-col gap-3 mb-4 sm:mb-6">
+                <div className="flex flex-wrap items-center gap-3 font-mono text-xs text-muted">
+                    <button
+                        type="button"
+                        onClick={() => setStreamNonce((value) => value + 1)}
+                        className="flex items-center gap-1.5 hover:text-accent transition-colors"
+                    >
+                        <RefreshCw className="w-3 h-3" />
+                        RECONNECT STREAM
+                    </button>
+                    <TerminalButton
+                        type="button"
+                        variant={simulationMode ? 'primary' : 'secondary'}
+                        onClick={() => setSimulationMode((value) => !value)}
+                    >
+                        SIMULATION MODE {simulationMode ? 'ON' : 'OFF'}
+                    </TerminalButton>
+                    {lastStreamUpdate ? (
+                        <span>Last stream update: {lastStreamUpdate.toLocaleTimeString()}</span>
+                    ) : (
+                        <span>{streamStatus === 'connecting' ? 'Connecting to /telemetry/stream...' : 'No stream payload received yet'}</span>
+                    )}
+                    <span className={`ml-auto flex items-center gap-1 ${statusTone(streamStatus)}`}>
+                        {streamStatus === 'live' ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                        {streamStatus === 'live' ? 'LIVE STREAM' : streamStatus === 'connecting' ? 'CONNECTING' : 'STREAM DISCONNECTED'}
                     </span>
+                </div>
+
+                {streamError && (
+                    <div className="p-3 border border-danger bg-danger/5 font-mono text-xs text-danger">
+                        {streamError}
+                    </div>
                 )}
-                <span className={`ml-auto flex items-center gap-1 ${state.status === 'live' ? 'text-accent' : state.status === 'error' ? 'text-danger' : 'text-muted'}`}>
-                    <div className={`w-1.5 h-1.5 rounded-full ${state.status === 'live' ? 'bg-accent animate-pulse' : state.status === 'error' ? 'bg-danger' : 'bg-muted'}`} />
-                    {state.status === 'loading' ? 'CONNECTING' : state.status === 'live' ? 'LIVE' : 'ERROR'}
-                </span>
+
+                {stale && (
+                    <div className="p-3 border border-[#ffcc00] bg-[#ffcc00]/5 font-mono text-xs text-[#ffcc00]">
+                        HEARTBEAT WARNING: observer is stale because no telemetry event has been received in the last 30 seconds.
+                    </div>
+                )}
             </div>
 
-            {/* Error Banner */}
-            {state.status === 'error' && (
-                <div className="mb-4 sm:mb-6 p-3 border border-danger bg-danger/5 font-mono text-xs text-danger">
-                    ERR: {state.errorMessage}
-                </div>
-            )}
-
-            {/* ── Top Metric Cards ─────────────────────────────────────── */}
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 mb-6 sm:mb-8">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 sm:gap-4 mb-6 sm:mb-8">
                 <MetricCard
                     label="Inferences (24h)"
-                    value={m ? String(m.total_inferences_24h) : '—'}
-                    loading={state.status === 'loading'}
+                    value={formatCount(snapshot?.metrics.inference_count, disconnectedWithoutData)}
+                    tone="accent"
                 />
                 <MetricCard
                     label="p95 Latency"
-                    value={m?.p95_latency_ms != null ? `${m.p95_latency_ms}ms` : '—'}
-                    loading={state.status === 'loading'}
+                    value={formatLatencyMetric(snapshot, streamStatus)}
+                    tone={snapshot?.metrics.anomaly_count ? 'danger' : 'accent'}
+                    icon={snapshot?.metrics.anomaly_count ? <AlertTriangle className="w-3 h-3 text-danger" /> : undefined}
                 />
                 <MetricCard
                     label="Avg Confidence"
-                    value={m?.avg_confidence != null ? `${(m.avg_confidence * 100).toFixed(1)}%` : '—'}
-                    accent={m?.avg_confidence != null && m.avg_confidence < 0.6 ? 'danger' : 'accent'}
-                    loading={state.status === 'loading'}
+                    value={formatPercentMetric(snapshot?.metrics.avg_confidence, snapshot?.metric_states.avg_confidence, streamStatus)}
+                    tone={(snapshot?.metrics.avg_confidence ?? 1) < 0.6 ? 'danger' : 'accent'}
                 />
                 <MetricCard
-                    label="Confidence Drift"
-                    value={m?.confidence_drift_24h != null ? `${(m.confidence_drift_24h * 100).toFixed(2)}%` : '—'}
-                    accent={m?.confidence_drift_24h != null && m.confidence_drift_24h < -0.05 ? 'danger' : 'accent'}
-                    loading={state.status === 'loading'}
-                    icon={m?.confidence_drift_24h != null && m.confidence_drift_24h < -0.05
-                        ? <AlertTriangle className="w-3 h-3 text-danger" />
-                        : m?.confidence_drift_24h != null
-                            ? <CheckCircle2 className="w-3 h-3 text-accent" />
-                            : undefined
-                    }
+                    label="Accuracy"
+                    value={formatPercentMetric(snapshot?.metrics.accuracy, snapshot?.metric_states.accuracy, streamStatus)}
+                    tone="accent"
+                    icon={snapshot?.metric_states.accuracy === 'READY' ? <CheckCircle2 className="w-3 h-3 text-accent" /> : undefined}
                 />
                 <MetricCard
-                    label="Simulations"
-                    value={m ? String(m.total_simulations) : '—'}
-                    loading={state.status === 'loading'}
+                    label="Drift Score"
+                    value={formatDriftMetric(snapshot, streamStatus)}
+                    tone={snapshot?.metric_states.drift_score === 'READY' && (snapshot.metrics.drift_score ?? 0) > 0.2 ? 'danger' : 'accent'}
+                    icon={snapshot?.metric_states.drift_score === 'READY' && (snapshot.metrics.drift_score ?? 0) > 0.2 ? <AlertTriangle className="w-3 h-3 text-danger" /> : undefined}
                 />
                 <MetricCard
-                    label="Outcomes"
-                    value={m ? String(m.total_outcomes) : '—'}
-                    loading={state.status === 'loading'}
+                    label="Outcomes (24h)"
+                    value={formatCount(snapshot?.metrics.outcome_count, disconnectedWithoutData)}
+                    tone="accent"
+                />
+                <MetricCard
+                    label="Latency Anomalies"
+                    value={formatCount(snapshot?.metrics.anomaly_count, disconnectedWithoutData)}
+                    tone={snapshot?.metrics.anomaly_count ? 'danger' : 'muted'}
                 />
             </div>
 
-            {/* ── Charts ──────────────────────────────────────────────── */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6 mb-4 sm:mb-6">
-                <ConsoleCard title="Inference Latency (p95) — ms" className="h-[240px] sm:h-[300px]" collapsible>
-                    {charts && charts.latency.length > 0 ? (
-                        <div className="flex-1 -mx-2 sm:-mx-4 h-full">
-                            <TelemetryChart data={charts.latency} dataKey="latency" color="#00ff41" />
-                        </div>
-                    ) : state.status === 'loading' ? (
-                        <div className="h-full flex items-center justify-center text-accent animate-pulse font-mono text-xs sm:text-sm">
-                            <Activity className="w-4 h-4 mr-2 animate-spin" /> LOADING LATENCY DATA...
-                        </div>
-                    ) : (
-                        <div className="h-full flex items-center justify-center text-muted text-[10px] font-mono border border-dashed border-grid">
-                            NO LATENCY DATA — Run inferences to populate
-                        </div>
-                    )}
-                </ConsoleCard>
+            <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 sm:gap-6 mb-4 sm:mb-6">
+                <div className="xl:col-span-3 grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                    <ConsoleCard title="Inference Latency (p95 window input)" className="h-[260px] sm:h-[320px]" collapsible>
+                        {snapshot && snapshot.charts.latency.length > 0 ? (
+                            <div className="flex-1 -mx-2 sm:-mx-4 h-full">
+                                <TelemetryChart data={snapshot.charts.latency} color="#00ff41" />
+                            </div>
+                        ) : (
+                            <EmptyChartState message={resolveLatencyChartMessage(snapshot, streamStatus)} />
+                        )}
+                    </ConsoleCard>
 
-                <ConsoleCard title="Model Drift Score (L2 Norm)" className="h-[240px] sm:h-[300px]" collapsible>
-                    {charts && charts.drift.length > 0 ? (
-                        <div className="flex-1 -mx-2 sm:-mx-4 h-full">
-                            <TelemetryChart data={charts.drift} dataKey="drift" color="#ff3333" />
-                        </div>
-                    ) : state.status === 'loading' ? (
-                        <div className="h-full flex items-center justify-center text-danger animate-pulse font-mono text-xs sm:text-sm">
-                            <Activity className="w-4 h-4 mr-2 animate-spin" /> LOADING DRIFT DATA...
-                        </div>
-                    ) : (
-                        <div className="h-full flex items-center justify-center text-muted text-[10px] font-mono border border-dashed border-grid">
-                            NO DRIFT DATA — Attach outcomes to generate evaluation events
-                        </div>
-                    )}
+                    <ConsoleCard title="Distribution Drift (L2 norm)" className="h-[260px] sm:h-[320px]" collapsible>
+                        {snapshot && snapshot.charts.drift.length > 0 ? (
+                            <div className="flex-1 -mx-2 sm:-mx-4 h-full">
+                                <TelemetryChart data={snapshot.charts.drift} color="#ff3333" />
+                            </div>
+                        ) : (
+                            <EmptyChartState message={resolveDriftChartMessage(snapshot, streamStatus)} />
+                        )}
+                    </ConsoleCard>
+                </div>
+
+                <ConsoleCard title="Observer State" collapsible>
+                    <div className="space-y-2">
+                        <DataRow label="System State" value={snapshot?.system_state ?? stateForMissingSnapshot(streamStatus)} />
+                        <DataRow
+                            label="Last Event"
+                            value={snapshot?.last_event_timestamp ? new Date(snapshot.last_event_timestamp).toLocaleString() : stateForMissingSnapshot(streamStatus)}
+                        />
+                        <DataRow
+                            label="CPU"
+                            value={formatUtilization(snapshot?.latest_system.cpu, streamStatus)}
+                        />
+                        <DataRow
+                            label="GPU"
+                            value={formatUtilization(snapshot?.latest_system.gpu, streamStatus)}
+                        />
+                        <DataRow
+                            label="Memory"
+                            value={formatUtilization(snapshot?.latest_system.memory, streamStatus)}
+                        />
+                        <DataRow
+                            label="Simulation"
+                            value={simulationMode ? 'ENABLED' : 'DISABLED'}
+                        />
+                    </div>
                 </ConsoleCard>
             </div>
 
-            {/* ── Live Log Stream ─────────────────────────────────────── */}
             <ConsoleCard title="System Log Stream" collapsible>
-                <div className="bg-black border border-grid/50 p-3 sm:p-4 h-[200px] sm:h-[250px] overflow-hidden flex flex-col font-mono text-xs">
+                <div className="bg-black border border-grid/50 p-3 sm:p-4 h-[220px] sm:h-[280px] overflow-hidden flex flex-col font-mono text-xs">
                     <div className="flex items-center gap-2 text-accent/50 mb-3 sm:mb-4 border-b border-grid/50 pb-2 text-[10px] sm:text-xs">
                         <Terminal className="w-3 h-3 sm:w-4 sm:h-4" />
-                        <span>TAIL -F /VAR/LOG/VETIOS/RUNTIME.LOG</span>
+                        <span>EVENT-DRIVEN TELEMETRY LOG</span>
                         <Activity className="w-3 h-3 ml-auto animate-pulse" />
                     </div>
                     <div className="flex-1 overflow-y-auto space-y-1 text-muted/80">
-                        {logs.length === 0 ? (
-                            <div className="text-muted/40 text-center pt-8">Waiting for telemetry events...</div>
-                        ) : (
-                            logs.map((log, i) => (
-                                <div key={i} className={`truncate text-[10px] sm:text-xs ${log.includes('ERROR') ? 'text-danger' : log.includes('WARN') ? 'text-[#ffcc00]' : ''}`}>
-                                    <span className="text-muted/40 mr-2">
-                                        {new Date().toISOString().split('T')[1]?.slice(0, 12) ?? ''}
-                                    </span>
-                                    {log}
-                                </div>
+                        {snapshot && snapshot.logs.length > 0 ? (
+                            snapshot.logs.map((log) => (
+                                <LogLine key={log.id} log={log} />
                             ))
+                        ) : (
+                            <div className="text-muted/40 text-center pt-8">
+                                {disconnectedWithoutData ? 'STREAM DISCONNECTED' : 'NO DATA'}
+                            </div>
                         )}
                     </div>
                 </div>
@@ -222,32 +237,160 @@ export default function TelemetrySystem() {
     );
 }
 
-// ── Metric Card Component ────────────────────────────────────────────────────
-
 function MetricCard({
     label,
     value,
-    accent = 'accent',
-    loading = false,
+    tone,
     icon,
 }: {
     label: string;
     value: string;
-    accent?: string;
-    loading?: boolean;
-    icon?: React.ReactNode;
+    tone: 'accent' | 'danger' | 'muted';
+    icon?: ReactNode;
 }) {
+    const tones = {
+        accent: {
+            border: 'border-accent/20',
+            text: 'text-accent',
+        },
+        danger: {
+            border: 'border-danger/20',
+            text: 'text-danger',
+        },
+        muted: {
+            border: 'border-muted/20',
+            text: 'text-muted',
+        },
+    } as const;
+
     return (
-        <ConsoleCard className={`p-3 sm:p-4 border-${accent}/20`}>
+        <ConsoleCard className={`p-3 sm:p-4 ${tones[tone].border}`}>
             <div className="font-mono text-[9px] sm:text-[10px] text-muted uppercase mb-1 truncate">{label}</div>
-            {loading ? (
-                <div className="font-mono text-lg sm:text-2xl text-muted animate-pulse">—</div>
-            ) : (
-                <div className={`font-mono text-lg sm:text-2xl text-${accent} flex items-center gap-1.5`}>
-                    {value}
-                    {icon}
-                </div>
-            )}
+            <div className={`font-mono text-lg sm:text-2xl flex items-center gap-1.5 ${tones[tone].text}`}>
+                {value}
+                {icon}
+            </div>
         </ConsoleCard>
     );
+}
+
+function EmptyChartState({ message }: { message: string }) {
+    return (
+        <div className="h-full flex items-center justify-center text-muted text-[10px] sm:text-xs font-mono border border-dashed border-grid">
+            {message}
+        </div>
+    );
+}
+
+function LogLine({ log }: { log: TelemetryLogEntry }) {
+    const tone = log.level === 'ERROR'
+        ? 'text-danger'
+        : log.level === 'WARN'
+            ? 'text-[#ffcc00]'
+            : 'text-muted/80';
+
+    return (
+        <div className={`truncate text-[10px] sm:text-xs ${tone}`}>
+            <span className="text-muted/40 mr-2">
+                {new Date(log.timestamp).toLocaleTimeString()}
+            </span>
+            {log.message}
+        </div>
+    );
+}
+
+function formatCount(value: number | undefined, disconnectedWithoutData: boolean) {
+    if (typeof value === 'number') {
+        return String(value);
+    }
+    return disconnectedWithoutData ? 'STREAM DISCONNECTED' : 'NO DATA';
+}
+
+function formatLatencyMetric(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (snapshot?.metric_states.p95_latency === 'READY' && snapshot.metrics.p95_latency_ms != null) {
+        return `${snapshot.metrics.p95_latency_ms.toFixed(1)}ms`;
+    }
+    return formatMetricState(snapshot?.metric_states.p95_latency, streamStatus);
+}
+
+function formatPercentMetric(
+    value: number | null | undefined,
+    state: TelemetryMetricState | undefined,
+    streamStatus: StreamStatus,
+) {
+    if (state === 'READY' && value != null) {
+        return `${(value * 100).toFixed(1)}%`;
+    }
+    return formatMetricState(state, streamStatus);
+}
+
+function formatDriftMetric(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (snapshot?.metric_states.drift_score === 'READY' && snapshot.metrics.drift_score != null) {
+        return snapshot.metrics.drift_score.toFixed(4);
+    }
+    return formatMetricState(snapshot?.metric_states.drift_score, streamStatus, true);
+}
+
+function formatMetricState(
+    state: TelemetryMetricState | undefined,
+    streamStatus: StreamStatus,
+    useInsufficientDataLabel = false,
+) {
+    if (streamStatus === 'disconnected' && !state) {
+        return 'STREAM DISCONNECTED';
+    }
+
+    if (state === 'NO_DATA') {
+        return 'NO DATA';
+    }
+
+    if (state === 'INSUFFICIENT_OUTCOMES') {
+        return useInsufficientDataLabel ? 'INSUFFICIENT DATA' : 'INSUFFICIENT OUTCOMES';
+    }
+
+    if (state === 'STREAM_DISCONNECTED' || streamStatus === 'disconnected') {
+        return 'STREAM DISCONNECTED';
+    }
+
+    return 'NO DATA';
+}
+
+function formatUtilization(value: number | null | undefined, streamStatus: StreamStatus) {
+    if (value == null) {
+        return stateForMissingSnapshot(streamStatus);
+    }
+    return `${(value * 100).toFixed(1)}%`;
+}
+
+function resolveLatencyChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (streamStatus === 'disconnected' && !snapshot) {
+        return 'STREAM DISCONNECTED';
+    }
+    if (snapshot?.metric_states.p95_latency === 'NO_DATA') {
+        return 'NO DATA';
+    }
+    return 'NO DATA';
+}
+
+function resolveDriftChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (streamStatus === 'disconnected' && !snapshot) {
+        return 'STREAM DISCONNECTED';
+    }
+    if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES') {
+        return 'INSUFFICIENT DATA';
+    }
+    return 'NO DATA';
+}
+
+function stateForMissingSnapshot(streamStatus: StreamStatus) {
+    if (streamStatus === 'disconnected') {
+        return 'STREAM DISCONNECTED';
+    }
+    return 'NO DATA';
+}
+
+function statusTone(streamStatus: StreamStatus) {
+    if (streamStatus === 'live') return 'text-accent';
+    if (streamStatus === 'disconnected') return 'text-danger';
+    return 'text-muted';
 }

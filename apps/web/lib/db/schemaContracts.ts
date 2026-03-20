@@ -276,6 +276,23 @@ export const MODEL_EVALUATION_EVENTS = {
     },
 } as const;
 
+export const TELEMETRY_EVENTS = {
+    TABLE: 'telemetry_events',
+    COLUMNS: {
+        event_id: 'event_id',
+        tenant_id: 'tenant_id',
+        linked_event_id: 'linked_event_id',
+        event_type: 'event_type',
+        timestamp: 'timestamp',
+        model_version: 'model_version',
+        run_id: 'run_id',
+        metrics: 'metrics',
+        system: 'system',
+        metadata: 'metadata',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const LEARNING_DATASET_VERSIONS = {
     TABLE: 'learning_dataset_versions',
     COLUMNS: {
