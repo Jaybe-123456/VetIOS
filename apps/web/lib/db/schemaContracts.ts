@@ -253,3 +253,158 @@ export const NETWORK_INTELLIGENCE_METRICS = {
         computed_at: 'computed_at',                        // timestamptz, NOT NULL
     },
 } as const;
+
+export const MODEL_EVALUATION_EVENTS = {
+    TABLE: 'model_evaluation_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        trigger_type: 'trigger_type',
+        inference_event_id: 'inference_event_id',
+        outcome_event_id: 'outcome_event_id',
+        model_name: 'model_name',
+        model_version: 'model_version',
+        calibration_error: 'calibration_error',
+        drift_score: 'drift_score',
+        outcome_alignment_delta: 'outcome_alignment_delta',
+        simulation_degradation: 'simulation_degradation',
+        calibrated_confidence: 'calibrated_confidence',
+        epistemic_uncertainty: 'epistemic_uncertainty',
+        aleatoric_uncertainty: 'aleatoric_uncertainty',
+        evaluation_payload: 'evaluation_payload',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const LEARNING_DATASET_VERSIONS = {
+    TABLE: 'learning_dataset_versions',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        dataset_version: 'dataset_version',
+        dataset_kind: 'dataset_kind',
+        feature_schema_version: 'feature_schema_version',
+        label_policy_version: 'label_policy_version',
+        row_count: 'row_count',
+        case_ids: 'case_ids',
+        filters: 'filters',
+        summary: 'summary',
+        dataset_rows: 'dataset_rows',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const LEARNING_CYCLES = {
+    TABLE: 'learning_cycles',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        cycle_type: 'cycle_type',
+        trigger_mode: 'trigger_mode',
+        status: 'status',
+        request_payload: 'request_payload',
+        summary: 'summary',
+        started_at: 'started_at',
+        completed_at: 'completed_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const LEARNING_BENCHMARK_REPORTS = {
+    TABLE: 'learning_benchmark_reports',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        learning_cycle_id: 'learning_cycle_id',
+        model_registry_id: 'model_registry_id',
+        benchmark_family: 'benchmark_family',
+        task_type: 'task_type',
+        report_payload: 'report_payload',
+        summary_score: 'summary_score',
+        pass_status: 'pass_status',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const LEARNING_CALIBRATION_REPORTS = {
+    TABLE: 'learning_calibration_reports',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        learning_cycle_id: 'learning_cycle_id',
+        model_registry_id: 'model_registry_id',
+        task_type: 'task_type',
+        report_payload: 'report_payload',
+        brier_score: 'brier_score',
+        ece_score: 'ece_score',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const MODEL_REGISTRY_ENTRIES = {
+    TABLE: 'model_registry_entries',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        model_name: 'model_name',
+        model_version: 'model_version',
+        task_type: 'task_type',
+        training_dataset_version: 'training_dataset_version',
+        feature_schema_version: 'feature_schema_version',
+        label_policy_version: 'label_policy_version',
+        artifact_payload: 'artifact_payload',
+        benchmark_scorecard: 'benchmark_scorecard',
+        calibration_report_id: 'calibration_report_id',
+        promotion_status: 'promotion_status',
+        is_champion: 'is_champion',
+        latency_profile: 'latency_profile',
+        resource_profile: 'resource_profile',
+        parent_model_version: 'parent_model_version',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const LEARNING_SCHEDULER_JOBS = {
+    TABLE: 'learning_scheduler_jobs',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        job_name: 'job_name',
+        cron_expression: 'cron_expression',
+        job_type: 'job_type',
+        enabled: 'enabled',
+        job_config: 'job_config',
+        last_run_at: 'last_run_at',
+        next_run_at: 'next_run_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const LEARNING_ROLLBACK_EVENTS = {
+    TABLE: 'learning_rollback_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        learning_cycle_id: 'learning_cycle_id',
+        previous_model_registry_id: 'previous_model_registry_id',
+        restored_model_registry_id: 'restored_model_registry_id',
+        trigger_reason: 'trigger_reason',
+        trigger_payload: 'trigger_payload',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const LEARNING_AUDIT_EVENTS = {
+    TABLE: 'learning_audit_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        learning_cycle_id: 'learning_cycle_id',
+        event_type: 'event_type',
+        event_payload: 'event_payload',
+        created_at: 'created_at',
+    },
+} as const;
