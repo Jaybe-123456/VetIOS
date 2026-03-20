@@ -354,6 +354,7 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
 
 async function main() {
     await testExperimentTrackingServiceFlow();
+    await testHeartbeatStateConsistency();
     await testExperimentBootstrapSeed();
 
     console.log('Experiment tracking integration tests passed.');
@@ -472,7 +473,7 @@ async function testExperimentBootstrapSeed() {
 
     const smokeRun = await store.getExperimentRun(tenantId, 'run_diag_smoke_v1');
     assert.ok(smokeRun);
-    assert.equal(smokeRun?.last_heartbeat_at, '2026-03-20T03:55:00Z');
+    assert.ok(smokeRun?.last_heartbeat_at);
 
     for (const runId of ['run_diag_smoke_v1', 'run_diag_complete_v1', 'run_diag_fail_v1']) {
         const metrics = await store.listExperimentMetrics(tenantId, runId, 100);
@@ -493,6 +494,10 @@ async function testExperimentBootstrapSeed() {
     assert.ok(completeDetail?.deployment_decision);
     assert.ok((completeDetail?.subgroup_metrics.length ?? 0) > 0);
     assert.ok((completeDetail?.audit_history.length ?? 0) > 0);
+    assert.equal(completeDetail?.registry_link_state, 'linked');
+    assert.equal(completeDetail?.registry_role, 'experimental');
+    assert.equal(completeDetail?.safety_coverage, 'partial');
+    assert.equal(completeDetail?.promotion_gating.can_promote, false);
 
     const calibration = await upsertCalibrationEvaluation(store, tenantId, 'run_diag_complete_v1', {
         ece: 0.03,
@@ -502,19 +507,26 @@ async function testExperimentBootstrapSeed() {
             { confidence: 0.5, accuracy: 0.52, count: 18 },
             { confidence: 0.8, accuracy: 0.82, count: 14 },
         ],
+        confidenceHistogram: [
+            { confidence: 0.2, count: 12 },
+            { confidence: 0.5, count: 18 },
+            { confidence: 0.8, count: 14 },
+        ],
         calibrationPass: true,
         calibrationNotes: 'Manual QA override for governance validation.',
     }, 'qa_user');
     assert.equal(calibration.calibration_pass, true);
+    assert.equal(calibration.confidence_histogram.length, 3);
 
     const adversarial = await upsertAdversarialEvaluation(store, tenantId, 'run_diag_complete_v1', {
         degradationScore: 0.14,
         contradictionRobustness: 0.88,
         criticalCaseRecall: 0.93,
-        falseReassuranceRate: 0.04,
+        dangerousFalseReassuranceRate: 0.04,
         adversarialPass: true,
     }, 'qa_user');
     assert.equal(adversarial.adversarial_pass, true);
+    assert.equal(adversarial.dangerous_false_reassurance_rate, 0.04);
 
     await logExperimentMetrics(store, tenantId, 'run_diag_complete_v1', [{
         epoch: 8,
@@ -555,7 +567,56 @@ async function testExperimentBootstrapSeed() {
     assert.ok(dashboard.selected_run_detail);
     assert.equal(dashboard.selected_run_detail?.metrics.length, 5);
     assert.ok(dashboard.summary.registry_link_coverage_pct > 0);
-    assert.ok(dashboard.summary.safety_metric_coverage_pct > 0);
+    assert.ok(dashboard.summary.safety_metric_coverage_pct < 100);
+    assert.equal(dashboard.selected_run_detail?.heartbeat_freshness, 'healthy');
+
+    const auditTypes = new Set((await getExperimentRunDetail(store, tenantId, 'run_diag_complete_v1'))?.audit_history.map((event) => event.event_type));
+    assert.ok(auditTypes.has('registry_candidate_created') || auditTypes.has('registry_synced'));
+    assert.ok(auditTypes.has('calibration_completed'));
+    assert.ok(auditTypes.has('adversarial_completed'));
+    assert.ok(auditTypes.has('deployment_evaluated'));
+    assert.ok(auditTypes.has('benchmark_completed'));
+}
+
+async function testHeartbeatStateConsistency() {
+    const tenantId = makeUuid(3);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createExperimentRun(store, {
+        tenantId,
+        runId: 'run_stale_v1',
+        taskType: 'clinical_diagnosis',
+        modality: 'tabular_clinical',
+        targetType: 'diagnosis',
+        modelArch: 'Transformer-Clinical-Small',
+        datasetName: 'vet_clinical_subset_b',
+        status: 'training',
+        lastHeartbeatAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+    });
+    await createExperimentRun(store, {
+        tenantId,
+        runId: 'run_interrupted_v1',
+        taskType: 'clinical_diagnosis',
+        modality: 'tabular_clinical',
+        targetType: 'diagnosis',
+        modelArch: 'Transformer-Clinical-Small',
+        datasetName: 'vet_clinical_subset_b',
+        status: 'training',
+        lastHeartbeatAt: new Date(Date.now() - 50 * 60 * 1000).toISOString(),
+    });
+
+    const staleRun = await store.getExperimentRun(tenantId, 'run_stale_v1');
+    const interruptedRun = await store.getExperimentRun(tenantId, 'run_interrupted_v1');
+    assert.equal(staleRun?.status, 'stalled');
+    assert.equal(interruptedRun?.status, 'interrupted');
+
+    const snapshot = await getExperimentDashboardSnapshot(store, tenantId);
+    assert.equal(snapshot.summary.active_runs, 0);
+
+    const staleDetail = await getExperimentRunDetail(store, tenantId, 'run_stale_v1');
+    const interruptedDetail = await getExperimentRunDetail(store, tenantId, 'run_interrupted_v1');
+    assert.equal(staleDetail?.heartbeat_freshness, 'stale');
+    assert.equal(interruptedDetail?.heartbeat_freshness, 'interrupted');
 }
 
 function buildStore(tenantId: string) {

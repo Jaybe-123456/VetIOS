@@ -730,6 +730,9 @@ function mapCalibrationMetrics(row: Record<string, unknown>): CalibrationMetricR
         reliability_bins: Array.isArray(row.reliability_bins)
             ? row.reliability_bins.map((entry) => asReliabilityBin(entry)).filter(Boolean) as CalibrationMetricRecord['reliability_bins']
             : [],
+        confidence_histogram: Array.isArray(row.confidence_histogram)
+            ? row.confidence_histogram.map((entry) => asConfidenceHistogramBin(entry)).filter(Boolean) as CalibrationMetricRecord['confidence_histogram']
+            : [],
         calibration_pass: typeof row.calibration_pass === 'boolean' ? row.calibration_pass : null,
         calibration_notes: readString(row.calibration_notes),
         created_at: String(row.created_at),
@@ -746,6 +749,7 @@ function mapAdversarialMetrics(row: Record<string, unknown>): AdversarialMetricR
         contradiction_robustness: readNumber(row.contradiction_robustness),
         critical_case_recall: readNumber(row.critical_case_recall),
         false_reassurance_rate: readNumber(row.false_reassurance_rate),
+        dangerous_false_reassurance_rate: readNumber(row.dangerous_false_reassurance_rate) ?? readNumber(row.false_reassurance_rate),
         adversarial_pass: typeof row.adversarial_pass === 'boolean' ? row.adversarial_pass : null,
         created_at: String(row.created_at),
         updated_at: String(row.updated_at ?? row.created_at),
@@ -855,6 +859,18 @@ function asReliabilityBin(value: unknown): CalibrationMetricRecord['reliability_
         confidence,
         accuracy,
         count: count ?? 0,
+    };
+}
+
+function asConfidenceHistogramBin(value: unknown): CalibrationMetricRecord['confidence_histogram'][number] | null {
+    if (!value || typeof value !== 'object') return null;
+    const entry = value as Record<string, unknown>;
+    const confidence = readNumber(entry.confidence);
+    const count = readNumber(entry.count);
+    if (confidence == null || count == null) return null;
+    return {
+        confidence,
+        count,
     };
 }
 

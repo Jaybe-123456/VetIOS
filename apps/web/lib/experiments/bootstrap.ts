@@ -75,8 +75,23 @@ export async function seedExperimentTrackingBootstrap(
         includeSummaryOnly: true,
     });
     const seededRuns = runs.filter((run) => EXPERIMENT_BOOTSTRAP_RUN_IDS.includes(run.run_id as typeof EXPERIMENT_BOOTSTRAP_RUN_IDS[number]));
-    const activeRuns = seededRuns.filter((run) => isActiveStatus(run.status));
-    const telemetryReady = seededRuns.filter((run) => !run.summary_only && run.last_heartbeat_at != null).length;
+    const activeRuns = seededRuns.filter((run) => isHealthyBootstrapRun(run));
+    const telemetryReadiness = await Promise.all(
+        seededRuns.map(async (run) => {
+            const metrics = await store.listExperimentMetrics(tenantId, run.run_id, 2_000);
+            const latest = metrics.at(-1) ?? null;
+            return !run.summary_only &&
+                latest?.epoch != null &&
+                latest?.global_step != null &&
+                latest?.train_loss != null &&
+                latest?.val_loss != null &&
+                latest?.val_accuracy != null &&
+                latest?.learning_rate != null &&
+                latest?.gradient_norm != null &&
+                run.last_heartbeat_at != null;
+        }),
+    );
+    const telemetryReady = telemetryReadiness.filter(Boolean).length;
 
     return {
         tenant_id: tenantId,
@@ -93,6 +108,18 @@ export async function seedExperimentTrackingBootstrap(
 }
 
 function buildBootstrapSeeds(tenantId: string, createdBy: string | null): ExperimentRunSeedDefinition[] {
+    const now = Date.now();
+    const minutesAgo = (minutes: number) => new Date(now - minutes * 60 * 1000).toISOString();
+    const smokeStartAt = minutesAgo(58);
+    const smokeMetricTimestamps = [46, 35, 24, 13, 2].map(minutesAgo);
+    const smokeHeartbeatAt = smokeMetricTimestamps[4];
+    const completeStartAt = minutesAgo(180);
+    const completeMetricTimestamps = [168, 154, 140, 126, 112, 98, 84, 70].map(minutesAgo);
+    const completeHeartbeatAt = completeMetricTimestamps[7];
+    const failStartAt = minutesAgo(120);
+    const failMetricTimestamps = [108, 92, 76].map(minutesAgo);
+    const failHeartbeatAt = failMetricTimestamps[2];
+
     return [
         {
             run: {
@@ -162,21 +189,21 @@ function buildBootstrapSeeds(tenantId: string, createdBy: string | null): Experi
                     steps_per_second: 1.8,
                 },
                 registryContext: {},
-                startedAt: '2026-03-20T03:10:00Z',
+                startedAt: smokeStartAt,
             },
             metrics: [
-                metricPoint(1, 10, 1.18, 1.02, 0.42, 0.00030, 0.91, 0.39, 0.70, '2026-03-20T03:11:00Z', 420, 1.2, 0.44, 0.26, 0.35),
-                metricPoint(2, 20, 0.96, 0.88, 0.56, 0.00028, 0.83, 0.51, 0.78, '2026-03-20T03:22:00Z', 840, 1.4, 0.48, 0.28, 0.37),
-                metricPoint(3, 30, 0.81, 0.74, 0.64, 0.00025, 0.77, 0.59, 0.82, '2026-03-20T03:33:00Z', 1260, 1.5, 0.5, 0.29, 0.39),
-                metricPoint(4, 40, 0.68, 0.65, 0.72, 0.00022, 0.73, 0.66, 0.87, '2026-03-20T03:44:00Z', 1680, 1.7, 0.53, 0.31, 0.4),
-                metricPoint(5, 50, 0.59, 0.58, 0.78, 0.00019, 0.69, 0.73, 0.90, '2026-03-20T03:55:00Z', 2100, 1.8, 0.54, 0.31, 0.42),
+                metricPoint(1, 10, 1.18, 1.02, 0.42, 0.00030, 0.91, 0.39, 0.70, smokeMetricTimestamps[0], 420, 1.2, 0.44, 0.26, 0.35),
+                metricPoint(2, 20, 0.96, 0.88, 0.56, 0.00028, 0.83, 0.51, 0.78, smokeMetricTimestamps[1], 840, 1.4, 0.48, 0.28, 0.37),
+                metricPoint(3, 30, 0.81, 0.74, 0.64, 0.00025, 0.77, 0.59, 0.82, smokeMetricTimestamps[2], 1260, 1.5, 0.5, 0.29, 0.39),
+                metricPoint(4, 40, 0.68, 0.65, 0.72, 0.00022, 0.73, 0.66, 0.87, smokeMetricTimestamps[3], 1680, 1.7, 0.53, 0.31, 0.4),
+                metricPoint(5, 50, 0.59, 0.58, 0.78, 0.00019, 0.69, 0.73, 0.90, smokeMetricTimestamps[4], 2100, 1.8, 0.54, 0.31, 0.42),
             ],
             heartbeat: {
                 status: 'training',
                 statusReason: 'manual_smoke_test',
                 epochsCompleted: 5,
                 progressPercent: 50,
-                lastHeartbeatAt: '2026-03-20T03:55:00Z',
+                lastHeartbeatAt: smokeHeartbeatAt,
                 resourceUsage: {
                     gpu_utilization: 0.54,
                     cpu_utilization: 0.31,
@@ -279,25 +306,25 @@ function buildBootstrapSeeds(tenantId: string, createdBy: string | null): Experi
                     steps_per_second: 2.0,
                 },
                 registryContext: {},
-                startedAt: '2026-03-20T02:00:00Z',
-                endedAt: '2026-03-20T03:40:00Z',
+                startedAt: completeStartAt,
+                endedAt: completeHeartbeatAt,
             },
             metrics: [
-                metricPoint(1, 12, 1.05, 0.97, 0.48, 0.00020, 0.88, 0.43, 0.72, '2026-03-20T02:05:00Z', 380, 1.3, 0.45, 0.25, 0.36),
-                metricPoint(2, 24, 0.88, 0.79, 0.58, 0.00018, 0.82, 0.54, 0.79, '2026-03-20T02:18:00Z', 760, 1.5, 0.49, 0.28, 0.38),
-                metricPoint(3, 36, 0.76, 0.70, 0.66, 0.00016, 0.76, 0.62, 0.84, '2026-03-20T02:31:00Z', 1140, 1.7, 0.52, 0.30, 0.40),
-                metricPoint(4, 48, 0.67, 0.63, 0.73, 0.00014, 0.71, 0.69, 0.88, '2026-03-20T02:44:00Z', 1520, 1.8, 0.55, 0.33, 0.41),
-                metricPoint(5, 60, 0.61, 0.57, 0.77, 0.00012, 0.69, 0.73, 0.90, '2026-03-20T02:57:00Z', 1900, 1.9, 0.56, 0.34, 0.43),
-                metricPoint(6, 72, 0.55, 0.52, 0.80, 0.00010, 0.66, 0.77, 0.92, '2026-03-20T03:10:00Z', 2280, 2.0, 0.57, 0.35, 0.44),
-                metricPoint(7, 84, 0.51, 0.49, 0.82, 0.00008, 0.63, 0.79, 0.93, '2026-03-20T03:23:00Z', 2660, 2.0, 0.58, 0.35, 0.45),
-                metricPoint(8, 96, 0.48, 0.46, 0.84, 0.00006, 0.61, 0.81, 0.94, '2026-03-20T03:40:00Z', 3040, 2.1, 0.58, 0.35, 0.45),
+                metricPoint(1, 12, 1.05, 0.97, 0.48, 0.00020, 0.88, 0.43, 0.72, completeMetricTimestamps[0], 380, 1.3, 0.45, 0.25, 0.36),
+                metricPoint(2, 24, 0.88, 0.79, 0.58, 0.00018, 0.82, 0.54, 0.79, completeMetricTimestamps[1], 760, 1.5, 0.49, 0.28, 0.38),
+                metricPoint(3, 36, 0.76, 0.70, 0.66, 0.00016, 0.76, 0.62, 0.84, completeMetricTimestamps[2], 1140, 1.7, 0.52, 0.30, 0.40),
+                metricPoint(4, 48, 0.67, 0.63, 0.73, 0.00014, 0.71, 0.69, 0.88, completeMetricTimestamps[3], 1520, 1.8, 0.55, 0.33, 0.41),
+                metricPoint(5, 60, 0.61, 0.57, 0.77, 0.00012, 0.69, 0.73, 0.90, completeMetricTimestamps[4], 1900, 1.9, 0.56, 0.34, 0.43),
+                metricPoint(6, 72, 0.55, 0.52, 0.80, 0.00010, 0.66, 0.77, 0.92, completeMetricTimestamps[5], 2280, 2.0, 0.57, 0.35, 0.44),
+                metricPoint(7, 84, 0.51, 0.49, 0.82, 0.00008, 0.63, 0.79, 0.93, completeMetricTimestamps[6], 2660, 2.0, 0.58, 0.35, 0.45),
+                metricPoint(8, 96, 0.48, 0.46, 0.84, 0.00006, 0.61, 0.81, 0.94, completeMetricTimestamps[7], 3040, 2.1, 0.58, 0.35, 0.45),
             ],
             heartbeat: {
                 status: 'completed',
                 statusReason: 'training_finished',
                 epochsCompleted: 8,
                 progressPercent: 100,
-                lastHeartbeatAt: '2026-03-20T03:40:00Z',
+                lastHeartbeatAt: completeHeartbeatAt,
                 resourceUsage: {
                     gpu_utilization: 0.58,
                     cpu_utilization: 0.35,
@@ -405,20 +432,20 @@ function buildBootstrapSeeds(tenantId: string, createdBy: string | null): Experi
                     steps_per_second: 1.1,
                 },
                 registryContext: {},
-                startedAt: '2026-03-20T02:30:00Z',
-                endedAt: '2026-03-20T03:05:00Z',
+                startedAt: failStartAt,
+                endedAt: failHeartbeatAt,
             },
             metrics: [
-                metricPoint(1, 12, 1.24, 1.09, 0.41, 0.003, 1.9, 0.35, 0.71, '2026-03-20T02:35:00Z', 300, 1.3, 0.64, 0.32, 0.47),
-                metricPoint(2, 24, 1.87, 1.96, 0.33, 0.003, 14.6, 0.31, 0.66, '2026-03-20T02:50:00Z', 600, 1.2, 0.68, 0.35, 0.50),
-                metricPoint(3, 36, 4.92, 5.87, 0.19, 0.003, 148.2, 0.18, 0.42, '2026-03-20T03:05:00Z', 900, 0.8, 0.73, 0.39, 0.52),
+                metricPoint(1, 12, 1.24, 1.09, 0.41, 0.003, 1.9, 0.35, 0.71, failMetricTimestamps[0], 300, 1.3, 0.64, 0.32, 0.47),
+                metricPoint(2, 24, 1.87, 1.96, 0.33, 0.003, 14.6, 0.31, 0.66, failMetricTimestamps[1], 600, 1.2, 0.68, 0.35, 0.50),
+                metricPoint(3, 36, 4.92, 5.87, 0.19, 0.003, 148.2, 0.18, 0.42, failMetricTimestamps[2], 900, 0.8, 0.73, 0.39, 0.52),
             ],
             heartbeat: {
                 status: 'failed',
                 statusReason: 'exploded_gradient',
                 epochsCompleted: 3,
                 progressPercent: 30,
-                lastHeartbeatAt: '2026-03-20T03:05:00Z',
+                lastHeartbeatAt: failHeartbeatAt,
                 resourceUsage: {
                     gpu_utilization: 0.73,
                     cpu_utilization: 0.39,
@@ -625,4 +652,10 @@ function isActiveStatus(status: string): boolean {
         status === 'training' ||
         status === 'validating' ||
         status === 'checkpointing';
+}
+
+function isHealthyBootstrapRun(run: { status: string; last_heartbeat_at: string | null }) {
+    if (!isActiveStatus(run.status) || !run.last_heartbeat_at) return false;
+    const ageMs = Date.now() - new Date(run.last_heartbeat_at).getTime();
+    return Number.isFinite(ageMs) && ageMs <= 10 * 60 * 1000;
 }
