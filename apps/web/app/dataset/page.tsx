@@ -18,9 +18,17 @@ export default async function ClinicalDatasetPage() {
                     live_count: 0,
                     quarantined_count: 0,
                     unlabeled_count: 0,
+                    label_coverage_count: 0,
                     adversarial_count: 0,
                     severity_coverage_count: 0,
                     contradiction_coverage_count: 0,
+                    calibration_ready_count: 0,
+                    label_coverage_pct: 0,
+                    severity_coverage_pct: 0,
+                    contradiction_coverage_pct: 0,
+                    adversarial_coverage_pct: 0,
+                    invalid_quarantined_pct: 0,
+                    calibration_readiness_pct: 0,
                 }}
                 refreshedAt={new Date().toISOString()}
             />

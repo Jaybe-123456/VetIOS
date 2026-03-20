@@ -57,6 +57,7 @@ export const CLINICAL_CASES = {
         validation_error_code: 'validation_error_code', // text, nullable
         primary_condition_class: 'primary_condition_class', // text, nullable
         top_diagnosis: 'top_diagnosis',           // text, nullable
+        predicted_diagnosis: 'predicted_diagnosis', // text, nullable
         confirmed_diagnosis: 'confirmed_diagnosis', // text, nullable
         label_type: 'label_type',                 // text, NOT NULL
         diagnosis_confidence: 'diagnosis_confidence', // double precision, nullable
@@ -71,6 +72,12 @@ export const CLINICAL_CASES = {
         case_cluster: 'case_cluster',             // text, nullable
         model_version: 'model_version',           // text, nullable
         telemetry_status: 'telemetry_status',     // text, nullable
+        calibration_status: 'calibration_status', // text, nullable
+        prediction_correct: 'prediction_correct', // boolean, nullable
+        confidence_error: 'confidence_error',     // double precision, nullable
+        calibration_bucket: 'calibration_bucket', // text, nullable
+        degraded_confidence: 'degraded_confidence', // double precision, nullable
+        differential_spread: 'differential_spread', // jsonb, nullable
         latest_inference_event_id: 'latest_inference_event_id', // uuid, nullable
         latest_outcome_event_id: 'latest_outcome_event_id', // uuid, nullable
         latest_simulation_event_id: 'latest_simulation_event_id', // uuid, nullable
@@ -94,6 +101,7 @@ export const CLINICAL_CASE_LIVE_VIEW = {
         symptom_vector_normalized: 'symptom_vector_normalized',
         primary_condition_class: 'primary_condition_class',
         top_diagnosis: 'top_diagnosis',
+        predicted_diagnosis: 'predicted_diagnosis',
         confirmed_diagnosis: 'confirmed_diagnosis',
         label_type: 'label_type',
         diagnosis_confidence: 'diagnosis_confidence',
@@ -105,6 +113,12 @@ export const CLINICAL_CASE_LIVE_VIEW = {
         case_cluster: 'case_cluster',
         model_version: 'model_version',
         telemetry_status: 'telemetry_status',
+        calibration_status: 'calibration_status',
+        prediction_correct: 'prediction_correct',
+        confidence_error: 'confidence_error',
+        calibration_bucket: 'calibration_bucket',
+        degraded_confidence: 'degraded_confidence',
+        differential_spread: 'differential_spread',
         ingestion_status: 'ingestion_status',
         invalid_case: 'invalid_case',
         validation_error_code: 'validation_error_code',

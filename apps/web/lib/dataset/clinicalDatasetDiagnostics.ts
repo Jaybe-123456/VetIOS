@@ -42,9 +42,12 @@ export interface ClinicalDatasetDebugSnapshot {
     coverage_counts: {
         quarantined_cases: number;
         unlabeled_cases: number;
+        label_coverage: number;
         adversarial_cases: number;
         severity_coverage: number;
         contradiction_coverage: number;
+        calibration_ready: number;
+        inference_sync_gaps: number;
     };
     recent_inference_writes: Array<Record<string, unknown>>;
     recent_outcome_writes: Array<Record<string, unknown>>;
@@ -103,9 +106,12 @@ export async function collectClinicalDatasetDebugSnapshot(
         liveCaseRows,
         quarantinedCases,
         unlabeledCases,
+        labelCoverage,
         adversarialCases,
         severityCoverage,
         contradictionCoverage,
+        calibrationReady,
+        inferenceSyncGaps,
         orphanInferenceCount,
         orphanOutcomeCount,
         orphanSimulationCount,
@@ -172,6 +178,12 @@ export async function collectClinicalDatasetDebugSnapshot(
             .from(CLINICAL_CASES.TABLE)
             .select(caseColumns.id, { count: 'exact', head: true })
             .eq(caseColumns.tenant_id, tenantId)
+            .eq(caseColumns.ingestion_status, 'accepted')
+            .or(`${caseColumns.confirmed_diagnosis}.not.is.null,${caseColumns.label_type}.neq.inferred_only`),
+        client
+            .from(CLINICAL_CASES.TABLE)
+            .select(caseColumns.id, { count: 'exact', head: true })
+            .eq(caseColumns.tenant_id, tenantId)
             .eq(caseColumns.adversarial_case, true),
         client
             .from(CLINICAL_CASES.TABLE)
@@ -183,6 +195,20 @@ export async function collectClinicalDatasetDebugSnapshot(
             .select(caseColumns.id, { count: 'exact', head: true })
             .eq(caseColumns.tenant_id, tenantId)
             .or(`${caseColumns.contradiction_score}.not.is.null,${caseColumns.adversarial_case}.eq.true`),
+        client
+            .from(CLINICAL_CASES.TABLE)
+            .select(caseColumns.id, { count: 'exact', head: true })
+            .eq(caseColumns.tenant_id, tenantId)
+            .not(caseColumns.predicted_diagnosis, 'is', null)
+            .not(caseColumns.confirmed_diagnosis, 'is', null)
+            .not(caseColumns.prediction_correct, 'is', null)
+            .not(caseColumns.confidence_error, 'is', null),
+        client
+            .from(CLINICAL_CASES.TABLE)
+            .select(caseColumns.id, { count: 'exact', head: true })
+            .eq(caseColumns.tenant_id, tenantId)
+            .not(caseColumns.latest_inference_event_id, 'is', null)
+            .or(`${caseColumns.top_diagnosis}.is.null,${caseColumns.primary_condition_class}.is.null,${caseColumns.emergency_level}.is.null`),
         client
             .from(AI_INFERENCE_EVENTS.TABLE)
             .select(inferenceColumns.id, { count: 'exact', head: true })
@@ -221,9 +247,12 @@ export async function collectClinicalDatasetDebugSnapshot(
         liveCaseRows.error,
         quarantinedCases.error,
         unlabeledCases.error,
+        labelCoverage.error,
         adversarialCases.error,
         severityCoverage.error,
         contradictionCoverage.error,
+        calibrationReady.error,
+        inferenceSyncGaps.error,
         orphanInferenceCount.error,
         orphanOutcomeCount.error,
         orphanSimulationCount.error,
@@ -247,9 +276,12 @@ export async function collectClinicalDatasetDebugSnapshot(
         coverage_counts: {
             quarantined_cases: quarantinedCases.count ?? 0,
             unlabeled_cases: unlabeledCases.count ?? 0,
+            label_coverage: labelCoverage.count ?? 0,
             adversarial_cases: adversarialCases.count ?? 0,
             severity_coverage: severityCoverage.count ?? 0,
             contradiction_coverage: contradictionCoverage.count ?? 0,
+            calibration_ready: calibrationReady.count ?? 0,
+            inference_sync_gaps: inferenceSyncGaps.count ?? 0,
         },
         recent_inference_writes: toDebugRecords(recentInferenceWrites.data),
         recent_outcome_writes: toDebugRecords(recentOutcomeWrites.data),
