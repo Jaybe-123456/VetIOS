@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { seedExperimentTrackingBootstrap } from '../../apps/web/lib/experiments/bootstrap.ts';
 import {
     backfillSummaryExperimentRuns,
     buildExperimentMetricSeries,
@@ -201,6 +202,13 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
 }
 
 async function main() {
+    await testExperimentTrackingServiceFlow();
+    await testExperimentBootstrapSeed();
+
+    console.log('Experiment tracking integration tests passed.');
+}
+
+async function testExperimentTrackingServiceFlow() {
     const tenantId = makeUuid(1);
     const store = buildStore(tenantId);
 
@@ -265,8 +273,49 @@ async function main() {
     const comparison = await getExperimentComparison(store, tenantId, [run.run_id, summaryOnlyRun.run_id]);
     assert.ok(comparison);
     assert.equal(comparison?.runs.length, 2);
+}
 
-    console.log('Experiment tracking integration tests passed.');
+async function testExperimentBootstrapSeed() {
+    const tenantId = makeUuid(2);
+    const store = new InMemoryExperimentTrackingStore();
+
+    const summary = await seedExperimentTrackingBootstrap(store, tenantId);
+    assert.equal(summary.total_runs, 3);
+    assert.equal(summary.active_runs, 1);
+    assert.equal(summary.failed_runs, 1);
+    assert.equal(summary.summary_only_runs, 0);
+    assert.ok(summary.telemetry_coverage_pct > 0);
+
+    const runs = await store.listExperimentRuns(tenantId, { limit: 10, includeSummaryOnly: true });
+    assert.equal(runs.length, 3);
+    assert.equal(runs.some((run) => run.run_id === 'run_diag_smoke_v1' && run.status === 'training'), true);
+    assert.equal(runs.some((run) => run.run_id === 'run_diag_complete_v1' && run.status === 'completed'), true);
+    assert.equal(runs.some((run) => run.run_id === 'run_diag_fail_v1' && run.status === 'failed'), true);
+
+    const smokeRun = await store.getExperimentRun(tenantId, 'run_diag_smoke_v1');
+    assert.ok(smokeRun);
+    assert.equal(smokeRun?.last_heartbeat_at, '2026-03-20T03:55:00Z');
+
+    for (const runId of ['run_diag_smoke_v1', 'run_diag_complete_v1', 'run_diag_fail_v1']) {
+        const metrics = await store.listExperimentMetrics(tenantId, runId, 100);
+        assert.ok(metrics.length > 0, `expected telemetry for ${runId}`);
+        const series = buildExperimentMetricSeries(metrics);
+        assert.equal(series.length, metrics.length);
+    }
+
+    const failedDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_fail_v1');
+    assert.ok(failedDetail?.failure);
+    assert.equal(failedDetail?.failure?.failure_reason, 'exploded_gradient');
+    assert.equal(failedDetail?.failure?.nan_detected, true);
+
+    const dashboard = await getExperimentDashboardSnapshot(store, tenantId, { runLimit: 10 });
+    assert.equal(dashboard.summary.total_runs, 3);
+    assert.equal(dashboard.summary.active_runs, 1);
+    assert.equal(dashboard.summary.failed_runs, 1);
+    assert.equal(dashboard.summary.summary_only_runs, 0);
+    assert.equal(dashboard.selected_run_id, 'run_diag_smoke_v1');
+    assert.ok(dashboard.selected_run_detail);
+    assert.equal(dashboard.selected_run_detail?.metrics.length, 5);
 }
 
 function buildStore(tenantId: string) {
