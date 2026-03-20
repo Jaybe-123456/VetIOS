@@ -6,10 +6,10 @@ import { getModelRegistryControlPlaneSnapshot } from '@/lib/experiments/service'
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
-import { resolveTopologySimulationTarget, getTopologySnapshot } from '@/lib/intelligence/topologyService';
+import { resolveTopologySimulationTarget, getTopologySnapshot, syncControlPlaneAlerts } from '@/lib/intelligence/topologyService';
 import { logSimulation } from '@/lib/logging/simulationLogger';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
-import { emitTelemetryEvent } from '@/lib/telemetry/service';
+import { emitTelemetryEvent, telemetrySimulationEventId } from '@/lib/telemetry/service';
 import type { TopologySimulationScenario, TopologyWindow } from '@/lib/intelligence/types';
 
 export const runtime = 'nodejs';
@@ -46,10 +46,12 @@ export async function GET(req: Request) {
     const until = url.searchParams.get('until');
 
     try {
-        const snapshot = await getTopologySnapshot(getSupabaseServer(), actor.tenantId, {
+        const client = getSupabaseServer();
+        const snapshot = await getTopologySnapshot(client, actor.tenantId, {
             window,
             until,
         });
+        await syncControlPlaneAlerts(client, actor.tenantId, snapshot.alerts);
 
         const response = NextResponse.json({
             snapshot,
@@ -106,7 +108,6 @@ export async function POST(req: Request) {
         const target = resolveTopologySimulationTarget(controlPlane, targetNodeId);
         const profile = buildInjectionProfile(scenario, severity, targetNodeId);
         const simulationEventId = randomUUID();
-        const telemetryEventId = `evt_topology_${scenario}_${randomUUID()}`;
         const timestamp = new Date().toISOString();
 
         await logSimulation(client, {
@@ -130,9 +131,12 @@ export async function POST(req: Request) {
         });
 
         await emitTelemetryEvent(client, {
-            event_id: telemetryEventId,
+            event_id: telemetrySimulationEventId(simulationEventId),
             tenant_id: actor.tenantId,
-            event_type: scenario === 'drift' ? 'training' : 'system',
+            linked_event_id: null,
+            source_id: simulationEventId,
+            source_table: 'edge_simulation_events',
+            event_type: 'simulation',
             timestamp,
             model_version: target.model_version,
             run_id: target.run_id,
@@ -150,6 +154,7 @@ export async function POST(req: Request) {
                 source_module: 'intelligence_topology',
                 target_node_id: targetNodeId,
                 scenario,
+                synthetic: true,
                 injected_status: profile.status,
                 injected_latency_ms: profile.latency_ms,
                 injected_error_rate: profile.error_rate,
@@ -163,7 +168,7 @@ export async function POST(req: Request) {
         const response = NextResponse.json({
             injected: true,
             simulation_event_id: simulationEventId,
-            telemetry_event_id: telemetryEventId,
+            telemetry_event_id: telemetrySimulationEventId(simulationEventId),
             target,
             request_id: requestId,
         });

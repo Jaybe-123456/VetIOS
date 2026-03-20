@@ -34,6 +34,7 @@ import { safeJson } from '@/lib/http/safeJson';
 import {
     emitTelemetryEvent,
     extractPredictionLabel,
+    telemetryEvaluationEventId,
     resolveTelemetryRunId,
     telemetryInferenceEventId,
     telemetryOutcomeEventId,
@@ -219,6 +220,8 @@ export async function POST(req: Request) {
                     event_id: telemetryOutcomeEventId(outcomeEventId),
                     tenant_id: tenantId,
                     linked_event_id: telemetryInferenceEventId(body.inference_event_id),
+                    source_id: outcomeEventId,
+                    source_table: 'clinical_outcome_events',
                     event_type: 'outcome',
                     timestamp: body.outcome.timestamp,
                     model_version: inf.model_version,
@@ -238,18 +241,75 @@ export async function POST(req: Request) {
                 });
 
                 const recentEvals = await getRecentEvaluations(supabase, tenantId, inf.model_name, 20);
+                const contradictionAnalysis = asRecord(inf.output_payload.contradiction_analysis);
+                const contradictionScore = readNumber(contradictionAnalysis.contradiction_score)
+                    ?? readNumber(inf.output_payload.contradiction_score);
+                const predictedSeverityLabel = normalizeOptionalLabel(
+                    typeof riskPayload.emergency_level === 'string'
+                        ? riskPayload.emergency_level
+                        : predictedSeverity != null
+                            ? String(predictedSeverity)
+                            : null,
+                );
+                const actualSeverityLabel = normalizeOptionalLabel(
+                    typeof actualOutcome.emergency_level === 'string'
+                        ? actualOutcome.emergency_level
+                        : actualSeverity != null
+                            ? String(actualSeverity)
+                            : null,
+                );
                 pipelineResult.evaluation = await createEvaluationEvent(supabase, {
                     tenant_id: tenantId,
                     trigger_type: 'outcome',
                     inference_event_id: body.inference_event_id,
                     outcome_event_id: outcomeEventId,
+                    case_id: canonicalClinicalCase.id,
                     model_name: inf.model_name,
                     model_version: inf.model_version,
+                    prediction: predictedLabel,
+                    ground_truth: groundTruthLabel,
+                    condition_class_pred: normalizeOptionalLabel(predictedClass),
+                    condition_class_true: normalizeOptionalLabel(actualClass),
+                    severity_pred: predictedSeverityLabel,
+                    severity_true: actualSeverityLabel,
+                    contradiction_score: contradictionScore,
+                    adversarial_case: canonicalClinicalCase.adversarial_case === true,
                     predicted_confidence: inf.confidence_score,
-                    actual_correctness: (predictedClass === actualClass && predictedDiagnosis === actualDiagnosis) ? 1.0 : 0.0,
+                    actual_correctness: telemetryCorrect == null ? undefined : (telemetryCorrect ? 1.0 : 0.0),
                     predicted_output: inf.output_payload,
                     actual_outcome: body.outcome.payload,
                     recent_evaluations: recentEvals,
+                });
+                await emitTelemetryEvent(supabase, {
+                    event_id: telemetryEvaluationEventId(pipelineResult.evaluation.evaluation_event_id),
+                    tenant_id: tenantId,
+                    linked_event_id: telemetryInferenceEventId(body.inference_event_id),
+                    source_id: pipelineResult.evaluation.evaluation_event_id,
+                    source_table: 'model_evaluation_events',
+                    event_type: 'evaluation',
+                    timestamp: body.outcome.timestamp,
+                    model_version: inf.model_version,
+                    run_id: resolveTelemetryRunId(inf.model_version, telemetryRecord.run_id),
+                    metrics: {
+                        confidence: inf.confidence_score,
+                        prediction: predictedLabel,
+                        ground_truth: groundTruthLabel,
+                        correct: telemetryCorrect,
+                    },
+                    metadata: {
+                        source_module: 'outcome_learning',
+                        request_id: requestId,
+                        inference_event_id: body.inference_event_id,
+                        outcome_event_id: outcomeEventId,
+                        evaluation_event_id: pipelineResult.evaluation.evaluation_event_id,
+                        case_id: canonicalClinicalCase.id,
+                        condition_class_pred: normalizeOptionalLabel(predictedClass),
+                        condition_class_true: normalizeOptionalLabel(actualClass),
+                        severity_pred: predictedSeverityLabel,
+                        severity_true: actualSeverityLabel,
+                        contradiction_score: contradictionScore,
+                        adversarial_case: canonicalClinicalCase.adversarial_case === true,
+                    },
                 });
 
                 pipelineResult.calibration = await logOutcomeCalibration(supabase, {
@@ -267,9 +327,8 @@ export async function POST(req: Request) {
                     predicted_severity: predictedSeverity,
                     actual_severity: actualSeverity,
                     had_contradictions:
-                        typeof inf.output_payload?.contradiction_score === 'number'
-                            ? (inf.output_payload.contradiction_score as number) > 0
-                            : ((inf.output_payload?.contradiction_analysis as any)?.is_plausible === false),
+                        (contradictionScore ?? 0) > 0
+                            || contradictionAnalysis.is_plausible === false,
                 });
 
                 pipelineResult.reinforcement = await routeReinforcement(supabase, {
@@ -376,6 +435,21 @@ function areLabelsEqual(left: string, right: string) {
 
 function normalizeLabel(value: string) {
     return value.trim().toLowerCase();
+}
+
+function normalizeOptionalLabel(value: string | null | undefined) {
+    return typeof value === 'string' && value.trim().length > 0
+        ? value.trim()
+        : null;
+}
+
+function readNumber(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

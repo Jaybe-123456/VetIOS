@@ -1,5 +1,13 @@
 export type TopologyNodeStatus = 'healthy' | 'degraded' | 'critical' | 'offline';
 export type TopologyEdgeStatus = 'normal' | 'stressed' | 'failing';
+export type TopologyControlPlaneState =
+    | 'READY'
+    | 'CONTROL_PLANE_INITIALIZING'
+    | 'STREAM_DISCONNECTED'
+    | 'NO_TELEMETRY_EVENTS'
+    | 'WAITING_FOR_EVALUATION_EVENTS'
+    | 'INSUFFICIENT_OUTCOMES_FOR_DRIFT'
+    | 'MISSING_EVALUATION_EVENTS_TABLE';
 export type TopologyNodeKind =
     | 'control'
     | 'registry'
@@ -37,7 +45,7 @@ export interface TopologyAlert {
     id: string;
     node_id: string;
     severity: TopologyAlertSeverity;
-    category: 'latency' | 'drift' | 'error_rate' | 'governance' | 'heartbeat' | 'simulation';
+    category: 'latency' | 'drift' | 'error_rate' | 'governance' | 'heartbeat' | 'simulation' | 'stream' | 'evaluation';
     title: string;
     message: string;
     timestamp: string;
@@ -64,6 +72,7 @@ export interface TopologyEdgeSnapshot {
     source: string;
     target: string;
     label: string;
+    flow_direction: 'source_to_target';
     requests_per_min: number | null;
     latency: number | null;
     failure_rate: number | null;
@@ -103,10 +112,20 @@ export interface TopologySnapshot {
     refreshed_at: string;
     window: TopologyWindow;
     mode: 'live' | 'historical';
+    control_plane_state: TopologyControlPlaneState;
     playback: {
         live_supported: boolean;
         current_until: string;
         event_timeline: TopologyTimelineMarker[];
+    };
+    diagnostics: {
+        telemetry_stream_connected: boolean;
+        evaluation_events_table_exists: boolean;
+        latest_inference_timestamp: string | null;
+        latest_outcome_timestamp: string | null;
+        latest_evaluation_timestamp: string | null;
+        latest_simulation_timestamp: string | null;
+        active_alert_count: number;
     };
     network_health_score: number;
     summary: {

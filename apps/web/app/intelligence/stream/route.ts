@@ -1,6 +1,6 @@
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
-import { getTopologySnapshot } from '@/lib/intelligence/topologyService';
+import { getTopologySnapshot, syncControlPlaneAlerts } from '@/lib/intelligence/topologyService';
 import type { TopologyWindow } from '@/lib/intelligence/types';
 
 export const runtime = 'nodejs';
@@ -35,9 +35,11 @@ export async function GET(req: Request) {
 
             const pushSnapshot = async () => {
                 try {
-                    const snapshot = await getTopologySnapshot(getSupabaseServer(), actor.tenantId, {
+                    const client = getSupabaseServer();
+                    const snapshot = await getTopologySnapshot(client, actor.tenantId, {
                         window,
                     });
+                    await syncControlPlaneAlerts(client, actor.tenantId, snapshot.alerts);
 
                     if (closed) return;
                     controller.enqueue(

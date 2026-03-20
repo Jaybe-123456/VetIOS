@@ -510,12 +510,24 @@ function mapSimulationEvent(row: Record<string, unknown>): LearningSimulationEve
 function mapEvaluationEvent(row: Record<string, unknown>): LearningEvaluationEvent {
     return {
         id: String(row.id),
+        evaluation_event_id: readString(row.evaluation_event_id),
         tenant_id: String(row.tenant_id),
         trigger_type: readString(row.trigger_type) ?? 'inference',
         inference_event_id: readString(row.inference_event_id),
         outcome_event_id: readString(row.outcome_event_id),
+        case_id: readString(row.case_id),
         model_name: readString(row.model_name),
         model_version: readString(row.model_version),
+        prediction: readString(row.prediction),
+        prediction_confidence: readNumber(row.prediction_confidence),
+        ground_truth: readString(row.ground_truth),
+        prediction_correct: readBoolean(row.prediction_correct),
+        condition_class_pred: readString(row.condition_class_pred),
+        condition_class_true: readString(row.condition_class_true),
+        severity_pred: readString(row.severity_pred),
+        severity_true: readString(row.severity_true),
+        contradiction_score: readNumber(row.contradiction_score),
+        adversarial_case: row.adversarial_case === true,
         calibration_error: readNumber(row.calibration_error),
         drift_score: readNumber(row.drift_score),
         outcome_alignment_delta: readNumber(row.outcome_alignment_delta),
@@ -676,6 +688,13 @@ function readNumber(value: unknown): number | null {
         const parsed = Number(value);
         return Number.isFinite(parsed) ? parsed : null;
     }
+    return null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+    if (typeof value === 'boolean') return value;
+    if (value === 'true') return true;
+    if (value === 'false') return false;
     return null;
 }
 

@@ -1,15 +1,23 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { CLINICAL_CASES, TELEMETRY_EVENTS } from '@/lib/db/schemaContracts';
+import {
+    AI_INFERENCE_EVENTS,
+    CLINICAL_CASES,
+    CLINICAL_OUTCOME_EVENTS,
+    CONTROL_PLANE_ALERTS,
+    EDGE_SIMULATION_EVENTS,
+    MODEL_EVALUATION_EVENTS,
+    TELEMETRY_EVENTS,
+} from '@/lib/db/schemaContracts';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
 import { getModelRegistryControlPlaneSnapshot } from '@/lib/experiments/service';
 import type { ModelRegistryFamilyGroup } from '@/lib/experiments/types';
 import { createSupabaseLearningEngineStore } from '@/lib/learningEngine/supabaseStore';
 import type {
-    LearningEvaluationEvent,
     LearningSimulationEvent,
 } from '@/lib/learningEngine/types';
 import type {
     TopologyAlert,
+    TopologyControlPlaneState,
     TopologyEdgeSnapshot,
     TopologyFailureImpact,
     TopologyNodeGovernance,
@@ -38,7 +46,9 @@ type NodeId =
 interface ControlGraphTelemetryEvent {
     event_id: string;
     linked_event_id: string | null;
-    event_type: 'inference' | 'outcome' | 'system' | 'training';
+    source_id: string | null;
+    source_table: string | null;
+    event_type: 'inference' | 'outcome' | 'evaluation' | 'simulation' | 'system' | 'training';
     timestamp: string;
     model_version: string;
     run_id: string;
@@ -55,6 +65,29 @@ interface ControlGraphTelemetryEvent {
         memory: number | null;
     };
     metadata: Record<string, unknown>;
+}
+
+interface ControlGraphEvaluationEvent {
+    id: string;
+    evaluation_event_id: string;
+    tenant_id: string;
+    inference_event_id: string | null;
+    outcome_event_id: string | null;
+    case_id: string | null;
+    model_name: string | null;
+    model_version: string | null;
+    prediction: string | null;
+    prediction_confidence: number | null;
+    ground_truth: string | null;
+    prediction_correct: boolean | null;
+    condition_class_pred: string | null;
+    condition_class_true: string | null;
+    severity_pred: string | null;
+    severity_true: string | null;
+    contradiction_score: number | null;
+    adversarial_case: boolean;
+    drift_score: number | null;
+    created_at: string;
 }
 
 interface CaseEvent {
@@ -85,6 +118,7 @@ interface FamilyTelemetryContext {
     group: ModelRegistryFamilyGroup;
     versions: Set<string>;
     inference_events: ControlGraphTelemetryEvent[];
+    evaluations: ControlGraphEvaluationEvent[];
     outcome_pairs: Array<{
         timestamp: string;
         prediction: string;
@@ -92,6 +126,19 @@ interface FamilyTelemetryContext {
         correct: boolean;
     }>;
     evaluation_drift: number | null;
+    drift_state: 'READY' | 'INSUFFICIENT_DATA';
+}
+
+interface TopologyDiagnosticsState {
+    control_plane_state: TopologyControlPlaneState;
+    telemetry_stream_connected: boolean;
+    evaluation_events_table_exists: boolean;
+    latest_inference_timestamp: string | null;
+    latest_outcome_timestamp: string | null;
+    latest_evaluation_timestamp: string | null;
+    latest_simulation_timestamp: string | null;
+    latest_telemetry_timestamp: string | null;
+    evaluation_load_error: string | null;
 }
 
 const WINDOW_TO_MS: Record<TopologyWindow, number> = {
@@ -105,7 +152,9 @@ const ERROR_WARNING_THRESHOLD = 0.05;
 const ERROR_CRITICAL_THRESHOLD = 0.12;
 const LATENCY_WARNING_THRESHOLD = 800;
 const LATENCY_CRITICAL_THRESHOLD = 2_000;
-const OFFLINE_THRESHOLD_MS = 30 * 60 * 1000;
+const OFFLINE_THRESHOLD_MS = 30 * 1000;
+const HEARTBEAT_STALE_MS = 30 * 1000;
+const MIN_EVALUATION_EVENTS_FOR_DRIFT = 3;
 
 const NODE_POSITIONS: Record<NodeId, { x: number; y: number }> = {
     control_plane: { x: 560, y: 40 },
@@ -178,11 +227,11 @@ export async function getTopologySnapshot(
     const experimentStore = createSupabaseExperimentTrackingStore(client);
     const learningStore = createSupabaseLearningEngineStore(client);
 
-    const [telemetryRows, caseRows, controlPlane, simulations, evaluations] = await Promise.all([
+    const [telemetryRows, caseRows, controlPlane, simulations, evaluationLoad, latestSourceTimestamps] = await Promise.all([
         loadTelemetryEvents(client, tenantId, from, until),
         loadClinicalCases(client, tenantId, from, until),
         getModelRegistryControlPlaneSnapshot(experimentStore, tenantId),
-        learningStore.listSimulationEvents({
+        loadSimulationEvents(learningStore, {
             tenantId,
             from: from.toISOString(),
             to: until.toISOString(),
@@ -191,18 +240,20 @@ export async function getTopologySnapshot(
             includeQuarantine: true,
             limit: 200,
         }),
-        learningStore.listEvaluationEvents({
-            tenantId,
-            from: from.toISOString(),
-            to: until.toISOString(),
-            includeAdversarial: true,
-            includeSynthetic: true,
-            includeQuarantine: true,
-            limit: 400,
-        }),
+        loadEvaluationEvents(client, tenantId, from, until),
+        loadLatestSourceTimestamps(client, tenantId),
     ]);
 
     const telemetryEvents = telemetryRows.map(mapTelemetryEvent);
+    const evaluations = evaluationLoad.events;
+    const diagnostics = buildDiagnosticsState({
+        until,
+        telemetryEvents,
+        evaluations,
+        latestSourceTimestamps,
+        evaluationTableExists: evaluationLoad.table_exists,
+        evaluationLoadError: evaluationLoad.error,
+    });
     const nodeOverrides = buildNodeOverrides(telemetryEvents);
     const familyContexts = buildFamilyContexts(controlPlane.families, telemetryEvents, evaluations);
     const nodes = buildNodes({
@@ -210,12 +261,13 @@ export async function getTopologySnapshot(
         windowMs,
         controlPlane,
         familyContexts,
+        evaluations,
         caseRows,
         telemetryEvents,
         simulations,
         nodeOverrides,
     });
-    const alerts = buildAlerts(nodes, telemetryEvents, until);
+    const alerts = buildAlerts(nodes, telemetryEvents, until, diagnostics);
     const failureImpacts = buildFailureImpacts(nodes, alerts);
     const edges = buildEdges({
         nodes,
@@ -228,13 +280,14 @@ export async function getTopologySnapshot(
     });
     const enrichedNodes = finalizeNodes(nodes, edges, alerts, failureImpacts, controlPlane);
     const recommendations = buildRecommendations(enrichedNodes, alerts, controlPlane);
-    const summary = buildSummary(enrichedNodes, alerts, failureImpacts, recommendations);
+    const summary = buildSummary(enrichedNodes, alerts, failureImpacts, recommendations, diagnostics);
 
     return {
         tenant_id: tenantId,
         refreshed_at: new Date().toISOString(),
         window: input.window,
         mode: input.until ? 'historical' : 'live',
+        control_plane_state: diagnostics.control_plane_state,
         playback: {
             live_supported: true,
             current_until: until.toISOString(),
@@ -247,7 +300,16 @@ export async function getTopologySnapshot(
                     label: buildTimelineLabel(event),
                 })),
         },
-        network_health_score: computeNetworkHealthScore(enrichedNodes),
+        diagnostics: {
+            telemetry_stream_connected: diagnostics.telemetry_stream_connected,
+            evaluation_events_table_exists: diagnostics.evaluation_events_table_exists,
+            latest_inference_timestamp: diagnostics.latest_inference_timestamp,
+            latest_outcome_timestamp: diagnostics.latest_outcome_timestamp,
+            latest_evaluation_timestamp: diagnostics.latest_evaluation_timestamp,
+            latest_simulation_timestamp: diagnostics.latest_simulation_timestamp,
+            active_alert_count: alerts.length,
+        },
+        network_health_score: computeNetworkHealthScore(enrichedNodes, diagnostics),
         summary,
         nodes: enrichedNodes,
         edges,
@@ -262,6 +324,7 @@ function buildNodes(input: {
     windowMs: number;
     controlPlane: Awaited<ReturnType<typeof getModelRegistryControlPlaneSnapshot>>;
     familyContexts: FamilyTelemetryContext[];
+    evaluations: ControlGraphEvaluationEvent[];
     caseRows: CaseEvent[];
     telemetryEvents: ControlGraphTelemetryEvent[];
     simulations: LearningSimulationEvent[];
@@ -270,14 +333,17 @@ function buildNodes(input: {
     const windowMinutes = Math.max(1, input.windowMs / 60_000);
     const totalInferenceEvents = input.telemetryEvents.filter((event) => event.event_type === 'inference');
     const totalOutcomeEvents = input.telemetryEvents.filter((event) => event.event_type === 'outcome');
+    const totalEvaluationEvents = input.evaluations.filter((event) => event.prediction != null && event.ground_truth != null);
     const globalLatencyValues = totalInferenceEvents
         .map((event) => event.metrics.latency_ms)
         .filter((value): value is number => value != null && value <= 5_000);
     const globalConfidenceValues = totalInferenceEvents
         .map((event) => event.metrics.confidence)
         .filter((value): value is number => value != null);
-    const globalOutcomePairs = collectOutcomePairs(totalInferenceEvents, totalOutcomeEvents);
-    const globalDrift = globalOutcomePairs.length >= 2 ? computeDistributionDrift(globalOutcomePairs) : null;
+    const globalAccuracy = totalEvaluationEvents.length > 0
+        ? ratio(totalEvaluationEvents.filter((event) => event.prediction_correct === true).length, totalEvaluationEvents.length)
+        : null;
+    const globalDrift = computeEvaluationDrift(totalEvaluationEvents);
     const invalidCaseCount = input.caseRows.filter((row) => row.invalid_case).length;
     const activeClinicCount = new Set(input.caseRows.map((row) => row.clinic_id).filter((value): value is string => !!value)).size;
     const caseConfidence = input.caseRows
@@ -285,7 +351,9 @@ function buildNodes(input: {
         .filter((value): value is number => value != null);
     const simulationTelemetry = input.telemetryEvents.filter((event) => {
         const source = readString(event.metadata.source_module) ?? readString(event.metadata.source);
-        return source === 'adversarial_simulation' || source === 'telemetry_stream_generator';
+        return event.event_type === 'simulation'
+            || source === 'adversarial_simulation'
+            || source === 'telemetry_stream_generator';
     });
 
     const registryNode = createNode({
@@ -310,7 +378,7 @@ function buildNodes(input: {
                 hasData: input.telemetryEvents.length > 0,
                 lastUpdated: findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp)),
                 latency: percentile(globalLatencyValues, 95),
-                errorRate: calculateInferenceErrorRate(totalInferenceEvents, globalOutcomePairs),
+                errorRate: calculateInferenceErrorRate(totalInferenceEvents, totalEvaluationEvents),
                 drift: globalDrift,
                 confidence: mean(globalConfidenceValues),
                 governanceFailure: false,
@@ -319,7 +387,7 @@ function buildNodes(input: {
             }),
             latency: percentile(globalLatencyValues, 95),
             throughput: roundNumber(totalInferenceEvents.length / windowMinutes, 2),
-            error_rate: calculateInferenceErrorRate(totalInferenceEvents, globalOutcomePairs),
+            error_rate: calculateInferenceErrorRate(totalInferenceEvents, totalEvaluationEvents),
             drift_score: globalDrift,
             confidence_avg: mean(globalConfidenceValues),
             last_updated: findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp)),
@@ -329,6 +397,8 @@ function buildNodes(input: {
             last_event_timestamp: findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp)),
             stale: isStale(findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp)), input.until),
             total_events: input.telemetryEvents.length,
+            evaluation_events: totalEvaluationEvents.length,
+            drift_state: totalEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
         },
     });
 
@@ -400,8 +470,8 @@ function buildNodes(input: {
         const confidenceValues = familyContext.inference_events
             .map((event) => event.metrics.confidence)
             .filter((value): value is number => value != null);
-        const errorRate = calculateInferenceErrorRate(familyContext.inference_events, familyContext.outcome_pairs);
-        const drift = familyContext.evaluation_drift ?? (familyContext.outcome_pairs.length >= 2 ? computeDistributionDrift(familyContext.outcome_pairs) : null);
+        const errorRate = calculateInferenceErrorRate(familyContext.inference_events, familyContext.evaluations);
+        const drift = familyContext.evaluation_drift;
         const lastUpdated = findLatestTimestamp(familyContext.inference_events.map((event) => event.timestamp));
 
         return createNode({
@@ -432,6 +502,8 @@ function buildNodes(input: {
                 active_model_version: familyContext.group.active_model?.model_version ?? null,
                 registry_id: familyContext.group.active_model?.registry_id ?? null,
                 last_stable_model_version: familyContext.group.last_stable_model?.model_version ?? null,
+                drift_state: familyContext.drift_state,
+                evaluation_count: familyContext.evaluations.length,
                 pending_entries: familyContext.group.entries
                     .filter((entry) => entry.registry.lifecycle_status === 'staging')
                     .map((entry) => entry.registry.model_version),
@@ -469,24 +541,25 @@ function buildNodes(input: {
                 hasData: totalOutcomeEvents.length > 0,
                 lastUpdated: findLatestTimestamp(totalOutcomeEvents.map((event) => event.timestamp)),
                 latency: outcomeLoopLatency(totalInferenceEvents, totalOutcomeEvents),
-                errorRate: globalOutcomePairs.length > 0 ? 1 - ratio(globalOutcomePairs.filter((pair) => pair.correct).length, globalOutcomePairs.length)! : null,
+                errorRate: globalAccuracy != null ? 1 - globalAccuracy : null,
                 drift: globalDrift,
-                confidence: globalOutcomePairs.length > 0 ? ratio(globalOutcomePairs.filter((pair) => pair.correct).length, globalOutcomePairs.length) : null,
+                confidence: globalAccuracy,
                 governanceFailure: false,
                 governancePending: false,
                 now: input.until,
             }),
             latency: outcomeLoopLatency(totalInferenceEvents, totalOutcomeEvents),
             throughput: roundNumber(totalOutcomeEvents.length / windowMinutes, 2),
-            error_rate: globalOutcomePairs.length > 0 ? 1 - ratio(globalOutcomePairs.filter((pair) => pair.correct).length, globalOutcomePairs.length)! : null,
+            error_rate: globalAccuracy != null ? 1 - globalAccuracy : null,
             drift_score: globalDrift,
-            confidence_avg: globalOutcomePairs.length > 0 ? ratio(globalOutcomePairs.filter((pair) => pair.correct).length, globalOutcomePairs.length) : null,
+            confidence_avg: globalAccuracy,
             last_updated: findLatestTimestamp(totalOutcomeEvents.map((event) => event.timestamp)),
         }, input.nodeOverrides.get('outcome_feedback'), input.until),
         governance: null,
         metadata: {
-            linked_outcomes: globalOutcomePairs.length,
+            linked_outcomes: totalEvaluationEvents.length,
             raw_outcomes: totalOutcomeEvents.length,
+            drift_state: totalEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
         },
     });
 
@@ -684,6 +757,7 @@ function buildEdges(input: {
             source: layout.source,
             target: layout.target,
             label: layout.label,
+            flow_direction: 'source_to_target',
             requests_per_min: requestsPerMinute,
             latency,
             failure_rate: failureRate,
@@ -763,9 +837,70 @@ function buildAlerts(
     nodes: TopologyNodeSnapshot[],
     telemetryEvents: ControlGraphTelemetryEvent[],
     now: Date,
+    diagnostics: TopologyDiagnosticsState,
 ): TopologyAlert[] {
     const alerts: TopologyAlert[] = [];
     const latestEventTimestamp = findLatestTimestamp(telemetryEvents.map((event) => event.timestamp));
+
+    if (!diagnostics.evaluation_events_table_exists) {
+        alerts.push({
+            id: 'alert_missing_evaluation_table',
+            node_id: 'control_plane',
+            severity: 'critical',
+            category: 'evaluation',
+            title: 'Evaluation events storage missing',
+            message: 'model_evaluation_events is unavailable, so drift and outcome-linked control signals cannot be computed.',
+            timestamp: now.toISOString(),
+        });
+    }
+
+    if (diagnostics.control_plane_state === 'NO_TELEMETRY_EVENTS') {
+        alerts.push({
+            id: 'alert_no_telemetry_events',
+            node_id: 'telemetry_observer',
+            severity: 'warning',
+            category: 'stream',
+            title: 'Telemetry stream empty',
+            message: 'No telemetry events have been ingested for the active window, so network health is still initializing.',
+            timestamp: now.toISOString(),
+        });
+    }
+
+    if (diagnostics.control_plane_state === 'STREAM_DISCONNECTED') {
+        alerts.push({
+            id: 'alert_stream_disconnected',
+            node_id: 'telemetry_observer',
+            severity: 'critical',
+            category: 'stream',
+            title: 'Telemetry heartbeat stale',
+            message: 'The telemetry heartbeat is stale, so live topology signals are no longer trustworthy.',
+            timestamp: diagnostics.latest_telemetry_timestamp ?? now.toISOString(),
+        });
+    }
+
+    if (diagnostics.control_plane_state === 'WAITING_FOR_EVALUATION_EVENTS') {
+        alerts.push({
+            id: 'alert_waiting_for_evaluations',
+            node_id: 'outcome_feedback',
+            severity: 'warning',
+            category: 'evaluation',
+            title: 'Outcome linkage waiting on evaluation events',
+            message: 'Outcomes exist, but the canonical evaluation events have not been materialized yet.',
+            timestamp: diagnostics.latest_outcome_timestamp ?? now.toISOString(),
+        });
+    }
+
+    if (diagnostics.control_plane_state === 'INSUFFICIENT_OUTCOMES_FOR_DRIFT') {
+        alerts.push({
+            id: 'alert_insufficient_outcomes_for_drift',
+            node_id: 'outcome_feedback',
+            severity: 'info',
+            category: 'evaluation',
+            title: 'Insufficient outcomes for drift',
+            message: 'Evaluation events exist, but there are not enough linked outcomes yet to compute drift reliably.',
+            timestamp: diagnostics.latest_evaluation_timestamp ?? now.toISOString(),
+        });
+    }
 
     for (const node of nodes) {
         if (node.state.status === 'offline') {
@@ -995,7 +1130,12 @@ function buildSummary(
     alerts: TopologyAlert[],
     impacts: TopologyFailureImpact[],
     recommendations: TopologyRecommendation[],
+    diagnostics: TopologyDiagnosticsState,
 ): TopologySnapshot['summary'] {
+    if (diagnostics.control_plane_state !== 'READY') {
+        return summarizeNonReadyState(diagnostics, recommendations);
+    }
+
     const topAlert = alerts[0] ?? null;
     const topNode = topAlert ? nodes.find((node) => node.id === topAlert.node_id) ?? null : null;
     const topImpact = topNode ? impacts.find((impact) => impact.source_node_id === topNode.id) ?? null : null;
@@ -1019,51 +1159,106 @@ function buildSummary(
     };
 }
 
+function summarizeNonReadyState(
+    diagnostics: TopologyDiagnosticsState,
+    recommendations: TopologyRecommendation[],
+): TopologySnapshot['summary'] {
+    switch (diagnostics.control_plane_state) {
+        case 'MISSING_EVALUATION_EVENTS_TABLE':
+            return {
+                where_failing: 'Control Plane Storage',
+                root_cause: 'MISSING_EVALUATION_EVENTS_TABLE',
+                impact: 'Drift, correctness, and contradiction-aware root-cause analysis are unavailable across model nodes.',
+                next_action: 'Apply the topology control-plane migration and backfill evaluation events before trusting production topology decisions.',
+            };
+        case 'NO_TELEMETRY_EVENTS':
+            return {
+                where_failing: 'Telemetry Observer',
+                root_cause: 'NO_TELEMETRY_EVENTS',
+                impact: 'Network health and failure propagation are still initializing because no unified telemetry has been ingested.',
+                next_action: 'Send live inference traffic or enable simulation mode so the control graph receives telemetry.',
+            };
+        case 'STREAM_DISCONNECTED':
+            return {
+                where_failing: 'Telemetry Observer',
+                root_cause: 'STREAM_DISCONNECTED',
+                impact: 'Node health, edge flow, and alert freshness are stale across the entire topology.',
+                next_action: 'Investigate the telemetry heartbeat and restore event ingestion before acting on downstream node status.',
+            };
+        case 'WAITING_FOR_EVALUATION_EVENTS':
+            return {
+                where_failing: 'Outcome Feedback',
+                root_cause: 'WAITING_FOR_EVALUATION_EVENTS',
+                impact: 'Outcomes are arriving, but evaluation-driven drift and correctness signals have not materialized yet.',
+                next_action: 'Inspect the outcome-to-evaluation pipeline and confirm evaluation telemetry is being emitted for each attached outcome.',
+            };
+        case 'INSUFFICIENT_OUTCOMES_FOR_DRIFT':
+            return {
+                where_failing: 'Outcome Feedback',
+                root_cause: 'INSUFFICIENT_OUTCOMES_FOR_DRIFT',
+                impact: 'The graph can compute latency and error pressure, but drift remains intentionally unavailable.',
+                next_action: 'Attach more outcomes or enable simulation mode until the evaluation window reaches the drift threshold.',
+            };
+        case 'CONTROL_PLANE_INITIALIZING':
+            return {
+                where_failing: 'VetIOS Control Plane',
+                root_cause: 'CONTROL_PLANE_INITIALIZING',
+                impact: 'One or more control-plane dependencies are still warming up, so operational intelligence is partial.',
+                next_action: recommendations[0]?.message ?? 'Check topology diagnostics and wait for the control plane to finish initializing.',
+            };
+        default:
+            return {
+                where_failing: 'No critical failures detected',
+                root_cause: 'Latency, error rate, drift, and confidence remain within the healthy operating envelope.',
+                impact: 'Decision propagation is stable across clinics, registry, and telemetry.',
+                next_action: recommendations[0]?.message ?? 'Maintain live monitoring.',
+            };
+    }
+}
+
 function buildFamilyContexts(
     families: Awaited<ReturnType<typeof getModelRegistryControlPlaneSnapshot>>['families'],
     telemetryEvents: ControlGraphTelemetryEvent[],
-    evaluations: LearningEvaluationEvent[],
+    evaluations: ControlGraphEvaluationEvent[],
 ): FamilyTelemetryContext[] {
     const allVersionFamilies = buildVersionLookup(families);
     const inferenceEvents = telemetryEvents.filter((event) => event.event_type === 'inference');
-    const inferenceById = new Map(inferenceEvents.map((event) => [event.event_id, event]));
-    const outcomeEvents = telemetryEvents.filter((event) => event.event_type === 'outcome');
 
     return families.map((family) => {
         const versions = allVersionFamilies.get(family.model_family) ?? new Set<string>();
         const familyInference = inferenceEvents.filter((event) => resolveEventFamily(event.model_version, allVersionFamilies, families) === family.model_family);
-        const familyInferenceIds = new Set(familyInference.map((event) => event.event_id));
-        const familyOutcomes = outcomeEvents
-            .filter((event) => event.linked_event_id != null && familyInferenceIds.has(event.linked_event_id))
-            .map((event) => {
-                const linkedInference = event.linked_event_id ? inferenceById.get(event.linked_event_id) ?? null : null;
-                const prediction = linkedInference ? linkedInference.metrics.prediction : null;
-                const groundTruth = event.metrics.ground_truth;
-                const correct = event.metrics.correct;
-
-                if (!prediction || !groundTruth || correct == null) {
+        const modelVersions = Array.from(versions);
+        const familyEvaluations = evaluations.filter((evaluation) =>
+            evaluation.model_version != null
+            && modelVersions.includes(evaluation.model_version)
+            && evaluation.prediction != null
+            && evaluation.ground_truth != null,
+        );
+        const familyOutcomes = familyEvaluations
+            .map((evaluation) => {
+                if (!evaluation.prediction || !evaluation.ground_truth || evaluation.prediction_correct == null) {
                     return null;
                 }
 
                 return {
-                    timestamp: event.timestamp,
-                    prediction,
-                    ground_truth: groundTruth,
-                    correct,
+                    timestamp: evaluation.created_at,
+                    prediction: evaluation.prediction,
+                    ground_truth: evaluation.ground_truth,
+                    correct: evaluation.prediction_correct,
                 };
             })
             .filter((value): value is FamilyTelemetryContext['outcome_pairs'][number] => value != null);
-
-        const modelVersions = Array.from(versions);
-        const latestEvaluation = evaluations.find((evaluation) => evaluation.model_version != null && modelVersions.includes(evaluation.model_version));
+        const familyDrift = computeEvaluationDrift(familyEvaluations);
 
         return {
             family: family.model_family,
             group: family,
             versions,
             inference_events: familyInference,
+            evaluations: familyEvaluations,
             outcome_pairs: familyOutcomes,
-            evaluation_drift: latestEvaluation?.drift_score ?? null,
+            evaluation_drift: familyDrift,
+            drift_state: familyEvaluations.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
         };
     });
 }
@@ -1191,7 +1386,10 @@ function createNode(input: {
     };
 }
 
-function computeNetworkHealthScore(nodes: TopologyNodeSnapshot[]) {
+function computeNetworkHealthScore(
+    nodes: TopologyNodeSnapshot[],
+    diagnostics: TopologyDiagnosticsState,
+) {
     if (nodes.length === 0) return 0;
 
     const scores = nodes.map((node) => {
@@ -1211,43 +1409,41 @@ function computeNetworkHealthScore(nodes: TopologyNodeSnapshot[]) {
         return (latencyScore * 0.3) + (errorScore * 0.25) + (driftScore * 0.2) + (confidenceScore * 0.25);
     });
 
-    return Math.round((mean(scores) ?? 0) * 100);
+    const freshnessScore = diagnostics.telemetry_stream_connected ? 1 : 0;
+    const evaluationScore = diagnostics.evaluation_events_table_exists
+        ? (diagnostics.control_plane_state === 'INSUFFICIENT_OUTCOMES_FOR_DRIFT' ? 0.7 : 1)
+        : 0;
+    return Math.round((((mean(scores) ?? 0) * 0.8) + (freshnessScore * 0.1) + (evaluationScore * 0.1)) * 100);
 }
 
 function calculateInferenceErrorRate(
     inferenceEvents: ControlGraphTelemetryEvent[],
-    outcomePairs: Array<{ correct: boolean }>,
+    evaluations: Array<{ prediction_correct: boolean | null }>,
 ) {
     if (inferenceEvents.length === 0) return null;
     const anomalyCount = inferenceEvents.filter((event) => (event.metrics.latency_ms ?? 0) > 5_000).length;
-    const incorrectCount = outcomePairs.filter((pair) => pair.correct === false).length;
+    const incorrectCount = evaluations.filter((event) => event.prediction_correct === false).length;
     return roundNumber((anomalyCount + incorrectCount) / inferenceEvents.length, 4);
 }
 
-function collectOutcomePairs(
-    inferenceEvents: ControlGraphTelemetryEvent[],
-    outcomeEvents: ControlGraphTelemetryEvent[],
+function computeEvaluationDrift(
+    evaluations: Array<{ prediction: string | null; ground_truth: string | null }>,
 ) {
-    const inferenceById = new Map(inferenceEvents.map((event) => [event.event_id, event]));
-    return outcomeEvents
-        .map((event) => {
-            const linkedInference = event.linked_event_id ? inferenceById.get(event.linked_event_id) ?? null : null;
-            const prediction = linkedInference?.metrics.prediction ?? null;
-            const groundTruth = event.metrics.ground_truth;
-            const correct = event.metrics.correct;
-
-            if (!prediction || !groundTruth || correct == null) {
-                return null;
-            }
-
+    const pairs = evaluations
+        .map((evaluation) => {
+            if (!evaluation.prediction || !evaluation.ground_truth) return null;
             return {
-                timestamp: event.timestamp,
-                prediction,
-                ground_truth: groundTruth,
-                correct,
+                prediction: evaluation.prediction,
+                ground_truth: evaluation.ground_truth,
             };
         })
-        .filter((value): value is { timestamp: string; prediction: string; ground_truth: string; correct: boolean } => value != null);
+        .filter((value): value is { prediction: string; ground_truth: string } => value != null);
+
+    if (pairs.length < MIN_EVALUATION_EVENTS_FOR_DRIFT) {
+        return null;
+    }
+
+    return computeDistributionDrift(pairs);
 }
 
 function computeDistributionDrift(
@@ -1377,6 +1573,9 @@ async function loadTelemetryEvents(
         .limit(2_500);
 
     if (error) {
+        if (isMissingRelationError(error.message)) {
+            return [] as Record<string, unknown>[];
+        }
         throw new Error(`Failed to load topology telemetry events: ${error.message}`);
     }
 
@@ -1427,6 +1626,389 @@ async function loadClinicalCases(
     });
 }
 
+async function loadSimulationEvents(
+    learningStore: ReturnType<typeof createSupabaseLearningEngineStore>,
+    filters: Parameters<ReturnType<typeof createSupabaseLearningEngineStore>['listSimulationEvents']>[0],
+) {
+    try {
+        return await learningStore.listSimulationEvents(filters);
+    } catch {
+        return [] as LearningSimulationEvent[];
+    }
+}
+
+async function loadEvaluationEvents(
+    client: SupabaseClient,
+    tenantId: string,
+    from: Date,
+    until: Date,
+): Promise<{
+    events: ControlGraphEvaluationEvent[];
+    table_exists: boolean;
+    error: string | null;
+}> {
+    const C = MODEL_EVALUATION_EVENTS.COLUMNS;
+    const selectColumns = [
+        C.id,
+        C.evaluation_event_id,
+        C.tenant_id,
+        C.inference_event_id,
+        C.outcome_event_id,
+        C.case_id,
+        C.model_name,
+        C.model_version,
+        C.prediction,
+        C.prediction_confidence,
+        C.ground_truth,
+        C.prediction_correct,
+        C.condition_class_pred,
+        C.condition_class_true,
+        C.severity_pred,
+        C.severity_true,
+        C.contradiction_score,
+        C.adversarial_case,
+        C.drift_score,
+        C.created_at,
+    ].join(',');
+
+    const { data, error } = await client
+        .from(MODEL_EVALUATION_EVENTS.TABLE)
+        .select(selectColumns)
+        .eq(C.tenant_id, tenantId)
+        .gte(C.created_at, from.toISOString())
+        .lte(C.created_at, until.toISOString())
+        .order(C.created_at, { ascending: false })
+        .limit(500);
+
+    if (error) {
+        return {
+            events: [],
+            table_exists: !isMissingRelationError(error.message),
+            error: error.message,
+        };
+    }
+
+    return {
+        events: (data ?? []).map((row) => mapEvaluationEvent(asRecord(row))),
+        table_exists: true,
+        error: null,
+    };
+}
+
+async function loadLatestSourceTimestamps(
+    client: SupabaseClient,
+    tenantId: string,
+) {
+    const [latestInference, latestOutcome, latestEvaluation, latestSimulation] = await Promise.all([
+        fetchLatestTimestamp(client, AI_INFERENCE_EVENTS.TABLE, tenantId, AI_INFERENCE_EVENTS.COLUMNS.created_at),
+        fetchLatestTimestamp(client, CLINICAL_OUTCOME_EVENTS.TABLE, tenantId, CLINICAL_OUTCOME_EVENTS.COLUMNS.outcome_timestamp),
+        fetchLatestTimestamp(client, MODEL_EVALUATION_EVENTS.TABLE, tenantId, MODEL_EVALUATION_EVENTS.COLUMNS.created_at),
+        fetchLatestTimestamp(client, EDGE_SIMULATION_EVENTS.TABLE, tenantId, EDGE_SIMULATION_EVENTS.COLUMNS.created_at),
+    ]);
+
+    return {
+        latest_inference_timestamp: latestInference.timestamp,
+        latest_outcome_timestamp: latestOutcome.timestamp,
+        latest_evaluation_timestamp: latestEvaluation.timestamp,
+        latest_simulation_timestamp: latestSimulation.timestamp,
+        evaluation_table_exists: latestEvaluation.table_exists,
+        evaluation_error: latestEvaluation.error,
+    };
+}
+
+function buildDiagnosticsState(input: {
+    until: Date;
+    telemetryEvents: ControlGraphTelemetryEvent[];
+    evaluations: ControlGraphEvaluationEvent[];
+    latestSourceTimestamps: {
+        latest_inference_timestamp: string | null;
+        latest_outcome_timestamp: string | null;
+        latest_evaluation_timestamp: string | null;
+        latest_simulation_timestamp: string | null;
+        evaluation_table_exists: boolean;
+        evaluation_error: string | null;
+    };
+    evaluationTableExists: boolean;
+    evaluationLoadError: string | null;
+}): TopologyDiagnosticsState {
+    const latestTelemetryTimestamp = findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp));
+    const telemetryStreamConnected = latestTelemetryTimestamp != null
+        && input.until.getTime() - new Date(latestTelemetryTimestamp).getTime() <= HEARTBEAT_STALE_MS;
+    const evaluationTableExists = input.evaluationTableExists && input.latestSourceTimestamps.evaluation_table_exists;
+    const evaluationCount = input.evaluations.filter((evaluation) => evaluation.prediction != null && evaluation.ground_truth != null).length;
+
+    let controlPlaneState: TopologyControlPlaneState = 'READY';
+    if (!evaluationTableExists) {
+        controlPlaneState = 'MISSING_EVALUATION_EVENTS_TABLE';
+    } else if (input.evaluationLoadError) {
+        controlPlaneState = 'CONTROL_PLANE_INITIALIZING';
+    } else if (input.telemetryEvents.length === 0) {
+        controlPlaneState = 'NO_TELEMETRY_EVENTS';
+    } else if (!telemetryStreamConnected) {
+        controlPlaneState = 'STREAM_DISCONNECTED';
+    } else if (input.latestSourceTimestamps.latest_outcome_timestamp && evaluationCount === 0) {
+        controlPlaneState = 'WAITING_FOR_EVALUATION_EVENTS';
+    } else if (evaluationCount < MIN_EVALUATION_EVENTS_FOR_DRIFT) {
+        controlPlaneState = 'INSUFFICIENT_OUTCOMES_FOR_DRIFT';
+    }
+
+    return {
+        control_plane_state: controlPlaneState,
+        telemetry_stream_connected: telemetryStreamConnected,
+        evaluation_events_table_exists: evaluationTableExists,
+        latest_inference_timestamp: input.latestSourceTimestamps.latest_inference_timestamp,
+        latest_outcome_timestamp: input.latestSourceTimestamps.latest_outcome_timestamp,
+        latest_evaluation_timestamp: input.latestSourceTimestamps.latest_evaluation_timestamp,
+        latest_simulation_timestamp: input.latestSourceTimestamps.latest_simulation_timestamp,
+        latest_telemetry_timestamp: latestTelemetryTimestamp,
+        evaluation_load_error: input.evaluationLoadError ?? input.latestSourceTimestamps.evaluation_error,
+    };
+}
+
+export async function getTopologyDiagnostics(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<TopologySnapshot['diagnostics'] & { control_plane_state: TopologyControlPlaneState; network_health_score: number }> {
+    const snapshot = await getTopologySnapshot(client, tenantId, { window: '24h' });
+    return {
+        ...snapshot.diagnostics,
+        control_plane_state: snapshot.control_plane_state,
+        network_health_score: snapshot.network_health_score,
+    };
+}
+
+export function computeTopologyDriftSignal(
+    evaluations: Array<{ prediction: string | null; ground_truth: string | null }>,
+) {
+    const validCount = evaluations.filter((evaluation) => evaluation.prediction && evaluation.ground_truth).length;
+    return {
+        drift_score: computeEvaluationDrift(evaluations),
+        drift_state: validCount >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA' as const,
+    };
+}
+
+export function classifyTopologyControlPlaneState(input: {
+    now: string;
+    telemetry_event_timestamps: string[];
+    evaluation_event_count: number;
+    evaluation_events_table_exists: boolean;
+    latest_inference_timestamp?: string | null;
+    latest_outcome_timestamp?: string | null;
+    latest_evaluation_timestamp?: string | null;
+    latest_simulation_timestamp?: string | null;
+    evaluation_load_error?: string | null;
+}) {
+    return buildDiagnosticsState({
+        until: resolveUntil(input.now),
+        telemetryEvents: input.telemetry_event_timestamps.map((timestamp, index) => ({
+            event_id: `evt_test_${index}`,
+            linked_event_id: null,
+            source_id: null,
+            source_table: null,
+            event_type: 'inference',
+            timestamp,
+            model_version: 'test',
+            run_id: 'test',
+            metrics: {
+                latency_ms: 200,
+                confidence: 0.82,
+                prediction: 'test',
+                ground_truth: null,
+                correct: null,
+            },
+            system: { cpu: null, gpu: null, memory: null },
+            metadata: {},
+        })),
+        evaluations: Array.from({ length: input.evaluation_event_count }, (_, index) => ({
+            id: `eval_${index}`,
+            evaluation_event_id: `eval_${index}`,
+            tenant_id: 'tenant',
+            inference_event_id: null,
+            outcome_event_id: null,
+            case_id: null,
+            model_name: 'test',
+            model_version: 'test',
+            prediction: 'a',
+            prediction_confidence: 0.8,
+            ground_truth: 'a',
+            prediction_correct: true,
+            condition_class_pred: null,
+            condition_class_true: null,
+            severity_pred: null,
+            severity_true: null,
+            contradiction_score: null,
+            adversarial_case: false,
+            drift_score: null,
+            created_at: input.latest_evaluation_timestamp ?? input.now,
+        })),
+        latestSourceTimestamps: {
+            latest_inference_timestamp: input.latest_inference_timestamp ?? null,
+            latest_outcome_timestamp: input.latest_outcome_timestamp ?? null,
+            latest_evaluation_timestamp: input.latest_evaluation_timestamp ?? null,
+            latest_simulation_timestamp: input.latest_simulation_timestamp ?? null,
+            evaluation_table_exists: input.evaluation_events_table_exists,
+            evaluation_error: input.evaluation_load_error ?? null,
+        },
+        evaluationTableExists: input.evaluation_events_table_exists,
+        evaluationLoadError: input.evaluation_load_error ?? null,
+    });
+}
+
+export function computeTopologyNetworkHealth(
+    nodes: TopologyNodeSnapshot[],
+    diagnostics: Pick<TopologyDiagnosticsState, 'control_plane_state' | 'telemetry_stream_connected' | 'evaluation_events_table_exists'>,
+) {
+    return computeNetworkHealthScore(nodes, {
+        ...diagnostics,
+        latest_inference_timestamp: null,
+        latest_outcome_timestamp: null,
+        latest_evaluation_timestamp: null,
+        latest_simulation_timestamp: null,
+        latest_telemetry_timestamp: null,
+        evaluation_load_error: null,
+    });
+}
+
+export function buildTopologyAlertsForTest(input: {
+    nodes: TopologyNodeSnapshot[];
+    now: string;
+    diagnostics: TopologyDiagnosticsState;
+    telemetry_event_timestamps?: string[];
+}) {
+    const telemetryEvents = (input.telemetry_event_timestamps ?? []).map((timestamp, index) => ({
+        event_id: `evt_alert_${index}`,
+        linked_event_id: null,
+        source_id: null,
+        source_table: null,
+        event_type: 'inference' as const,
+        timestamp,
+        model_version: 'test',
+        run_id: 'test',
+        metrics: {
+            latency_ms: 200,
+            confidence: 0.8,
+            prediction: 'test',
+            ground_truth: null,
+            correct: null,
+        },
+        system: { cpu: null, gpu: null, memory: null },
+        metadata: {},
+    }));
+
+    return buildAlerts(input.nodes, telemetryEvents, resolveUntil(input.now), input.diagnostics);
+}
+
+export async function syncControlPlaneAlerts(
+    client: SupabaseClient,
+    tenantId: string,
+    alerts: TopologyAlert[],
+) {
+    const C = CONTROL_PLANE_ALERTS.COLUMNS;
+    try {
+        if (alerts.length > 0) {
+            await client
+                .from(CONTROL_PLANE_ALERTS.TABLE)
+                .upsert(alerts.map((alert) => ({
+                    [C.alert_key]: alert.id,
+                    [C.tenant_id]: tenantId,
+                    [C.severity]: alert.severity,
+                    [C.title]: alert.title,
+                    [C.message]: alert.message,
+                    [C.node_id]: alert.node_id,
+                    [C.resolved]: false,
+                    [C.resolved_at]: null,
+                    [C.metadata]: {
+                        category: alert.category,
+                        timestamp: alert.timestamp,
+                    },
+                })), {
+                    onConflict: `${C.tenant_id},${C.alert_key}`,
+                });
+        }
+
+        const { data: existing, error } = await client
+            .from(CONTROL_PLANE_ALERTS.TABLE)
+            .select(`${C.id},${C.alert_key}`)
+            .eq(C.tenant_id, tenantId)
+            .eq(C.resolved, false);
+
+        if (error) return;
+
+        const activeKeys = new Set(alerts.map((alert) => alert.id));
+        const staleIds = (existing ?? [])
+            .map((row) => asRecord(row))
+            .filter((row) => !activeKeys.has(readString(row.alert_key) ?? ''))
+            .map((row) => readString(row.id))
+            .filter((value): value is string => value != null);
+
+        if (staleIds.length > 0) {
+            await client
+                .from(CONTROL_PLANE_ALERTS.TABLE)
+                .update({
+                    [C.resolved]: true,
+                    [C.resolved_at]: new Date().toISOString(),
+                })
+                .in(C.id, staleIds);
+        }
+    } catch {
+        // Alert persistence is best effort; topology streaming should remain available.
+    }
+}
+
+async function fetchLatestTimestamp(
+    client: SupabaseClient,
+    table: string,
+    tenantId: string,
+    timestampColumn: string,
+): Promise<{ timestamp: string | null; table_exists: boolean; error: string | null }> {
+    const { data, error } = await client
+        .from(table)
+        .select(timestampColumn)
+        .eq('tenant_id', tenantId)
+        .order(timestampColumn, { ascending: false })
+        .limit(1);
+
+    if (error) {
+        return {
+            timestamp: null,
+            table_exists: !isMissingRelationError(error.message),
+            error: error.message,
+        };
+    }
+
+    const record = asRecord((data ?? [])[0]);
+    return {
+        timestamp: readString(record[timestampColumn]),
+        table_exists: true,
+        error: null,
+    };
+}
+
+function mapEvaluationEvent(row: Record<string, unknown>): ControlGraphEvaluationEvent {
+    return {
+        id: readString(row.id) ?? readString(row.evaluation_event_id) ?? 'eval_unknown',
+        evaluation_event_id: readString(row.evaluation_event_id) ?? readString(row.id) ?? 'eval_unknown',
+        tenant_id: readString(row.tenant_id) ?? '',
+        inference_event_id: readString(row.inference_event_id),
+        outcome_event_id: readString(row.outcome_event_id),
+        case_id: readString(row.case_id),
+        model_name: readString(row.model_name),
+        model_version: readString(row.model_version),
+        prediction: readString(row.prediction),
+        prediction_confidence: readNumber(row.prediction_confidence),
+        ground_truth: readString(row.ground_truth),
+        prediction_correct: readBoolean(row.prediction_correct),
+        condition_class_pred: readString(row.condition_class_pred),
+        condition_class_true: readString(row.condition_class_true),
+        severity_pred: readString(row.severity_pred),
+        severity_true: readString(row.severity_true),
+        contradiction_score: readNumber(row.contradiction_score),
+        adversarial_case: row.adversarial_case === true,
+        drift_score: readNumber(row.drift_score),
+        created_at: readString(row.created_at) ?? new Date().toISOString(),
+    };
+}
+
 function mapTelemetryEvent(row: Record<string, unknown>): ControlGraphTelemetryEvent {
     const metrics = asRecord(row.metrics);
     const system = asRecord(row.system);
@@ -1434,6 +2016,8 @@ function mapTelemetryEvent(row: Record<string, unknown>): ControlGraphTelemetryE
     return {
         event_id: readString(row.event_id) ?? 'evt_unknown',
         linked_event_id: readString(row.linked_event_id),
+        source_id: readString(row.source_id),
+        source_table: readString(row.source_table),
         event_type: resolveEventType(readString(row.event_type)),
         timestamp: readString(row.timestamp) ?? new Date().toISOString(),
         model_version: readString(row.model_version) ?? 'unknown',
@@ -1455,8 +2039,16 @@ function mapTelemetryEvent(row: Record<string, unknown>): ControlGraphTelemetryE
 }
 
 function resolveEventType(value: string | null): ControlGraphTelemetryEvent['event_type'] {
-    if (value === 'outcome' || value === 'system' || value === 'training') return value;
+    if (value === 'outcome' || value === 'evaluation' || value === 'simulation' || value === 'system' || value === 'training') return value;
     return 'inference';
+}
+
+function isMissingRelationError(message: string | null | undefined) {
+    if (!message) return false;
+    const normalized = message.toLowerCase();
+    return normalized.includes('could not find the table')
+        || normalized.includes('relation')
+        && normalized.includes('does not exist');
 }
 
 function resolveUntil(until: string | null | undefined) {

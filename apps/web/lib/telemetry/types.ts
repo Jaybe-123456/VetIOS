@@ -1,4 +1,4 @@
-export type TelemetryEventType = 'inference' | 'outcome' | 'system' | 'training';
+export type TelemetryEventType = 'inference' | 'outcome' | 'evaluation' | 'simulation' | 'system' | 'training';
 export type TelemetrySystemState = 'LIVE' | 'STALE';
 export type TelemetryMetricState =
     | 'READY'
@@ -25,6 +25,8 @@ export interface TelemetryEventRecord {
     event_id: string;
     tenant_id: string;
     linked_event_id: string | null;
+    source_id: string | null;
+    source_table: string | null;
     event_type: TelemetryEventType;
     timestamp: string;
     model_version: string;
