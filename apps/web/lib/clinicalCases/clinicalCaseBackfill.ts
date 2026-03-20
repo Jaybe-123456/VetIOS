@@ -492,9 +492,18 @@ function readObject(value: unknown): Record<string, unknown> {
 function readString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.replace(/\s+/g, ' ').trim();
-    return normalized.length > 0 ? normalized : null;
+    return normalized.length > 0 && normalized !== '-' ? normalized : null;
 }
 
 function readNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === 'string') {
+        const normalized = value.trim();
+        if (!normalized) return null;
+        const parsed = Number(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }

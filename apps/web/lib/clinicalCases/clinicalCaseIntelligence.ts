@@ -142,6 +142,16 @@ const SPECIES_PLACEHOLDERS = new Set([
     '-',
 ]);
 
+const UNKNOWN_CONDITION_CLASS_LABELS = new Set([
+    'idiopathic / unknown',
+    'idiopathic',
+    'unknown',
+    'unknown / mixed',
+    'mixed',
+    'nonspecific',
+    'non-specific',
+]);
+
 export function validateClinicalCaseDraft(input: {
     speciesCanonical: string | null;
     speciesRaw: string | null;
@@ -187,29 +197,43 @@ export function buildInferenceLearningPatch(input: InferenceLearningInput): Clin
     const diagnosis = readObject(input.outputPayload.diagnosis);
     const riskAssessment = readObject(input.outputPayload.risk_assessment);
     const contradiction = readObject(input.outputPayload.contradiction_analysis);
-    const topDifferential = readTopDifferential(diagnosis.top_differentials);
+    const telemetry = readObject(input.outputPayload.telemetry);
+    const topDifferential = readTopDifferential(diagnosis.top_differentials ?? input.outputPayload.top_differentials);
     const existing = input.existing ?? null;
     const preferIncoming = input.preferIncoming ?? true;
 
-    const parsedTopDiagnosis = readText(topDifferential?.name);
-    const parsedConditionClass =
+    const parsedTopDiagnosis = extractTopDiagnosis(input.outputPayload, diagnosis, topDifferential);
+    const parsedConditionClass = normalizeConditionClass(
         readText(diagnosis.primary_condition_class) ??
-        inferConditionClassFromDiagnosis(parsedTopDiagnosis);
+        readText(diagnosis.condition_class) ??
+        readText(input.outputPayload.primary_condition_class) ??
+        readText(input.outputPayload.condition_class) ??
+        inferConditionClassFromDiagnosis(parsedTopDiagnosis),
+    );
+    const incomingSeverityScore =
+        readNumber(riskAssessment.severity_score ?? input.outputPayload.severity_score);
+    const incomingEmergencyLevel = normalizeEmergencyLevel(
+        readText(riskAssessment.emergency_level) ??
+        readText(input.outputPayload.emergency_level),
+    );
     let emergencyLevel =
-        normalizeEmergencyLevel(readText(riskAssessment.emergency_level)) ??
-        deriveEmergencyLevelFromSeverity(readNumber(riskAssessment.severity_score)) ??
+        incomingEmergencyLevel ??
+        deriveEmergencyLevelFromSeverity(incomingSeverityScore) ??
         existing?.emergency_level ??
         null;
     let severityScore =
-        readNumber(riskAssessment.severity_score) ??
+        incomingSeverityScore ??
         deriveSeverityScoreFromEmergencyLevel(emergencyLevel) ??
         existing?.severity_score ??
         null;
     const contradictionFlags = mergeStringArrays(
         existing?.contradiction_flags ?? [],
         mergeStringArrays(
-            readStringArray(input.outputPayload.contradiction_reasons),
-            readStringArray(contradiction.contradiction_reasons),
+            readStringArray(input.outputPayload.contradiction_flags),
+            mergeStringArrays(
+                readStringArray(input.outputPayload.contradiction_reasons),
+                readStringArray(contradiction.contradiction_reasons),
+            ),
         ),
     );
     const uncertaintyNotes = mergeStringArrays(
@@ -217,14 +241,16 @@ export function buildInferenceLearningPatch(input: InferenceLearningInput): Clin
         readStringArray(input.outputPayload.uncertainty_notes),
     );
     const contradictionScore = readNumber(
-        input.outputPayload.contradiction_score ?? contradiction.contradiction_score,
+        input.outputPayload.contradiction_score ??
+        contradiction.contradiction_score ??
+        readObject(input.outputPayload.contradiction_analysis).contradiction_score,
     );
     const adversarialCase = (input.sourceModule ?? '') === 'adversarial_simulation';
     const adversarialType = adversarialCase ? 'simulated_adversarial_case' : null;
     let diagnosisConfidence =
         normalizeProbability(readNumber(input.confidenceScore)) ??
-        readNumber(diagnosis.confidence_score) ??
-        readNumber(topDifferential?.probability) ??
+        readNumber(diagnosis.confidence_score ?? input.outputPayload.confidence_score) ??
+        readNumber(topDifferential?.probability ?? topDifferential?.confidence) ??
         existing?.diagnosis_confidence ??
         null;
     let topDiagnosis = mergeScalar(existing?.top_diagnosis ?? null, parsedTopDiagnosis, preferIncoming);
@@ -234,10 +260,18 @@ export function buildInferenceLearningPatch(input: InferenceLearningInput): Clin
         preferIncoming,
     );
 
-    if (!topDiagnosis || !primaryConditionClass) {
+    if (!hasMeaningfulConditionClass(primaryConditionClass)) {
+        primaryConditionClass =
+            inferConditionClassFromDiagnosis(topDiagnosis) ??
+            primaryConditionClass;
+    }
+
+    if (!topDiagnosis || !hasMeaningfulConditionClass(primaryConditionClass)) {
         const lowSignalFallback = deriveLowSignalFallback(input.symptomKeys ?? []);
         topDiagnosis = topDiagnosis ?? lowSignalFallback.topDiagnosis;
-        primaryConditionClass = primaryConditionClass ?? lowSignalFallback.primaryConditionClass;
+        primaryConditionClass = hasMeaningfulConditionClass(primaryConditionClass)
+            ? primaryConditionClass
+            : lowSignalFallback.primaryConditionClass;
         diagnosisConfidence = capConfidence(
             diagnosisConfidence ?? lowSignalFallback.diagnosisConfidence,
             lowSignalFallback.diagnosisConfidence,
@@ -290,7 +324,11 @@ export function buildInferenceLearningPatch(input: InferenceLearningInput): Clin
             adversarialCase: adversarialCase || existing?.adversarial_case === true,
             adversarialCaseType: adversarialType ?? existing?.adversarial_case_type ?? null,
         }),
-        model_version: readText(input.modelVersion) ?? existing?.model_version ?? null,
+        model_version:
+            readText(input.modelVersion) ??
+            readText(telemetry.model_version) ??
+            existing?.model_version ??
+            null,
         telemetry_status: deriveTelemetryStatus({
             hasDiagnosis: Boolean(topDiagnosis || primaryConditionClass || existing?.confirmed_diagnosis),
             hasSeverity: Boolean(emergencyLevel || severityScore !== null),
@@ -381,15 +419,20 @@ export function buildSimulationLearningPatch(input: SimulationLearningInput): Pa
     const diagnosis = readObject(stressMetrics.diagnosis);
     const riskAssessment = readObject(stressMetrics.risk_assessment);
     const topDifferential = readTopDifferential(diagnosis.top_differentials);
-    const parsedTopDiagnosis = readText(topDifferential?.name);
-    const parsedConditionClass =
+    const parsedTopDiagnosis = extractTopDiagnosis(stressMetrics, diagnosis, topDifferential);
+    const parsedConditionClass = normalizeConditionClass(
         readText(diagnosis.primary_condition_class) ??
-        inferConditionClassFromDiagnosis(parsedTopDiagnosis);
+        readText(diagnosis.condition_class) ??
+        inferConditionClassFromDiagnosis(parsedTopDiagnosis),
+    );
+    const resolvedConditionClass = hasMeaningfulConditionClass(parsedConditionClass)
+        ? parsedConditionClass
+        : inferConditionClassFromDiagnosis(parsedTopDiagnosis);
     const severityScore =
-        readNumber(riskAssessment.severity_score) ??
+        readNumber(riskAssessment.severity_score ?? stressMetrics.severity_score) ??
         input.existing.severity_score;
     const emergencyLevel =
-        normalizeEmergencyLevel(readText(riskAssessment.emergency_level)) ??
+        normalizeEmergencyLevel(readText(riskAssessment.emergency_level) ?? readText(stressMetrics.emergency_level)) ??
         deriveEmergencyLevelFromSeverity(severityScore) ??
         input.existing.emergency_level;
     const contradictionScore =
@@ -412,7 +455,7 @@ export function buildSimulationLearningPatch(input: SimulationLearningInput): Pa
         adversarial_case_type: normalizeSimulationCaseType(input.simulationType),
         top_diagnosis: input.existing.top_diagnosis ?? parsedTopDiagnosis,
         predicted_diagnosis: input.existing.predicted_diagnosis ?? input.existing.top_diagnosis ?? parsedTopDiagnosis,
-        primary_condition_class: input.existing.primary_condition_class ?? parsedConditionClass,
+        primary_condition_class: input.existing.primary_condition_class ?? resolvedConditionClass,
         severity_score: severityScore,
         emergency_level: emergencyLevel,
         triage_priority: deriveTriagePriority(emergencyLevel, severityScore),
@@ -422,12 +465,12 @@ export function buildSimulationLearningPatch(input: SimulationLearningInput): Pa
         case_cluster: deriveCaseCluster({
             topDiagnosis: input.existing.top_diagnosis ?? parsedTopDiagnosis,
             confirmedDiagnosis: input.existing.confirmed_diagnosis,
-            primaryConditionClass: input.existing.primary_condition_class ?? parsedConditionClass,
+            primaryConditionClass: input.existing.primary_condition_class ?? resolvedConditionClass,
             adversarialCase: true,
             adversarialCaseType: normalizeSimulationCaseType(input.simulationType),
         }),
         telemetry_status: deriveTelemetryStatus({
-            hasDiagnosis: Boolean(input.existing.top_diagnosis || parsedTopDiagnosis || input.existing.confirmed_diagnosis || input.existing.primary_condition_class || parsedConditionClass),
+            hasDiagnosis: Boolean(input.existing.top_diagnosis || parsedTopDiagnosis || input.existing.confirmed_diagnosis || input.existing.primary_condition_class || resolvedConditionClass),
             hasSeverity: Boolean(emergencyLevel || severityScore !== null),
             isInvalid: false,
             adversarialCase: true,
@@ -623,12 +666,18 @@ function inferConditionClassFromDiagnosis(value: string | null): string | null {
     if (normalized.includes('undifferentiated')) {
         return 'Undifferentiated';
     }
+    if (normalized.includes('unknown') || normalized.includes('undifferentiated')) {
+        return 'Undifferentiated';
+    }
     return null;
 }
 
 function readTopDifferential(value: unknown): Record<string, unknown> | null {
     if (!Array.isArray(value) || value.length === 0) return null;
     const candidate = value[0];
+    if (typeof candidate === 'string') {
+        return { name: candidate };
+    }
     return readObject(candidate);
 }
 
@@ -641,11 +690,20 @@ function readObject(value: unknown): Record<string, unknown> {
 function readText(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.replace(/\s+/g, ' ').trim();
-    return normalized.length > 0 ? normalized : null;
+    return normalized.length > 0 && !isPlaceholderValue(normalized) ? normalized : null;
 }
 
 function readNumber(value: unknown): number | null {
-    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === 'string') {
+        const normalized = value.trim();
+        if (!normalized) return null;
+        const parsed = Number(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
 
 function readStringArray(value: unknown): string[] {
@@ -653,9 +711,40 @@ function readStringArray(value: unknown): string[] {
     const normalized = value
         .filter((entry): entry is string => typeof entry === 'string')
         .map((entry) => entry.replace(/\s+/g, ' ').trim())
-        .filter(Boolean);
+        .filter((entry) => entry.length > 0 && !isPlaceholderValue(entry));
 
     return Array.from(new Set(normalized));
+}
+
+function extractTopDiagnosis(
+    payload: Record<string, unknown>,
+    diagnosis: Record<string, unknown>,
+    topDifferential: Record<string, unknown> | null,
+): string | null {
+    return readText(topDifferential?.name) ??
+        readText(topDifferential?.diagnosis) ??
+        readText(topDifferential?.condition) ??
+        readText(diagnosis.top_diagnosis) ??
+        readText(diagnosis.predicted_diagnosis) ??
+        readText(diagnosis.primary_diagnosis) ??
+        readText(payload.top_diagnosis) ??
+        readText(payload.predicted_diagnosis) ??
+        null;
+}
+
+function normalizeConditionClass(value: string | null): string | null {
+    if (!value) return null;
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (!normalized) return null;
+    if (UNKNOWN_CONDITION_CLASS_LABELS.has(normalized.toLowerCase())) {
+        return 'Undifferentiated';
+    }
+    return normalized;
+}
+
+function hasMeaningfulConditionClass(value: string | null): boolean {
+    if (!value) return false;
+    return normalizeConditionClass(value) !== 'Undifferentiated' || value === 'Undifferentiated';
 }
 
 function mergeStringArrays(left: string[], right: string[]): string[] {
