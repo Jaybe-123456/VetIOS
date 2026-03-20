@@ -13,8 +13,10 @@ import { AI_INFERENCE_EVENTS } from '@/lib/db/schemaContracts';
 export interface InferenceLogInput {
     id?: string;
     tenant_id: string;
+    user_id?: string | null;
     clinic_id?: string | null;
     case_id?: string | null;
+    source_module?: string | null;
     model_name: string;
     model_version: string;
     input_signature: Record<string, unknown>;
@@ -36,8 +38,10 @@ export async function logInference(
         .insert({
             [C.id]: input.id,
             [C.tenant_id]: input.tenant_id,
+            [C.user_id]: input.user_id ?? null,
             [C.clinic_id]: input.clinic_id ?? null,
             [C.case_id]: input.case_id ?? null,
+            [C.source_module]: input.source_module ?? null,
             [C.model_name]: input.model_name,
             [C.model_version]: input.model_version,
             [C.input_signature]: input.input_signature,

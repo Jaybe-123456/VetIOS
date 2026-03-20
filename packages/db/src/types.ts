@@ -773,17 +773,26 @@ export interface Database {
                 Row: {
                     id: string;
                     tenant_id: string;
+                    user_id: string | null;
                     clinic_id: string | null;
+                    source_module: string | null;
                     case_key: string;
                     source_case_reference: string | null;
                     species: string | null;
+                    species_canonical: string | null;
+                    species_display: string | null;
                     species_raw: string | null;
+                    symptoms_raw: string | null;
+                    symptoms_normalized: string[];
                     breed: string | null;
                     symptom_vector: string[];
                     symptom_summary: string | null;
+                    patient_metadata: Json;
                     metadata: Json;
                     latest_input_signature: Json;
                     latest_inference_event_id: string | null;
+                    latest_outcome_event_id: string | null;
+                    latest_simulation_event_id: string | null;
                     inference_event_count: number;
                     first_inference_at: string;
                     last_inference_at: string;
@@ -793,17 +802,26 @@ export interface Database {
                 Insert: {
                     id?: string;
                     tenant_id: string;
+                    user_id?: string | null;
                     clinic_id?: string | null;
+                    source_module?: string | null;
                     case_key: string;
                     source_case_reference?: string | null;
                     species?: string | null;
+                    species_canonical?: string | null;
+                    species_display?: string | null;
                     species_raw?: string | null;
+                    symptoms_raw?: string | null;
+                    symptoms_normalized?: string[];
                     breed?: string | null;
                     symptom_vector?: string[];
                     symptom_summary?: string | null;
+                    patient_metadata?: Json;
                     metadata?: Json;
                     latest_input_signature?: Json;
                     latest_inference_event_id?: string | null;
+                    latest_outcome_event_id?: string | null;
+                    latest_simulation_event_id?: string | null;
                     inference_event_count?: number;
                     first_inference_at?: string;
                     last_inference_at?: string;
@@ -813,17 +831,26 @@ export interface Database {
                 Update: {
                     id?: string;
                     tenant_id?: string;
+                    user_id?: string | null;
                     clinic_id?: string | null;
+                    source_module?: string | null;
                     case_key?: string;
                     source_case_reference?: string | null;
                     species?: string | null;
+                    species_canonical?: string | null;
+                    species_display?: string | null;
                     species_raw?: string | null;
+                    symptoms_raw?: string | null;
+                    symptoms_normalized?: string[];
                     breed?: string | null;
                     symptom_vector?: string[];
                     symptom_summary?: string | null;
+                    patient_metadata?: Json;
                     metadata?: Json;
                     latest_input_signature?: Json;
                     latest_inference_event_id?: string | null;
+                    latest_outcome_event_id?: string | null;
+                    latest_simulation_event_id?: string | null;
                     inference_event_count?: number;
                     first_inference_at?: string;
                     last_inference_at?: string;
@@ -842,6 +869,18 @@ export interface Database {
                         columns: ["latest_inference_event_id"];
                         referencedRelation: "ai_inference_events";
                         referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "clinical_cases_latest_outcome_event_id_fkey";
+                        columns: ["latest_outcome_event_id"];
+                        referencedRelation: "clinical_outcome_events";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "clinical_cases_latest_simulation_event_id_fkey";
+                        columns: ["latest_simulation_event_id"];
+                        referencedRelation: "edge_simulation_events";
+                        referencedColumns: ["id"];
                     }
                 ];
             };
@@ -850,8 +889,10 @@ export interface Database {
                 Row: {
                     id: string;
                     tenant_id: string;
+                    user_id: string | null;
                     clinic_id: string | null;
                     case_id: string | null;
+                    source_module: string | null;
                     model_name: string;
                     model_version: string;
                     input_signature: Json;
@@ -865,8 +906,10 @@ export interface Database {
                 Insert: {
                     id?: string;
                     tenant_id: string;
+                    user_id?: string | null;
                     clinic_id?: string | null;
                     case_id?: string | null;
+                    source_module?: string | null;
                     model_name: string;
                     model_version: string;
                     input_signature: Json;
@@ -880,8 +923,10 @@ export interface Database {
                 Update: {
                     id?: string;
                     tenant_id?: string;
+                    user_id?: string | null;
                     clinic_id?: string | null;
                     case_id?: string | null;
+                    source_module?: string | null;
                     model_name?: string;
                     model_version?: string;
                     input_signature?: Json;
@@ -912,8 +957,10 @@ export interface Database {
                 Row: {
                     id: string;
                     tenant_id: string;
+                    user_id: string | null;
                     clinic_id: string | null;
                     case_id: string | null;
+                    source_module: string | null;
                     inference_event_id: string;
                     outcome_type: string;
                     outcome_payload: Json;
@@ -923,8 +970,10 @@ export interface Database {
                 Insert: {
                     id?: string;
                     tenant_id: string;
+                    user_id?: string | null;
                     clinic_id?: string | null;
                     case_id?: string | null;
+                    source_module?: string | null;
                     inference_event_id: string;
                     outcome_type: string;
                     outcome_payload: Json;
@@ -934,8 +983,10 @@ export interface Database {
                 Update: {
                     id?: string;
                     tenant_id?: string;
+                    user_id?: string | null;
                     clinic_id?: string | null;
                     case_id?: string | null;
+                    source_module?: string | null;
                     inference_event_id?: string;
                     outcome_type?: string;
                     outcome_payload?: Json;
@@ -967,35 +1018,47 @@ export interface Database {
             edge_simulation_events: {
                 Row: {
                     id: string;
-                    tenant_id: string;
+                    tenant_id: string | null;
+                    user_id: string | null;
+                    clinic_id: string | null;
+                    case_id: string | null;
+                    source_module: string | null;
                     simulation_type: string;
                     simulation_parameters: Json;
-                    scenario: Json;
                     triggered_inference_id: string | null;
-                    inference_output: Json | null;
                     failure_mode: string | null;
+                    stress_metrics: Json | null;
+                    is_real_world: boolean;
                     created_at: string;
                 };
                 Insert: {
                     id?: string;
-                    tenant_id: string;
+                    tenant_id?: string | null;
+                    user_id?: string | null;
+                    clinic_id?: string | null;
+                    case_id?: string | null;
+                    source_module?: string | null;
                     simulation_type: string;
                     simulation_parameters: Json;
-                    scenario: Json;
                     triggered_inference_id?: string | null;
-                    inference_output?: Json | null;
                     failure_mode?: string | null;
+                    stress_metrics?: Json | null;
+                    is_real_world: boolean;
                     created_at?: string;
                 };
                 Update: {
                     id?: string;
-                    tenant_id?: string;
+                    tenant_id?: string | null;
+                    user_id?: string | null;
+                    clinic_id?: string | null;
+                    case_id?: string | null;
+                    source_module?: string | null;
                     simulation_type?: string;
                     simulation_parameters?: Json;
-                    scenario?: Json;
                     triggered_inference_id?: string | null;
-                    inference_output?: Json | null;
                     failure_mode?: string | null;
+                    stress_metrics?: Json | null;
+                    is_real_world?: boolean;
                     created_at?: string;
                 };
                 Relationships: [
@@ -1009,6 +1072,12 @@ export interface Database {
                         foreignKeyName: "edge_simulation_events_inference_id_fkey";
                         columns: ["triggered_inference_id"];
                         referencedRelation: "ai_inference_events";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "edge_simulation_events_case_id_fkey";
+                        columns: ["case_id"];
+                        referencedRelation: "clinical_cases";
                         referencedColumns: ["id"];
                     }
                 ];
@@ -1055,7 +1124,26 @@ export interface Database {
                 ];
             };
         };
-        Views: Record<string, never>;
+        Views: {
+            clinical_case_live_view: {
+                Row: {
+                    case_id: string | null;
+                    tenant_id: string | null;
+                    user_id: string | null;
+                    species: string | null;
+                    breed: string | null;
+                    symptoms_summary: string | null;
+                    latest_inference_event_id: string | null;
+                    latest_outcome_event_id: string | null;
+                    latest_simulation_event_id: string | null;
+                    latest_confidence: number | null;
+                    latest_emergency_level: string | null;
+                    source_module: string | null;
+                    updated_at: string | null;
+                };
+                Relationships: [];
+            };
+        };
         Functions: Record<string, never>;
         Enums: {
             user_role: UserRole;

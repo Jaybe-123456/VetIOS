@@ -1,11 +1,32 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { AI_INFERENCE_EVENTS, CLINICAL_CASES } from '@/lib/db/schemaContracts';
-import type { ClinicalCaseRecord } from '@/lib/clinicalCases/clinicalCaseManager';
+import {
+    AI_INFERENCE_EVENTS,
+    CLINICAL_CASE_LIVE_VIEW,
+} from '@/lib/db/schemaContracts';
+import { logClinicalDatasetRead } from '@/lib/dataset/clinicalDatasetDiagnostics';
+
+export interface ClinicalCaseLiveRecord {
+    case_id: string;
+    tenant_id: string;
+    user_id: string | null;
+    species: string | null;
+    breed: string | null;
+    symptoms_summary: string | null;
+    latest_inference_event_id: string | null;
+    latest_outcome_event_id: string | null;
+    latest_simulation_event_id: string | null;
+    latest_confidence: number | null;
+    latest_emergency_level: string | null;
+    source_module: string | null;
+    updated_at: string;
+}
 
 export interface DatasetInferenceEventRecord {
     id: string;
     tenant_id: string;
+    user_id: string | null;
     case_id: string | null;
+    source_module: string | null;
     model_version: string;
     confidence_score: number | null;
     output_payload: Record<string, unknown>;
@@ -13,7 +34,7 @@ export interface DatasetInferenceEventRecord {
 }
 
 export interface ClinicalDatasetStore {
-    listClinicalCases(tenantId: string, limit: number): Promise<ClinicalCaseRecord[]>;
+    listClinicalCases(tenantId: string, limit: number): Promise<ClinicalCaseLiveRecord[]>;
     listInferenceEvents(tenantId: string, limit: number): Promise<DatasetInferenceEventRecord[]>;
 }
 
@@ -23,15 +44,30 @@ export interface TenantClinicalDataset {
     refreshedAt: string;
 }
 
+export interface TenantClinicalDatasetOptions {
+    authenticatedUserId?: string | null;
+    source?: string;
+}
+
 export async function getTenantClinicalDataset(
     store: ClinicalDatasetStore,
     tenantId: string,
     limit = 50,
+    options: TenantClinicalDatasetOptions = {},
 ): Promise<TenantClinicalDataset> {
     const [clinicalCases, inferenceEvents] = await Promise.all([
         store.listClinicalCases(tenantId, limit),
         store.listInferenceEvents(tenantId, limit),
     ]);
+
+    logClinicalDatasetRead({
+        source: options.source ?? 'dataset_manager',
+        authenticatedUserId: options.authenticatedUserId ?? null,
+        resolvedTenantId: tenantId,
+        datasetQueryTenantId: tenantId,
+        rowCount: clinicalCases.length,
+        inferenceRowCount: inferenceEvents.length,
+    });
 
     return {
         clinicalCases: mapClinicalCasesToDatasetRows(clinicalCases),
@@ -41,17 +77,14 @@ export async function getTenantClinicalDataset(
 }
 
 export function mapClinicalCasesToDatasetRows(
-    rows: ClinicalCaseRecord[],
+    rows: ClinicalCaseLiveRecord[],
 ): Array<Record<string, string>> {
     return rows.map((row) => ({
-        CASE_ID: row.id,
-        SPECIES: row.species ?? row.species_raw ?? 'Unknown',
+        CASE_ID: row.case_id,
+        SPECIES: row.species ?? 'Unknown',
         BREED: row.breed ?? '-',
-        SYMPTOMS:
-            row.symptom_summary ??
-            (row.symptom_vector.length > 0 ? row.symptom_vector.slice(0, 8).join(', ') : '-') ??
-            '-',
-        TIMESTAMP: formatDatasetTimestamp(row.last_inference_at),
+        SYMPTOMS: row.symptoms_summary ?? '-',
+        TIMESTAMP: formatDatasetTimestamp(row.updated_at),
     }));
 }
 
@@ -68,73 +101,54 @@ export function mapInferenceEventsToDatasetRows(
 }
 
 export function createSupabaseClinicalDatasetStore(client: SupabaseClient): ClinicalDatasetStore {
-    const caseColumns = CLINICAL_CASES.COLUMNS;
+    const liveCaseColumns = CLINICAL_CASE_LIVE_VIEW.COLUMNS;
     const inferenceColumns = AI_INFERENCE_EVENTS.COLUMNS;
 
     return {
         async listClinicalCases(tenantId, limit) {
             const { data, error } = await client
-                .from(CLINICAL_CASES.TABLE)
+                .from(CLINICAL_CASE_LIVE_VIEW.TABLE)
                 .select([
-                    caseColumns.id,
-                    caseColumns.tenant_id,
-                    caseColumns.clinic_id,
-                    caseColumns.case_key,
-                    caseColumns.source_case_reference,
-                    caseColumns.species,
-                    caseColumns.species_raw,
-                    caseColumns.breed,
-                    caseColumns.symptom_vector,
-                    caseColumns.symptom_summary,
-                    caseColumns.metadata,
-                    caseColumns.latest_input_signature,
-                    caseColumns.latest_inference_event_id,
-                    caseColumns.inference_event_count,
-                    caseColumns.first_inference_at,
-                    caseColumns.last_inference_at,
-                    caseColumns.created_at,
-                    caseColumns.updated_at,
+                    liveCaseColumns.case_id,
+                    liveCaseColumns.tenant_id,
+                    liveCaseColumns.user_id,
+                    liveCaseColumns.species,
+                    liveCaseColumns.breed,
+                    liveCaseColumns.symptoms_summary,
+                    liveCaseColumns.latest_inference_event_id,
+                    liveCaseColumns.latest_outcome_event_id,
+                    liveCaseColumns.latest_simulation_event_id,
+                    liveCaseColumns.latest_confidence,
+                    liveCaseColumns.latest_emergency_level,
+                    liveCaseColumns.source_module,
+                    liveCaseColumns.updated_at,
                 ].join(', '))
-                .eq(caseColumns.tenant_id, tenantId)
-                .order(caseColumns.last_inference_at, { ascending: false })
+                .eq(liveCaseColumns.tenant_id, tenantId)
+                .order(liveCaseColumns.updated_at, { ascending: false })
                 .limit(limit);
 
             if (error) {
-                throw new Error(`Failed to query canonical clinical cases: ${error.message}`);
+                throw new Error(`Failed to query clinical case live view: ${error.message}`);
             }
 
-            const caseRows = (data ?? []) as unknown as Array<Record<string, unknown>>;
-            return caseRows.map((row) => ({
-                id: String(row.id),
+            const liveRows = (data ?? []) as unknown as Array<Record<string, unknown>>;
+            return liveRows.map((row) => ({
+                case_id: String(row.case_id),
                 tenant_id: String(row.tenant_id),
-                clinic_id: typeof row.clinic_id === 'string' ? row.clinic_id : null,
-                case_key: String(row.case_key),
-                source_case_reference:
-                    typeof row.source_case_reference === 'string' ? row.source_case_reference : null,
+                user_id: typeof row.user_id === 'string' ? row.user_id : null,
                 species: typeof row.species === 'string' ? row.species : null,
-                species_raw: typeof row.species_raw === 'string' ? row.species_raw : null,
                 breed: typeof row.breed === 'string' ? row.breed : null,
-                symptom_vector: Array.isArray(row.symptom_vector)
-                    ? row.symptom_vector.filter((value): value is string => typeof value === 'string')
-                    : [],
-                symptom_summary: typeof row.symptom_summary === 'string' ? row.symptom_summary : null,
-                metadata:
-                    typeof row.metadata === 'object' && row.metadata !== null && !Array.isArray(row.metadata)
-                        ? row.metadata as Record<string, unknown>
-                        : {},
-                latest_input_signature:
-                    typeof row.latest_input_signature === 'object' &&
-                        row.latest_input_signature !== null &&
-                        !Array.isArray(row.latest_input_signature)
-                        ? row.latest_input_signature as Record<string, unknown>
-                        : {},
+                symptoms_summary: typeof row.symptoms_summary === 'string' ? row.symptoms_summary : null,
                 latest_inference_event_id:
                     typeof row.latest_inference_event_id === 'string' ? row.latest_inference_event_id : null,
-                inference_event_count:
-                    typeof row.inference_event_count === 'number' ? row.inference_event_count : 0,
-                first_inference_at: String(row.first_inference_at),
-                last_inference_at: String(row.last_inference_at),
-                created_at: String(row.created_at),
+                latest_outcome_event_id:
+                    typeof row.latest_outcome_event_id === 'string' ? row.latest_outcome_event_id : null,
+                latest_simulation_event_id:
+                    typeof row.latest_simulation_event_id === 'string' ? row.latest_simulation_event_id : null,
+                latest_confidence: typeof row.latest_confidence === 'number' ? row.latest_confidence : null,
+                latest_emergency_level:
+                    typeof row.latest_emergency_level === 'string' ? row.latest_emergency_level : null,
+                source_module: typeof row.source_module === 'string' ? row.source_module : null,
                 updated_at: String(row.updated_at),
             }));
         },
@@ -145,7 +159,9 @@ export function createSupabaseClinicalDatasetStore(client: SupabaseClient): Clin
                 .select([
                     inferenceColumns.id,
                     inferenceColumns.tenant_id,
+                    inferenceColumns.user_id,
                     inferenceColumns.case_id,
+                    inferenceColumns.source_module,
                     inferenceColumns.model_version,
                     inferenceColumns.confidence_score,
                     inferenceColumns.output_payload,
@@ -163,7 +179,9 @@ export function createSupabaseClinicalDatasetStore(client: SupabaseClient): Clin
             return inferenceRows.map((row) => ({
                 id: String(row.id),
                 tenant_id: String(row.tenant_id),
+                user_id: typeof row.user_id === 'string' ? row.user_id : null,
                 case_id: typeof row.case_id === 'string' ? row.case_id : null,
+                source_module: typeof row.source_module === 'string' ? row.source_module : null,
                 model_version: String(row.model_version),
                 confidence_score: typeof row.confidence_score === 'number' ? row.confidence_score : null,
                 output_payload:

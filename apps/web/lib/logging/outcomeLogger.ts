@@ -12,8 +12,10 @@ import { CLINICAL_OUTCOME_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface OutcomeLogInput {
     tenant_id: string;
+    user_id?: string | null;
     clinic_id?: string | null;
     case_id?: string | null;
+    source_module?: string | null;
     inference_event_id: string;
     outcome_type: string;
     outcome_payload: Record<string, unknown>;
@@ -30,8 +32,10 @@ export async function logOutcome(
         .from(CLINICAL_OUTCOME_EVENTS.TABLE)
         .insert({
             [C.tenant_id]: input.tenant_id,
+            [C.user_id]: input.user_id ?? null,
             [C.clinic_id]: input.clinic_id ?? null,
             [C.case_id]: input.case_id ?? null,
+            [C.source_module]: input.source_module ?? null,
             [C.inference_event_id]: input.inference_event_id,
             [C.outcome_type]: input.outcome_type,
             [C.outcome_payload]: input.outcome_payload,
