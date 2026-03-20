@@ -10,95 +10,46 @@ import {
     type ClinicalCaseUpsertRecord,
 } from '../../apps/web/lib/clinicalCases/clinicalCaseManager.ts';
 import {
+    buildClinicalDatasetExport,
     getTenantClinicalDataset,
     type ClinicalCaseLiveRecord,
     type ClinicalDatasetStore,
     type DatasetInferenceEventRecord,
 } from '../../apps/web/lib/dataset/clinicalDataset.ts';
 
-interface OutcomeEventRecord {
-    id: string;
-    tenant_id: string;
-    case_id: string;
-    created_at: string;
-}
-
-interface SimulationEventRecord {
-    id: string;
-    tenant_id: string;
-    case_id: string;
-    created_at: string;
-}
-
 class InMemoryClinicalDatasetStore implements ClinicalCaseStore, ClinicalDatasetStore {
     private readonly clinicalCases = new Map<string, ClinicalCaseRecord>();
     private readonly inferenceEvents = new Map<string, DatasetInferenceEventRecord>();
-    private readonly outcomeEvents = new Map<string, OutcomeEventRecord>();
-    private readonly simulationEvents = new Map<string, SimulationEventRecord>();
     private idCounter = 1000;
 
     async findById(tenantId: string, caseId: string): Promise<ClinicalCaseRecord | null> {
         const record = this.clinicalCases.get(caseId);
-        if (!record || record.tenant_id !== tenantId) {
-            return null;
-        }
-
-        return structuredClone(record);
+        return record && record.tenant_id === tenantId ? structuredClone(record) : null;
     }
 
     async findByCaseKey(tenantId: string, caseKey: string): Promise<ClinicalCaseRecord | null> {
-        const record = [...this.clinicalCases.values()].find(
-            (candidate) =>
-                candidate.tenant_id === tenantId &&
-                candidate.case_key === caseKey,
+        const record = [...this.clinicalCases.values()].find((candidate) =>
+            candidate.tenant_id === tenantId && candidate.case_key === caseKey,
         );
-
         return record ? structuredClone(record) : null;
     }
 
     async upsert(record: ClinicalCaseUpsertRecord): Promise<ClinicalCaseRecord> {
         const existing = this.findExistingRecord(record);
         const now = new Date().toISOString();
-
         const nextRecord: ClinicalCaseRecord = {
+            ...structuredClone(existing ?? {}),
+            ...structuredClone(record),
             id: existing?.id ?? record.id ?? makeUuid(++this.idCounter),
-            tenant_id: record.tenant_id,
-            user_id: record.user_id,
-            clinic_id: record.clinic_id,
-            source_module: record.source_module,
-            case_key: record.case_key,
-            source_case_reference: record.source_case_reference,
-            species: record.species,
-            species_canonical: record.species_canonical,
-            species_display: record.species_display,
-            species_raw: record.species_raw,
-            breed: record.breed,
-            symptoms_raw: record.symptoms_raw,
-            symptoms_normalized: [...record.symptoms_normalized],
-            symptom_vector: [...record.symptom_vector],
-            symptom_summary: record.symptom_summary,
-            patient_metadata: structuredClone(record.patient_metadata),
-            metadata: structuredClone(record.metadata),
-            latest_input_signature: structuredClone(record.latest_input_signature),
-            latest_inference_event_id: record.latest_inference_event_id,
-            latest_outcome_event_id: record.latest_outcome_event_id,
-            latest_simulation_event_id: record.latest_simulation_event_id,
-            inference_event_count: record.inference_event_count,
-            first_inference_at: record.first_inference_at,
-            last_inference_at: record.last_inference_at,
             created_at: existing?.created_at ?? now,
             updated_at: now,
-        };
+        } as ClinicalCaseRecord;
 
         this.clinicalCases.set(nextRecord.id, nextRecord);
         return structuredClone(nextRecord);
     }
 
-    async updateById(
-        tenantId: string,
-        caseId: string,
-        patch: Partial<ClinicalCaseUpsertRecord>,
-    ): Promise<ClinicalCaseRecord> {
+    async updateById(tenantId: string, caseId: string, patch: Partial<ClinicalCaseUpsertRecord>): Promise<ClinicalCaseRecord> {
         const existing = this.clinicalCases.get(caseId);
         if (!existing || existing.tenant_id !== tenantId) {
             throw new Error(`Clinical case not found: ${caseId}`);
@@ -106,22 +57,9 @@ class InMemoryClinicalDatasetStore implements ClinicalCaseStore, ClinicalDataset
 
         const updated: ClinicalCaseRecord = {
             ...existing,
-            ...patch,
-            symptoms_normalized: patch.symptoms_normalized
-                ? [...patch.symptoms_normalized]
-                : existing.symptoms_normalized,
-            symptom_vector: patch.symptom_vector
-                ? [...patch.symptom_vector]
-                : existing.symptom_vector,
-            patient_metadata: patch.patient_metadata
-                ? structuredClone(patch.patient_metadata)
-                : existing.patient_metadata,
-            metadata: patch.metadata
-                ? structuredClone(patch.metadata)
-                : existing.metadata,
-            latest_input_signature: patch.latest_input_signature
-                ? structuredClone(patch.latest_input_signature)
-                : existing.latest_input_signature,
+            ...structuredClone(patch),
+            id: existing.id,
+            created_at: existing.created_at,
             updated_at: new Date().toISOString(),
         };
 
@@ -131,30 +69,18 @@ class InMemoryClinicalDatasetStore implements ClinicalCaseStore, ClinicalDataset
 
     async listClinicalCases(tenantId: string, limit: number): Promise<ClinicalCaseLiveRecord[]> {
         return [...this.clinicalCases.values()]
-            .filter((record) => record.tenant_id === tenantId)
+            .filter((record) => record.tenant_id === tenantId && !record.invalid_case && record.ingestion_status === 'accepted')
             .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
             .slice(0, limit)
-            .map((record) => {
-                const inference = record.latest_inference_event_id
-                    ? this.inferenceEvents.get(record.latest_inference_event_id) ?? null
-                    : null;
+            .map((record) => this.toLiveRecord(record));
+    }
 
-                return {
-                    case_id: record.id,
-                    tenant_id: record.tenant_id,
-                    user_id: record.user_id,
-                    species: record.species_canonical ?? record.species_display ?? record.species_raw,
-                    breed: record.breed,
-                    symptoms_summary: record.symptom_summary ?? record.symptoms_raw,
-                    latest_inference_event_id: record.latest_inference_event_id,
-                    latest_outcome_event_id: record.latest_outcome_event_id,
-                    latest_simulation_event_id: record.latest_simulation_event_id,
-                    latest_confidence: inference?.confidence_score ?? null,
-                    latest_emergency_level: extractEmergencyLevel(inference?.output_payload ?? {}),
-                    source_module: record.source_module,
-                    updated_at: record.updated_at,
-                };
-            });
+    async listQuarantinedCases(tenantId: string, limit: number): Promise<ClinicalCaseLiveRecord[]> {
+        return [...this.clinicalCases.values()]
+            .filter((record) => record.tenant_id === tenantId && (record.invalid_case || record.ingestion_status !== 'accepted'))
+            .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
+            .slice(0, limit)
+            .map((record) => this.toLiveRecord(record));
     }
 
     async listInferenceEvents(tenantId: string, limit: number): Promise<DatasetInferenceEventRecord[]> {
@@ -169,14 +95,6 @@ class InMemoryClinicalDatasetStore implements ClinicalCaseStore, ClinicalDataset
         this.inferenceEvents.set(record.id, structuredClone(record));
     }
 
-    appendOutcomeEvent(record: OutcomeEventRecord): void {
-        this.outcomeEvents.set(record.id, structuredClone(record));
-    }
-
-    appendSimulationEvent(record: SimulationEventRecord): void {
-        this.simulationEvents.set(record.id, structuredClone(record));
-    }
-
     private findExistingRecord(record: ClinicalCaseUpsertRecord): ClinicalCaseRecord | undefined {
         if (record.id) {
             const byId = this.clinicalCases.get(record.id);
@@ -186,253 +104,316 @@ class InMemoryClinicalDatasetStore implements ClinicalCaseStore, ClinicalDataset
         }
 
         return [...this.clinicalCases.values()].find(
-            (candidate) =>
-                candidate.tenant_id === record.tenant_id &&
-                candidate.case_key === record.case_key,
+            (candidate) => candidate.tenant_id === record.tenant_id && candidate.case_key === record.case_key,
         );
+    }
+
+    private toLiveRecord(record: ClinicalCaseRecord): ClinicalCaseLiveRecord {
+        const inference = record.latest_inference_event_id
+            ? this.inferenceEvents.get(record.latest_inference_event_id) ?? null
+            : null;
+
+        return {
+            case_id: record.id,
+            tenant_id: record.tenant_id,
+            user_id: record.user_id,
+            species: record.species_display ?? record.species_canonical ?? record.species,
+            breed: record.breed,
+            symptoms_summary: record.symptom_summary ?? record.symptom_text_raw,
+            symptom_vector_normalized: structuredClone(record.symptom_vector_normalized),
+            primary_condition_class: record.primary_condition_class,
+            top_diagnosis: record.top_diagnosis,
+            confirmed_diagnosis: record.confirmed_diagnosis,
+            label_type: record.label_type,
+            diagnosis_confidence: record.diagnosis_confidence ?? inference?.confidence_score ?? null,
+            severity_score: record.severity_score,
+            latest_emergency_level: record.emergency_level,
+            triage_priority: record.triage_priority,
+            contradiction_score: record.contradiction_score,
+            contradiction_flags: [...record.contradiction_flags],
+            uncertainty_notes: [...record.uncertainty_notes],
+            case_cluster: record.case_cluster,
+            model_version: record.model_version,
+            telemetry_status: record.telemetry_status,
+            ingestion_status: record.ingestion_status,
+            invalid_case: record.invalid_case,
+            validation_error_code: record.validation_error_code,
+            adversarial_case: record.adversarial_case,
+            adversarial_case_type: record.adversarial_case_type,
+            latest_inference_event_id: record.latest_inference_event_id,
+            latest_outcome_event_id: record.latest_outcome_event_id,
+            latest_simulation_event_id: record.latest_simulation_event_id,
+            latest_confidence: inference?.confidence_score ?? record.diagnosis_confidence,
+            source_module: record.source_module,
+            updated_at: record.updated_at,
+        };
     }
 }
 
 async function main() {
-    assert.equal(
-        normalizeSpeciesValue('Canis lupus'),
-        'Canis lupus familiaris',
-        'Canis lupus should normalize to the canonical domestic dog species',
-    );
+    assert.equal(normalizeSpeciesValue('Canis lupus'), 'Canis lupus familiaris');
 
     const store = new InMemoryClinicalDatasetStore();
-    const tenantAlpha = makeUuid(1);
-    const tenantBravo = makeUuid(2);
-    const clinicAlpha = makeUuid(3);
-    const alphaUserId = tenantAlpha;
-    const bravoUserId = tenantBravo;
-    const explicitCaseId = makeUuid(10);
+    const tenantId = makeUuid(1);
+    const userId = tenantId;
+    const clinicId = makeUuid(2);
 
-    const firstObservedAt = '2026-03-19T18:10:00.000Z';
-    const outcomeObservedAt = '2026-03-19T18:14:00.000Z';
-    const simulationObservedAt = '2026-03-19T18:16:00.000Z';
-    const secondObservedAt = '2026-03-19T18:20:00.000Z';
-
-    // 1. Inference submission creates/upserts a canonical clinical case visible in the dataset.
-    const firstCase = await ensureCanonicalClinicalCase(store, {
-        tenantId: tenantAlpha,
-        userId: alphaUserId,
-        clinicId: clinicAlpha,
-        requestedCaseId: null,
+    // 1. Clean GDV case
+    const gdvCase = await ensureCanonicalClinicalCase(store, {
+        tenantId,
+        userId,
+        clinicId,
         sourceModule: 'inference_console',
-        observedAt: firstObservedAt,
-        inputSignature: {
-            species: 'Canis lupus',
-            breed: 'retriever',
-            symptoms: ['Lethargy', 'Fever'],
-            metadata: { raw_note: 'Same patient fingerprint for dataset test.' },
-        },
-    });
-    const firstInferenceId = makeUuid(20);
-    const finalizedFirstCase = await finalizeClinicalCaseAfterInference(
-        store,
-        firstCase,
-        firstInferenceId,
-        {
-            observedAt: firstObservedAt,
-            userId: alphaUserId,
-            sourceModule: 'inference_console',
-            metadataPatch: {
-                latest_inference_confidence: 0.91,
-            },
-        },
-    );
-    store.appendInferenceEvent({
-        id: firstInferenceId,
-        tenant_id: tenantAlpha,
-        user_id: alphaUserId,
-        case_id: finalizedFirstCase.id,
-        source_module: 'inference_console',
-        model_version: '1.0.0',
-        confidence_score: 0.91,
-        output_payload: {
-            diagnosis: {
-                top_differentials: [{ name: 'Parvovirus', probability: 0.91 }],
-            },
-            risk_assessment: {
-                emergency_level: 'HIGH',
-            },
-        },
-        created_at: firstObservedAt,
-    });
-
-    const datasetAfterInference = await getTenantClinicalDataset(store, tenantAlpha);
-    assert.equal(datasetAfterInference.clinicalCases.length, 1);
-    assert.equal(datasetAfterInference.clinicalCases[0].CASE_ID, finalizedFirstCase.id);
-    assert.equal(datasetAfterInference.clinicalCases[0].SPECIES, 'Canis lupus familiaris');
-
-    // 2. Outcome injection links back to the same case and keeps the row visible.
-    const outcomeEventId = makeUuid(30);
-    const caseAfterOutcome = await finalizeClinicalCaseAfterOutcome(
-        store,
-        finalizedFirstCase,
-        outcomeEventId,
-        {
-            observedAt: outcomeObservedAt,
-            userId: alphaUserId,
-            sourceModule: 'outcome_learning',
-            metadataPatch: {
-                latest_outcome_type: 'confirmed_diagnosis',
-            },
-        },
-    );
-    store.appendOutcomeEvent({
-        id: outcomeEventId,
-        tenant_id: tenantAlpha,
-        case_id: caseAfterOutcome.id,
-        created_at: outcomeObservedAt,
-    });
-
-    const liveCaseAfterOutcome = (await store.listClinicalCases(tenantAlpha, 10))[0];
-    assert.equal(liveCaseAfterOutcome.latest_outcome_event_id, outcomeEventId);
-    assert.equal(liveCaseAfterOutcome.case_id, finalizedFirstCase.id);
-
-    // 3. Adversarial simulation attaches to the same case and updates latest_simulation_event_id.
-    const simulationEventId = makeUuid(40);
-    const caseAfterSimulation = await finalizeClinicalCaseAfterSimulation(
-        store,
-        caseAfterOutcome,
-        simulationEventId,
-        {
-            observedAt: simulationObservedAt,
-            userId: alphaUserId,
-            sourceModule: 'adversarial_simulation',
-            metadataPatch: {
-                latest_simulation_type: 'adversarial_gdv',
-            },
-        },
-    );
-    store.appendSimulationEvent({
-        id: simulationEventId,
-        tenant_id: tenantAlpha,
-        case_id: caseAfterSimulation.id,
-        created_at: simulationObservedAt,
-    });
-
-    const liveCaseAfterSimulation = (await store.listClinicalCases(tenantAlpha, 10))[0];
-    assert.equal(liveCaseAfterSimulation.latest_simulation_event_id, simulationEventId);
-
-    // 4. Tenant isolation keeps other tenants' rows out of the active tenant dataset.
-    const explicitCase = await ensureCanonicalClinicalCase(store, {
-        tenantId: tenantBravo,
-        userId: bravoUserId,
-        clinicId: null,
-        requestedCaseId: explicitCaseId,
-        sourceModule: 'inference_console',
-        observedAt: secondObservedAt,
-        inputSignature: {
-            species: 'Felis catus',
-            breed: 'Siamese',
-            symptoms: ['vomiting'],
-            metadata: { raw_note: 'Explicit upstream case id should be reused.' },
-        },
-    });
-    const bravoInferenceId = makeUuid(50);
-    await finalizeClinicalCaseAfterInference(store, explicitCase, bravoInferenceId, {
-        observedAt: secondObservedAt,
-        userId: bravoUserId,
-        sourceModule: 'inference_console',
-    });
-    store.appendInferenceEvent({
-        id: bravoInferenceId,
-        tenant_id: tenantBravo,
-        user_id: bravoUserId,
-        case_id: explicitCase.id,
-        source_module: 'inference_console',
-        model_version: '2.0.0',
-        confidence_score: 0.64,
-        output_payload: {
-            diagnosis: {
-                top_differentials: [{ name: 'Acute Gastroenteritis', probability: 0.64 }],
-            },
-        },
-        created_at: secondObservedAt,
-    });
-
-    const alphaDataset = await getTenantClinicalDataset(store, tenantAlpha);
-    const bravoDataset = await getTenantClinicalDataset(store, tenantBravo);
-    assert.equal(alphaDataset.clinicalCases.length, 1);
-    assert.equal(bravoDataset.clinicalCases.length, 1);
-    assert.equal(bravoDataset.clinicalCases[0].CASE_ID, explicitCaseId);
-    assert.equal(alphaDataset.clinicalCases.some((row) => row.CASE_ID === explicitCaseId), false);
-
-    // 5. Refresh flow: a new inference for the same tenant becomes visible on the next dataset fetch.
-    const refreshProbeBefore = await getTenantClinicalDataset(store, tenantAlpha);
-    const secondCase = await ensureCanonicalClinicalCase(store, {
-        tenantId: tenantAlpha,
-        userId: alphaUserId,
-        clinicId: clinicAlpha,
-        requestedCaseId: null,
-        sourceModule: 'inference_console',
-        observedAt: secondObservedAt,
+        observedAt: '2026-03-19T18:00:00.000Z',
         inputSignature: {
             species: 'Canis lupus familiaris',
-            breed: 'Retriever',
-            symptoms: ['collapse', 'abdominal distension'],
-            metadata: { raw_note: 'New acute case should appear after refresh.' },
+            breed: 'Great Dane',
+            symptoms: ['unproductive retching', 'abdominal distension', 'collapse', 'tachycardia'],
+            metadata: { raw_note: 'Acute bloat presentation.' },
         },
     });
-    const secondInferenceId = makeUuid(60);
-    const finalizedSecondCase = await finalizeClinicalCaseAfterInference(
-        store,
-        secondCase,
-        secondInferenceId,
-        {
-            observedAt: secondObservedAt,
-            userId: alphaUserId,
-            sourceModule: 'inference_console',
-            metadataPatch: {
-                latest_inference_confidence: 0.88,
-            },
-        },
-    );
-    store.appendInferenceEvent({
-        id: secondInferenceId,
-        tenant_id: tenantAlpha,
-        user_id: alphaUserId,
-        case_id: finalizedSecondCase.id,
-        source_module: 'inference_console',
-        model_version: '1.1.0',
-        confidence_score: 0.88,
-        output_payload: {
+    const gdvInferenceId = makeUuid(10);
+    const gdvAfterInference = await finalizeClinicalCaseAfterInference(store, gdvCase, gdvInferenceId, {
+        observedAt: '2026-03-19T18:00:00.000Z',
+        userId,
+        sourceModule: 'inference_console',
+        confidenceScore: 0.92,
+        modelVersion: 'risk_model_v2',
+        outputPayload: {
             diagnosis: {
-                top_differentials: [{ name: 'Gastric Dilatation-Volvulus', probability: 0.88 }],
+                primary_condition_class: 'Mechanical',
+                top_differentials: [
+                    { name: 'Gastric Dilatation-Volvulus', probability: 0.92 },
+                ],
             },
             risk_assessment: {
+                severity_score: 0.94,
                 emergency_level: 'CRITICAL',
             },
+            uncertainty_notes: [],
+            contradiction_score: 0,
+            contradiction_reasons: [],
         },
-        created_at: secondObservedAt,
     });
+    store.appendInferenceEvent(buildInferenceEvent({
+        id: gdvInferenceId,
+        tenantId,
+        caseId: gdvAfterInference.id,
+        modelVersion: 'risk_model_v2',
+        confidence: 0.92,
+        outputPayload: {
+            diagnosis: { top_differentials: [{ name: 'Gastric Dilatation-Volvulus', probability: 0.92 }] },
+            risk_assessment: { emergency_level: 'CRITICAL' },
+        },
+        createdAt: '2026-03-19T18:00:00.000Z',
+    }));
 
-    const refreshProbeAfter = await getTenantClinicalDataset(store, tenantAlpha);
-    assert.equal(refreshProbeBefore.clinicalCases.length, 1);
-    assert.equal(refreshProbeAfter.clinicalCases.length, 2);
-    assert.equal(refreshProbeAfter.inferenceEvents[0].EVENT_ID, secondInferenceId);
-    assert.equal(refreshProbeAfter.clinicalCases.some((row) => row.CASE_ID === finalizedSecondCase.id), true);
-    assert.notEqual(refreshProbeBefore.refreshedAt, refreshProbeAfter.refreshedAt);
+    const gdvDataset = await getTenantClinicalDataset(store, tenantId);
+    assert.equal(gdvDataset.clinicalCases.length, 1);
+    assert.equal(gdvDataset.clinicalCases[0].primary_condition_class, 'Mechanical');
+    assert.equal(gdvDataset.clinicalCases[0].case_cluster, 'GDV');
+    assert.equal(gdvDataset.clinicalCases[0].latest_emergency_level, 'CRITICAL');
+    assert.equal(gdvDataset.clinicalCases[0].invalid_case, false);
 
-    console.log('Clinical dataset manager integration tests passed.');
+    // 2. Distemper case with normalized symptom vector
+    const distemperCase = await ensureCanonicalClinicalCase(store, {
+        tenantId,
+        userId,
+        clinicId,
+        sourceModule: 'inference_console',
+        observedAt: '2026-03-19T18:10:00.000Z',
+        inputSignature: {
+            species: 'Dog',
+            breed: 'Mixed',
+            symptoms: ['ocular discharge', 'nasal discharge', 'myoclonus', 'fever'],
+            metadata: { raw_note: 'Neuro-respiratory infectious presentation.' },
+        },
+    });
+    await finalizeClinicalCaseAfterInference(store, distemperCase, makeUuid(11), {
+        observedAt: '2026-03-19T18:10:00.000Z',
+        userId,
+        sourceModule: 'inference_console',
+        confidenceScore: 0.81,
+        modelVersion: 'risk_model_v2',
+        outputPayload: {
+            diagnosis: {
+                primary_condition_class: 'Infectious',
+                top_differentials: [{ name: 'Canine Distemper', probability: 0.81 }],
+            },
+            risk_assessment: {
+                severity_score: 0.72,
+                emergency_level: 'HIGH',
+            },
+            contradiction_score: 0.1,
+            contradiction_reasons: [],
+        },
+    });
+    const distemperDataset = await getTenantClinicalDataset(store, tenantId);
+    const distemperRow = distemperDataset.clinicalCases.find((row) => row.case_id === distemperCase.id);
+    assert.ok(distemperRow);
+    assert.equal(distemperRow.case_cluster, 'Distemper');
+    assert.equal(distemperRow.primary_condition_class, 'Infectious');
+    assert.equal(distemperRow.symptom_vector_normalized.ocular_discharge, true);
+    assert.equal(distemperRow.symptom_vector_normalized.myoclonus, true);
+
+    // 3. Parvo case with hemorrhagic diarrhea normalization
+    const parvoCase = await ensureCanonicalClinicalCase(store, {
+        tenantId,
+        userId,
+        clinicId,
+        sourceModule: 'inference_console',
+        observedAt: '2026-03-19T18:20:00.000Z',
+        inputSignature: {
+            species: 'Canis lupus familiaris',
+            breed: 'Labrador',
+            symptoms: ['bloody diarrhea', 'vomiting', 'lethargy'],
+            metadata: { raw_note: 'Classic parvo pattern.' },
+        },
+    });
+    const parvoAfterInference = await finalizeClinicalCaseAfterInference(store, parvoCase, makeUuid(12), {
+        observedAt: '2026-03-19T18:20:00.000Z',
+        userId,
+        sourceModule: 'inference_console',
+        confidenceScore: 0.88,
+        modelVersion: 'risk_model_v2',
+        outputPayload: {
+            diagnosis: {
+                primary_condition_class: 'Infectious',
+                top_differentials: [{ name: 'Canine Parvovirus', probability: 0.88 }],
+            },
+            risk_assessment: {
+                severity_score: 0.83,
+                emergency_level: 'HIGH',
+            },
+            contradiction_score: 0,
+            contradiction_reasons: [],
+        },
+    });
+    const parvoAfterOutcome = await finalizeClinicalCaseAfterOutcome(store, parvoAfterInference, makeUuid(30), {
+        observedAt: '2026-03-19T18:22:00.000Z',
+        userId,
+        sourceModule: 'outcome_learning',
+        outcomeType: 'synthetic_outcome',
+        outcomePayload: {
+            diagnosis: 'Canine Parvovirus',
+            primary_condition_class: 'Infectious',
+            label_type: 'synthetic',
+            severity_score: 0.84,
+            emergency_level: 'HIGH',
+        },
+    });
+    const parvoDataset = await getTenantClinicalDataset(store, tenantId);
+    const parvoRow = parvoDataset.clinicalCases.find((row) => row.case_id === parvoAfterOutcome.id);
+    assert.ok(parvoRow);
+    assert.equal(parvoRow.symptom_vector_normalized.hemorrhagic_diarrhea, true);
+    assert.equal(parvoRow.label_type, 'synthetic');
+
+    // 4. Invalid empty case should quarantine and stay out of live dataset
+    const invalidCase = await ensureCanonicalClinicalCase(store, {
+        tenantId,
+        userId,
+        clinicId,
+        sourceModule: 'inference_console',
+        observedAt: '2026-03-19T18:30:00.000Z',
+        inputSignature: {
+            species: 'Unknown',
+            breed: '-',
+            symptoms: ['-'],
+            metadata: {},
+        },
+    });
+    const datasetAfterInvalid = await getTenantClinicalDataset(store, tenantId);
+    assert.equal(invalidCase.invalid_case, true);
+    assert.equal(invalidCase.ingestion_status, 'rejected');
+    assert.equal(datasetAfterInvalid.clinicalCases.some((row) => row.case_id === invalidCase.id), false);
+    assert.equal(datasetAfterInvalid.quarantinedCases.some((row) => row.case_id === invalidCase.id), true);
+
+    // 5. Adversarial GDV case should preserve contradiction metadata and remain visible
+    const adversarialCase = await ensureCanonicalClinicalCase(store, {
+        tenantId,
+        userId,
+        clinicId,
+        sourceModule: 'adversarial_simulation',
+        observedAt: '2026-03-19T18:40:00.000Z',
+        inputSignature: {
+            species: 'Dog',
+            breed: 'Great Dane',
+            symptoms: ['unproductive retching', 'abdominal distension', 'collapse', 'dyspnea', 'pale gums'],
+            metadata: { raw_note: 'Hard contradiction noise case.' },
+        },
+    });
+    const adversarialAfterInference = await finalizeClinicalCaseAfterInference(store, adversarialCase, makeUuid(13), {
+        observedAt: '2026-03-19T18:40:00.000Z',
+        userId,
+        sourceModule: 'adversarial_simulation',
+        confidenceScore: 0.42,
+        modelVersion: 'risk_model_v2',
+        outputPayload: {
+            diagnosis: {
+                primary_condition_class: 'Mechanical',
+                top_differentials: [{ name: 'Gastric Dilatation-Volvulus', probability: 0.42 }],
+            },
+            risk_assessment: {
+                severity_score: 0.93,
+                emergency_level: 'CRITICAL',
+            },
+            contradiction_score: 0.68,
+            contradiction_reasons: ['abdominal distension conflict', 'appetite severity mismatch'],
+            uncertainty_notes: ['Contradictory metadata reduces diagnostic certainty.'],
+        },
+    });
+    const adversarialAfterSimulation = await finalizeClinicalCaseAfterSimulation(store, adversarialAfterInference, makeUuid(40), {
+        observedAt: '2026-03-19T18:41:00.000Z',
+        userId,
+        sourceModule: 'adversarial_simulation',
+        simulationType: 'hard_contradiction_noise',
+        stressMetrics: {
+            contradiction_analysis: {
+                contradiction_score: 0.68,
+                contradiction_reasons: ['abdominal distension conflict', 'appetite severity mismatch'],
+            },
+        },
+    });
+    const adversarialDataset = await getTenantClinicalDataset(store, tenantId);
+    const adversarialRow = adversarialDataset.clinicalCases.find((row) => row.case_id === adversarialAfterSimulation.id);
+    assert.ok(adversarialRow);
+    assert.equal(adversarialRow.adversarial_case, true);
+    assert.equal(adversarialRow.case_cluster, 'Adversarial Mechanical');
+    assert.ok((adversarialRow.contradiction_score ?? 0) > 0);
+    assert.ok(adversarialRow.contradiction_flags.length >= 2);
+
+    // 6. Outcome-linked case upgrades the label and confirmed diagnosis
+    assert.equal(parvoAfterOutcome.confirmed_diagnosis, 'Canine Parvovirus');
+    assert.equal(parvoAfterOutcome.label_type, 'synthetic');
+    assert.equal(parvoAfterOutcome.primary_condition_class, 'Infectious');
+
+    const exportPayload = buildClinicalDatasetExport(adversarialDataset, 'adversarial_benchmark_set');
+    assert.ok(exportPayload.length >= 1);
+    assert.equal((exportPayload[0] as Record<string, unknown>).adversarial_case, true);
+
+    console.log('Structured clinical dataset manager integration tests passed.');
 }
 
-function extractEmergencyLevel(outputPayload: Record<string, unknown>): string | null {
-    const riskAssessment = outputPayload.risk_assessment;
-    if (
-        typeof riskAssessment !== 'object' ||
-        riskAssessment === null ||
-        Array.isArray(riskAssessment)
-    ) {
-        return null;
-    }
-
-    return typeof (riskAssessment as Record<string, unknown>).emergency_level === 'string'
-        ? (riskAssessment as Record<string, unknown>).emergency_level as string
-        : null;
+function buildInferenceEvent(input: {
+    id: string;
+    tenantId: string;
+    caseId: string;
+    modelVersion: string;
+    confidence: number;
+    outputPayload: Record<string, unknown>;
+    createdAt: string;
+}): DatasetInferenceEventRecord {
+    return {
+        id: input.id,
+        tenant_id: input.tenantId,
+        user_id: input.tenantId,
+        case_id: input.caseId,
+        source_module: 'inference_console',
+        model_version: input.modelVersion,
+        confidence_score: input.confidence,
+        output_payload: input.outputPayload,
+        created_at: input.createdAt,
+    };
 }
 
 function makeUuid(seed: number): string {

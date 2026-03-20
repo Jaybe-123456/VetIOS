@@ -171,6 +171,9 @@ export async function POST(req: Request) {
                 observedAt,
                 userId,
                 sourceModule: 'inference_console',
+                outputPayload: inferenceResult.output_payload,
+                confidenceScore: inferenceResult.confidence_score,
+                modelVersion: body.model.version,
                 metadataPatch: {
                     latest_inference_confidence: inferenceResult.confidence_score,
                     latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),

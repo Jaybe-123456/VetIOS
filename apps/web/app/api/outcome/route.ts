@@ -146,12 +146,17 @@ export async function POST(req: Request) {
             outcome_type: body.outcome.type,
             outcome_payload: body.outcome.payload,
             outcome_timestamp: body.outcome.timestamp,
+            label_type: typeof body.outcome.payload.label_type === 'string'
+                ? body.outcome.payload.label_type
+                : null,
         });
 
         await finalizeClinicalCaseAfterOutcome(caseStore, canonicalClinicalCase, outcomeEventId, {
             observedAt: body.outcome.timestamp,
             userId,
             sourceModule: 'outcome_learning',
+            outcomePayload: body.outcome.payload,
+            outcomeType: body.outcome.type,
             metadataPatch: {
                 latest_outcome_type: body.outcome.type,
                 latest_outcome_timestamp: body.outcome.timestamp,

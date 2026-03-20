@@ -12,7 +12,16 @@ export default async function ClinicalDatasetPage() {
         return (
             <ClinicalDatasetClient
                 clinicalCases={[]}
+                quarantinedCases={[]}
                 inferenceEvents={[]}
+                summary={{
+                    live_count: 0,
+                    quarantined_count: 0,
+                    unlabeled_count: 0,
+                    adversarial_count: 0,
+                    severity_coverage_count: 0,
+                    contradiction_coverage_count: 0,
+                }}
                 refreshedAt={new Date().toISOString()}
             />
         );

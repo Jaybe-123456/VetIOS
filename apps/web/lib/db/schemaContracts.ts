@@ -43,13 +43,34 @@ export const CLINICAL_CASES = {
         species_display: 'species_display',       // text, nullable
         species_raw: 'species_raw',               // text, nullable
         breed: 'breed',                           // text, nullable
+        symptom_text_raw: 'symptom_text_raw',     // text, nullable
         symptoms_raw: 'symptoms_raw',             // text, nullable
         symptoms_normalized: 'symptoms_normalized', // text[], NOT NULL
         symptom_vector: 'symptom_vector',         // text[], NOT NULL
+        symptom_vector_normalized: 'symptom_vector_normalized', // jsonb, NOT NULL
         symptom_summary: 'symptom_summary',       // text, nullable
         patient_metadata: 'patient_metadata',     // jsonb, NOT NULL
         metadata: 'metadata',                     // jsonb, NOT NULL
         latest_input_signature: 'latest_input_signature', // jsonb, NOT NULL
+        ingestion_status: 'ingestion_status',     // text, NOT NULL
+        invalid_case: 'invalid_case',             // boolean, NOT NULL
+        validation_error_code: 'validation_error_code', // text, nullable
+        primary_condition_class: 'primary_condition_class', // text, nullable
+        top_diagnosis: 'top_diagnosis',           // text, nullable
+        confirmed_diagnosis: 'confirmed_diagnosis', // text, nullable
+        label_type: 'label_type',                 // text, NOT NULL
+        diagnosis_confidence: 'diagnosis_confidence', // double precision, nullable
+        severity_score: 'severity_score',         // double precision, nullable
+        emergency_level: 'emergency_level',       // text, nullable
+        triage_priority: 'triage_priority',       // text, nullable
+        contradiction_score: 'contradiction_score', // double precision, nullable
+        contradiction_flags: 'contradiction_flags', // text[], NOT NULL
+        adversarial_case: 'adversarial_case',     // boolean, NOT NULL
+        adversarial_case_type: 'adversarial_case_type', // text, nullable
+        uncertainty_notes: 'uncertainty_notes',   // text[], NOT NULL
+        case_cluster: 'case_cluster',             // text, nullable
+        model_version: 'model_version',           // text, nullable
+        telemetry_status: 'telemetry_status',     // text, nullable
         latest_inference_event_id: 'latest_inference_event_id', // uuid, nullable
         latest_outcome_event_id: 'latest_outcome_event_id', // uuid, nullable
         latest_simulation_event_id: 'latest_simulation_event_id', // uuid, nullable
@@ -70,6 +91,25 @@ export const CLINICAL_CASE_LIVE_VIEW = {
         species: 'species',
         breed: 'breed',
         symptoms_summary: 'symptoms_summary',
+        symptom_vector_normalized: 'symptom_vector_normalized',
+        primary_condition_class: 'primary_condition_class',
+        top_diagnosis: 'top_diagnosis',
+        confirmed_diagnosis: 'confirmed_diagnosis',
+        label_type: 'label_type',
+        diagnosis_confidence: 'diagnosis_confidence',
+        severity_score: 'severity_score',
+        triage_priority: 'triage_priority',
+        contradiction_score: 'contradiction_score',
+        contradiction_flags: 'contradiction_flags',
+        uncertainty_notes: 'uncertainty_notes',
+        case_cluster: 'case_cluster',
+        model_version: 'model_version',
+        telemetry_status: 'telemetry_status',
+        ingestion_status: 'ingestion_status',
+        invalid_case: 'invalid_case',
+        validation_error_code: 'validation_error_code',
+        adversarial_case: 'adversarial_case',
+        adversarial_case_type: 'adversarial_case_type',
         latest_inference_event_id: 'latest_inference_event_id',
         latest_outcome_event_id: 'latest_outcome_event_id',
         latest_simulation_event_id: 'latest_simulation_event_id',

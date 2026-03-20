@@ -20,6 +20,7 @@ export interface OutcomeLogInput {
     outcome_type: string;
     outcome_payload: Record<string, unknown>;
     outcome_timestamp: string;
+    label_type?: string | null;
 }
 
 export async function logOutcome(
@@ -40,6 +41,7 @@ export async function logOutcome(
             [C.outcome_type]: input.outcome_type,
             [C.outcome_payload]: input.outcome_payload,
             [C.outcome_timestamp]: input.outcome_timestamp,
+            [C.label_type]: input.label_type ?? null,
         })
         .select('id')
         .single();

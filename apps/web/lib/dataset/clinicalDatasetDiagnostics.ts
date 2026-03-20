@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
     AI_INFERENCE_EVENTS,
+    CLINICAL_CASES,
     CLINICAL_CASE_LIVE_VIEW,
     CLINICAL_OUTCOME_EVENTS,
     EDGE_SIMULATION_EVENTS,
@@ -13,6 +14,7 @@ export interface ClinicalDatasetReadLog {
     datasetQueryTenantId: string;
     rowCount: number;
     inferenceRowCount: number;
+    quarantinedRowCount: number;
 }
 
 export interface ClinicalDatasetMutationLog {
@@ -37,9 +39,17 @@ export interface ClinicalDatasetDebugSnapshot {
         outcome_events_missing_case_id: number;
         simulation_events_missing_case_id: number;
     };
+    coverage_counts: {
+        quarantined_cases: number;
+        unlabeled_cases: number;
+        adversarial_cases: number;
+        severity_coverage: number;
+        contradiction_coverage: number;
+    };
     recent_inference_writes: Array<Record<string, unknown>>;
     recent_outcome_writes: Array<Record<string, unknown>>;
     recent_simulation_writes: Array<Record<string, unknown>>;
+    recent_quarantined_cases: Array<Record<string, unknown>>;
     generated_at: string;
 }
 
@@ -53,6 +63,7 @@ export function logClinicalDatasetRead(input: ClinicalDatasetReadLog): void {
             dataset_query_tenant_id: input.datasetQueryTenantId,
             row_count: input.rowCount,
             inference_row_count: input.inferenceRowCount,
+            quarantined_row_count: input.quarantinedRowCount,
         }),
     );
 }
@@ -80,6 +91,7 @@ export async function collectClinicalDatasetDebugSnapshot(
     userId: string | null,
 ): Promise<ClinicalDatasetDebugSnapshot> {
     const inferenceColumns = AI_INFERENCE_EVENTS.COLUMNS;
+    const caseColumns = CLINICAL_CASES.COLUMNS;
     const outcomeColumns = CLINICAL_OUTCOME_EVENTS.COLUMNS;
     const simulationColumns = EDGE_SIMULATION_EVENTS.COLUMNS;
     const liveCaseColumns = CLINICAL_CASE_LIVE_VIEW.COLUMNS;
@@ -89,9 +101,15 @@ export async function collectClinicalDatasetDebugSnapshot(
         recentOutcomeWrites,
         recentSimulationWrites,
         liveCaseRows,
+        quarantinedCases,
+        unlabeledCases,
+        adversarialCases,
+        severityCoverage,
+        contradictionCoverage,
         orphanInferenceCount,
         orphanOutcomeCount,
         orphanSimulationCount,
+        recentQuarantinedCases,
     ] = await Promise.all([
         client
             .from(AI_INFERENCE_EVENTS.TABLE)
@@ -140,6 +158,32 @@ export async function collectClinicalDatasetDebugSnapshot(
             .select(liveCaseColumns.case_id, { count: 'exact', head: true })
             .eq(liveCaseColumns.tenant_id, tenantId),
         client
+            .from(CLINICAL_CASES.TABLE)
+            .select(caseColumns.id, { count: 'exact', head: true })
+            .eq(caseColumns.tenant_id, tenantId)
+            .or(`${caseColumns.invalid_case}.eq.true,${caseColumns.ingestion_status}.eq.quarantined,${caseColumns.ingestion_status}.eq.rejected`),
+        client
+            .from(CLINICAL_CASES.TABLE)
+            .select(caseColumns.id, { count: 'exact', head: true })
+            .eq(caseColumns.tenant_id, tenantId)
+            .eq(caseColumns.ingestion_status, 'accepted')
+            .eq(caseColumns.label_type, 'inferred_only'),
+        client
+            .from(CLINICAL_CASES.TABLE)
+            .select(caseColumns.id, { count: 'exact', head: true })
+            .eq(caseColumns.tenant_id, tenantId)
+            .eq(caseColumns.adversarial_case, true),
+        client
+            .from(CLINICAL_CASES.TABLE)
+            .select(caseColumns.id, { count: 'exact', head: true })
+            .eq(caseColumns.tenant_id, tenantId)
+            .not(caseColumns.severity_score, 'is', null),
+        client
+            .from(CLINICAL_CASES.TABLE)
+            .select(caseColumns.id, { count: 'exact', head: true })
+            .eq(caseColumns.tenant_id, tenantId)
+            .or(`${caseColumns.contradiction_score}.not.is.null,${caseColumns.adversarial_case}.eq.true`),
+        client
             .from(AI_INFERENCE_EVENTS.TABLE)
             .select(inferenceColumns.id, { count: 'exact', head: true })
             .eq(inferenceColumns.tenant_id, tenantId)
@@ -154,6 +198,20 @@ export async function collectClinicalDatasetDebugSnapshot(
             .select(simulationColumns.id, { count: 'exact', head: true })
             .eq(simulationColumns.tenant_id, tenantId)
             .is(simulationColumns.case_id, null),
+        client
+            .from(CLINICAL_CASES.TABLE)
+            .select([
+                caseColumns.id,
+                caseColumns.ingestion_status,
+                caseColumns.validation_error_code,
+                caseColumns.species_display,
+                caseColumns.symptom_summary,
+                caseColumns.updated_at,
+            ].join(', '))
+            .eq(caseColumns.tenant_id, tenantId)
+            .or(`${caseColumns.invalid_case}.eq.true,${caseColumns.ingestion_status}.eq.quarantined,${caseColumns.ingestion_status}.eq.rejected`)
+            .order(caseColumns.updated_at, { ascending: false })
+            .limit(20),
     ]);
 
     const errors = [
@@ -161,9 +219,15 @@ export async function collectClinicalDatasetDebugSnapshot(
         recentOutcomeWrites.error,
         recentSimulationWrites.error,
         liveCaseRows.error,
+        quarantinedCases.error,
+        unlabeledCases.error,
+        adversarialCases.error,
+        severityCoverage.error,
+        contradictionCoverage.error,
         orphanInferenceCount.error,
         orphanOutcomeCount.error,
         orphanSimulationCount.error,
+        recentQuarantinedCases.error,
     ].filter(Boolean);
 
     if (errors.length > 0) {
@@ -180,9 +244,17 @@ export async function collectClinicalDatasetDebugSnapshot(
             outcome_events_missing_case_id: orphanOutcomeCount.count ?? 0,
             simulation_events_missing_case_id: orphanSimulationCount.count ?? 0,
         },
+        coverage_counts: {
+            quarantined_cases: quarantinedCases.count ?? 0,
+            unlabeled_cases: unlabeledCases.count ?? 0,
+            adversarial_cases: adversarialCases.count ?? 0,
+            severity_coverage: severityCoverage.count ?? 0,
+            contradiction_coverage: contradictionCoverage.count ?? 0,
+        },
         recent_inference_writes: toDebugRecords(recentInferenceWrites.data),
         recent_outcome_writes: toDebugRecords(recentOutcomeWrites.data),
         recent_simulation_writes: toDebugRecords(recentSimulationWrites.data),
+        recent_quarantined_cases: toDebugRecords(recentQuarantinedCases.data),
         generated_at: new Date().toISOString(),
     };
 }
