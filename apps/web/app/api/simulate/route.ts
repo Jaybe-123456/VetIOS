@@ -140,10 +140,13 @@ export async function POST(req: Request) {
             compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
-        await finalizeClinicalCaseAfterInference(caseStore, canonicalClinicalCase, triggeredInferenceId, {
+        const inferredClinicalCase = await finalizeClinicalCaseAfterInference(caseStore, canonicalClinicalCase, triggeredInferenceId, {
             observedAt,
             userId,
             sourceModule: 'adversarial_simulation',
+            outputPayload: inferenceResult.output_payload,
+            confidenceScore: inferenceResult.confidence_score,
+            modelVersion: body.inference.model_version ?? body.inference.model,
             metadataPatch: {
                 latest_inference_confidence: inferenceResult.confidence_score,
                 latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
@@ -168,10 +171,15 @@ export async function POST(req: Request) {
             },
             is_real_world: false,
         });
-        await finalizeClinicalCaseAfterSimulation(caseStore, canonicalClinicalCase, persistedSimulationEventId, {
+        await finalizeClinicalCaseAfterSimulation(caseStore, inferredClinicalCase, persistedSimulationEventId, {
             observedAt,
             userId,
             sourceModule: 'adversarial_simulation',
+            simulationType: body.simulation.type,
+            stressMetrics: {
+                ...inferenceResult.output_payload,
+                contradiction_analysis: inferenceResult.contradiction_analysis,
+            },
             metadataPatch: {
                 latest_simulation_type: body.simulation.type,
                 latest_simulation_timestamp: observedAt,

@@ -1,5 +1,19 @@
 import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+    buildInferenceLearningPatch,
+    buildOutcomeLearningPatch,
+    buildSimulationLearningPatch,
+    deriveTelemetryStatus,
+    type ClinicalCaseIngestionStatus,
+    type ClinicalCaseLabelType,
+    type ClinicalEmergencyLevel,
+    type ClinicalTriagePriority,
+    type ClinicalLearningPatch,
+    type ClinicalCaseValidationResult,
+    validateClinicalCaseDraft,
+} from '@/lib/clinicalCases/clinicalCaseIntelligence';
+import { isPlaceholderValue, normalizeSymptomSet } from '@/lib/clinicalCases/symptomOntology';
 import { CLINICAL_CASES } from '@/lib/db/schemaContracts';
 
 const UUID_PATTERN =
@@ -23,14 +37,15 @@ const SPECIES_ALIASES: Record<string, string> = {
     'bos taurus': 'Bos taurus',
 };
 
-const CORE_SIGNATURE_KEYS = new Set([
-    'species',
-    'breed',
-    'symptoms',
-    'metadata',
-    'diagnostic_images',
-    'lab_results',
-]);
+const SPECIES_DISPLAY_LABELS: Record<string, string> = {
+    'Canis lupus familiaris': 'Dog',
+    'Felis catus': 'Cat',
+    'Equus ferus caballus': 'Horse',
+    'Bos taurus': 'Cow',
+};
+
+const BREED_PLACEHOLDERS = new Set(['-', '--', 'unknown', 'n/a', 'na', 'none', 'null']);
+const CORE_SIGNATURE_KEYS = new Set(['species', 'breed', 'symptoms', 'metadata', 'diagnostic_images', 'lab_results']);
 
 export interface ClinicalCaseRecord {
     id: string;
@@ -45,13 +60,34 @@ export interface ClinicalCaseRecord {
     species_display: string | null;
     species_raw: string | null;
     breed: string | null;
+    symptom_text_raw: string | null;
     symptoms_raw: string | null;
     symptoms_normalized: string[];
     symptom_vector: string[];
+    symptom_vector_normalized: Record<string, boolean>;
     symptom_summary: string | null;
     patient_metadata: Record<string, unknown>;
     metadata: Record<string, unknown>;
     latest_input_signature: Record<string, unknown>;
+    ingestion_status: ClinicalCaseIngestionStatus;
+    invalid_case: boolean;
+    validation_error_code: string | null;
+    primary_condition_class: string | null;
+    top_diagnosis: string | null;
+    confirmed_diagnosis: string | null;
+    label_type: ClinicalCaseLabelType;
+    diagnosis_confidence: number | null;
+    severity_score: number | null;
+    emergency_level: ClinicalEmergencyLevel | null;
+    triage_priority: ClinicalTriagePriority | null;
+    contradiction_score: number | null;
+    contradiction_flags: string[];
+    adversarial_case: boolean;
+    adversarial_case_type: string | null;
+    uncertainty_notes: string[];
+    case_cluster: string | null;
+    model_version: string | null;
+    telemetry_status: string | null;
     latest_inference_event_id: string | null;
     latest_outcome_event_id: string | null;
     latest_simulation_event_id: string | null;
@@ -66,39 +102,11 @@ export interface ClinicalCaseStore {
     findById(tenantId: string, caseId: string): Promise<ClinicalCaseRecord | null>;
     findByCaseKey(tenantId: string, caseKey: string): Promise<ClinicalCaseRecord | null>;
     upsert(record: ClinicalCaseUpsertRecord): Promise<ClinicalCaseRecord>;
-    updateById(
-        tenantId: string,
-        caseId: string,
-        patch: Partial<ClinicalCaseUpsertRecord>,
-    ): Promise<ClinicalCaseRecord>;
+    updateById(tenantId: string, caseId: string, patch: Partial<ClinicalCaseUpsertRecord>): Promise<ClinicalCaseRecord>;
 }
 
-export interface ClinicalCaseUpsertRecord {
+export interface ClinicalCaseUpsertRecord extends Omit<ClinicalCaseRecord, 'id' | 'created_at' | 'updated_at'> {
     id?: string;
-    tenant_id: string;
-    user_id: string | null;
-    clinic_id: string | null;
-    source_module: string | null;
-    case_key: string;
-    source_case_reference: string | null;
-    species: string | null;
-    species_canonical: string | null;
-    species_display: string | null;
-    species_raw: string | null;
-    breed: string | null;
-    symptoms_raw: string | null;
-    symptoms_normalized: string[];
-    symptom_vector: string[];
-    symptom_summary: string | null;
-    patient_metadata: Record<string, unknown>;
-    metadata: Record<string, unknown>;
-    latest_input_signature: Record<string, unknown>;
-    latest_inference_event_id: string | null;
-    latest_outcome_event_id: string | null;
-    latest_simulation_event_id: string | null;
-    inference_event_count: number;
-    first_inference_at: string;
-    last_inference_at: string;
 }
 
 export interface EnsureCanonicalClinicalCaseInput {
@@ -111,11 +119,27 @@ export interface EnsureCanonicalClinicalCaseInput {
     observedAt: string;
 }
 
-export interface ClinicalCaseEventContext {
+interface ClinicalCaseEventContext {
     observedAt: string;
     userId?: string | null;
     sourceModule?: string | null;
     metadataPatch?: Record<string, unknown>;
+}
+
+export interface ClinicalCaseInferenceContext extends ClinicalCaseEventContext {
+    outputPayload?: Record<string, unknown>;
+    confidenceScore?: number | null;
+    modelVersion?: string | null;
+}
+
+export interface ClinicalCaseOutcomeContext extends ClinicalCaseEventContext {
+    outcomePayload?: Record<string, unknown>;
+    outcomeType?: string;
+}
+
+export interface ClinicalCaseSimulationContext extends ClinicalCaseEventContext {
+    simulationType?: string;
+    stressMetrics?: Record<string, unknown> | null;
 }
 
 interface ClinicalCaseSnapshot {
@@ -126,11 +150,13 @@ interface ClinicalCaseSnapshot {
     speciesDisplay: string | null;
     speciesRaw: string | null;
     breed: string | null;
-    symptomsRaw: string | null;
+    symptomTextRaw: string | null;
     symptomsNormalized: string[];
+    symptomVectorNormalized: Record<string, boolean>;
     symptomSummary: string | null;
     patientMetadata: Record<string, unknown>;
     latestInputSignature: Record<string, unknown>;
+    validation: ClinicalCaseValidationResult;
 }
 
 export function normalizeSpeciesValue(value: unknown): string | null {
@@ -148,7 +174,7 @@ export function normalizeSpeciesValue(value: unknown): string | null {
 
 export function normalizeBreedValue(value: unknown): string | null {
     const normalized = normalizeText(value);
-    if (!normalized) return null;
+    if (!normalized || BREED_PLACEHOLDERS.has(normalized.toLowerCase())) return null;
 
     return normalized
         .split(/\s+/)
@@ -158,20 +184,7 @@ export function normalizeBreedValue(value: unknown): string | null {
 }
 
 export function normalizeSymptomVector(value: unknown): string[] {
-    const source = Array.isArray(value)
-        ? value
-        : typeof value === 'string'
-            ? value.split(/[,;|]/)
-            : [];
-
-    const deduped = new Set<string>();
-    for (const entry of source) {
-        if (typeof entry !== 'string') continue;
-        const normalized = entry.replace(/\s+/g, ' ').trim().toLowerCase();
-        if (normalized) deduped.add(normalized);
-    }
-
-    return Array.from(deduped);
+    return normalizeSymptomSet(value).normalizedKeys;
 }
 
 export function buildClinicalCaseSnapshot(input: EnsureCanonicalClinicalCaseInput): ClinicalCaseSnapshot {
@@ -179,15 +192,9 @@ export function buildClinicalCaseSnapshot(input: EnsureCanonicalClinicalCaseInpu
     const sourceCaseReference = preferredCaseId ? null : normalizeText(input.requestedCaseId);
     const speciesRaw = normalizeText(input.inputSignature.species);
     const speciesCanonical = normalizeSpeciesValue(speciesRaw);
-    const speciesDisplay = speciesRaw ?? speciesCanonical;
-    const breed = normalizeBreedValue(input.inputSignature.breed);
-    const symptomsNormalized = normalizeSymptomVector(input.inputSignature.symptoms);
-    const symptomsRaw = normalizeSymptomsRaw(input.inputSignature.symptoms);
+    const symptoms = normalizeSymptomSet(input.inputSignature.symptoms);
     const patientMetadata = extractCaseMetadata(input.inputSignature);
     const latestInputSignature = sanitizeSignatureForCase(input.inputSignature);
-    const symptomSummary = symptomsNormalized.length > 0
-        ? symptomsNormalized.slice(0, 8).join(', ')
-        : normalizeText(symptomsRaw);
 
     return {
         preferredCaseId,
@@ -196,21 +203,31 @@ export function buildClinicalCaseSnapshot(input: EnsureCanonicalClinicalCaseInpu
             preferredCaseId,
             sourceCaseReference,
             speciesCanonical,
-            breed,
-            symptomsNormalized,
+            breed: normalizeBreedValue(input.inputSignature.breed),
+            symptomsNormalized: symptoms.normalizedKeys,
             patientMetadata,
             latestInputSignature,
         }),
         sourceCaseReference,
         speciesCanonical,
-        speciesDisplay,
+        speciesDisplay: resolveSpeciesDisplay(speciesRaw, speciesCanonical),
         speciesRaw,
-        breed,
-        symptomsRaw,
-        symptomsNormalized,
-        symptomSummary,
+        breed: normalizeBreedValue(input.inputSignature.breed),
+        symptomTextRaw: symptoms.rawText,
+        symptomsNormalized: symptoms.normalizedKeys,
+        symptomVectorNormalized: symptoms.vector,
+        symptomSummary: symptoms.normalizedKeys.length > 0
+            ? symptoms.normalizedKeys.slice(0, 8).join(', ')
+            : normalizeText(symptoms.rawText),
         patientMetadata,
         latestInputSignature,
+        validation: validateClinicalCaseDraft({
+            speciesCanonical,
+            speciesRaw,
+            symptomsRaw: symptoms.rawText,
+            symptomKeys: symptoms.normalizedKeys,
+            unresolvedSymptoms: symptoms.unresolvedTokens,
+        }),
     };
 }
 
@@ -223,19 +240,27 @@ export async function ensureCanonicalClinicalCase(
         ? await store.findById(input.tenantId, snapshot.preferredCaseId)
         : await store.findByCaseKey(input.tenantId, snapshot.caseKey);
 
+    const symptomsNormalized = snapshot.symptomsNormalized.length > 0
+        ? snapshot.symptomsNormalized
+        : existingCase?.symptoms_normalized ?? [];
+    const validation = chooseValidationState(existingCase, snapshot.validation);
+    const learning = pickExistingLearningState(existingCase);
     const patientMetadata = mergeJsonRecords(
         existingCase?.patient_metadata ?? existingCase?.metadata ?? {},
         snapshot.patientMetadata,
     );
-    const symptomsNormalized = snapshot.symptomsNormalized.length > 0
-        ? snapshot.symptomsNormalized
-        : existingCase?.symptoms_normalized ??
-            existingCase?.symptom_vector ??
-            [];
-    const symptomSummary = snapshot.symptomSummary ??
-        (symptomsNormalized.length > 0 ? symptomsNormalized.slice(0, 8).join(', ') : null) ??
-        existingCase?.symptom_summary ??
-        null;
+    const telemetryStatus = validation.invalid_case
+        ? validation.ingestion_status
+        : learning.telemetry_status ?? deriveTelemetryStatus({
+            hasDiagnosis: Boolean(
+                learning.top_diagnosis ||
+                learning.confirmed_diagnosis ||
+                learning.primary_condition_class,
+            ),
+            hasSeverity: Boolean(learning.emergency_level || learning.severity_score !== null),
+            isInvalid: false,
+            adversarialCase: learning.adversarial_case,
+        });
 
     return store.upsert({
         id: existingCase?.id ?? snapshot.preferredCaseId ?? undefined,
@@ -247,16 +272,43 @@ export async function ensureCanonicalClinicalCase(
         source_case_reference: existingCase?.source_case_reference ?? snapshot.sourceCaseReference,
         species: snapshot.speciesCanonical ?? existingCase?.species ?? null,
         species_canonical: snapshot.speciesCanonical ?? existingCase?.species_canonical ?? existingCase?.species ?? null,
-        species_display: snapshot.speciesDisplay ?? existingCase?.species_display ?? existingCase?.species_raw ?? existingCase?.species ?? null,
+        species_display: snapshot.speciesDisplay ??
+            existingCase?.species_display ??
+            resolveSpeciesDisplay(existingCase?.species_raw ?? null, existingCase?.species_canonical ?? existingCase?.species ?? null),
         species_raw: snapshot.speciesRaw ?? existingCase?.species_raw ?? null,
         breed: snapshot.breed ?? existingCase?.breed ?? null,
-        symptoms_raw: snapshot.symptomsRaw ?? existingCase?.symptoms_raw ?? null,
+        symptom_text_raw: snapshot.symptomTextRaw ?? existingCase?.symptom_text_raw ?? existingCase?.symptoms_raw ?? null,
+        symptoms_raw: snapshot.symptomTextRaw ?? existingCase?.symptoms_raw ?? null,
         symptoms_normalized: symptomsNormalized,
         symptom_vector: symptomsNormalized,
-        symptom_summary: symptomSummary,
+        symptom_vector_normalized: Object.keys(snapshot.symptomVectorNormalized).length > 0
+            ? snapshot.symptomVectorNormalized
+            : existingCase?.symptom_vector_normalized ?? vectorFromKeys(symptomsNormalized),
+        symptom_summary: snapshot.symptomSummary ??
+            existingCase?.symptom_summary ??
+            (symptomsNormalized.length > 0 ? symptomsNormalized.slice(0, 8).join(', ') : null),
         patient_metadata: patientMetadata,
         metadata: patientMetadata,
         latest_input_signature: snapshot.latestInputSignature,
+        ingestion_status: validation.ingestion_status,
+        invalid_case: validation.invalid_case,
+        validation_error_code: validation.validation_error_code,
+        primary_condition_class: learning.primary_condition_class,
+        top_diagnosis: learning.top_diagnosis,
+        confirmed_diagnosis: learning.confirmed_diagnosis,
+        label_type: learning.label_type,
+        diagnosis_confidence: learning.diagnosis_confidence,
+        severity_score: learning.severity_score,
+        emergency_level: learning.emergency_level,
+        triage_priority: learning.triage_priority,
+        contradiction_score: learning.contradiction_score,
+        contradiction_flags: learning.contradiction_flags,
+        adversarial_case: learning.adversarial_case,
+        adversarial_case_type: learning.adversarial_case_type,
+        uncertainty_notes: learning.uncertainty_notes,
+        case_cluster: learning.case_cluster,
+        model_version: learning.model_version,
+        telemetry_status: telemetryStatus,
         latest_inference_event_id: existingCase?.latest_inference_event_id ?? null,
         latest_outcome_event_id: existingCase?.latest_outcome_event_id ?? null,
         latest_simulation_event_id: existingCase?.latest_simulation_event_id ?? null,
@@ -270,35 +322,58 @@ export async function finalizeClinicalCaseAfterInference(
     store: ClinicalCaseStore,
     clinicalCase: ClinicalCaseRecord,
     inferenceEventId: string,
-    context: ClinicalCaseEventContext,
+    context: ClinicalCaseInferenceContext,
 ): Promise<ClinicalCaseRecord> {
+    const learningPatch = context.outputPayload
+        ? buildInferenceLearningPatch({
+            outputPayload: context.outputPayload,
+            confidenceScore: context.confidenceScore ?? null,
+            modelVersion: context.modelVersion ?? null,
+            sourceModule: context.sourceModule ?? clinicalCase.source_module ?? null,
+        })
+        : null;
+
     return updateClinicalCaseActivity(store, clinicalCase, {
         latest_inference_event_id: inferenceEventId,
         inference_event_count: clinicalCase.inference_event_count + 1,
         last_inference_at: context.observedAt,
-    }, context);
+    }, context, learningPatch);
 }
 
 export async function finalizeClinicalCaseAfterOutcome(
     store: ClinicalCaseStore,
     clinicalCase: ClinicalCaseRecord,
     outcomeEventId: string,
-    context: ClinicalCaseEventContext,
+    context: ClinicalCaseOutcomeContext,
 ): Promise<ClinicalCaseRecord> {
+    const learningPatch = context.outcomePayload
+        ? buildOutcomeLearningPatch({
+            outcomePayload: context.outcomePayload,
+            outcomeType: context.outcomeType ?? 'outcome_learning',
+            existing: pickExistingLearningState(clinicalCase),
+        })
+        : null;
+
     return updateClinicalCaseActivity(store, clinicalCase, {
         latest_outcome_event_id: outcomeEventId,
-    }, context);
+    }, context, learningPatch);
 }
 
 export async function finalizeClinicalCaseAfterSimulation(
     store: ClinicalCaseStore,
     clinicalCase: ClinicalCaseRecord,
     simulationEventId: string,
-    context: ClinicalCaseEventContext,
+    context: ClinicalCaseSimulationContext,
 ): Promise<ClinicalCaseRecord> {
+    const learningPatch = buildSimulationLearningPatch({
+        simulationType: context.simulationType ?? 'adversarial_simulation',
+        stressMetrics: context.stressMetrics ?? null,
+        existing: pickExistingLearningState(clinicalCase),
+    });
+
     return updateClinicalCaseActivity(store, clinicalCase, {
         latest_simulation_event_id: simulationEventId,
-    }, context);
+    }, context, learningPatch);
 }
 
 export function createSupabaseClinicalCaseStore(client: SupabaseClient): ClinicalCaseStore {
@@ -387,74 +462,67 @@ function buildClinicalCaseKey(input: {
         return `source:${sha256(input.sourceCaseReference.toLowerCase())}`;
     }
 
-    const fingerprint = {
+    return `fingerprint:${sha256(stableStringify({
         clinic_id: input.clinicId,
         species: input.speciesCanonical,
         breed: input.breed?.toLowerCase() ?? null,
         symptoms: [...input.symptomsNormalized].sort(),
         metadata: normalizeFingerprintMetadata(input.patientMetadata),
         signature: input.latestInputSignature,
-    };
-
-    return `fingerprint:${sha256(stableStringify(fingerprint))}`;
+    }))}`;
 }
 
 function extractCaseMetadata(signature: Record<string, unknown>): Record<string, unknown> {
-    const merged: Record<string, unknown> = {};
-
-    if (isRecord(signature.metadata)) {
-        Object.assign(merged, signature.metadata);
-    }
+    const merged: Record<string, unknown> = isRecord(signature.metadata)
+        ? { ...signature.metadata }
+        : {};
 
     for (const [key, value] of Object.entries(signature)) {
-        if (CORE_SIGNATURE_KEYS.has(key)) continue;
-        merged[key] = value;
+        if (!CORE_SIGNATURE_KEYS.has(key)) {
+            merged[key] = value;
+        }
     }
 
     return sanitizeJsonRecord(merged);
 }
 
 function sanitizeSignatureForCase(signature: Record<string, unknown>): Record<string, unknown> {
-    const symptoms = normalizeSymptomVector(signature.symptoms).sort();
+    const symptoms = normalizeSymptomSet(signature.symptoms);
 
-    const base: Record<string, unknown> = {
+    return sanitizeJsonRecord({
         species_canonical: normalizeSpeciesValue(signature.species) ?? normalizeText(signature.species),
-        species_display: normalizeText(signature.species) ?? normalizeSpeciesValue(signature.species),
+        species_display: resolveSpeciesDisplay(
+            normalizeText(signature.species),
+            normalizeSpeciesValue(signature.species),
+        ),
         breed: normalizeBreedValue(signature.breed),
-        symptoms_raw: normalizeSymptomsRaw(signature.symptoms),
-        symptoms_normalized: symptoms,
+        symptom_text_raw: symptoms.rawText,
+        symptoms_raw: symptoms.rawText,
+        symptoms_normalized: symptoms.normalizedKeys,
+        symptom_vector_normalized: symptoms.vector,
         metadata: extractCaseMetadata(signature),
-    };
-
-    return sanitizeJsonRecord(base);
+    });
 }
 
 function normalizeFingerprintMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
-    const rawNote = typeof metadata.raw_note === 'string'
-        ? metadata.raw_note.replace(/\s+/g, ' ').trim().slice(0, 500)
-        : undefined;
-
     return sanitizeJsonRecord({
         ...metadata,
-        raw_note: rawNote,
+        raw_note: typeof metadata.raw_note === 'string'
+            ? metadata.raw_note.replace(/\s+/g, ' ').trim().slice(0, 500)
+            : undefined,
     });
 }
 
 function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRecord {
+    const symptomsNormalized = readStringArray(row.symptoms_normalized, row.symptom_vector);
+    const symptomVectorNormalized = isRecord(row.symptom_vector_normalized)
+        ? booleanRecord(row.symptom_vector_normalized)
+        : vectorFromKeys(symptomsNormalized);
     const patientMetadata = isRecord(row.patient_metadata)
         ? row.patient_metadata
         : isRecord(row.metadata)
             ? row.metadata
             : {};
-    const symptomsNormalized = Array.isArray(row.symptoms_normalized)
-        ? row.symptoms_normalized.filter((value): value is string => typeof value === 'string')
-        : Array.isArray(row.symptom_vector)
-            ? row.symptom_vector.filter((value): value is string => typeof value === 'string')
-            : [];
-    const speciesCanonical = normalizeText(row.species_canonical) ?? normalizeText(row.species);
-    const speciesDisplay = normalizeText(row.species_display)
-        ?? normalizeText(row.species_raw)
-        ?? speciesCanonical;
 
     return {
         id: String(row.id),
@@ -464,18 +532,43 @@ function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRecord {
         source_module: normalizeText(row.source_module),
         case_key: String(row.case_key),
         source_case_reference: normalizeText(row.source_case_reference),
-        species: speciesCanonical,
-        species_canonical: speciesCanonical,
-        species_display: speciesDisplay,
+        species: normalizeText(row.species_canonical) ?? normalizeText(row.species),
+        species_canonical: normalizeText(row.species_canonical) ?? normalizeText(row.species),
+        species_display: normalizeText(row.species_display) ??
+            resolveSpeciesDisplay(
+                normalizeText(row.species_raw),
+                normalizeText(row.species_canonical) ?? normalizeText(row.species),
+            ),
         species_raw: normalizeText(row.species_raw),
-        breed: normalizeText(row.breed),
+        breed: normalizeBreedValue(row.breed) ?? normalizeText(row.breed),
+        symptom_text_raw: normalizeText(row.symptom_text_raw) ?? normalizeText(row.symptoms_raw),
         symptoms_raw: normalizeText(row.symptoms_raw),
         symptoms_normalized: symptomsNormalized,
         symptom_vector: symptomsNormalized,
+        symptom_vector_normalized: symptomVectorNormalized,
         symptom_summary: normalizeText(row.symptom_summary),
         patient_metadata: patientMetadata,
         metadata: patientMetadata,
         latest_input_signature: isRecord(row.latest_input_signature) ? row.latest_input_signature : {},
+        ingestion_status: normalizeIngestionStatus(row.ingestion_status),
+        invalid_case: row.invalid_case === true,
+        validation_error_code: normalizeText(row.validation_error_code),
+        primary_condition_class: normalizeText(row.primary_condition_class),
+        top_diagnosis: normalizeText(row.top_diagnosis),
+        confirmed_diagnosis: normalizeText(row.confirmed_diagnosis),
+        label_type: normalizeLabelType(row.label_type),
+        diagnosis_confidence: normalizeNumber(row.diagnosis_confidence),
+        severity_score: normalizeNumber(row.severity_score),
+        emergency_level: normalizeEmergencyLevel(row.emergency_level),
+        triage_priority: normalizeTriagePriority(row.triage_priority),
+        contradiction_score: normalizeNumber(row.contradiction_score),
+        contradiction_flags: readStringArray(row.contradiction_flags),
+        adversarial_case: row.adversarial_case === true,
+        adversarial_case_type: normalizeText(row.adversarial_case_type),
+        uncertainty_notes: readStringArray(row.uncertainty_notes),
+        case_cluster: normalizeText(row.case_cluster),
+        model_version: normalizeText(row.model_version),
+        telemetry_status: normalizeText(row.telemetry_status),
         latest_inference_event_id: normalizeText(row.latest_inference_event_id),
         latest_outcome_event_id: normalizeText(row.latest_outcome_event_id),
         latest_simulation_event_id: normalizeText(row.latest_simulation_event_id),
@@ -492,11 +585,23 @@ async function updateClinicalCaseActivity(
     clinicalCase: ClinicalCaseRecord,
     patch: Partial<ClinicalCaseUpsertRecord>,
     context: ClinicalCaseEventContext,
+    learningPatch: Partial<ClinicalLearningPatch> | null,
 ): Promise<ClinicalCaseRecord> {
-    const metadata = mergeJsonRecords(
-        clinicalCase.patient_metadata,
-        context.metadataPatch ?? {},
-    );
+    const metadata = mergeJsonRecords(clinicalCase.patient_metadata, context.metadataPatch ?? {});
+    const currentLearning = pickExistingLearningState(clinicalCase);
+    const nextLearning = { ...currentLearning, ...(learningPatch ?? {}) };
+    const telemetryStatus = clinicalCase.invalid_case
+        ? clinicalCase.ingestion_status
+        : nextLearning.telemetry_status ?? deriveTelemetryStatus({
+            hasDiagnosis: Boolean(
+                nextLearning.top_diagnosis ||
+                nextLearning.confirmed_diagnosis ||
+                nextLearning.primary_condition_class,
+            ),
+            hasSeverity: Boolean(nextLearning.emergency_level || nextLearning.severity_score !== null),
+            isInvalid: false,
+            adversarialCase: nextLearning.adversarial_case,
+        });
 
     return store.updateById(clinicalCase.tenant_id, clinicalCase.id, {
         ...patch,
@@ -504,7 +609,77 @@ async function updateClinicalCaseActivity(
         source_module: context.sourceModule ?? clinicalCase.source_module ?? null,
         patient_metadata: metadata,
         metadata,
+        primary_condition_class: nextLearning.primary_condition_class,
+        top_diagnosis: nextLearning.top_diagnosis,
+        confirmed_diagnosis: nextLearning.confirmed_diagnosis,
+        label_type: nextLearning.label_type,
+        diagnosis_confidence: nextLearning.diagnosis_confidence,
+        severity_score: nextLearning.severity_score,
+        emergency_level: nextLearning.emergency_level,
+        triage_priority: nextLearning.triage_priority,
+        contradiction_score: nextLearning.contradiction_score,
+        contradiction_flags: nextLearning.contradiction_flags,
+        adversarial_case: nextLearning.adversarial_case,
+        adversarial_case_type: nextLearning.adversarial_case_type,
+        uncertainty_notes: nextLearning.uncertainty_notes,
+        case_cluster: nextLearning.case_cluster,
+        model_version: nextLearning.model_version,
+        telemetry_status: telemetryStatus,
     });
+}
+
+function pickExistingLearningState(clinicalCase: ClinicalCaseRecord | null): ClinicalLearningPatch {
+    return {
+        primary_condition_class: clinicalCase?.primary_condition_class ?? null,
+        top_diagnosis: clinicalCase?.top_diagnosis ?? null,
+        confirmed_diagnosis: clinicalCase?.confirmed_diagnosis ?? null,
+        label_type: clinicalCase?.label_type ?? 'inferred_only',
+        diagnosis_confidence: clinicalCase?.diagnosis_confidence ?? null,
+        severity_score: clinicalCase?.severity_score ?? null,
+        emergency_level: clinicalCase?.emergency_level ?? null,
+        triage_priority: clinicalCase?.triage_priority ?? null,
+        contradiction_score: clinicalCase?.contradiction_score ?? null,
+        contradiction_flags: clinicalCase?.contradiction_flags ?? [],
+        adversarial_case: clinicalCase?.adversarial_case ?? false,
+        adversarial_case_type: clinicalCase?.adversarial_case_type ?? null,
+        uncertainty_notes: clinicalCase?.uncertainty_notes ?? [],
+        case_cluster: clinicalCase?.case_cluster ?? null,
+        model_version: clinicalCase?.model_version ?? null,
+        telemetry_status: clinicalCase?.telemetry_status ?? clinicalCase?.ingestion_status ?? 'pending',
+    };
+}
+
+function chooseValidationState(
+    existingCase: ClinicalCaseRecord | null,
+    incoming: ClinicalCaseValidationResult,
+): ClinicalCaseValidationResult {
+    if (!existingCase) return incoming;
+    if (!existingCase.invalid_case) {
+        return {
+            ingestion_status: existingCase.ingestion_status,
+            invalid_case: false,
+            validation_error_code: existingCase.validation_error_code,
+        };
+    }
+    return incoming;
+}
+
+function resolveSpeciesDisplay(speciesRaw: string | null, speciesCanonical: string | null): string | null {
+    const normalizedRaw = normalizeText(speciesRaw);
+    if (normalizedRaw && !SPECIES_DISPLAY_LABELS[normalizedRaw]) {
+        return normalizedRaw;
+    }
+    return speciesCanonical ? SPECIES_DISPLAY_LABELS[speciesCanonical] ?? speciesCanonical : normalizedRaw;
+}
+
+function vectorFromKeys(keys: string[]): Record<string, boolean> {
+    return Object.fromEntries(keys.map((key) => [key, true]));
+}
+
+function booleanRecord(value: Record<string, unknown>): Record<string, boolean> {
+    return Object.fromEntries(
+        Object.entries(value).filter(([, entry]) => entry === true),
+    ) as Record<string, boolean>;
 }
 
 function mergeJsonRecords(
@@ -518,11 +693,11 @@ function mergeJsonRecords(
 }
 
 function sanitizeJsonRecord(record: Record<string, unknown>): Record<string, unknown> {
-    const sanitizedEntries = Object.entries(record)
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => [key, sanitizeJsonValue(value)]);
-
-    return Object.fromEntries(sanitizedEntries);
+    return Object.fromEntries(
+        Object.entries(record)
+            .filter(([, value]) => value !== undefined)
+            .map(([key, value]) => [key, sanitizeJsonValue(value)]),
+    );
 }
 
 function sanitizeJsonValue(value: unknown): unknown {
@@ -573,23 +748,6 @@ function scientificNameCase(value: string): string {
         .join(' ');
 }
 
-function normalizeSymptomsRaw(value: unknown): string | null {
-    if (typeof value === 'string') {
-        return normalizeText(value);
-    }
-
-    if (!Array.isArray(value)) {
-        return null;
-    }
-
-    const normalized = value
-        .filter((entry): entry is string => typeof entry === 'string')
-        .map((entry) => entry.replace(/\s+/g, ' ').trim())
-        .filter(Boolean);
-
-    return normalized.length > 0 ? normalized.join(', ') : null;
-}
-
 function normalizeUuid(value: unknown): string | null {
     const normalized = normalizeText(value);
     if (!normalized) return null;
@@ -599,7 +757,52 @@ function normalizeUuid(value: unknown): string | null {
 function normalizeText(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.replace(/\s+/g, ' ').trim();
-    return normalized ? normalized : null;
+    return normalized && !isPlaceholderValue(normalized) ? normalized : null;
+}
+
+function normalizeNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeIngestionStatus(value: unknown): ClinicalCaseIngestionStatus {
+    return value === 'accepted' || value === 'rejected' || value === 'quarantined'
+        ? value
+        : 'accepted';
+}
+
+function normalizeLabelType(value: unknown): ClinicalCaseLabelType {
+    return value === 'inferred_only' || value === 'synthetic' || value === 'expert_reviewed' || value === 'lab_confirmed'
+        ? value
+        : 'inferred_only';
+}
+
+function normalizeEmergencyLevel(value: unknown): ClinicalEmergencyLevel | null {
+    const normalized = typeof value === 'string' ? value.toUpperCase() : value;
+    return normalized === 'CRITICAL' || normalized === 'HIGH' || normalized === 'MODERATE' || normalized === 'LOW'
+        ? normalized
+        : null;
+}
+
+function normalizeTriagePriority(value: unknown): ClinicalTriagePriority | null {
+    return value === 'immediate' || value === 'urgent' || value === 'standard' || value === 'low'
+        ? value
+        : null;
+}
+
+function readStringArray(...values: unknown[]): string[] {
+    const entries: string[] = [];
+
+    for (const value of values) {
+        if (!Array.isArray(value)) continue;
+        for (const entry of value) {
+            const normalized = normalizeText(entry);
+            if (normalized) {
+                entries.push(normalized);
+            }
+        }
+    }
+
+    return Array.from(new Set(entries));
 }
 
 function sha256(value: string): string {
