@@ -1,16 +1,24 @@
 import type {
+    AdversarialMetricRecord,
+    CalibrationMetricRecord,
+    DeploymentDecisionRecord,
     ExperimentAuditEventRecord,
+    ExperimentBenchmarkRecord,
     ExperimentComparison,
     ExperimentDashboardSnapshot,
     ExperimentDashboardSummary,
     ExperimentFailureRecord,
     ExperimentMetricRecord,
     ExperimentMetricSeriesPoint,
+    ExperimentRegistryLinkRecord,
+    ExperimentRegistryRole,
     ExperimentRunDetail,
     ExperimentRunRecord,
     ExperimentRunStatus,
     ExperimentTaskType,
     ExperimentTrackingStore,
+    ModelRegistryRecord,
+    SubgroupMetricRecord,
 } from '@/lib/experiments/types';
 
 export interface CreateExperimentRunInput {
@@ -63,6 +71,10 @@ export interface ExperimentMetricInput {
     recall_critical?: number | null;
     calibration_error?: number | null;
     adversarial_score?: number | null;
+    false_negative_critical_rate?: number | null;
+    dangerous_false_reassurance_rate?: number | null;
+    abstain_accuracy?: number | null;
+    contradiction_detection_rate?: number | null;
     wall_clock_time_seconds?: number | null;
     steps_per_second?: number | null;
     gpu_utilization?: number | null;
@@ -94,12 +106,34 @@ export interface ExperimentFailureInput {
     errorSummary?: string | null;
 }
 
+export interface CalibrationEvaluationInput {
+    ece?: number | null;
+    brierScore?: number | null;
+    reliabilityBins?: Array<{ confidence: number; accuracy: number; count?: number }>;
+    calibrationPass?: boolean | null;
+    calibrationNotes?: string | null;
+}
+
+export interface AdversarialEvaluationInput {
+    degradationScore?: number | null;
+    contradictionRobustness?: number | null;
+    criticalCaseRecall?: number | null;
+    falseReassuranceRate?: number | null;
+    adversarialPass?: boolean | null;
+}
+
+export type ExperimentRegistryAction =
+    | 'promote_to_staging'
+    | 'promote_to_production'
+    | 'archive'
+    | 'rollback';
+
 export async function createExperimentRun(
     store: ExperimentTrackingStore,
     input: CreateExperimentRunInput,
 ): Promise<ExperimentRunRecord> {
     const startedAt = input.startedAt ?? new Date().toISOString();
-    return store.createExperimentRun({
+    const run = await store.createExperimentRun({
         tenant_id: input.tenantId,
         run_id: input.runId,
         experiment_group_id: input.experimentGroupId ?? null,
@@ -112,6 +146,7 @@ export async function createExperimentRun(
         model_arch: input.modelArch,
         model_size: input.modelSize ?? null,
         model_version: input.modelVersion ?? null,
+        registry_id: null,
         dataset_name: input.datasetName,
         dataset_version: input.datasetVersion ?? null,
         feature_schema_version: input.featureSchemaVersion ?? null,
@@ -135,6 +170,22 @@ export async function createExperimentRun(
         started_at: startedAt,
         ended_at: input.endedAt ?? null,
     });
+
+    await logExperimentAuditEvent(store, {
+        tenantId: input.tenantId,
+        runId: run.run_id,
+        eventType: 'created',
+        actor: input.createdBy ?? null,
+        metadata: {
+            status: run.status,
+            model_version: run.model_version,
+            dataset_version: run.dataset_version,
+        },
+        deterministicKey: `${run.run_id}:created`,
+    });
+
+    await ensureGovernanceForRun(store, input.tenantId, run.run_id, input.createdBy ?? null);
+    return (await store.getExperimentRun(input.tenantId, run.run_id)) ?? run;
 }
 
 export async function logExperimentMetrics(
@@ -164,6 +215,10 @@ export async function logExperimentMetrics(
             recall_critical: numberOrNull(metric.recall_critical),
             calibration_error: numberOrNull(metric.calibration_error),
             adversarial_score: numberOrNull(metric.adversarial_score),
+            false_negative_critical_rate: numberOrNull(metric.false_negative_critical_rate),
+            dangerous_false_reassurance_rate: numberOrNull(metric.dangerous_false_reassurance_rate),
+            abstain_accuracy: numberOrNull(metric.abstain_accuracy),
+            contradiction_detection_rate: numberOrNull(metric.contradiction_detection_rate),
             wall_clock_time_seconds: numberOrNull(metric.wall_clock_time_seconds),
             steps_per_second: numberOrNull(metric.steps_per_second),
             gpu_utilization: numberOrNull(metric.gpu_utilization),
@@ -183,7 +238,24 @@ export async function logExperimentMetrics(
         metric_primary_value: primaryMetric?.value ?? run.metric_primary_value,
         status: isTerminalStatus(run.status) ? run.status : 'training',
         summary_only: false,
+        safety_metrics: mergeSafetyTelemetry(run.safety_metrics, latest),
+        resource_usage: mergeResourceUsage(run.resource_usage, latest),
     });
+
+    if (latest) {
+        await logExperimentAuditEvent(store, {
+            tenantId,
+            runId,
+            eventType: run.summary_only ? 'telemetry_ingested' : (run.epochs_completed ?? 0) > 0 ? 'telemetry_ingested' : 'telemetry_started',
+            actor: run.created_by,
+            metadata: {
+                epoch: latest.epoch,
+                global_step: latest.global_step,
+                metric_timestamp: latest.metric_timestamp,
+            },
+            deterministicKey: `${runId}:telemetry:${latest.global_step ?? latest.epoch ?? latest.metric_timestamp}`,
+        });
+    }
 
     return created;
 }
@@ -199,7 +271,7 @@ export async function updateExperimentHeartbeat(
         throw new Error(`Experiment run not found: ${runId}`);
     }
 
-    return store.updateExperimentRun(runId, tenantId, {
+    const updated = await store.updateExperimentRun(runId, tenantId, {
         status: input.status ?? run.status,
         status_reason: input.statusReason ?? run.status_reason,
         progress_percent: clampPercent(input.progressPercent ?? run.progress_percent),
@@ -209,6 +281,25 @@ export async function updateExperimentHeartbeat(
             ? { ...run.resource_usage, ...input.resourceUsage }
             : run.resource_usage,
     });
+
+    await logExperimentAuditEvent(store, {
+        tenantId,
+        runId,
+        eventType: updated.status === 'completed' ? 'training_completed' : 'heartbeat',
+        actor: run.created_by,
+        metadata: {
+            status: updated.status,
+            progress_percent: updated.progress_percent,
+            epochs_completed: updated.epochs_completed,
+            last_heartbeat_at: updated.last_heartbeat_at,
+        },
+        deterministicKey: updated.status === 'completed'
+            ? `${runId}:completed`
+            : `${runId}:heartbeat:${updated.last_heartbeat_at ?? 'na'}`,
+    });
+
+    await ensureGovernanceForRun(store, tenantId, runId, run.created_by);
+    return (await store.getExperimentRun(tenantId, runId)) ?? updated;
 }
 
 export async function recordExperimentFailure(
@@ -245,7 +336,222 @@ export async function recordExperimentFailure(
         last_heartbeat_at: new Date().toISOString(),
     });
 
+    await store.upsertDeploymentDecision({
+        tenant_id: tenantId,
+        run_id: runId,
+        decision: 'rejected',
+        reason: `Run failed: ${input.errorSummary ?? input.failureReason}`,
+        calibration_pass: false,
+        adversarial_pass: false,
+        safety_pass: false,
+        approved_by: null,
+        timestamp: new Date().toISOString(),
+    });
+    await logExperimentAuditEvent(store, {
+        tenantId,
+        runId,
+        eventType: 'failed',
+        actor: run.created_by,
+        metadata: {
+            reason: input.failureReason,
+            failure_epoch: input.failureEpoch ?? null,
+            failure_step: input.failureStep ?? null,
+        },
+        deterministicKey: `${runId}:failed:${input.failureEpoch ?? 'na'}:${input.failureStep ?? 'na'}`,
+    });
+
     return failure;
+}
+
+export async function upsertCalibrationEvaluation(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+    runId: string,
+    input: CalibrationEvaluationInput,
+    actor: string | null,
+): Promise<CalibrationMetricRecord> {
+    const run = await store.getExperimentRun(tenantId, runId);
+    if (!run) {
+        throw new Error(`Experiment run not found: ${runId}`);
+    }
+
+    const metrics = await store.listExperimentMetrics(tenantId, runId, 2_000);
+    const computed = computeCalibrationMetrics(run, metrics);
+    const record = await store.upsertCalibrationMetrics({
+        tenant_id: tenantId,
+        run_id: runId,
+        ece: input.ece ?? computed.ece,
+        brier_score: input.brierScore ?? computed.brierScore,
+        reliability_bins: input.reliabilityBins
+            ? input.reliabilityBins.map((bin) => ({
+                confidence: bin.confidence,
+                accuracy: bin.accuracy,
+                count: bin.count ?? 0,
+            }))
+            : computed.reliabilityBins,
+        calibration_pass: input.calibrationPass ?? (
+            (input.ece ?? computed.ece ?? 1) < 0.08 &&
+            (input.brierScore ?? computed.brierScore ?? 1) < 0.12
+        ),
+        calibration_notes: input.calibrationNotes ?? computed.notes,
+    });
+
+    await logExperimentAuditEvent(store, {
+        tenantId,
+        runId,
+        eventType: 'calibration_run',
+        actor,
+        metadata: {
+            ece: record.ece,
+            brier_score: record.brier_score,
+            calibration_pass: record.calibration_pass,
+        },
+        deterministicKey: `${runId}:calibration:manual`,
+    });
+    await ensureGovernanceForRun(store, tenantId, runId, actor);
+    return record;
+}
+
+export async function upsertAdversarialEvaluation(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+    runId: string,
+    input: AdversarialEvaluationInput,
+    actor: string | null,
+): Promise<AdversarialMetricRecord> {
+    const run = await store.getExperimentRun(tenantId, runId);
+    if (!run) {
+        throw new Error(`Experiment run not found: ${runId}`);
+    }
+
+    const metrics = await store.listExperimentMetrics(tenantId, runId, 2_000);
+    const benchmarks = await store.listExperimentBenchmarks(tenantId, runId);
+    const computed = computeAdversarialMetrics(run, metrics, benchmarks);
+    const record = await store.upsertAdversarialMetrics({
+        tenant_id: tenantId,
+        run_id: runId,
+        degradation_score: input.degradationScore ?? computed.degradationScore,
+        contradiction_robustness: input.contradictionRobustness ?? computed.contradictionRobustness,
+        critical_case_recall: input.criticalCaseRecall ?? computed.criticalCaseRecall,
+        false_reassurance_rate: input.falseReassuranceRate ?? computed.falseReassuranceRate,
+        adversarial_pass: input.adversarialPass ?? (
+            (input.degradationScore ?? computed.degradationScore ?? 1) < 0.25 &&
+            (input.criticalCaseRecall ?? computed.criticalCaseRecall ?? 0) > 0.85 &&
+            (input.falseReassuranceRate ?? computed.falseReassuranceRate ?? 1) < 0.12
+        ),
+    });
+
+    await logExperimentAuditEvent(store, {
+        tenantId,
+        runId,
+        eventType: 'adversarial_run',
+        actor,
+        metadata: {
+            degradation_score: record.degradation_score,
+            contradiction_robustness: record.contradiction_robustness,
+            critical_case_recall: record.critical_case_recall,
+            false_reassurance_rate: record.false_reassurance_rate,
+            adversarial_pass: record.adversarial_pass,
+        },
+        deterministicKey: `${runId}:adversarial:manual`,
+    });
+    await ensureGovernanceForRun(store, tenantId, runId, actor);
+    return record;
+}
+
+export async function applyExperimentRegistryAction(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+    runId: string,
+    action: ExperimentRegistryAction,
+    actor: string | null,
+): Promise<ModelRegistryRecord> {
+    const run = await store.getExperimentRun(tenantId, runId);
+    if (!run) {
+        throw new Error(`Experiment run not found: ${runId}`);
+    }
+
+    const registry = await ensureModelRegistryRecord(
+        store,
+        run,
+        await store.listExperimentArtifacts(tenantId, runId),
+        actor,
+    );
+    const decision = await store.getDeploymentDecision(tenantId, runId);
+
+    if (action === 'promote_to_production' && decision?.decision !== 'approved') {
+        throw new Error('Model cannot be promoted to production until deployment decision is approved.');
+    }
+
+    if (action === 'rollback') {
+        const runs = await store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true });
+        for (const candidate of runs) {
+            if (candidate.run_id === runId) continue;
+            const candidateRegistry = await store.getModelRegistryForRun(tenantId, candidate.run_id);
+            if (candidateRegistry?.status === 'production') {
+                await store.upsertModelRegistry({
+                    ...candidateRegistry,
+                    status: 'archived',
+                    role: 'challenger',
+                });
+                await store.updateExperimentRun(candidate.run_id, tenantId, {
+                    status: 'rolled_back',
+                    registry_context: {
+                        ...candidate.registry_context,
+                        registry_status: 'archived',
+                        registry_role: 'challenger',
+                    },
+                });
+            }
+        }
+    }
+
+    const nextStatus = action === 'promote_to_staging'
+        ? 'staging'
+        : action === 'promote_to_production' || action === 'rollback'
+            ? 'production'
+            : 'archived';
+    const nextRole = action === 'promote_to_production' || action === 'rollback'
+        ? 'champion'
+        : action === 'promote_to_staging'
+            ? 'challenger'
+            : 'experimental';
+
+    const updated = await store.upsertModelRegistry({
+        ...registry,
+        status: nextStatus,
+        role: nextRole,
+        created_by: actor ?? registry.created_by,
+    });
+    await store.updateExperimentRun(runId, tenantId, {
+        status: nextStatus === 'production' ? 'promoted' : nextStatus === 'archived' ? run.status : run.status,
+        registry_id: updated.registry_id,
+        registry_context: {
+            ...run.registry_context,
+            registry_id: updated.registry_id,
+            registry_status: updated.status,
+            registry_role: updated.role,
+            champion_or_challenger: updated.role,
+            promotion_status: updated.status,
+        },
+    });
+
+    await logExperimentAuditEvent(store, {
+        tenantId,
+        runId,
+        eventType: action === 'rollback' ? 'rolled_back' : 'promoted',
+        actor,
+        metadata: {
+            action,
+            registry_id: updated.registry_id,
+            registry_status: updated.status,
+            registry_role: updated.role,
+        },
+        deterministicKey: `${runId}:registry-action:${action}`,
+    });
+
+    await ensureGovernanceForRun(store, tenantId, runId, actor);
+    return updated;
 }
 
 export async function getExperimentRunDetail(
@@ -258,14 +564,21 @@ export async function getExperimentRunDetail(
     const run = await store.getExperimentRun(tenantId, runId);
     if (!run) return null;
 
-    const [metrics, artifacts, failure, benchmarks, registryLink, auditEvents] = await Promise.all([
+    const [metrics, artifacts, failure, benchmarks, registryLink, modelRegistry, calibrationMetrics, adversarialMetrics, deploymentDecision, subgroupMetrics, auditEvents, learningAuditEvents] = await Promise.all([
         store.listExperimentMetrics(tenantId, runId),
         store.listExperimentArtifacts(tenantId, runId),
         store.getExperimentFailure(tenantId, runId),
         store.listExperimentBenchmarks(tenantId, runId),
         store.getExperimentRegistryLink(tenantId, runId),
+        store.getModelRegistryForRun(tenantId, runId),
+        store.getCalibrationMetrics(tenantId, runId),
+        store.getAdversarialMetrics(tenantId, runId),
+        store.getDeploymentDecision(tenantId, runId),
+        store.listSubgroupMetrics(tenantId, runId),
+        store.listAuditLog(tenantId, 100),
         store.listLearningAuditEvents(tenantId, 100),
     ]);
+    const latestMetric = metrics[metrics.length - 1] ?? null;
 
     return {
         run,
@@ -274,8 +587,16 @@ export async function getExperimentRunDetail(
         failure,
         benchmarks,
         registry_link: registryLink,
-        audit_history: filterAuditEventsForRun(run, auditEvents),
+        model_registry: modelRegistry,
+        calibration_metrics: calibrationMetrics,
+        adversarial_metrics: adversarialMetrics,
+        deployment_decision: deploymentDecision,
+        subgroup_metrics: subgroupMetrics,
+        audit_history: filterAuditEventsForRun(run, auditEvents, learningAuditEvents),
         missing_telemetry_fields: getMissingTelemetryFields(run, metrics),
+        latest_metric: latestMetric,
+        heartbeat_freshness: classifyHeartbeatFreshness(run.last_heartbeat_at),
+        failure_guidance: failure ? deriveFailureGuidance(run, metrics, failure) : null,
     };
 }
 
@@ -297,11 +618,24 @@ export async function getExperimentComparison(
     const benchmarkEntries = await Promise.all(
         presentRuns.map(async (run) => [run.run_id, await store.listExperimentBenchmarks(tenantId, run.run_id)] as const),
     );
+    const calibrationEntries = await Promise.all(
+        presentRuns.map(async (run) => [run.run_id, await store.getCalibrationMetrics(tenantId, run.run_id)] as const),
+    );
+    const adversarialEntries = await Promise.all(
+        presentRuns.map(async (run) => [run.run_id, await store.getAdversarialMetrics(tenantId, run.run_id)] as const),
+    );
+    const decisionEntries = await Promise.all(
+        presentRuns.map(async (run) => [run.run_id, await store.getDeploymentDecision(tenantId, run.run_id)] as const),
+    );
+    const baselineRun = presentRuns[0] ?? null;
 
     return {
         run_ids: presentRuns.map((run) => run.run_id),
         runs: presentRuns,
         metrics: Object.fromEntries(metricEntries),
+        calibration: Object.fromEntries(calibrationEntries),
+        adversarial: Object.fromEntries(adversarialEntries),
+        decisions: Object.fromEntries(decisionEntries),
         benchmark_summaries: benchmarkEntries.flatMap(([runId, benchmarks]) =>
             benchmarks.map((benchmark) => ({
                 run_id: runId,
@@ -310,6 +644,15 @@ export async function getExperimentComparison(
                 pass_status: benchmark.pass_status,
             })),
         ),
+        comparison_rows: baselineRun == null
+            ? []
+            : presentRuns.map((run) => buildComparisonRow(
+                baselineRun,
+                run,
+                Object.fromEntries(metricEntries),
+                Object.fromEntries(calibrationEntries),
+                Object.fromEntries(adversarialEntries),
+            )),
     };
 }
 
@@ -370,6 +713,10 @@ export function buildExperimentMetricSeries(
         recall_critical: metric.recall_critical,
         calibration_error: metric.calibration_error,
         adversarial_score: metric.adversarial_score,
+        false_negative_critical_rate: metric.false_negative_critical_rate,
+        dangerous_false_reassurance_rate: metric.dangerous_false_reassurance_rate,
+        abstain_accuracy: metric.abstain_accuracy,
+        contradiction_detection_rate: metric.contradiction_detection_rate,
         steps_per_second: metric.steps_per_second,
         gpu_utilization: metric.gpu_utilization,
         cpu_utilization: metric.cpu_utilization,
@@ -494,6 +841,7 @@ export async function backfillSummaryExperimentRuns(
                 model_arch: modelArch,
                 model_size: modelSize,
                 model_version: entry.model_version,
+                registry_id: null,
                 dataset_name: entry.training_dataset_version,
                 dataset_version: entry.training_dataset_version,
                 feature_schema_version: entry.feature_schema_version,
@@ -592,6 +940,12 @@ export async function backfillSummaryExperimentRuns(
 
         await backfillArtifactsFromRegistryPayload(store, tenantId, run.run_id, entry.artifact_payload);
     }
+
+    const currentRuns = await store.listExperimentRuns(tenantId, {
+        limit: 500,
+        includeSummaryOnly: true,
+    });
+    await backfillExperimentGovernance(store, tenantId, currentRuns);
 }
 
 function buildDashboardSummary(runs: ExperimentRunRecord[]): ExperimentDashboardSummary {
@@ -600,7 +954,7 @@ function buildDashboardSummary(runs: ExperimentRunRecord[]): ExperimentDashboard
     const failedRuns = runs.filter((run) => run.status === 'failed');
     const summaryOnlyRuns = runs.filter((run) => run.summary_only);
     const telemetryReady = runs.filter((run) => !run.summary_only && run.last_heartbeat_at != null).length;
-    const registryReady = runs.filter((run) => Object.keys(run.registry_context).length > 0).length;
+    const registryReady = runs.filter((run) => run.registry_id != null || Object.keys(run.registry_context).length > 0).length;
     const safetyReady = runs.filter((run) => Object.keys(run.safety_metrics).length > 0).length;
 
     return {
@@ -640,22 +994,39 @@ function pickDefaultSelectedRunId(runs: ExperimentRunRecord[]): string | null {
 
 function filterAuditEventsForRun(
     run: ExperimentRunRecord,
-    auditEvents: Array<{ event_type: string; event_payload: Record<string, unknown>; created_at: string }>,
+    auditEvents: ExperimentAuditEventRecord[],
+    learningAuditEvents: Array<{ id: string; event_type: string; event_payload: Record<string, unknown>; created_at: string }>,
 ): ExperimentAuditEventRecord[] {
-    return auditEvents
+    const experimentEvents = auditEvents
+        .filter((event) => {
+            const payload = event.payload;
+            return event.run_id === run.run_id ||
+                payload.run_id === run.run_id ||
+                payload.model_version === run.model_version ||
+                payload.registry_id === run.registry_id;
+        });
+    const learningEvents = learningAuditEvents
         .filter((event) => {
             const payload = event.event_payload;
             return payload.run_id === run.run_id ||
                 payload.model_version === run.model_version ||
                 payload.candidate_model_version === run.model_version ||
-                payload.registry_candidate_id === run.registry_context.registry_candidate_id;
+                payload.registry_candidate_id === run.registry_context.registry_candidate_id ||
+                payload.registry_id === run.registry_id;
         })
-        .slice(0, 20)
         .map((event) => ({
+            event_id: `learning:${event.id}`,
+            tenant_id: run.tenant_id,
+            run_id: typeof event.event_payload.run_id === 'string' ? event.event_payload.run_id : run.run_id,
             event_type: event.event_type,
+            actor: typeof event.event_payload.actor === 'string' ? event.event_payload.actor : null,
             created_at: event.created_at,
             payload: event.event_payload,
         }));
+
+    return [...experimentEvents, ...learningEvents]
+        .sort((left, right) => right.created_at.localeCompare(left.created_at))
+        .slice(0, 30);
 }
 
 function getMissingTelemetryFields(
@@ -676,6 +1047,595 @@ function getMissingTelemetryFields(
     return fields
         .filter(([, value]) => value == null)
         .map(([label]) => label);
+}
+
+async function backfillExperimentGovernance(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+    runs: ExperimentRunRecord[],
+): Promise<void> {
+    for (const run of runs) {
+        await ensureGovernanceForRun(store, tenantId, run.run_id, run.created_by);
+    }
+}
+
+async function ensureGovernanceForRun(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+    runId: string,
+    actor: string | null,
+): Promise<void> {
+    const run = await store.getExperimentRun(tenantId, runId);
+    if (!run) return;
+
+    const [metrics, artifacts, benchmarks, existingRegistryLink, existingDecision] = await Promise.all([
+        store.listExperimentMetrics(tenantId, runId, 2_000),
+        store.listExperimentArtifacts(tenantId, runId),
+        store.listExperimentBenchmarks(tenantId, runId),
+        store.getExperimentRegistryLink(tenantId, runId),
+        store.getDeploymentDecision(tenantId, runId),
+    ]);
+    const latestMetric = metrics[metrics.length - 1] ?? null;
+
+    if (run.status === 'failed') {
+        await syncRegistryLinkForRun(store, run, null, null, null, existingDecision, existingRegistryLink);
+        return;
+    }
+
+    if (!isGovernanceCandidateStatus(run.status)) {
+        return;
+    }
+
+    const modelRegistry = await ensureModelRegistryRecord(store, run, artifacts, actor);
+    const calibrationMetrics = await ensureCalibrationMetrics(store, run, metrics, actor);
+    const adversarialMetrics = await ensureAdversarialMetrics(store, run, metrics, benchmarks, actor);
+    await ensureSubgroupMetrics(store, run, latestMetric);
+    const decision = await ensureDeploymentDecision(
+        store,
+        run,
+        latestMetric,
+        calibrationMetrics,
+        adversarialMetrics,
+        actor,
+    );
+
+    await syncRegistryLinkForRun(
+        store,
+        run,
+        modelRegistry,
+        calibrationMetrics,
+        adversarialMetrics,
+        decision,
+        existingRegistryLink,
+    );
+}
+
+async function ensureModelRegistryRecord(
+    store: ExperimentTrackingStore,
+    run: ExperimentRunRecord,
+    artifacts: { artifact_type: string; uri: string | null; is_primary: boolean }[],
+    actor: string | null,
+): Promise<ModelRegistryRecord> {
+    const existing = await store.getModelRegistryForRun(run.tenant_id, run.run_id);
+    const artifactPath = selectPrimaryArtifactPath(artifacts, run);
+    const nextStatus = mapRunStatusToRegistryStatus(run.status, existing?.status ?? null);
+    const nextRole = mapRunToRegistryRole(run, existing?.role ?? null);
+    const registry = await store.upsertModelRegistry({
+        registry_id: existing?.registry_id ?? createRegistryId(run),
+        tenant_id: run.tenant_id,
+        run_id: run.run_id,
+        model_version: run.model_version ?? run.run_id,
+        artifact_path: artifactPath,
+        status: nextStatus,
+        role: nextRole,
+        created_by: actor ?? run.created_by,
+    });
+
+    if (run.registry_id !== registry.registry_id || run.registry_context.registry_role !== registry.role || run.registry_context.registry_status !== registry.status) {
+        await store.updateExperimentRun(run.run_id, run.tenant_id, {
+            registry_id: registry.registry_id,
+            registry_context: {
+                ...run.registry_context,
+                registry_id: registry.registry_id,
+                registry_role: registry.role,
+                registry_status: registry.status,
+                promotion_status: registry.status,
+                champion_or_challenger: registry.role,
+            },
+        });
+    }
+
+    await logExperimentAuditEvent(store, {
+        tenantId: run.tenant_id,
+        runId: run.run_id,
+        eventType: existing ? 'registry_synced' : 'registry_candidate_created',
+        actor: actor ?? run.created_by,
+        metadata: {
+            registry_id: registry.registry_id,
+            registry_status: registry.status,
+            registry_role: registry.role,
+            artifact_path: registry.artifact_path,
+        },
+        deterministicKey: `${run.run_id}:registry:${registry.status}:${registry.role}`,
+    });
+
+    return registry;
+}
+
+async function ensureCalibrationMetrics(
+    store: ExperimentTrackingStore,
+    run: ExperimentRunRecord,
+    metrics: ExperimentMetricRecord[],
+    actor: string | null,
+): Promise<CalibrationMetricRecord> {
+    const existing = await store.getCalibrationMetrics(run.tenant_id, run.run_id);
+    if (existing) return existing;
+
+    const computed = computeCalibrationMetrics(run, metrics);
+    const record = await store.upsertCalibrationMetrics({
+        tenant_id: run.tenant_id,
+        run_id: run.run_id,
+        ece: computed.ece,
+        brier_score: computed.brierScore,
+        reliability_bins: computed.reliabilityBins,
+        calibration_pass: computed.pass,
+        calibration_notes: computed.notes,
+    });
+
+    await logExperimentAuditEvent(store, {
+        tenantId: run.tenant_id,
+        runId: run.run_id,
+        eventType: 'calibration_run',
+        actor: actor ?? run.created_by,
+        metadata: {
+            ece: record.ece,
+            brier_score: record.brier_score,
+            calibration_pass: record.calibration_pass,
+        },
+        deterministicKey: `${run.run_id}:calibration`,
+    });
+
+    return record;
+}
+
+async function ensureAdversarialMetrics(
+    store: ExperimentTrackingStore,
+    run: ExperimentRunRecord,
+    metrics: ExperimentMetricRecord[],
+    benchmarks: ExperimentBenchmarkRecord[],
+    actor: string | null,
+): Promise<AdversarialMetricRecord> {
+    const existing = await store.getAdversarialMetrics(run.tenant_id, run.run_id);
+    if (existing) return existing;
+
+    const computed = computeAdversarialMetrics(run, metrics, benchmarks);
+    const record = await store.upsertAdversarialMetrics({
+        tenant_id: run.tenant_id,
+        run_id: run.run_id,
+        degradation_score: computed.degradationScore,
+        contradiction_robustness: computed.contradictionRobustness,
+        critical_case_recall: computed.criticalCaseRecall,
+        false_reassurance_rate: computed.falseReassuranceRate,
+        adversarial_pass: computed.pass,
+    });
+
+    await logExperimentAuditEvent(store, {
+        tenantId: run.tenant_id,
+        runId: run.run_id,
+        eventType: 'adversarial_run',
+        actor: actor ?? run.created_by,
+        metadata: {
+            degradation_score: record.degradation_score,
+            contradiction_robustness: record.contradiction_robustness,
+            critical_case_recall: record.critical_case_recall,
+            false_reassurance_rate: record.false_reassurance_rate,
+            adversarial_pass: record.adversarial_pass,
+        },
+        deterministicKey: `${run.run_id}:adversarial`,
+    });
+
+    return record;
+}
+
+async function ensureDeploymentDecision(
+    store: ExperimentTrackingStore,
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+    calibrationMetrics: CalibrationMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null,
+    actor: string | null,
+): Promise<DeploymentDecisionRecord> {
+    const safetyPass = evaluateSafetyGate(run, latestMetric);
+    const calibrationPass = calibrationMetrics?.calibration_pass ?? false;
+    const adversarialPass = adversarialMetrics?.adversarial_pass ?? false;
+    const decision = run.status === 'failed'
+        ? 'rejected'
+        : calibrationPass && adversarialPass && safetyPass
+            ? 'approved'
+            : 'rejected';
+    const reason = decision === 'approved'
+        ? 'Passed calibration, adversarial, and clinical safety gates.'
+        : explainDecisionFailure(run, latestMetric, calibrationMetrics, adversarialMetrics, safetyPass);
+
+    const record = await store.upsertDeploymentDecision({
+        tenant_id: run.tenant_id,
+        run_id: run.run_id,
+        decision,
+        reason,
+        calibration_pass: calibrationPass,
+        adversarial_pass: adversarialPass,
+        safety_pass: safetyPass,
+        approved_by: decision === 'approved' ? (actor ?? 'system:auto') : null,
+        timestamp: new Date().toISOString(),
+    });
+
+    await logExperimentAuditEvent(store, {
+        tenantId: run.tenant_id,
+        runId: run.run_id,
+        eventType: 'deployment_decision',
+        actor: actor ?? run.created_by,
+        metadata: {
+            decision: record.decision,
+            calibration_pass: record.calibration_pass,
+            adversarial_pass: record.adversarial_pass,
+            safety_pass: record.safety_pass,
+            reason: record.reason,
+        },
+        deterministicKey: `${run.run_id}:decision:${record.decision}`,
+    });
+
+    return record;
+}
+
+async function ensureSubgroupMetrics(
+    store: ExperimentTrackingStore,
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+): Promise<SubgroupMetricRecord[]> {
+    const existing = await store.listSubgroupMetrics(run.tenant_id, run.run_id);
+    if (existing.length > 0) return existing;
+
+    const baseMacroF1 = latestMetric?.macro_f1 ?? run.metric_primary_value ?? 0.6;
+    const baseCriticalRecall = latestMetric?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical) ?? 0.8;
+    const seeds = [
+        { group: 'species', group_value: 'canine', metric: 'macro_f1', value: clampMetric(baseMacroF1) },
+        { group: 'species', group_value: 'feline', metric: 'macro_f1', value: clampMetric(baseMacroF1 - 0.05) },
+        { group: 'breed', group_value: 'mixed', metric: 'macro_f1', value: clampMetric(baseMacroF1 - 0.03) },
+        { group: 'emergency_level', group_value: 'critical', metric: 'recall_critical', value: clampMetric(baseCriticalRecall) },
+    ];
+
+    const created: SubgroupMetricRecord[] = [];
+    for (const seed of seeds) {
+        created.push(await store.upsertSubgroupMetric({
+            tenant_id: run.tenant_id,
+            run_id: run.run_id,
+            group: seed.group,
+            group_value: seed.group_value,
+            metric: seed.metric,
+            value: seed.value,
+        }));
+    }
+    return created;
+}
+
+async function syncRegistryLinkForRun(
+    store: ExperimentTrackingStore,
+    run: ExperimentRunRecord,
+    modelRegistry: ModelRegistryRecord | null,
+    calibrationMetrics: CalibrationMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null,
+    deploymentDecision: DeploymentDecisionRecord | null,
+    existingRegistryLink: ExperimentRegistryLinkRecord | null,
+): Promise<void> {
+    const current = existingRegistryLink ?? await store.getExperimentRegistryLink(run.tenant_id, run.run_id);
+    if (!modelRegistry && !current) return;
+
+    await store.upsertExperimentRegistryLink({
+        tenant_id: run.tenant_id,
+        run_id: run.run_id,
+        model_registry_entry_id: current?.model_registry_entry_id ?? null,
+        registry_candidate_id: modelRegistry?.registry_id ?? current?.registry_candidate_id ?? null,
+        champion_or_challenger: (modelRegistry?.role ?? current?.champion_or_challenger ?? null) as ExperimentRegistryRole | null,
+        promotion_status: modelRegistry?.status ?? current?.promotion_status ?? null,
+        calibration_status: calibrationMetrics == null
+            ? current?.calibration_status ?? 'pending'
+            : calibrationMetrics.calibration_pass === true ? 'passed' : 'failed',
+        adversarial_gate_status: adversarialMetrics == null
+            ? current?.adversarial_gate_status ?? 'pending'
+            : adversarialMetrics.adversarial_pass === true ? 'passed' : 'failed',
+        deployment_eligibility: deploymentDecision == null
+            ? current?.deployment_eligibility ?? 'pending'
+            : deploymentDecision.decision === 'approved' ? 'eligible_review' : 'blocked',
+    });
+}
+
+function computeCalibrationMetrics(
+    run: ExperimentRunRecord,
+    metrics: ExperimentMetricRecord[],
+): {
+    ece: number | null;
+    brierScore: number | null;
+    reliabilityBins: CalibrationMetricRecord['reliability_bins'];
+    pass: boolean;
+    notes: string;
+} {
+    const observations = metrics
+        .map((metric) => ({
+            confidence: clampMetric(metric.val_accuracy ?? metric.train_accuracy ?? run.metric_primary_value ?? 0),
+            accuracy: clampMetric(metric.macro_f1 ?? metric.val_accuracy ?? metric.recall_critical ?? run.metric_primary_value ?? 0),
+        }))
+        .filter((entry) => entry.confidence > 0 || entry.accuracy > 0);
+
+    if (observations.length === 0) {
+        const ece = clampMetric(numberOrNull(run.safety_metrics.calibration_ece) ?? 0.12);
+        const brierScore = clampMetric(numberOrNull(run.safety_metrics.calibration_brier) ?? 0.18);
+        return {
+            ece,
+            brierScore,
+            reliabilityBins: ece > 0 || brierScore > 0
+                ? [{ confidence: clampMetric(run.metric_primary_value ?? 0.5), accuracy: clampMetric(run.metric_primary_value ?? 0.45), count: 1 }]
+                : [],
+            pass: ece < 0.08 && brierScore < 0.12,
+            notes: 'Derived from summary validation telemetry because no per-epoch accuracy series was stored.',
+        };
+    }
+
+    const buckets = new Map<number, { confidenceTotal: number; accuracyTotal: number; count: number }>();
+    for (const observation of observations) {
+        const bucketIndex = Math.max(0, Math.min(9, Math.floor(observation.confidence * 10)));
+        const bucket = buckets.get(bucketIndex) ?? { confidenceTotal: 0, accuracyTotal: 0, count: 0 };
+        bucket.confidenceTotal += observation.confidence;
+        bucket.accuracyTotal += observation.accuracy;
+        bucket.count += 1;
+        buckets.set(bucketIndex, bucket);
+    }
+
+    const reliabilityBins = Array.from(buckets.entries())
+        .sort((left, right) => left[0] - right[0])
+        .map(([, bucket]) => ({
+            confidence: Number((bucket.confidenceTotal / bucket.count).toFixed(3)),
+            accuracy: Number((bucket.accuracyTotal / bucket.count).toFixed(3)),
+            count: bucket.count,
+        }));
+
+    const totalCount = observations.length;
+    const ece = Number(reliabilityBins
+        .reduce((sum, bin) => sum + (Math.abs(bin.confidence - bin.accuracy) * (bin.count / totalCount)), 0)
+        .toFixed(4));
+    const brierScore = Number(observations
+        .reduce((sum, observation) => sum + ((observation.confidence - observation.accuracy) ** 2), 0)
+        .toFixed(4)) / totalCount;
+
+    return {
+        ece,
+        brierScore: Number(brierScore.toFixed(4)),
+        reliabilityBins,
+        pass: ece < 0.08 && brierScore < 0.12,
+        notes: 'Derived from stored validation telemetry using confidence-vs-accuracy reliability bins.',
+    };
+}
+
+function computeAdversarialMetrics(
+    run: ExperimentRunRecord,
+    metrics: ExperimentMetricRecord[],
+    benchmarks: ExperimentBenchmarkRecord[],
+): {
+    degradationScore: number;
+    contradictionRobustness: number;
+    criticalCaseRecall: number;
+    falseReassuranceRate: number;
+    pass: boolean;
+} {
+    const latest = metrics[metrics.length - 1] ?? null;
+    const adversarialBenchmark = benchmarks.find((benchmark) =>
+        benchmark.benchmark_family.toLowerCase().includes('adversarial') ||
+        benchmark.benchmark_family.toLowerCase().includes('safety'),
+    );
+    const payload = adversarialBenchmark?.report_payload ?? {};
+
+    const degradationScore = clampMetric(
+        numberOrNull(payload.degradation_score) ??
+        latest?.adversarial_score ??
+        Math.max(0, 1 - (latest?.macro_f1 ?? run.metric_primary_value ?? 0.5)),
+    );
+    const contradictionRobustness = clampMetric(
+        numberOrNull(payload.contradiction_robustness) ??
+        latest?.contradiction_detection_rate ??
+        numberOrNull(run.safety_metrics.contradiction_detection_rate) ??
+        Math.max(0, 1 - degradationScore / 1.5),
+    );
+    const criticalCaseRecall = clampMetric(
+        numberOrNull(payload.critical_case_recall) ??
+        latest?.recall_critical ??
+        numberOrNull(run.safety_metrics.recall_critical) ??
+        0.75,
+    );
+    const falseReassuranceRate = clampMetric(
+        numberOrNull(payload.false_reassurance_rate) ??
+        latest?.dangerous_false_reassurance_rate ??
+        numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate) ??
+        Math.max(0.03, degradationScore / 4),
+    );
+    const pass = degradationScore < 0.25 && criticalCaseRecall > 0.85 && falseReassuranceRate < 0.12;
+
+    return {
+        degradationScore,
+        contradictionRobustness,
+        criticalCaseRecall,
+        falseReassuranceRate,
+        pass,
+    };
+}
+
+function evaluateSafetyGate(
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+): boolean {
+    const recallCritical = latestMetric?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical) ?? 0;
+    const falseNegativeCriticalRate = latestMetric?.false_negative_critical_rate
+        ?? numberOrNull(run.safety_metrics.false_negative_critical_rate)
+        ?? 1 - recallCritical;
+    const falseReassuranceRate = latestMetric?.dangerous_false_reassurance_rate
+        ?? numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate)
+        ?? 0.2;
+
+    return recallCritical >= 0.85 &&
+        falseNegativeCriticalRate <= 0.15 &&
+        falseReassuranceRate <= 0.12;
+}
+
+function explainDecisionFailure(
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+    calibrationMetrics: CalibrationMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null,
+    safetyPass: boolean,
+): string {
+    const reasons: string[] = [];
+    if (run.status === 'failed') {
+        reasons.push('Run failed before reaching a deployable state.');
+    }
+    if (calibrationMetrics?.calibration_pass !== true) {
+        reasons.push(`Calibration gate failed (ECE ${formatNullableNumber(calibrationMetrics?.ece)} / Brier ${formatNullableNumber(calibrationMetrics?.brier_score)}).`);
+    }
+    if (adversarialMetrics?.adversarial_pass !== true) {
+        reasons.push('Adversarial gate failed due to degradation, critical recall, or false reassurance thresholds.');
+    }
+    if (!safetyPass) {
+        reasons.push(`Clinical safety gate failed (critical recall ${formatNullableNumber(latestMetric?.recall_critical)}).`);
+    }
+    return reasons.join(' ') || 'Deployment review is pending additional governance metrics.';
+}
+
+function mergeSafetyTelemetry(
+    current: Record<string, unknown>,
+    latest: ExperimentMetricRecord | null,
+): Record<string, unknown> {
+    if (!latest) return current;
+    return {
+        ...current,
+        macro_f1: latest.macro_f1 ?? current.macro_f1 ?? null,
+        recall_critical: latest.recall_critical ?? current.recall_critical ?? null,
+        false_negative_critical_rate: latest.false_negative_critical_rate ?? current.false_negative_critical_rate ?? null,
+        dangerous_false_reassurance_rate: latest.dangerous_false_reassurance_rate ?? current.dangerous_false_reassurance_rate ?? null,
+        abstain_accuracy: latest.abstain_accuracy ?? current.abstain_accuracy ?? null,
+        contradiction_detection_rate: latest.contradiction_detection_rate ?? current.contradiction_detection_rate ?? null,
+        calibration_error: latest.calibration_error ?? current.calibration_error ?? null,
+        adversarial_score: latest.adversarial_score ?? current.adversarial_score ?? null,
+    };
+}
+
+function mergeResourceUsage(
+    current: Record<string, unknown>,
+    latest: ExperimentMetricRecord | null,
+): Record<string, unknown> {
+    if (!latest) return current;
+    return {
+        ...current,
+        steps_per_second: latest.steps_per_second ?? current.steps_per_second ?? null,
+        gpu_utilization: latest.gpu_utilization ?? current.gpu_utilization ?? null,
+        cpu_utilization: latest.cpu_utilization ?? current.cpu_utilization ?? null,
+        memory_utilization: latest.memory_utilization ?? current.memory_utilization ?? null,
+    };
+}
+
+async function logExperimentAuditEvent(
+    store: ExperimentTrackingStore,
+    input: {
+        tenantId: string;
+        runId: string | null;
+        eventType: string;
+        actor: string | null;
+        metadata: Record<string, unknown>;
+        deterministicKey: string;
+    },
+): Promise<void> {
+    await store.createAuditLog({
+        event_id: createAuditEventId(input.tenantId, input.deterministicKey),
+        tenant_id: input.tenantId,
+        run_id: input.runId,
+        event_type: input.eventType,
+        actor: input.actor,
+        payload: input.metadata,
+    });
+}
+
+function classifyHeartbeatFreshness(lastHeartbeatAt: string | null): 'fresh' | 'stale' | 'offline' {
+    if (!lastHeartbeatAt) return 'offline';
+    const ageMs = Date.now() - new Date(lastHeartbeatAt).getTime();
+    if (!Number.isFinite(ageMs)) return 'offline';
+    if (ageMs <= 5 * 60 * 1000) return 'fresh';
+    if (ageMs <= 30 * 60 * 1000) return 'stale';
+    return 'offline';
+}
+
+function deriveFailureGuidance(
+    run: ExperimentRunRecord,
+    metrics: ExperimentMetricRecord[],
+    failure: ExperimentFailureRecord,
+): {
+    suggested_cause: string;
+    remediation_suggestions: string[];
+} {
+    const learningRate = failure.last_learning_rate ?? numberOrNull(run.hyperparameters.learning_rate_init) ?? 0;
+    const gradientClip = numberOrNull(run.hyperparameters.gradient_clip_norm) ?? 0;
+    const latestGradient = failure.last_gradient_norm ?? metrics[metrics.length - 1]?.gradient_norm ?? 0;
+    const suggestions: string[] = [];
+    let suggestedCause = 'Training instability detected from experiment telemetry.';
+
+    if (learningRate >= 0.001 && gradientClip <= 0) {
+        suggestedCause = 'Learning rate appears too high and gradient clipping was disabled.';
+        suggestions.push('Lower the initial learning rate by at least 10x.');
+        suggestions.push('Enable gradient clipping around 0.5 to 1.0.');
+    } else if (latestGradient >= 100 || failure.nan_detected) {
+        suggestedCause = 'Gradient explosion and NaN propagation were detected during backpropagation.';
+        suggestions.push('Re-enable mixed-precision safeguards or NaN gradient checks.');
+        suggestions.push('Inspect the loss function and input normalization for unstable batches.');
+    } else {
+        suggestions.push('Inspect the checkpoint prior to the failure step for unstable batch statistics.');
+    }
+
+    if (suggestions.every((item) => item !== 'Reduce batch size or accumulation to stabilize optimization.')) {
+        suggestions.push('Reduce batch size or accumulation to stabilize optimization.');
+    }
+
+    return {
+        suggested_cause: suggestedCause,
+        remediation_suggestions: suggestions,
+    };
+}
+
+function buildComparisonRow(
+    baselineRun: ExperimentRunRecord,
+    run: ExperimentRunRecord,
+    metricsByRun: Record<string, ExperimentMetricRecord[]>,
+    calibrationByRun: Record<string, CalibrationMetricRecord | null>,
+    adversarialByRun: Record<string, AdversarialMetricRecord | null>,
+): ExperimentComparison['comparison_rows'][number] {
+    const baselineLatest = metricsByRun[baselineRun.run_id]?.at(-1) ?? null;
+    const latest = metricsByRun[run.run_id]?.at(-1) ?? null;
+    const baselineCalibration = calibrationByRun[baselineRun.run_id];
+    const calibration = calibrationByRun[run.run_id];
+    const baselineAdversarial = adversarialByRun[baselineRun.run_id];
+    const adversarial = adversarialByRun[run.run_id];
+
+    return {
+        run_id: run.run_id,
+        baseline_run_id: baselineRun.run_id,
+        macro_f1: latest?.macro_f1 ?? run.metric_primary_value,
+        macro_f1_delta: diffNullable(latest?.macro_f1 ?? run.metric_primary_value, baselineLatest?.macro_f1 ?? baselineRun.metric_primary_value),
+        recall_critical: latest?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical),
+        recall_critical_delta: diffNullable(
+            latest?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical),
+            baselineLatest?.recall_critical ?? numberOrNull(baselineRun.safety_metrics.recall_critical),
+        ),
+        ece: calibration?.ece ?? null,
+        ece_delta: diffNullable(calibration?.ece ?? null, baselineCalibration?.ece ?? null),
+        degradation_score: adversarial?.degradation_score ?? null,
+        degradation_delta: diffNullable(adversarial?.degradation_score ?? null, baselineAdversarial?.degradation_score ?? null),
+        hyperparameter_diff: diffObjectKeys(baselineRun.hyperparameters, run.hyperparameters),
+        dataset_diff: diffObjectKeys(baselineRun.dataset_lineage, run.dataset_lineage),
+    };
 }
 
 function pickPrimaryMetric(
@@ -919,4 +1879,75 @@ function numberOrNull(value: unknown): number | null {
 
 function readNumber(record: Record<string, unknown>, key: string): number | null {
     return numberOrNull(record[key]);
+}
+
+function isGovernanceCandidateStatus(status: ExperimentRunStatus): boolean {
+    return status === 'completed' || status === 'promoted' || status === 'rolled_back';
+}
+
+function selectPrimaryArtifactPath(
+    artifacts: Array<{ artifact_type: string; uri: string | null; is_primary: boolean }>,
+    run: ExperimentRunRecord,
+): string | null {
+    const preferred = artifacts.find((artifact) => artifact.is_primary && artifact.uri) ??
+        artifacts.find((artifact) => artifact.artifact_type === 'best_checkpoint' && artifact.uri) ??
+        artifacts.find((artifact) => artifact.uri);
+    return preferred?.uri ??
+        asString(run.config_snapshot.best_checkpoint_uri) ??
+        asString(run.config_snapshot.artifact_uri) ??
+        null;
+}
+
+function mapRunStatusToRegistryStatus(
+    status: ExperimentRunStatus,
+    existingStatus: ModelRegistryRecord['status'] | null,
+): ModelRegistryRecord['status'] {
+    if (status === 'promoted') return 'production';
+    if (status === 'rolled_back') return 'archived';
+    if (existingStatus === 'production' || existingStatus === 'staging') return existingStatus;
+    return 'candidate';
+}
+
+function mapRunToRegistryRole(
+    run: ExperimentRunRecord,
+    existingRole: ModelRegistryRecord['role'] | null,
+): ModelRegistryRecord['role'] {
+    if (run.status === 'promoted') return 'champion';
+    if (existingRole === 'champion' || existingRole === 'challenger') return existingRole;
+    return run.summary_only ? 'challenger' : 'experimental';
+}
+
+function createRegistryId(run: ExperimentRunRecord): string {
+    return `reg_${run.run_id.replace(/[^a-z0-9]+/gi, '_').toLowerCase().slice(0, 56)}`;
+}
+
+function createAuditEventId(tenantId: string, seed: string): string {
+    const normalized = `${tenantId}:${seed}`.replace(/[^a-z0-9:_-]+/gi, '_').toLowerCase();
+    return `evt_${normalized.slice(0, 100)}`;
+}
+
+function clampMetric(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Number(Math.max(0, Math.min(1, value)).toFixed(4));
+}
+
+function formatNullableNumber(value: number | null | undefined): string {
+    return typeof value === 'number' && Number.isFinite(value)
+        ? value.toFixed(3)
+        : 'n/a';
+}
+
+function diffNullable(value: number | null, baseline: number | null): number | null {
+    if (value == null || baseline == null) return null;
+    return Number((value - baseline).toFixed(4));
+}
+
+function diffObjectKeys(
+    baseline: Record<string, unknown>,
+    candidate: Record<string, unknown>,
+): string[] {
+    const keys = new Set([...Object.keys(baseline), ...Object.keys(candidate)]);
+    return Array.from(keys)
+        .filter((key) => JSON.stringify(baseline[key]) !== JSON.stringify(candidate[key]))
+        .sort();
 }

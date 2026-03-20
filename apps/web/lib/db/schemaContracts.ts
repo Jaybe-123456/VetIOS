@@ -425,6 +425,7 @@ export const EXPERIMENT_RUNS = {
         model_arch: 'model_arch',
         model_size: 'model_size',
         model_version: 'model_version',
+        registry_id: 'registry_id',
         dataset_name: 'dataset_name',
         dataset_version: 'dataset_version',
         feature_schema_version: 'feature_schema_version',
@@ -470,6 +471,10 @@ export const EXPERIMENT_METRICS = {
         recall_critical: 'recall_critical',
         calibration_error: 'calibration_error',
         adversarial_score: 'adversarial_score',
+        false_negative_critical_rate: 'false_negative_critical_rate',
+        dangerous_false_reassurance_rate: 'dangerous_false_reassurance_rate',
+        abstain_accuracy: 'abstain_accuracy',
+        contradiction_detection_rate: 'contradiction_detection_rate',
         wall_clock_time_seconds: 'wall_clock_time_seconds',
         steps_per_second: 'steps_per_second',
         gpu_utilization: 'gpu_utilization',
@@ -547,5 +552,99 @@ export const EXPERIMENT_REGISTRY_LINKS = {
         deployment_eligibility: 'deployment_eligibility',
         linked_at: 'linked_at',
         updated_at: 'updated_at',
+    },
+} as const;
+
+export const MODEL_REGISTRY = {
+    TABLE: 'model_registry',
+    COLUMNS: {
+        registry_id: 'registry_id',
+        tenant_id: 'tenant_id',
+        run_id: 'run_id',
+        model_version: 'model_version',
+        artifact_path: 'artifact_path',
+        status: 'status',
+        role: 'role',
+        created_at: 'created_at',
+        created_by: 'created_by',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const CALIBRATION_METRICS = {
+    TABLE: 'calibration_metrics',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        run_id: 'run_id',
+        ece: 'ece',
+        brier_score: 'brier_score',
+        reliability_bins: 'reliability_bins',
+        calibration_pass: 'calibration_pass',
+        calibration_notes: 'calibration_notes',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const ADVERSARIAL_METRICS = {
+    TABLE: 'adversarial_metrics',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        run_id: 'run_id',
+        degradation_score: 'degradation_score',
+        contradiction_robustness: 'contradiction_robustness',
+        critical_case_recall: 'critical_case_recall',
+        false_reassurance_rate: 'false_reassurance_rate',
+        adversarial_pass: 'adversarial_pass',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const AUDIT_LOG = {
+    TABLE: 'audit_log',
+    COLUMNS: {
+        event_id: 'event_id',
+        tenant_id: 'tenant_id',
+        run_id: 'run_id',
+        event_type: 'event_type',
+        actor: 'actor',
+        metadata: 'metadata',
+        timestamp: 'timestamp',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const DEPLOYMENT_DECISIONS = {
+    TABLE: 'deployment_decisions',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        run_id: 'run_id',
+        decision: 'decision',
+        reason: 'reason',
+        calibration_pass: 'calibration_pass',
+        adversarial_pass: 'adversarial_pass',
+        safety_pass: 'safety_pass',
+        approved_by: 'approved_by',
+        timestamp: 'timestamp',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const SUBGROUP_METRICS = {
+    TABLE: 'subgroup_metrics',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        run_id: 'run_id',
+        group: 'group',
+        group_value: 'group_value',
+        metric: 'metric',
+        value: 'value',
+        created_at: 'created_at',
     },
 } as const;

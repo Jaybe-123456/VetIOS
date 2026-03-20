@@ -1,5 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+    ADVERSARIAL_METRICS,
+    AUDIT_LOG,
+    CALIBRATION_METRICS,
+    DEPLOYMENT_DECISIONS,
     EXPERIMENT_ARTIFACTS,
     EXPERIMENT_BENCHMARKS,
     EXPERIMENT_FAILURES,
@@ -10,15 +14,23 @@ import {
     LEARNING_BENCHMARK_REPORTS,
     LEARNING_CALIBRATION_REPORTS,
     LEARNING_DATASET_VERSIONS,
+    MODEL_REGISTRY,
     MODEL_REGISTRY_ENTRIES,
+    SUBGROUP_METRICS,
 } from '@/lib/db/schemaContracts';
 import type {
+    AdversarialMetricRecord,
+    CalibrationMetricRecord,
+    DeploymentDecisionRecord,
     ExperimentArtifactRecord,
+    ExperimentAuditEventRecord,
     ExperimentBenchmarkRecord,
     ExperimentFailureRecord,
     ExperimentMetricRecord,
     ExperimentRegistryLinkRecord,
     ExperimentRunRecord,
+    ModelRegistryRecord,
+    SubgroupMetricRecord,
     ExperimentTrackingStore,
     ListExperimentRunsOptions,
 } from '@/lib/experiments/types';
@@ -253,6 +265,201 @@ export function createSupabaseExperimentTrackingStore(
             return mapExperimentRegistryLink(asRecord(data));
         },
 
+        async getModelRegistryForRun(tenantId, runId) {
+            const { data, error } = await client
+                .from(MODEL_REGISTRY.TABLE)
+                .select('*')
+                .eq(MODEL_REGISTRY.COLUMNS.tenant_id, tenantId)
+                .eq(MODEL_REGISTRY.COLUMNS.run_id, runId)
+                .maybeSingle();
+
+            if (error) {
+                throw new Error(`Failed to load model registry record: ${error.message}`);
+            }
+
+            return data ? mapModelRegistry(asRecord(data)) : null;
+        },
+
+        async upsertModelRegistry(record) {
+            const { data, error } = await client
+                .from(MODEL_REGISTRY.TABLE)
+                .upsert(stripUndefined(record), {
+                    onConflict: `${MODEL_REGISTRY.COLUMNS.registry_id}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to upsert model registry record: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapModelRegistry(asRecord(data));
+        },
+
+        async getCalibrationMetrics(tenantId, runId) {
+            const { data, error } = await client
+                .from(CALIBRATION_METRICS.TABLE)
+                .select('*')
+                .eq(CALIBRATION_METRICS.COLUMNS.tenant_id, tenantId)
+                .eq(CALIBRATION_METRICS.COLUMNS.run_id, runId)
+                .maybeSingle();
+
+            if (error) {
+                throw new Error(`Failed to load calibration metrics: ${error.message}`);
+            }
+
+            return data ? mapCalibrationMetrics(asRecord(data)) : null;
+        },
+
+        async upsertCalibrationMetrics(record) {
+            const { data, error } = await client
+                .from(CALIBRATION_METRICS.TABLE)
+                .upsert(stripUndefined(record), {
+                    onConflict: `${CALIBRATION_METRICS.COLUMNS.tenant_id},${CALIBRATION_METRICS.COLUMNS.run_id}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to upsert calibration metrics: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapCalibrationMetrics(asRecord(data));
+        },
+
+        async getAdversarialMetrics(tenantId, runId) {
+            const { data, error } = await client
+                .from(ADVERSARIAL_METRICS.TABLE)
+                .select('*')
+                .eq(ADVERSARIAL_METRICS.COLUMNS.tenant_id, tenantId)
+                .eq(ADVERSARIAL_METRICS.COLUMNS.run_id, runId)
+                .maybeSingle();
+
+            if (error) {
+                throw new Error(`Failed to load adversarial metrics: ${error.message}`);
+            }
+
+            return data ? mapAdversarialMetrics(asRecord(data)) : null;
+        },
+
+        async upsertAdversarialMetrics(record) {
+            const { data, error } = await client
+                .from(ADVERSARIAL_METRICS.TABLE)
+                .upsert(stripUndefined(record), {
+                    onConflict: `${ADVERSARIAL_METRICS.COLUMNS.tenant_id},${ADVERSARIAL_METRICS.COLUMNS.run_id}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to upsert adversarial metrics: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapAdversarialMetrics(asRecord(data));
+        },
+
+        async getDeploymentDecision(tenantId, runId) {
+            const { data, error } = await client
+                .from(DEPLOYMENT_DECISIONS.TABLE)
+                .select('*')
+                .eq(DEPLOYMENT_DECISIONS.COLUMNS.tenant_id, tenantId)
+                .eq(DEPLOYMENT_DECISIONS.COLUMNS.run_id, runId)
+                .maybeSingle();
+
+            if (error) {
+                throw new Error(`Failed to load deployment decision: ${error.message}`);
+            }
+
+            return data ? mapDeploymentDecision(asRecord(data)) : null;
+        },
+
+        async upsertDeploymentDecision(record) {
+            const { data, error } = await client
+                .from(DEPLOYMENT_DECISIONS.TABLE)
+                .upsert(stripUndefined(record), {
+                    onConflict: `${DEPLOYMENT_DECISIONS.COLUMNS.tenant_id},${DEPLOYMENT_DECISIONS.COLUMNS.run_id}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to upsert deployment decision: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapDeploymentDecision(asRecord(data));
+        },
+
+        async listSubgroupMetrics(tenantId, runId) {
+            const { data, error } = await client
+                .from(SUBGROUP_METRICS.TABLE)
+                .select('*')
+                .eq(SUBGROUP_METRICS.COLUMNS.tenant_id, tenantId)
+                .eq(SUBGROUP_METRICS.COLUMNS.run_id, runId)
+                .order(SUBGROUP_METRICS.COLUMNS.group, { ascending: true });
+
+            if (error) {
+                throw new Error(`Failed to list subgroup metrics: ${error.message}`);
+            }
+
+            return (data ?? []).map((row) => mapSubgroupMetric(asRecord(row)));
+        },
+
+        async upsertSubgroupMetric(record) {
+            const { data, error } = await client
+                .from(SUBGROUP_METRICS.TABLE)
+                .upsert(stripUndefined(record), {
+                    onConflict: `${SUBGROUP_METRICS.COLUMNS.tenant_id},${SUBGROUP_METRICS.COLUMNS.run_id},${SUBGROUP_METRICS.COLUMNS.group},${SUBGROUP_METRICS.COLUMNS.group_value},${SUBGROUP_METRICS.COLUMNS.metric}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to upsert subgroup metric: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapSubgroupMetric(asRecord(data));
+        },
+
+        async listAuditLog(tenantId, limit = 200) {
+            const { data, error } = await client
+                .from(AUDIT_LOG.TABLE)
+                .select('*')
+                .eq(AUDIT_LOG.COLUMNS.tenant_id, tenantId)
+                .order(AUDIT_LOG.COLUMNS.timestamp, { ascending: false })
+                .limit(limit);
+
+            if (error) {
+                throw new Error(`Failed to list experiment audit log: ${error.message}`);
+            }
+
+            return (data ?? []).map((row) => mapAuditLog(asRecord(row)));
+        },
+
+        async createAuditLog(record) {
+            const timestamp = new Date().toISOString();
+            const { data, error } = await client
+                .from(AUDIT_LOG.TABLE)
+                .upsert({
+                    event_id: record.event_id,
+                    tenant_id: record.tenant_id,
+                    run_id: record.run_id,
+                    event_type: record.event_type,
+                    actor: record.actor,
+                    metadata: record.payload,
+                    timestamp,
+                }, {
+                    onConflict: `${AUDIT_LOG.COLUMNS.event_id}`,
+                })
+                .select('*')
+                .single();
+
+            if (error || !data) {
+                throw new Error(`Failed to create experiment audit log event: ${error?.message ?? 'Unknown error'}`);
+            }
+
+            return mapAuditLog(asRecord(data));
+        },
+
         async listModelRegistryEntries(tenantId) {
             const { data, error } = await client
                 .from(MODEL_REGISTRY_ENTRIES.TABLE)
@@ -373,6 +580,7 @@ function mapExperimentRun(row: Record<string, unknown>): ExperimentRunRecord {
         model_arch: readString(row.model_arch) ?? 'Unknown architecture',
         model_size: readString(row.model_size),
         model_version: readString(row.model_version),
+        registry_id: readString(row.registry_id),
         dataset_name: readString(row.dataset_name) ?? 'Unknown dataset',
         dataset_version: readString(row.dataset_version),
         feature_schema_version: readString(row.feature_schema_version),
@@ -417,6 +625,10 @@ function mapExperimentMetric(row: Record<string, unknown>): ExperimentMetricReco
         recall_critical: readNumber(row.recall_critical),
         calibration_error: readNumber(row.calibration_error),
         adversarial_score: readNumber(row.adversarial_score),
+        false_negative_critical_rate: readNumber(row.false_negative_critical_rate),
+        dangerous_false_reassurance_rate: readNumber(row.dangerous_false_reassurance_rate),
+        abstain_accuracy: readNumber(row.abstain_accuracy),
+        contradiction_detection_rate: readNumber(row.contradiction_detection_rate),
         wall_clock_time_seconds: readNumber(row.wall_clock_time_seconds),
         steps_per_second: readNumber(row.steps_per_second),
         gpu_utilization: readNumber(row.gpu_utilization),
@@ -493,6 +705,95 @@ function mapExperimentRegistryLink(row: Record<string, unknown>): ExperimentRegi
     };
 }
 
+function mapModelRegistry(row: Record<string, unknown>): ModelRegistryRecord {
+    return {
+        registry_id: String(row.registry_id),
+        tenant_id: String(row.tenant_id),
+        run_id: String(row.run_id),
+        model_version: readString(row.model_version) ?? 'unknown_model_version',
+        artifact_path: readString(row.artifact_path),
+        status: (readString(row.status) ?? 'candidate') as ModelRegistryRecord['status'],
+        role: (readString(row.role) ?? 'experimental') as ModelRegistryRecord['role'],
+        created_at: String(row.created_at),
+        created_by: readString(row.created_by),
+        updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapCalibrationMetrics(row: Record<string, unknown>): CalibrationMetricRecord {
+    return {
+        id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        run_id: String(row.run_id),
+        ece: readNumber(row.ece),
+        brier_score: readNumber(row.brier_score),
+        reliability_bins: Array.isArray(row.reliability_bins)
+            ? row.reliability_bins.map((entry) => asReliabilityBin(entry)).filter(Boolean) as CalibrationMetricRecord['reliability_bins']
+            : [],
+        calibration_pass: typeof row.calibration_pass === 'boolean' ? row.calibration_pass : null,
+        calibration_notes: readString(row.calibration_notes),
+        created_at: String(row.created_at),
+        updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapAdversarialMetrics(row: Record<string, unknown>): AdversarialMetricRecord {
+    return {
+        id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        run_id: String(row.run_id),
+        degradation_score: readNumber(row.degradation_score),
+        contradiction_robustness: readNumber(row.contradiction_robustness),
+        critical_case_recall: readNumber(row.critical_case_recall),
+        false_reassurance_rate: readNumber(row.false_reassurance_rate),
+        adversarial_pass: typeof row.adversarial_pass === 'boolean' ? row.adversarial_pass : null,
+        created_at: String(row.created_at),
+        updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapDeploymentDecision(row: Record<string, unknown>): DeploymentDecisionRecord {
+    return {
+        id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        run_id: String(row.run_id),
+        decision: (readString(row.decision) ?? 'pending') as DeploymentDecisionRecord['decision'],
+        reason: readString(row.reason),
+        calibration_pass: typeof row.calibration_pass === 'boolean' ? row.calibration_pass : null,
+        adversarial_pass: typeof row.adversarial_pass === 'boolean' ? row.adversarial_pass : null,
+        safety_pass: typeof row.safety_pass === 'boolean' ? row.safety_pass : null,
+        approved_by: readString(row.approved_by),
+        timestamp: String(row.timestamp ?? row.created_at),
+        created_at: String(row.created_at),
+        updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapSubgroupMetric(row: Record<string, unknown>): SubgroupMetricRecord {
+    return {
+        id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        run_id: String(row.run_id),
+        group: readString(row.group) ?? 'unknown_group',
+        group_value: readString(row.group_value) ?? 'unknown_value',
+        metric: readString(row.metric) ?? 'unknown_metric',
+        value: readNumber(row.value) ?? 0,
+        created_at: String(row.created_at),
+    };
+}
+
+function mapAuditLog(row: Record<string, unknown>): ExperimentAuditEventRecord {
+    return {
+        event_id: String(row.event_id),
+        tenant_id: String(row.tenant_id),
+        run_id: readString(row.run_id),
+        event_type: readString(row.event_type) ?? 'unknown_event',
+        actor: readString(row.actor),
+        created_at: String(row.timestamp ?? row.created_at),
+        payload: asRecord(row.metadata),
+    };
+}
+
 function mapRegistryEntry(row: Record<string, unknown>) {
     return {
         id: String(row.id),
@@ -540,6 +841,21 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function asReliabilityBin(value: unknown): CalibrationMetricRecord['reliability_bins'][number] | null {
+    const record = asRecord(value);
+    const confidence = readNumber(record.confidence);
+    const accuracy = readNumber(record.accuracy);
+    const count = readNumber(record.count);
+    if (confidence == null || accuracy == null) {
+        return null;
+    }
+    return {
+        confidence,
+        accuracy,
+        count: count ?? 0,
+    };
 }
 
 function stripUndefined<T extends Record<string, unknown>>(value: T): T {

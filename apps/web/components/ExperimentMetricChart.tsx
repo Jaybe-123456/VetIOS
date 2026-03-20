@@ -58,8 +58,8 @@ export function ExperimentMetricChart({
                                 tickLine={false}
                                 axisLine={false}
                                 fontFamily="monospace"
-                                width={48}
-                                tickFormatter={(value) => typeof value === 'number' ? formatTick(value) : String(value)}
+                                width={72}
+                                tickFormatter={(value) => typeof value === 'number' ? formatTick(value, metricKey) : String(value)}
                             />
                             <Tooltip
                                 contentStyle={{
@@ -69,7 +69,7 @@ export function ExperimentMetricChart({
                                     fontFamily: 'monospace',
                                     fontSize: '12px',
                                 }}
-                                formatter={(value: unknown) => typeof value === 'number' ? value.toFixed(4) : String(value ?? '')}
+                                formatter={(value: unknown) => typeof value === 'number' ? formatTooltipValue(value, metricKey) : String(value ?? '')}
                             />
                             <Legend wrapperStyle={{ fontFamily: 'monospace', fontSize: '10px' }} />
                             {series.map((item) => (
@@ -120,8 +120,32 @@ function lineKey(runId: string): string {
     return `run_${runId.replace(/[^a-z0-9]+/gi, '_').toLowerCase()}`;
 }
 
-function formatTick(value: number): string {
+function formatTick(
+    value: number,
+    metricKey: keyof ExperimentMetricSeriesPoint,
+): string {
+    if (metricKey === 'learning_rate') {
+        if (value === 0) return '0';
+        if (Math.abs(value) < 0.001) return value.toExponential(1);
+        if (Math.abs(value) < 0.01) return value.toFixed(4);
+        return value.toFixed(3);
+    }
+
     if (Math.abs(value) >= 100) return value.toFixed(0);
     if (Math.abs(value) >= 10) return value.toFixed(1);
+    if (Math.abs(value) < 0.01 && value !== 0) return value.toExponential(1);
     return value.toFixed(2);
+}
+
+function formatTooltipValue(
+    value: number,
+    metricKey: keyof ExperimentMetricSeriesPoint,
+): string {
+    if (metricKey === 'learning_rate') {
+        return value.toExponential(6);
+    }
+    if (Math.abs(value) < 0.01 && value !== 0) {
+        return value.toExponential(4);
+    }
+    return value.toFixed(4);
 }
