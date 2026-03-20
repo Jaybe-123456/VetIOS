@@ -1,7 +1,7 @@
 'use client';
 
-import { useDeferredValue, useEffect, useMemo, useState, useTransition } from 'react';
-import { Activity, AlertTriangle, BarChart3, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { useDeferredValue, useEffect, useMemo, useState, useTransition, type ReactNode } from 'react';
+import { Activity, AlertTriangle, CheckCircle2, Gauge, RefreshCw, Search, ShieldAlert } from 'lucide-react';
 import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components/ui/terminal';
 import { ExperimentMetricChart } from '@/components/ExperimentMetricChart';
 import { buildExperimentMetricSeries, getEmptyMetricStateMessage } from '@/lib/experiments/service';
@@ -13,6 +13,7 @@ import type {
 } from '@/lib/experiments/types';
 
 const CHART_COLORS = ['#00ff41', '#3b82f6', '#f59e0b', '#ef4444'];
+type RegistryAction = 'promote_to_staging' | 'promote_to_production' | 'archive' | 'rollback';
 
 export function ExperimentTrackingClient({
     initialSnapshot,
@@ -30,8 +31,7 @@ export function ExperimentTrackingClient({
     const deferredQuery = useDeferredValue(query.trim().toLowerCase());
 
     useEffect(() => {
-        const hasActiveRuns = snapshot.summary.active_runs > 0;
-        if (!hasActiveRuns) return;
+        if (snapshot.summary.active_runs <= 0) return;
 
         const refresh = () => {
             if (document.visibilityState !== 'visible') return;
@@ -55,8 +55,8 @@ export function ExperimentTrackingClient({
         [snapshot.runs, deferredQuery, statusFilter, taskFilter, includeSummaryOnly],
     );
     const selectedRunDetail = useMemo(
-        () => resolveSelectedRunDetail(snapshot.selected_run_detail, selectedRunId, filteredRuns),
-        [snapshot.selected_run_detail, selectedRunId, filteredRuns],
+        () => resolveSelectedRunDetail(snapshot.selected_run_detail, selectedRunId),
+        [snapshot.selected_run_detail, selectedRunId],
     );
     const comparison = useMemo(
         () => normalizeComparison(snapshot.comparison, compareRunIds),
@@ -96,17 +96,18 @@ export function ExperimentTrackingClient({
         <Container className="max-w-[96rem]">
             <PageHeader
                 title="EXPERIMENT TRACKING"
-                description="Operate experiment telemetry, failure diagnostics, safety benchmarks, dataset lineage, and model governance from one clinical MLOps surface."
+                description="Operate telemetry, calibration, adversarial gates, clinical safety metrics, and deployment governance from one clinical MLOps surface."
             />
 
             <div className="mb-8 flex flex-col gap-4">
-                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
                     <SummaryCard label="Total Runs" value={snapshot.summary.total_runs} />
                     <SummaryCard label="Active Runs" value={snapshot.summary.active_runs} tone={snapshot.summary.active_runs > 0 ? 'accent' : 'default'} />
                     <SummaryCard label="Failed Runs" value={snapshot.summary.failed_runs} tone={snapshot.summary.failed_runs > 0 ? 'warn' : 'default'} />
                     <SummaryCard label="Summary Only" value={snapshot.summary.summary_only_runs} />
                     <SummaryCard label="Telemetry Coverage" value={`${snapshot.summary.telemetry_coverage_pct}%`} />
                     <SummaryCard label="Registry Coverage" value={`${snapshot.summary.registry_link_coverage_pct}%`} />
+                    <SummaryCard label="Safety Coverage" value={`${snapshot.summary.safety_metric_coverage_pct}%`} />
                 </div>
 
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -141,54 +142,18 @@ export function ExperimentTrackingClient({
             </div>
 
             <div className="grid gap-6 xl:grid-cols-2">
-                <ConsoleCard title="Training Loss">
-                    <ExperimentMetricChart
-                        title="train_loss vs epoch"
-                        metricKey="train_loss"
-                        series={chartSeries}
-                        emptyMessage={selectedRunDetail ? getEmptyMetricStateMessage(selectedRunDetail.run, selectedRunDetail.metrics) : 'Select a run to view metric telemetry.'}
-                    />
-                </ConsoleCard>
-                <ConsoleCard title="Validation Accuracy">
-                    <ExperimentMetricChart
-                        title="val_accuracy vs epoch"
-                        metricKey="val_accuracy"
-                        series={chartSeries}
-                        emptyMessage={selectedRunDetail ? getEmptyMetricStateMessage(selectedRunDetail.run, selectedRunDetail.metrics) : 'Select a run to view metric telemetry.'}
-                    />
-                </ConsoleCard>
-                <ConsoleCard title="Validation Loss">
-                    <ExperimentMetricChart
-                        title="val_loss vs epoch"
-                        metricKey="val_loss"
-                        series={chartSeries}
-                        emptyMessage={selectedRunDetail ? getEmptyMetricStateMessage(selectedRunDetail.run, selectedRunDetail.metrics) : 'Select a run to view metric telemetry.'}
-                    />
-                </ConsoleCard>
-                <ConsoleCard title="Learning Rate">
-                    <ExperimentMetricChart
-                        title="learning_rate vs epoch"
-                        metricKey="learning_rate"
-                        series={chartSeries}
-                        emptyMessage={selectedRunDetail ? getEmptyMetricStateMessage(selectedRunDetail.run, selectedRunDetail.metrics) : 'Select a run to view metric telemetry.'}
-                    />
-                </ConsoleCard>
-                <ConsoleCard title="Gradient Norm">
-                    <ExperimentMetricChart
-                        title="gradient_norm vs epoch"
-                        metricKey="gradient_norm"
-                        series={chartSeries}
-                        emptyMessage={selectedRunDetail ? getEmptyMetricStateMessage(selectedRunDetail.run, selectedRunDetail.metrics) : 'Select a run to view metric telemetry.'}
-                    />
-                </ConsoleCard>
-                <ConsoleCard title="Safety Metric">
-                    <ExperimentMetricChart
-                        title="macro_f1 / recall_critical"
-                        metricKey={selectedRunDetail?.run.task_type === 'severity_prediction' ? 'recall_critical' : 'macro_f1'}
-                        series={chartSeries}
-                        emptyMessage={selectedRunDetail ? getEmptyMetricStateMessage(selectedRunDetail.run, selectedRunDetail.metrics) : 'Select a run to view safety telemetry.'}
-                    />
-                </ConsoleCard>
+                <MetricCard title="Training Loss" metricTitle="train_loss vs epoch" metricKey="train_loss" chartSeries={chartSeries} selectedRunDetail={selectedRunDetail} />
+                <MetricCard title="Validation Accuracy" metricTitle="val_accuracy vs epoch" metricKey="val_accuracy" chartSeries={chartSeries} selectedRunDetail={selectedRunDetail} />
+                <MetricCard title="Validation Loss" metricTitle="val_loss vs epoch" metricKey="val_loss" chartSeries={chartSeries} selectedRunDetail={selectedRunDetail} />
+                <MetricCard title="Learning Rate" metricTitle="learning_rate vs epoch" metricKey="learning_rate" chartSeries={chartSeries} selectedRunDetail={selectedRunDetail} />
+                <MetricCard title="Gradient Norm" metricTitle="gradient_norm vs epoch" metricKey="gradient_norm" chartSeries={chartSeries} selectedRunDetail={selectedRunDetail} />
+                <MetricCard
+                    title="Safety Metric"
+                    metricTitle={selectedRunDetail?.run.task_type === 'severity_prediction' ? 'recall_critical vs epoch' : 'macro_f1 vs epoch'}
+                    metricKey={selectedRunDetail?.run.task_type === 'severity_prediction' ? 'recall_critical' : 'macro_f1'}
+                    chartSeries={chartSeries}
+                    selectedRunDetail={selectedRunDetail}
+                />
             </div>
 
             <div className="mt-8 grid gap-8 xl:grid-cols-[1.2fr,0.8fr]">
@@ -197,7 +162,7 @@ export function ExperimentTrackingClient({
                         <EmptyPanel message="No experiment runs match the active filters. Summary-only historical runs remain hidden when that filter is off." />
                     ) : (
                         <div className="overflow-x-auto">
-                            <table className="min-w-[1120px] w-full text-left border-collapse">
+                            <table className="min-w-[1260px] w-full text-left border-collapse">
                                 <thead>
                                     <tr className="border-b border-grid bg-black/40 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
                                         <th className="p-3 font-normal">Compare</th>
@@ -209,7 +174,8 @@ export function ExperimentTrackingClient({
                                         <th className="p-3 font-normal">Primary Metric</th>
                                         <th className="p-3 font-normal">Status</th>
                                         <th className="p-3 font-normal">Heartbeat</th>
-                                        <th className="p-3 font-normal">Registry</th>
+                                        <th className="p-3 font-normal">Registry Role</th>
+                                        <th className="p-3 font-normal">Eligibility</th>
                                     </tr>
                                 </thead>
                                 <tbody className="font-mono text-sm">
@@ -233,6 +199,7 @@ export function ExperimentTrackingClient({
                                                 <td className="p-3">{renderStatusBadge(run)}</td>
                                                 <td className="p-3 text-xs text-muted">{formatHeartbeat(run.last_heartbeat_at)}</td>
                                                 <td className="p-3 text-xs">{renderRegistryContext(run)}</td>
+                                                <td className="p-3 text-xs">{renderEligibility(run)}</td>
                                             </tr>
                                         );
                                     })}
@@ -241,75 +208,77 @@ export function ExperimentTrackingClient({
                         </div>
                     )}
                 </ConsoleCard>
-
                 <div className="space-y-6">
-                    <ConsoleCard title="Active Monitoring">
-                        {snapshot.summary.active_runs > 0 ? (
-                            <div className="space-y-3">
-                                {snapshot.summary.active_run_ids.map((runId) => (
-                                    <div key={runId} className="flex items-center justify-between border border-grid bg-black/20 px-3 py-3 font-mono text-xs">
-                                        <div className="flex items-center gap-2">
-                                            <Activity className="h-4 w-4 animate-pulse text-accent" />
-                                            {runId}
-                                        </div>
-                                        <span className="uppercase tracking-[0.15em] text-muted">live heartbeat</span>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <EmptyPanel message="No active runs are currently emitting heartbeat telemetry." compact />
-                        )}
-                    </ConsoleCard>
-
-                    <ConsoleCard title="Comparison">
-                        {comparison && comparison.runs.length > 1 ? (
-                            <div className="space-y-4">
-                                {comparison.runs.map((run) => (
-                                    <div key={run.run_id} className="border border-grid bg-black/20 p-3">
-                                        <div className="font-mono text-xs text-accent">{run.run_id}</div>
-                                        <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.15em] text-muted">{run.model_arch} / {run.task_type}</div>
-                                        <div className="mt-3 grid grid-cols-2 gap-2 font-mono text-xs">
-                                            <span>Primary metric: {renderPrimaryMetric(run)}</span>
-                                            <span>Status: {run.status}</span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <EmptyPanel message="Select at least two runs in the table to compare sweeps, architectures, or datasets side by side." compact />
-                        )}
-                    </ConsoleCard>
+                    <ConsoleCard title="Active Monitoring"><ActiveMonitoringPanel detail={selectedRunDetail} activeRunIds={snapshot.summary.active_run_ids} /></ConsoleCard>
+                    <ConsoleCard title="Comparison">{comparison && comparison.runs.length > 1 ? <ComparisonPanel comparison={comparison} /> : <EmptyPanel message="Select at least two runs in the table to compare metrics, calibration, adversarial robustness, and dataset/hyperparameter deltas." compact />}</ConsoleCard>
                 </div>
             </div>
 
             <div className="mt-8">
                 <ConsoleCard title="Run Detail">
-                    {!selectedRunDetail ? (
-                        <EmptyPanel message="Select a run to inspect configuration, telemetry, failure diagnostics, artifacts, and registry status." />
-                    ) : (
-                        <RunDetail detail={selectedRunDetail} comparison={comparison} />
-                    )}
+                    {!selectedRunDetail ? <EmptyPanel message="Select a run to inspect calibration, adversarial robustness, governance status, and clinical deployment eligibility." /> : <RunDetail detail={selectedRunDetail} comparison={comparison} onRefresh={handleRefresh} />}
                 </ConsoleCard>
             </div>
         </Container>
     );
 }
 
+function MetricCard({
+    title,
+    metricTitle,
+    metricKey,
+    chartSeries,
+    selectedRunDetail,
+}: {
+    title: string;
+    metricTitle: string;
+    metricKey: 'train_loss' | 'val_accuracy' | 'val_loss' | 'learning_rate' | 'gradient_norm' | 'macro_f1' | 'recall_critical';
+    chartSeries: Array<{ runId: string; label: string; color: string; points: ReturnType<typeof buildExperimentMetricSeries> }>;
+    selectedRunDetail: ExperimentRunDetail | null;
+}) {
+    return (
+        <ConsoleCard title={title}>
+            <ExperimentMetricChart
+                title={metricTitle}
+                metricKey={metricKey}
+                series={chartSeries}
+                emptyMessage={selectedRunDetail ? getEmptyMetricStateMessage(selectedRunDetail.run, selectedRunDetail.metrics) : 'Select a run to view metric telemetry.'}
+            />
+        </ConsoleCard>
+    );
+}
+
 function RunDetail({
     detail,
     comparison,
+    onRefresh,
 }: {
     detail: ExperimentRunDetail;
     comparison: ExperimentComparison | null;
+    onRefresh: () => void;
 }) {
+    const [registryMessage, setRegistryMessage] = useState<string | null>(null);
+    const [registryError, setRegistryError] = useState<string | null>(null);
+    const [isApplyingAction, startRegistryActionTransition] = useTransition();
     const emptyMetricMessage = getEmptyMetricStateMessage(detail.run, detail.metrics);
-    const registry = detail.registry_link;
+    const gradientSeries = useMemo(() => [{
+        runId: detail.run.run_id,
+        label: detail.run.run_id,
+        color: CHART_COLORS[0],
+        points: buildExperimentMetricSeries(detail.metrics),
+    }], [detail.metrics, detail.run.run_id]);
+
+    const handleRegistryAction = (action: RegistryAction) => {
+        startRegistryActionTransition(() => {
+            void postRegistryAction(detail.run.run_id, action, setRegistryMessage, setRegistryError, onRefresh);
+        });
+    };
 
     return (
         <div className="space-y-6">
             {detail.failure ? (
                 <div className="border border-danger/40 bg-danger/10 p-4">
-                    <div className="mb-2 flex items-center gap-2 font-mono text-xs uppercase tracking-[0.2em] text-danger">
+                    <div className="mb-3 flex items-center gap-2 font-mono text-xs uppercase tracking-[0.2em] text-danger">
                         <AlertTriangle className="h-4 w-4" />
                         Failure Diagnostics
                     </div>
@@ -318,10 +287,32 @@ function RunDetail({
                         <DetailStat label="Failure Epoch" value={detail.failure.failure_epoch != null ? String(detail.failure.failure_epoch) : 'n/a'} />
                         <DetailStat label="Failure Step" value={detail.failure.failure_step != null ? String(detail.failure.failure_step) : 'n/a'} />
                         <DetailStat label="NaN Detected" value={detail.failure.nan_detected ? 'Yes' : 'No'} />
-                        <DetailStat label="Last Train Loss" value={formatNullableNumber(detail.failure.last_train_loss)} />
-                        <DetailStat label="Last Val Loss" value={formatNullableNumber(detail.failure.last_val_loss)} />
-                        <DetailStat label="Last LR" value={formatNullableNumber(detail.failure.last_learning_rate)} />
-                        <DetailStat label="Last Gradient Norm" value={formatNullableNumber(detail.failure.last_gradient_norm)} />
+                        <DetailStat label="Last Train Loss" value={formatMetricValue(detail.failure.last_train_loss)} />
+                        <DetailStat label="Last Val Loss" value={formatMetricValue(detail.failure.last_val_loss)} />
+                        <DetailStat label="Last LR" value={formatMetricValue(detail.failure.last_learning_rate, 'learning_rate')} />
+                        <DetailStat label="Last Gradient Norm" value={formatMetricValue(detail.failure.last_gradient_norm)} />
+                    </div>
+                    <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                        <ConsoleInset title="Suggested Cause">
+                            <div className="font-mono text-xs text-foreground/85">
+                                {detail.failure_guidance?.suggested_cause ?? 'No guidance generated yet.'}
+                            </div>
+                            <div className="mt-3 space-y-2">
+                                {(detail.failure_guidance?.remediation_suggestions ?? []).map((suggestion) => (
+                                    <div key={suggestion} className="border border-grid/40 bg-black/20 px-3 py-2 font-mono text-xs text-muted">
+                                        {suggestion}
+                                    </div>
+                                ))}
+                            </div>
+                        </ConsoleInset>
+                        <ConsoleInset title="Gradient Trajectory">
+                            <ExperimentMetricChart
+                                title="gradient_norm vs epoch"
+                                metricKey="gradient_norm"
+                                series={gradientSeries}
+                                emptyMessage={emptyMetricMessage}
+                            />
+                        </ConsoleInset>
                     </div>
                     {(detail.failure.error_summary || detail.failure.stack_trace_excerpt) ? (
                         <div className="mt-4 grid gap-3 xl:grid-cols-2">
@@ -332,8 +323,8 @@ function RunDetail({
                 </div>
             ) : null}
 
-            <div className="grid gap-6 xl:grid-cols-[1.1fr,0.9fr]">
-                <div className="space-y-4">
+            <div className="grid gap-6 xl:grid-cols-[1.05fr,0.95fr]">
+                <ConsoleInset title="Run Identity">
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <DetailStat label="Run ID" value={detail.run.run_id} />
                         <DetailStat label="Task" value={detail.run.task_type} />
@@ -343,14 +334,62 @@ function RunDetail({
                         <DetailStat label="Model Version" value={detail.run.model_version ?? 'Not reported'} />
                         <DetailStat label="Status" value={`${detail.run.status}${detail.run.status_reason ? ` / ${detail.run.status_reason}` : ''}`} />
                         <DetailStat label="Progress" value={`${detail.run.progress_percent ?? 0}%`} />
-                        <DetailStat label="Summary Only" value={detail.run.summary_only ? 'Yes' : 'No'} />
+                        <DetailStat label="Created By" value={detail.run.created_by ?? 'system'} />
                     </div>
+                </ConsoleInset>
 
+                <ConsoleInset title="Governance Decision">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        <DetailStat label="Registry ID" value={detail.model_registry?.registry_id ?? detail.run.registry_id ?? 'Pending candidate'} />
+                        <DetailStat label="Registry Status" value={detail.model_registry?.status ?? 'candidate_pending'} />
+                        <DetailStat label="Registry Role" value={detail.model_registry?.role ?? detail.registry_link?.champion_or_challenger ?? 'Unlinked'} />
+                        <DetailStat label="Calibration Gate" value={detail.calibration_metrics?.calibration_pass === true ? 'PASS' : detail.calibration_metrics ? 'FAIL' : 'Pending'} />
+                        <DetailStat label="Adversarial Gate" value={detail.adversarial_metrics?.adversarial_pass === true ? 'PASS' : detail.adversarial_metrics ? 'FAIL' : 'Pending'} />
+                        <DetailStat label="Deployment Decision" value={detail.deployment_decision ? detail.deployment_decision.decision.toUpperCase() : 'Pending'} />
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        <TerminalButton variant="secondary" disabled={isApplyingAction} onClick={() => handleRegistryAction('promote_to_staging')}>
+                            Promote Staging
+                        </TerminalButton>
+                        <TerminalButton variant="secondary" disabled={isApplyingAction || detail.deployment_decision?.decision !== 'approved'} onClick={() => handleRegistryAction('promote_to_production')}>
+                            Promote Production
+                        </TerminalButton>
+                        <TerminalButton variant="secondary" disabled={isApplyingAction} onClick={() => handleRegistryAction('archive')}>
+                            Archive
+                        </TerminalButton>
+                        <TerminalButton variant="secondary" disabled={isApplyingAction} onClick={() => handleRegistryAction('rollback')}>
+                            Rollback
+                        </TerminalButton>
+                    </div>
+                    {registryMessage ? <div className="mt-3 font-mono text-xs text-accent">{registryMessage}</div> : null}
+                    {registryError ? <div className="mt-3 font-mono text-xs text-danger">{registryError}</div> : null}
+                    <div className="mt-4 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
+                        {detail.deployment_decision?.reason ?? 'Deployment decision will populate once calibration, adversarial, and clinical safety gates have all been evaluated.'}
+                    </div>
+                </ConsoleInset>
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-3">
+                <CalibrationPanel detail={detail} />
+                <AdversarialPanel detail={detail} />
+                <SafetyPanel detail={detail} />
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-2">
+                <ConsoleInset title="Active Monitoring">
+                    <ActiveRunTelemetry detail={detail} emptyMessage={emptyMetricMessage} />
+                </ConsoleInset>
+                <ConsoleInset title="Subgroup Performance">
+                    <SubgroupMetricsPanel detail={detail} />
+                </ConsoleInset>
+            </div>
+
+            <div className="grid gap-6 xl:grid-cols-[1.05fr,0.95fr]">
+                <div className="space-y-4">
                     <CodeBlock title="Hyperparameters" value={stringifyJson(detail.run.hyperparameters, 'No hyperparameters recorded')} />
                     <CodeBlock title="Dataset Lineage" value={stringifyJson(detail.run.dataset_lineage, 'No dataset lineage recorded')} />
                     <CodeBlock title="Config Snapshot" value={stringifyJson(detail.run.config_snapshot, 'No config snapshot recorded')} />
                 </div>
-
                 <div className="space-y-4">
                     <div className="grid gap-3 md:grid-cols-2">
                         <DetailStat label="Dataset Version" value={detail.run.dataset_version ?? 'Not reported'} />
@@ -358,98 +397,361 @@ function RunDetail({
                         <DetailStat label="Label Policy" value={detail.run.label_policy_version ?? 'Not reported'} />
                         <DetailStat label="Epochs" value={renderEpochs(detail.run)} />
                         <DetailStat label="Primary Metric" value={renderPrimaryMetric(detail.run)} />
-                        <DetailStat label="Last Heartbeat" value={formatHeartbeat(detail.run.last_heartbeat_at)} />
-                        <DetailStat label="Registry Role" value={registry?.champion_or_challenger ?? 'Unlinked'} />
-                        <DetailStat label="Promotion" value={registry?.promotion_status ?? 'Pending'} />
-                        <DetailStat label="Calibration Gate" value={registry?.calibration_status ?? 'Pending'} />
-                        <DetailStat label="Adversarial Gate" value={registry?.adversarial_gate_status ?? 'Pending'} />
-                        <DetailStat label="Deployment Eligibility" value={registry?.deployment_eligibility ?? 'Pending review'} />
+                        <DetailStat label="Heartbeat Freshness" value={detail.heartbeat_freshness.toUpperCase()} />
+                        <DetailStat label="Artifact Path" value={detail.model_registry?.artifact_path ?? 'Not recorded'} />
                         <DetailStat label="Missing Telemetry" value={detail.missing_telemetry_fields.length > 0 ? detail.missing_telemetry_fields.join(', ') : 'None'} />
                     </div>
-
-                    <CodeBlock title="Safety Metrics" value={stringifyJson(detail.run.safety_metrics, 'No safety summary recorded')} />
-                    <CodeBlock title="Resource Usage" value={stringifyJson(detail.run.resource_usage, emptyMetricMessage)} />
                 </div>
             </div>
 
             <div className="grid gap-6 xl:grid-cols-[0.95fr,1.05fr]">
-                <div className="space-y-4">
-                    <div className="border border-grid bg-black/20 p-4">
-                        <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
-                            <ShieldCheck className="h-4 w-4 text-accent" />
-                            Benchmark Summary
+                <ConsoleInset title="Benchmark Summary">
+                    <div className="space-y-2 font-mono text-xs">
+                        {detail.benchmarks.length === 0 ? (
+                            <span className="text-muted">No benchmark telemetry stored for this run.</span>
+                        ) : detail.benchmarks.map((benchmark) => (
+                            <div key={benchmark.id} className="flex items-center justify-between gap-3 border-b border-grid/20 pb-2">
+                                <span>{benchmark.benchmark_family}</span>
+                                <span className={benchmark.pass_status === 'pass' ? 'text-accent' : 'text-danger'}>
+                                    {benchmark.summary_score != null ? benchmark.summary_score.toFixed(3) : 'n/a'} [{benchmark.pass_status}]
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                </ConsoleInset>
+
+                <ConsoleInset title="Artifacts">
+                    <div className="space-y-2 font-mono text-xs">
+                        {detail.artifacts.length === 0 ? (
+                            <span className="text-muted">No artifact lineage recorded for this run.</span>
+                        ) : detail.artifacts.map((artifact) => (
+                            <div key={artifact.id} className="border border-grid/40 bg-black/20 p-3">
+                                <div className="text-accent">{artifact.label ?? artifact.artifact_type}</div>
+                                <div className="mt-1 break-all text-muted">{artifact.uri ?? 'No URI recorded'}</div>
+                            </div>
+                        ))}
+                    </div>
+                </ConsoleInset>
+            </div>
+
+            {comparison && comparison.runs.length > 1 ? (
+                <ConsoleInset title="Comparison Deltas">
+                    <ComparisonPanel comparison={comparison} compact />
+                </ConsoleInset>
+            ) : null}
+
+            <ConsoleInset title="Audit History">
+                <div className="space-y-2 font-mono text-xs">
+                    {detail.audit_history.length === 0 ? (
+                        <span className="text-muted">No experiment or learning audit events are currently linked to this run.</span>
+                    ) : detail.audit_history.map((event, index) => (
+                        <div key={`${event.event_type}:${event.created_at}:${index}`} className="border border-grid/40 bg-black/20 p-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <span className="text-accent">{event.event_type}</span>
+                                <span className="text-muted">{formatDateTime(event.created_at)}</span>
+                            </div>
+                            <div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-muted">{event.actor ?? 'system'}</div>
+                            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[11px] text-foreground/80">{stringifyJson(event.payload, '{}')}</pre>
                         </div>
+                    ))}
+                </div>
+            </ConsoleInset>
+        </div>
+    );
+}
+
+function CalibrationPanel({ detail }: { detail: ExperimentRunDetail }) {
+    const calibration = detail.calibration_metrics;
+    return (
+        <ConsoleInset title="Calibration">
+            {calibration ? (
+                <div className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2">
+                        <DetailStat label="ECE" value={formatMetricValue(calibration.ece)} />
+                        <DetailStat label="Brier Score" value={formatMetricValue(calibration.brier_score)} />
+                        <DetailStat label="Calibration Gate" value={calibration.calibration_pass ? 'PASS' : 'FAIL'} />
+                        <DetailStat label="Notes" value={calibration.calibration_notes ?? 'No notes recorded'} />
+                    </div>
+                    <ReliabilityCurve bins={calibration.reliability_bins} />
+                </div>
+            ) : (
+                <EmptyPanel message="Calibration metrics have not been computed for this run yet." compact />
+            )}
+        </ConsoleInset>
+    );
+}
+
+function AdversarialPanel({ detail }: { detail: ExperimentRunDetail }) {
+    const adversarial = detail.adversarial_metrics;
+    return (
+        <ConsoleInset title="Adversarial">
+            {adversarial ? (
+                <div className="grid gap-3 md:grid-cols-2">
+                    <DetailStat label="Degradation Score" value={formatMetricValue(adversarial.degradation_score)} />
+                    <DetailStat label="Contradiction Robustness" value={formatMetricValue(adversarial.contradiction_robustness)} />
+                    <DetailStat label="Critical Recall" value={formatMetricValue(adversarial.critical_case_recall)} />
+                    <DetailStat label="False Reassurance" value={formatMetricValue(adversarial.false_reassurance_rate)} />
+                    <DetailStat label="Adversarial Gate" value={adversarial.adversarial_pass ? 'PASS' : 'FAIL'} />
+                    <DetailStat label="Gate Summary" value={adversarial.adversarial_pass ? 'Stable under contradiction stress.' : 'Blocked by degradation or safety regression.'} />
+                </div>
+            ) : (
+                <EmptyPanel message="Adversarial benchmark metrics have not been stored for this run yet." compact />
+            )}
+        </ConsoleInset>
+    );
+}
+
+function SafetyPanel({ detail }: { detail: ExperimentRunDetail }) {
+    const latest = detail.latest_metric;
+    return (
+        <ConsoleInset title="Clinical Safety">
+            <div className="grid gap-3 md:grid-cols-2">
+                <DetailStat label="Macro F1" value={formatMetricValue(latest?.macro_f1 ?? readNumber(detail.run.safety_metrics, 'macro_f1'))} />
+                <DetailStat label="Critical Recall" value={formatMetricValue(latest?.recall_critical ?? readNumber(detail.run.safety_metrics, 'recall_critical'))} />
+                <DetailStat label="FN Critical Rate" value={formatMetricValue(latest?.false_negative_critical_rate ?? readNumber(detail.run.safety_metrics, 'false_negative_critical_rate'))} />
+                <DetailStat label="False Reassurance" value={formatMetricValue(latest?.dangerous_false_reassurance_rate ?? readNumber(detail.run.safety_metrics, 'dangerous_false_reassurance_rate'))} />
+                <DetailStat label="Abstain Accuracy" value={formatMetricValue(latest?.abstain_accuracy ?? readNumber(detail.run.safety_metrics, 'abstain_accuracy'))} />
+                <DetailStat label="Contradiction Detection" value={formatMetricValue(latest?.contradiction_detection_rate ?? readNumber(detail.run.safety_metrics, 'contradiction_detection_rate'))} />
+            </div>
+        </ConsoleInset>
+    );
+}
+
+function ActiveMonitoringPanel({
+    detail,
+    activeRunIds,
+}: {
+    detail: ExperimentRunDetail | null;
+    activeRunIds: string[];
+}) {
+    if (detail && isActiveRun(detail.run)) {
+        return <ActiveRunTelemetry detail={detail} emptyMessage="No live telemetry available for the selected active run yet." />;
+    }
+
+    if (activeRunIds.length === 0) {
+        return <EmptyPanel message="No active runs are currently emitting heartbeat telemetry." compact />;
+    }
+
+    return (
+        <div className="space-y-3">
+            {activeRunIds.map((runId) => (
+                <div key={runId} className="flex items-center justify-between border border-grid bg-black/20 px-3 py-3 font-mono text-xs">
+                    <div className="flex items-center gap-2">
+                        <Activity className="h-4 w-4 animate-pulse text-accent" />
+                        {runId}
+                    </div>
+                    <span className="uppercase tracking-[0.15em] text-muted">live heartbeat</span>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function ActiveRunTelemetry({
+    detail,
+    emptyMessage,
+}: {
+    detail: ExperimentRunDetail;
+    emptyMessage: string;
+}) {
+    const latest = detail.latest_metric;
+    if (!latest) {
+        return <EmptyPanel message={emptyMessage} compact />;
+    }
+
+    return (
+        <div className="space-y-4">
+            <div className="flex items-center justify-between border border-grid bg-black/20 px-3 py-3 font-mono text-xs">
+                <div className="flex items-center gap-2">
+                    <Gauge className="h-4 w-4 text-accent" />
+                    {detail.run.run_id}
+                </div>
+                <FreshnessBadge freshness={detail.heartbeat_freshness} />
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <DetailStat label="Current Epoch" value={latest.epoch != null ? String(latest.epoch) : 'n/a'} />
+                <DetailStat label="Train Loss" value={formatMetricValue(latest.train_loss)} />
+                <DetailStat label="Val Loss" value={formatMetricValue(latest.val_loss)} />
+                <DetailStat label="Learning Rate" value={formatMetricValue(latest.learning_rate, 'learning_rate')} />
+                <DetailStat label="Gradient Norm" value={formatMetricValue(latest.gradient_norm)} />
+                <DetailStat label="Steps / Sec" value={formatMetricValue(latest.steps_per_second)} />
+                <DetailStat label="GPU Utilization" value={formatPercent(latest.gpu_utilization)} />
+                <DetailStat label="CPU Utilization" value={formatPercent(latest.cpu_utilization)} />
+                <DetailStat label="Memory Utilization" value={formatPercent(latest.memory_utilization)} />
+                <DetailStat label="Heartbeat" value={formatHeartbeat(detail.run.last_heartbeat_at)} />
+                <DetailStat label="Progress" value={`${detail.run.progress_percent ?? 0}%`} />
+                <DetailStat label="Epoch Plan" value={renderEpochs(detail.run)} />
+            </div>
+        </div>
+    );
+}
+
+function ComparisonPanel({
+    comparison,
+    compact = false,
+}: {
+    comparison: ExperimentComparison;
+    compact?: boolean;
+}) {
+    return (
+        <div className="space-y-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
+                Baseline: {comparison.run_ids[0] ?? 'n/a'}
+            </div>
+            <div className="overflow-x-auto">
+                <table className="min-w-[980px] w-full text-left border-collapse">
+                    <thead>
+                        <tr className="border-b border-grid bg-black/30 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                            <th className="p-3 font-normal">Run</th>
+                            <th className="p-3 font-normal">Macro F1</th>
+                            <th className="p-3 font-normal">Critical Recall</th>
+                            <th className="p-3 font-normal">ECE</th>
+                            <th className="p-3 font-normal">Degradation</th>
+                            <th className="p-3 font-normal">Decision</th>
+                            <th className="p-3 font-normal">Hyperparameter Diff</th>
+                            <th className="p-3 font-normal">Dataset Diff</th>
+                        </tr>
+                    </thead>
+                    <tbody className="font-mono text-xs">
+                        {comparison.comparison_rows.map((row) => (
+                            <tr key={row.run_id} className="border-b border-grid/20">
+                                <td className="p-3 text-accent">{row.run_id}</td>
+                                <td className="p-3">{renderDeltaCell(row.macro_f1, row.macro_f1_delta)}</td>
+                                <td className="p-3">{renderDeltaCell(row.recall_critical, row.recall_critical_delta)}</td>
+                                <td className="p-3">{renderDeltaCell(row.ece, row.ece_delta, true)}</td>
+                                <td className="p-3">{renderDeltaCell(row.degradation_score, row.degradation_delta, true)}</td>
+                                <td className="p-3">{comparison.decisions[row.run_id]?.decision ?? 'pending'}</td>
+                                <td className="p-3">{row.hyperparameter_diff.length > 0 ? row.hyperparameter_diff.join(', ') : 'No diff'}</td>
+                                <td className="p-3">{row.dataset_diff.length > 0 ? row.dataset_diff.join(', ') : 'No diff'}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+            {!compact ? (
+                <div className="grid gap-3 xl:grid-cols-2">
+                    <ConsoleInset title="Calibration / Adversarial Gates">
                         <div className="space-y-2 font-mono text-xs">
-                            {detail.benchmarks.length === 0 ? (
-                                <span className="text-muted">No benchmark telemetry stored for this run.</span>
-                            ) : detail.benchmarks.map((benchmark) => (
-                                <div key={benchmark.id} className="flex items-center justify-between gap-3 border-b border-grid/20 pb-2">
-                                    <span>{benchmark.benchmark_family}</span>
+                            {comparison.run_ids.map((runId) => (
+                                <div key={runId} className="flex items-center justify-between gap-3 border-b border-grid/20 pb-2">
+                                    <span>{runId}</span>
+                                    <span className="text-muted">
+                                        cal={comparison.calibration[runId]?.calibration_pass === true ? 'PASS' : comparison.calibration[runId] ? 'FAIL' : 'PENDING'} / adv={comparison.adversarial[runId]?.adversarial_pass === true ? 'PASS' : comparison.adversarial[runId] ? 'FAIL' : 'PENDING'}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
+                    </ConsoleInset>
+                    <ConsoleInset title="Benchmark Families">
+                        <div className="space-y-2 font-mono text-xs">
+                            {comparison.benchmark_summaries.length === 0 ? (
+                                <span className="text-muted">No comparison benchmarks available for the selected runs.</span>
+                            ) : comparison.benchmark_summaries.map((benchmark) => (
+                                <div key={`${benchmark.run_id}:${benchmark.benchmark_family}`} className="flex items-center justify-between gap-3 border-b border-grid/20 pb-2">
+                                    <span>{benchmark.run_id} / {benchmark.benchmark_family}</span>
                                     <span className={benchmark.pass_status === 'pass' ? 'text-accent' : 'text-danger'}>
                                         {benchmark.summary_score != null ? benchmark.summary_score.toFixed(3) : 'n/a'} [{benchmark.pass_status}]
                                     </span>
                                 </div>
                             ))}
                         </div>
-                    </div>
-
-                    <div className="border border-grid bg-black/20 p-4">
-                        <div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
-                            <BarChart3 className="h-4 w-4 text-accent" />
-                            Artifacts
-                        </div>
-                        <div className="space-y-2 font-mono text-xs">
-                            {detail.artifacts.length === 0 ? (
-                                <span className="text-muted">No artifact lineage recorded for this run.</span>
-                            ) : detail.artifacts.map((artifact) => (
-                                <div key={artifact.id} className="border border-grid/40 bg-black/20 p-3">
-                                    <div className="text-accent">{artifact.label ?? artifact.artifact_type}</div>
-                                    <div className="mt-1 break-all text-muted">{artifact.uri ?? 'No URI recorded'}</div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+                    </ConsoleInset>
                 </div>
-
-                <div className="space-y-4">
-                    {comparison && comparison.runs.length > 1 ? (
-                        <div className="border border-grid bg-black/20 p-4">
-                            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">Comparison Families</div>
-                            <div className="space-y-2 font-mono text-xs">
-                                {comparison.benchmark_summaries.length === 0 ? (
-                                    <span className="text-muted">No comparison benchmarks available for the selected runs.</span>
-                                ) : comparison.benchmark_summaries.map((benchmark) => (
-                                    <div key={`${benchmark.run_id}:${benchmark.benchmark_family}`} className="flex items-center justify-between gap-3 border-b border-grid/20 pb-2">
-                                        <span>{benchmark.run_id} / {benchmark.benchmark_family}</span>
-                                        <span className={benchmark.pass_status === 'pass' ? 'text-accent' : 'text-danger'}>
-                                            {benchmark.summary_score != null ? benchmark.summary_score.toFixed(3) : 'n/a'} [{benchmark.pass_status}]
-                                        </span>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
-                    ) : null}
-
-                    <div className="border border-grid bg-black/20 p-4">
-                        <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">Audit History</div>
-                        <div className="space-y-2 font-mono text-xs">
-                            {detail.audit_history.length === 0 ? (
-                                <span className="text-muted">No learning audit events are currently linked to this run.</span>
-                            ) : detail.audit_history.map((event, index) => (
-                                <div key={`${event.event_type}:${event.created_at}:${index}`} className="border border-grid/40 bg-black/20 p-3">
-                                    <div className="flex items-center justify-between gap-3">
-                                        <span className="text-accent">{event.event_type}</span>
-                                        <span className="text-muted">{formatDateTime(event.created_at)}</span>
-                                    </div>
-                                    <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-[11px] text-foreground/80">{stringifyJson(event.payload, '{}')}</pre>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </div>
+            ) : null}
         </div>
     );
+}
+
+function SubgroupMetricsPanel({ detail }: { detail: ExperimentRunDetail }) {
+    if (detail.subgroup_metrics.length === 0) {
+        return <EmptyPanel message="No subgroup performance metrics stored for this run yet." compact />;
+    }
+
+    return (
+        <div className="overflow-x-auto">
+            <table className="min-w-[520px] w-full text-left border-collapse">
+                <thead>
+                    <tr className="border-b border-grid bg-black/30 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                        <th className="p-3 font-normal">Group</th>
+                        <th className="p-3 font-normal">Value</th>
+                        <th className="p-3 font-normal">Metric</th>
+                        <th className="p-3 font-normal">Score</th>
+                    </tr>
+                </thead>
+                <tbody className="font-mono text-xs">
+                    {detail.subgroup_metrics.map((metric) => (
+                        <tr key={metric.id} className="border-b border-grid/20">
+                            <td className="p-3">{metric.group}</td>
+                            <td className="p-3">{metric.group_value}</td>
+                            <td className="p-3">{metric.metric}</td>
+                            <td className="p-3">{metric.value.toFixed(3)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+function ReliabilityCurve({
+    bins,
+}: {
+    bins: Array<{ confidence: number; accuracy: number; count: number }>;
+}) {
+    if (bins.length === 0) {
+        return <EmptyPanel message="No reliability bins are available for this run yet." compact />;
+    }
+
+    return (
+        <div className="space-y-3">
+            {bins.map((bin, index) => (
+                <div key={`${bin.confidence}:${bin.accuracy}:${index}`} className="space-y-1 font-mono text-xs">
+                    <div className="flex items-center justify-between gap-3 text-muted">
+                        <span>bin {index + 1}</span>
+                        <span>conf {bin.confidence.toFixed(2)} / acc {bin.accuracy.toFixed(2)} / n={bin.count}</span>
+                    </div>
+                    <div className="grid gap-2">
+                        <div className="h-2 overflow-hidden border border-grid bg-black/20">
+                            <div className="h-full bg-blue-500/70" style={{ width: `${Math.max(2, bin.confidence * 100)}%` }} />
+                        </div>
+                        <div className="h-2 overflow-hidden border border-grid bg-black/20">
+                            <div className="h-full bg-accent/80" style={{ width: `${Math.max(2, bin.accuracy * 100)}%` }} />
+                        </div>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+async function postRegistryAction(
+    runId: string,
+    action: RegistryAction,
+    setMessage: (value: string | null) => void,
+    setError: (value: string | null) => void,
+    onRefresh: () => void,
+) {
+    setMessage(null);
+    setError(null);
+
+    try {
+        const response = await fetch(`/api/experiments/runs/${runId}/registry`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ action }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(typeof payload?.error === 'string' ? payload.error : 'Registry action failed.');
+        }
+        setMessage(`Registry action applied: ${action}`);
+        onRefresh();
+    } catch (error) {
+        setError(error instanceof Error ? error.message : 'Registry action failed.');
+    }
 }
 
 async function refreshSnapshot(
@@ -478,12 +780,9 @@ async function refreshSnapshot(
 function resolveSelectedRunDetail(
     detail: ExperimentRunDetail | null,
     selectedRunId: string | null,
-    runs: ExperimentRunRecord[],
 ) {
-    if (detail && detail.run.run_id === selectedRunId) return detail;
-    if (!selectedRunId) return null;
-    const run = runs.find((candidate) => candidate.run_id === selectedRunId);
-    return run ? null : null;
+    if (!detail) return null;
+    return detail.run.run_id === selectedRunId ? detail : null;
 }
 
 function normalizeComparison(
@@ -492,14 +791,20 @@ function normalizeComparison(
 ) {
     if (!comparison) return null;
     const filteredRuns = comparison.runs.filter((run) => compareRunIds.includes(run.run_id));
-    return filteredRuns.length > 1
-        ? {
-            ...comparison,
-            runs: filteredRuns,
-            run_ids: filteredRuns.map((run) => run.run_id),
-            benchmark_summaries: comparison.benchmark_summaries.filter((item) => compareRunIds.includes(item.run_id)),
-          }
-        : null;
+    const allowedRunIds = new Set(filteredRuns.map((run) => run.run_id));
+    if (filteredRuns.length <= 1) return null;
+
+    return {
+        ...comparison,
+        runs: filteredRuns,
+        run_ids: filteredRuns.map((run) => run.run_id),
+        benchmark_summaries: comparison.benchmark_summaries.filter((item) => allowedRunIds.has(item.run_id)),
+        comparison_rows: comparison.comparison_rows.filter((item) => allowedRunIds.has(item.run_id)),
+        calibration: Object.fromEntries(Object.entries(comparison.calibration).filter(([runId]) => allowedRunIds.has(runId))),
+        adversarial: Object.fromEntries(Object.entries(comparison.adversarial).filter(([runId]) => allowedRunIds.has(runId))),
+        decisions: Object.fromEntries(Object.entries(comparison.decisions).filter(([runId]) => allowedRunIds.has(runId))),
+        metrics: Object.fromEntries(Object.entries(comparison.metrics).filter(([runId]) => allowedRunIds.has(runId))),
+    };
 }
 
 function buildChartSeries(
@@ -559,14 +864,18 @@ function renderPrimaryMetric(run: ExperimentRunRecord) {
     if (!run.metric_primary_name || run.metric_primary_value == null) {
         return run.summary_only ? 'Summary metric pending' : 'Telemetry pending';
     }
-    return `${run.metric_primary_name}: ${run.metric_primary_value.toFixed(3)}`;
+    return `${run.metric_primary_name}: ${formatMetricValue(run.metric_primary_value, run.metric_primary_name)}`;
 }
 
 function renderRegistryContext(run: ExperimentRunRecord) {
-    const role = String(run.registry_context.champion_or_challenger ?? '').trim();
-    const status = String(run.registry_context.promotion_status ?? '').trim();
-    if (!role && !status) return 'Unlinked';
+    const role = String(run.registry_context.champion_or_challenger ?? run.registry_context.registry_role ?? '').trim();
+    const status = String(run.registry_context.promotion_status ?? run.registry_context.registry_status ?? '').trim();
+    if (!role && !status) return run.registry_id ? 'candidate' : 'Unlinked';
     return [role, status].filter(Boolean).join(' / ');
+}
+
+function renderEligibility(run: ExperimentRunRecord) {
+    return String(run.registry_context.deployment_eligibility ?? 'Pending review');
 }
 
 function renderStatusBadge(run: ExperimentRunRecord) {
@@ -599,10 +908,6 @@ function formatHeartbeat(value: string | null) {
     return formatDateTime(value);
 }
 
-function formatNullableNumber(value: number | null) {
-    return typeof value === 'number' ? value.toFixed(4) : 'n/a';
-}
-
 function formatDateTime(value: string) {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return value;
@@ -614,10 +919,62 @@ function formatDateTime(value: string) {
     return `${month}/${day} ${hours}:${minutes}:${seconds}`;
 }
 
-function stringifyJson(value: Record<string, unknown>, fallback: string) {
-    return Object.keys(value).length > 0
-        ? JSON.stringify(value, null, 2)
-        : fallback;
+function formatMetricValue(value: number | null | undefined, metricName?: string) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
+    if (metricName === 'learning_rate') {
+        return value.toExponential(4);
+    }
+    if (Math.abs(value) < 0.01 && value !== 0) {
+        return value.toExponential(2);
+    }
+    return value.toFixed(3);
+}
+
+function formatPercent(value: number | null | undefined) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return 'n/a';
+    return `${Math.round(value * 100)}%`;
+}
+
+function renderDeltaCell(
+    value: number | null,
+    delta: number | null,
+    invertDeltaTone = false,
+) {
+    const deltaTone = delta == null
+        ? 'text-muted'
+        : invertDeltaTone
+            ? delta <= 0 ? 'text-accent' : 'text-danger'
+            : delta >= 0 ? 'text-accent' : 'text-danger';
+
+    return (
+        <div className="flex flex-col gap-1">
+            <span>{formatMetricValue(value)}</span>
+            <span className={deltaTone}>{delta == null ? 'delta n/a' : `${delta >= 0 ? '+' : ''}${delta.toFixed(3)}`}</span>
+        </div>
+    );
+}
+
+function stringifyJson(value: unknown, fallback: string) {
+    if (value == null) return fallback;
+    if (Array.isArray(value)) {
+        return value.length > 0 ? JSON.stringify(value, null, 2) : fallback;
+    }
+    if (typeof value === 'object') {
+        return Object.keys(value as Record<string, unknown>).length > 0
+            ? JSON.stringify(value, null, 2)
+            : fallback;
+    }
+    return String(value);
+}
+
+function readNumber(record: Record<string, unknown>, key: string) {
+    const value = record[key];
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
 
 function uniqueValues(values: string[]) {
@@ -657,5 +1014,34 @@ function CodeBlock({ title, value }: { title: string; value: string }) {
             <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{title}</div>
             <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-foreground/80">{value}</pre>
         </div>
+    );
+}
+
+function ConsoleInset({ title, children }: { title: string; children: ReactNode }) {
+    return (
+        <div className="border border-grid bg-black/20 p-4">
+            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{title}</div>
+            {children}
+        </div>
+    );
+}
+
+function FreshnessBadge({
+    freshness,
+}: {
+    freshness: ExperimentRunDetail['heartbeat_freshness'];
+}) {
+    const tone = freshness === 'fresh'
+        ? 'border-accent/30 bg-accent/10 text-accent'
+        : freshness === 'stale'
+            ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
+            : 'border-danger/30 bg-danger/10 text-danger';
+    const Icon = freshness === 'fresh' ? CheckCircle2 : freshness === 'stale' ? ShieldAlert : AlertTriangle;
+
+    return (
+        <span className={`inline-flex items-center gap-2 border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.15em] ${tone}`}>
+            <Icon className="h-3.5 w-3.5" />
+            {freshness}
+        </span>
     );
 }

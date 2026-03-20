@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { seedExperimentTrackingBootstrap } from '../../apps/web/lib/experiments/bootstrap.ts';
 import {
+    applyExperimentRegistryAction,
     backfillSummaryExperimentRuns,
     buildExperimentMetricSeries,
     createExperimentRun,
@@ -11,16 +12,24 @@ import {
     getExperimentRunDetail,
     logExperimentMetrics,
     recordExperimentFailure,
+    upsertAdversarialEvaluation,
+    upsertCalibrationEvaluation,
     updateExperimentHeartbeat,
 } from '../../apps/web/lib/experiments/service.ts';
 import type {
+    AdversarialMetricRecord,
+    CalibrationMetricRecord,
+    DeploymentDecisionRecord,
     ExperimentArtifactRecord,
+    ExperimentAuditEventRecord,
     ExperimentBenchmarkRecord,
     ExperimentFailureRecord,
     ExperimentMetricRecord,
     ExperimentRegistryLinkRecord,
     ExperimentRunRecord,
     ExperimentTrackingStore,
+    ModelRegistryRecord,
+    SubgroupMetricRecord,
 } from '../../apps/web/lib/experiments/types.ts';
 
 class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
@@ -30,6 +39,12 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
     failures: ExperimentFailureRecord[] = [];
     benchmarks: ExperimentBenchmarkRecord[] = [];
     registryLinks: ExperimentRegistryLinkRecord[] = [];
+    modelRegistry: ModelRegistryRecord[] = [];
+    calibrationMetrics: CalibrationMetricRecord[] = [];
+    adversarialMetrics: AdversarialMetricRecord[] = [];
+    deploymentDecisions: DeploymentDecisionRecord[] = [];
+    subgroupMetrics: SubgroupMetricRecord[] = [];
+    auditEvents: ExperimentAuditEventRecord[] = [];
     registryEntries: Array<Awaited<ReturnType<ExperimentTrackingStore['listModelRegistryEntries']>>[number]> = [];
     datasetVersions: Array<Awaited<ReturnType<ExperimentTrackingStore['listLearningDatasetVersions']>>[number]> = [];
     learningBenchmarks: Array<Awaited<ReturnType<ExperimentTrackingStore['listLearningBenchmarkReports']>>[number]> = [];
@@ -180,6 +195,142 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
         return clone(created);
     }
 
+    async getModelRegistryForRun(tenantId: string, runId: string) {
+        const record = this.modelRegistry.find((row) => row.tenant_id === tenantId && row.run_id === runId);
+        return record ? clone(record) : null;
+    }
+
+    async upsertModelRegistry(record: Omit<ModelRegistryRecord, 'created_at' | 'updated_at'>) {
+        const existing = this.modelRegistry.find((row) => row.registry_id === record.registry_id);
+        if (existing) {
+            Object.assign(existing, record, { updated_at: new Date().toISOString() });
+            return clone(existing);
+        }
+        const now = new Date().toISOString();
+        const created: ModelRegistryRecord = {
+            ...record,
+            created_at: now,
+            updated_at: now,
+        };
+        this.modelRegistry.push(created);
+        return clone(created);
+    }
+
+    async getCalibrationMetrics(tenantId: string, runId: string) {
+        const record = this.calibrationMetrics.find((row) => row.tenant_id === tenantId && row.run_id === runId);
+        return record ? clone(record) : null;
+    }
+
+    async upsertCalibrationMetrics(record: Omit<CalibrationMetricRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }) {
+        const existing = this.calibrationMetrics.find((row) => row.tenant_id === record.tenant_id && row.run_id === record.run_id);
+        if (existing) {
+            Object.assign(existing, record, { updated_at: new Date().toISOString() });
+            return clone(existing);
+        }
+        const now = new Date().toISOString();
+        const created: CalibrationMetricRecord = {
+            ...record,
+            id: record.id ?? randomUUID(),
+            created_at: now,
+            updated_at: now,
+        };
+        this.calibrationMetrics.push(created);
+        return clone(created);
+    }
+
+    async getAdversarialMetrics(tenantId: string, runId: string) {
+        const record = this.adversarialMetrics.find((row) => row.tenant_id === tenantId && row.run_id === runId);
+        return record ? clone(record) : null;
+    }
+
+    async upsertAdversarialMetrics(record: Omit<AdversarialMetricRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }) {
+        const existing = this.adversarialMetrics.find((row) => row.tenant_id === record.tenant_id && row.run_id === record.run_id);
+        if (existing) {
+            Object.assign(existing, record, { updated_at: new Date().toISOString() });
+            return clone(existing);
+        }
+        const now = new Date().toISOString();
+        const created: AdversarialMetricRecord = {
+            ...record,
+            id: record.id ?? randomUUID(),
+            created_at: now,
+            updated_at: now,
+        };
+        this.adversarialMetrics.push(created);
+        return clone(created);
+    }
+
+    async getDeploymentDecision(tenantId: string, runId: string) {
+        const record = this.deploymentDecisions.find((row) => row.tenant_id === tenantId && row.run_id === runId);
+        return record ? clone(record) : null;
+    }
+
+    async upsertDeploymentDecision(record: Omit<DeploymentDecisionRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }) {
+        const existing = this.deploymentDecisions.find((row) => row.tenant_id === record.tenant_id && row.run_id === record.run_id);
+        if (existing) {
+            Object.assign(existing, record, { updated_at: new Date().toISOString() });
+            return clone(existing);
+        }
+        const now = new Date().toISOString();
+        const created: DeploymentDecisionRecord = {
+            ...record,
+            id: record.id ?? randomUUID(),
+            created_at: now,
+            updated_at: now,
+        };
+        this.deploymentDecisions.push(created);
+        return clone(created);
+    }
+
+    async listSubgroupMetrics(tenantId: string, runId: string) {
+        return this.subgroupMetrics
+            .filter((row) => row.tenant_id === tenantId && row.run_id === runId)
+            .map(clone);
+    }
+
+    async upsertSubgroupMetric(record: Omit<SubgroupMetricRecord, 'id' | 'created_at'> & { id?: string }) {
+        const existing = this.subgroupMetrics.find((row) =>
+            row.tenant_id === record.tenant_id &&
+            row.run_id === record.run_id &&
+            row.group === record.group &&
+            row.group_value === record.group_value &&
+            row.metric === record.metric,
+        );
+        if (existing) {
+            Object.assign(existing, record);
+            return clone(existing);
+        }
+        const created: SubgroupMetricRecord = {
+            ...record,
+            id: record.id ?? randomUUID(),
+            created_at: new Date().toISOString(),
+        };
+        this.subgroupMetrics.push(created);
+        return clone(created);
+    }
+
+    async listAuditLog(tenantId: string, limit = 200) {
+        return this.auditEvents
+            .filter((row) => row.tenant_id === tenantId)
+            .sort((left, right) => right.created_at.localeCompare(left.created_at))
+            .slice(0, limit)
+            .map(clone);
+    }
+
+    async createAuditLog(record: Omit<ExperimentAuditEventRecord, 'created_at'>) {
+        const existing = this.auditEvents.find((row) => row.event_id === record.event_id);
+        if (existing) {
+            Object.assign(existing, record);
+            return clone(existing);
+        }
+        const created: ExperimentAuditEventRecord = {
+            ...record,
+            created_at: new Date().toISOString(),
+        };
+        this.auditEvents.push(created);
+        return clone(created);
+    }
+
     async listModelRegistryEntries(tenantId: string) {
         return this.registryEntries.filter((entry) => entry.tenant_id === tenantId).map(clone);
     }
@@ -228,8 +379,33 @@ async function testExperimentTrackingServiceFlow() {
     assert.equal(run.run_id, 'run_diag_live_001');
 
     const metrics = await logExperimentMetrics(store, tenantId, run.run_id, [
-        { epoch: 1, global_step: 100, train_loss: 0.82, val_accuracy: 0.71, learning_rate: 0.0001, gradient_norm: 1.8 },
-        { epoch: 2, global_step: 200, train_loss: 0.61, val_accuracy: 0.78, learning_rate: 0.00008, gradient_norm: 1.2, macro_f1: 0.75 },
+        {
+            epoch: 1,
+            global_step: 100,
+            train_loss: 0.82,
+            val_accuracy: 0.71,
+            learning_rate: 0.0001,
+            gradient_norm: 1.8,
+            recall_critical: 0.8,
+            false_negative_critical_rate: 0.12,
+            dangerous_false_reassurance_rate: 0.05,
+            abstain_accuracy: 0.74,
+            contradiction_detection_rate: 0.68,
+        },
+        {
+            epoch: 2,
+            global_step: 200,
+            train_loss: 0.61,
+            val_accuracy: 0.78,
+            learning_rate: 0.00008,
+            gradient_norm: 1.2,
+            macro_f1: 0.75,
+            recall_critical: 0.86,
+            false_negative_critical_rate: 0.08,
+            dangerous_false_reassurance_rate: 0.03,
+            abstain_accuracy: 0.8,
+            contradiction_detection_rate: 0.72,
+        },
     ]);
     assert.equal(metrics.length, 2);
     const series = buildExperimentMetricSeries(metrics);
@@ -259,6 +435,8 @@ async function testExperimentTrackingServiceFlow() {
     assert.ok(detail);
     assert.equal(detail?.failure?.nan_detected, true);
     assert.equal(detail?.run.status, 'failed');
+    assert.equal(detail?.deployment_decision?.decision, 'rejected');
+    assert.ok((detail?.audit_history.length ?? 0) > 0);
 
     await backfillSummaryExperimentRuns(store, tenantId);
     const dashboard = await getExperimentDashboardSnapshot(store, tenantId, { runLimit: 20 });
@@ -308,6 +486,66 @@ async function testExperimentBootstrapSeed() {
     assert.equal(failedDetail?.failure?.failure_reason, 'exploded_gradient');
     assert.equal(failedDetail?.failure?.nan_detected, true);
 
+    const completeDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_complete_v1');
+    assert.ok(completeDetail?.model_registry);
+    assert.ok(completeDetail?.calibration_metrics);
+    assert.ok(completeDetail?.adversarial_metrics);
+    assert.ok(completeDetail?.deployment_decision);
+    assert.ok((completeDetail?.subgroup_metrics.length ?? 0) > 0);
+    assert.ok((completeDetail?.audit_history.length ?? 0) > 0);
+
+    const calibration = await upsertCalibrationEvaluation(store, tenantId, 'run_diag_complete_v1', {
+        ece: 0.03,
+        brierScore: 0.06,
+        reliabilityBins: [
+            { confidence: 0.2, accuracy: 0.18, count: 12 },
+            { confidence: 0.5, accuracy: 0.52, count: 18 },
+            { confidence: 0.8, accuracy: 0.82, count: 14 },
+        ],
+        calibrationPass: true,
+        calibrationNotes: 'Manual QA override for governance validation.',
+    }, 'qa_user');
+    assert.equal(calibration.calibration_pass, true);
+
+    const adversarial = await upsertAdversarialEvaluation(store, tenantId, 'run_diag_complete_v1', {
+        degradationScore: 0.14,
+        contradictionRobustness: 0.88,
+        criticalCaseRecall: 0.93,
+        falseReassuranceRate: 0.04,
+        adversarialPass: true,
+    }, 'qa_user');
+    assert.equal(adversarial.adversarial_pass, true);
+
+    await logExperimentMetrics(store, tenantId, 'run_diag_complete_v1', [{
+        epoch: 8,
+        global_step: 97,
+        train_loss: 0.47,
+        val_loss: 0.45,
+        val_accuracy: 0.85,
+        learning_rate: 0.00005,
+        gradient_norm: 0.6,
+        macro_f1: 0.82,
+        recall_critical: 0.95,
+        false_negative_critical_rate: 0.05,
+        dangerous_false_reassurance_rate: 0.03,
+        abstain_accuracy: 0.84,
+        contradiction_detection_rate: 0.88,
+    }]);
+
+    const stagingRegistry = await applyExperimentRegistryAction(store, tenantId, 'run_diag_complete_v1', 'promote_to_staging', 'qa_user');
+    assert.equal(stagingRegistry.status, 'staging');
+
+    const decision = await store.getDeploymentDecision(tenantId, 'run_diag_complete_v1');
+    assert.equal(decision?.decision, 'approved');
+
+    const productionRegistry = await applyExperimentRegistryAction(store, tenantId, 'run_diag_complete_v1', 'promote_to_production', 'qa_user');
+    assert.equal(productionRegistry.status, 'production');
+    assert.equal(productionRegistry.role, 'champion');
+
+    const promotedRun = await store.getExperimentRun(tenantId, 'run_diag_complete_v1');
+    assert.equal(promotedRun?.status, 'promoted');
+    assert.ok(promotedRun?.registry_id);
+
     const dashboard = await getExperimentDashboardSnapshot(store, tenantId, { runLimit: 10 });
     assert.equal(dashboard.summary.total_runs, 3);
     assert.equal(dashboard.summary.active_runs, 1);
@@ -316,6 +554,8 @@ async function testExperimentBootstrapSeed() {
     assert.equal(dashboard.selected_run_id, 'run_diag_smoke_v1');
     assert.ok(dashboard.selected_run_detail);
     assert.equal(dashboard.selected_run_detail?.metrics.length, 5);
+    assert.ok(dashboard.summary.registry_link_coverage_pct > 0);
+    assert.ok(dashboard.summary.safety_metric_coverage_pct > 0);
 }
 
 function buildStore(tenantId: string) {

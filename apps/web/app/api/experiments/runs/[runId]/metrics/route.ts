@@ -60,6 +60,10 @@ export async function POST(
             recall_critical?: number | null;
             calibration_error?: number | null;
             adversarial_score?: number | null;
+            false_negative_critical_rate?: number | null;
+            dangerous_false_reassurance_rate?: number | null;
+            abstain_accuracy?: number | null;
+            contradiction_detection_rate?: number | null;
             wall_clock_time_seconds?: number | null;
             steps_per_second?: number | null;
             gpu_utilization?: number | null;

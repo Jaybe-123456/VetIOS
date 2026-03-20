@@ -23,7 +23,9 @@ export type ExperimentModality =
     | 'multimodal'
     | 'text_structured';
 
-export type ExperimentRegistryRole = 'champion' | 'challenger' | 'candidate' | 'archived';
+export type ExperimentRegistryRole = 'champion' | 'challenger' | 'candidate' | 'archived' | 'experimental';
+export type ModelRegistryStatus = 'candidate' | 'staging' | 'production' | 'archived';
+export type DeploymentDecisionStatus = 'approved' | 'rejected' | 'pending';
 
 export interface ExperimentRunRecord {
     id: string;
@@ -39,6 +41,7 @@ export interface ExperimentRunRecord {
     model_arch: string;
     model_size: string | null;
     model_version: string | null;
+    registry_id: string | null;
     dataset_name: string;
     dataset_version: string | null;
     feature_schema_version: string | null;
@@ -81,6 +84,10 @@ export interface ExperimentMetricRecord {
     recall_critical: number | null;
     calibration_error: number | null;
     adversarial_score: number | null;
+    false_negative_critical_rate: number | null;
+    dangerous_false_reassurance_rate: number | null;
+    abstain_accuracy: number | null;
+    contradiction_detection_rate: number | null;
     wall_clock_time_seconds: number | null;
     steps_per_second: number | null;
     gpu_utilization: number | null;
@@ -148,8 +155,83 @@ export interface ExperimentRegistryLinkRecord {
     updated_at: string;
 }
 
+export interface ModelRegistryRecord {
+    registry_id: string;
+    tenant_id: string;
+    run_id: string;
+    model_version: string;
+    artifact_path: string | null;
+    status: ModelRegistryStatus;
+    role: ExperimentRegistryRole;
+    created_at: string;
+    created_by: string | null;
+    updated_at: string;
+}
+
+export interface CalibrationReliabilityBin {
+    confidence: number;
+    accuracy: number;
+    count: number;
+}
+
+export interface CalibrationMetricRecord {
+    id: string;
+    tenant_id: string;
+    run_id: string;
+    ece: number | null;
+    brier_score: number | null;
+    reliability_bins: CalibrationReliabilityBin[];
+    calibration_pass: boolean | null;
+    calibration_notes: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AdversarialMetricRecord {
+    id: string;
+    tenant_id: string;
+    run_id: string;
+    degradation_score: number | null;
+    contradiction_robustness: number | null;
+    critical_case_recall: number | null;
+    false_reassurance_rate: number | null;
+    adversarial_pass: boolean | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface DeploymentDecisionRecord {
+    id: string;
+    tenant_id: string;
+    run_id: string;
+    decision: DeploymentDecisionStatus;
+    reason: string | null;
+    calibration_pass: boolean | null;
+    adversarial_pass: boolean | null;
+    safety_pass: boolean | null;
+    approved_by: string | null;
+    timestamp: string;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface SubgroupMetricRecord {
+    id: string;
+    tenant_id: string;
+    run_id: string;
+    group: string;
+    group_value: string;
+    metric: string;
+    value: number;
+    created_at: string;
+}
+
 export interface ExperimentAuditEventRecord {
+    event_id: string;
+    tenant_id: string;
+    run_id: string | null;
     event_type: string;
+    actor: string | null;
     created_at: string;
     payload: Record<string, unknown>;
 }
@@ -161,8 +243,19 @@ export interface ExperimentRunDetail {
     failure: ExperimentFailureRecord | null;
     benchmarks: ExperimentBenchmarkRecord[];
     registry_link: ExperimentRegistryLinkRecord | null;
+    model_registry: ModelRegistryRecord | null;
+    calibration_metrics: CalibrationMetricRecord | null;
+    adversarial_metrics: AdversarialMetricRecord | null;
+    deployment_decision: DeploymentDecisionRecord | null;
+    subgroup_metrics: SubgroupMetricRecord[];
     audit_history: ExperimentAuditEventRecord[];
     missing_telemetry_fields: string[];
+    latest_metric: ExperimentMetricRecord | null;
+    heartbeat_freshness: 'fresh' | 'stale' | 'offline';
+    failure_guidance: {
+        suggested_cause: string;
+        remediation_suggestions: string[];
+    } | null;
 }
 
 export interface ExperimentMetricSeriesPoint {
@@ -181,6 +274,10 @@ export interface ExperimentMetricSeriesPoint {
     recall_critical: number | null;
     calibration_error: number | null;
     adversarial_score: number | null;
+    false_negative_critical_rate: number | null;
+    dangerous_false_reassurance_rate: number | null;
+    abstain_accuracy: number | null;
+    contradiction_detection_rate: number | null;
     steps_per_second: number | null;
     gpu_utilization: number | null;
     cpu_utilization: number | null;
@@ -191,11 +288,28 @@ export interface ExperimentComparison {
     run_ids: string[];
     runs: ExperimentRunRecord[];
     metrics: Record<string, ExperimentMetricRecord[]>;
+    calibration: Record<string, CalibrationMetricRecord | null>;
+    adversarial: Record<string, AdversarialMetricRecord | null>;
+    decisions: Record<string, DeploymentDecisionRecord | null>;
     benchmark_summaries: Array<{
         run_id: string;
         benchmark_family: string;
         summary_score: number | null;
         pass_status: string;
+    }>;
+    comparison_rows: Array<{
+        run_id: string;
+        baseline_run_id: string;
+        macro_f1: number | null;
+        macro_f1_delta: number | null;
+        recall_critical: number | null;
+        recall_critical_delta: number | null;
+        ece: number | null;
+        ece_delta: number | null;
+        degradation_score: number | null;
+        degradation_delta: number | null;
+        hyperparameter_diff: string[];
+        dataset_diff: string[];
     }>;
 }
 
@@ -242,6 +356,18 @@ export interface ExperimentTrackingStore {
     upsertExperimentBenchmark(record: Omit<ExperimentBenchmarkRecord, 'id' | 'created_at'> & { id?: string }): Promise<ExperimentBenchmarkRecord>;
     getExperimentRegistryLink(tenantId: string, runId: string): Promise<ExperimentRegistryLinkRecord | null>;
     upsertExperimentRegistryLink(record: Omit<ExperimentRegistryLinkRecord, 'id' | 'linked_at' | 'updated_at'> & { id?: string }): Promise<ExperimentRegistryLinkRecord>;
+    getModelRegistryForRun(tenantId: string, runId: string): Promise<ModelRegistryRecord | null>;
+    upsertModelRegistry(record: Omit<ModelRegistryRecord, 'created_at' | 'updated_at'>): Promise<ModelRegistryRecord>;
+    getCalibrationMetrics(tenantId: string, runId: string): Promise<CalibrationMetricRecord | null>;
+    upsertCalibrationMetrics(record: Omit<CalibrationMetricRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }): Promise<CalibrationMetricRecord>;
+    getAdversarialMetrics(tenantId: string, runId: string): Promise<AdversarialMetricRecord | null>;
+    upsertAdversarialMetrics(record: Omit<AdversarialMetricRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }): Promise<AdversarialMetricRecord>;
+    getDeploymentDecision(tenantId: string, runId: string): Promise<DeploymentDecisionRecord | null>;
+    upsertDeploymentDecision(record: Omit<DeploymentDecisionRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }): Promise<DeploymentDecisionRecord>;
+    listSubgroupMetrics(tenantId: string, runId: string): Promise<SubgroupMetricRecord[]>;
+    upsertSubgroupMetric(record: Omit<SubgroupMetricRecord, 'id' | 'created_at'> & { id?: string }): Promise<SubgroupMetricRecord>;
+    listAuditLog(tenantId: string, limit?: number): Promise<ExperimentAuditEventRecord[]>;
+    createAuditLog(record: Omit<ExperimentAuditEventRecord, 'created_at'>): Promise<ExperimentAuditEventRecord>;
     listModelRegistryEntries(tenantId: string): Promise<Array<{
         id: string;
         tenant_id: string;
