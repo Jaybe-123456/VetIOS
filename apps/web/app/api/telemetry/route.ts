@@ -68,7 +68,8 @@ export async function GET(req: Request) {
             // 4) Simulation count
             supabase
                 .from('edge_simulation_events')
-                .select('id', { count: 'exact', head: true }),
+                .select('id', { count: 'exact', head: true })
+                .eq('tenant_id', tenantId),
 
             // 5) Outcome count
             supabase

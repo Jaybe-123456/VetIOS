@@ -35,17 +35,26 @@ const CORE_SIGNATURE_KEYS = new Set([
 export interface ClinicalCaseRecord {
     id: string;
     tenant_id: string;
+    user_id: string | null;
     clinic_id: string | null;
+    source_module: string | null;
     case_key: string;
     source_case_reference: string | null;
     species: string | null;
+    species_canonical: string | null;
+    species_display: string | null;
     species_raw: string | null;
     breed: string | null;
+    symptoms_raw: string | null;
+    symptoms_normalized: string[];
     symptom_vector: string[];
     symptom_summary: string | null;
+    patient_metadata: Record<string, unknown>;
     metadata: Record<string, unknown>;
     latest_input_signature: Record<string, unknown>;
     latest_inference_event_id: string | null;
+    latest_outcome_event_id: string | null;
+    latest_simulation_event_id: string | null;
     inference_event_count: number;
     first_inference_at: string;
     last_inference_at: string;
@@ -67,17 +76,26 @@ export interface ClinicalCaseStore {
 export interface ClinicalCaseUpsertRecord {
     id?: string;
     tenant_id: string;
+    user_id: string | null;
     clinic_id: string | null;
+    source_module: string | null;
     case_key: string;
     source_case_reference: string | null;
     species: string | null;
+    species_canonical: string | null;
+    species_display: string | null;
     species_raw: string | null;
     breed: string | null;
+    symptoms_raw: string | null;
+    symptoms_normalized: string[];
     symptom_vector: string[];
     symptom_summary: string | null;
+    patient_metadata: Record<string, unknown>;
     metadata: Record<string, unknown>;
     latest_input_signature: Record<string, unknown>;
     latest_inference_event_id: string | null;
+    latest_outcome_event_id: string | null;
+    latest_simulation_event_id: string | null;
     inference_event_count: number;
     first_inference_at: string;
     last_inference_at: string;
@@ -85,22 +103,33 @@ export interface ClinicalCaseUpsertRecord {
 
 export interface EnsureCanonicalClinicalCaseInput {
     tenantId: string;
+    userId?: string | null;
     clinicId?: string | null;
     requestedCaseId?: string | null;
+    sourceModule?: string | null;
     inputSignature: Record<string, unknown>;
     observedAt: string;
+}
+
+export interface ClinicalCaseEventContext {
+    observedAt: string;
+    userId?: string | null;
+    sourceModule?: string | null;
+    metadataPatch?: Record<string, unknown>;
 }
 
 interface ClinicalCaseSnapshot {
     preferredCaseId: string | null;
     caseKey: string;
     sourceCaseReference: string | null;
-    species: string | null;
+    speciesCanonical: string | null;
+    speciesDisplay: string | null;
     speciesRaw: string | null;
     breed: string | null;
-    symptomVector: string[];
+    symptomsRaw: string | null;
+    symptomsNormalized: string[];
     symptomSummary: string | null;
-    metadata: Record<string, unknown>;
+    patientMetadata: Record<string, unknown>;
     latestInputSignature: Record<string, unknown>;
 }
 
@@ -149,12 +178,16 @@ export function buildClinicalCaseSnapshot(input: EnsureCanonicalClinicalCaseInpu
     const preferredCaseId = normalizeUuid(input.requestedCaseId);
     const sourceCaseReference = preferredCaseId ? null : normalizeText(input.requestedCaseId);
     const speciesRaw = normalizeText(input.inputSignature.species);
-    const species = normalizeSpeciesValue(speciesRaw);
+    const speciesCanonical = normalizeSpeciesValue(speciesRaw);
+    const speciesDisplay = speciesRaw ?? speciesCanonical;
     const breed = normalizeBreedValue(input.inputSignature.breed);
-    const symptomVector = normalizeSymptomVector(input.inputSignature.symptoms);
-    const metadata = extractCaseMetadata(input.inputSignature);
+    const symptomsNormalized = normalizeSymptomVector(input.inputSignature.symptoms);
+    const symptomsRaw = normalizeSymptomsRaw(input.inputSignature.symptoms);
+    const patientMetadata = extractCaseMetadata(input.inputSignature);
     const latestInputSignature = sanitizeSignatureForCase(input.inputSignature);
-    const symptomSummary = symptomVector.length > 0 ? symptomVector.slice(0, 8).join(', ') : null;
+    const symptomSummary = symptomsNormalized.length > 0
+        ? symptomsNormalized.slice(0, 8).join(', ')
+        : normalizeText(symptomsRaw);
 
     return {
         preferredCaseId,
@@ -162,19 +195,21 @@ export function buildClinicalCaseSnapshot(input: EnsureCanonicalClinicalCaseInpu
             clinicId: input.clinicId ?? null,
             preferredCaseId,
             sourceCaseReference,
-            species,
+            speciesCanonical,
             breed,
-            symptomVector,
-            metadata,
+            symptomsNormalized,
+            patientMetadata,
             latestInputSignature,
         }),
         sourceCaseReference,
-        species,
+        speciesCanonical,
+        speciesDisplay,
         speciesRaw,
         breed,
-        symptomVector,
+        symptomsRaw,
+        symptomsNormalized,
         symptomSummary,
-        metadata,
+        patientMetadata,
         latestInputSignature,
     };
 }
@@ -188,34 +223,46 @@ export async function ensureCanonicalClinicalCase(
         ? await store.findById(input.tenantId, snapshot.preferredCaseId)
         : await store.findByCaseKey(input.tenantId, snapshot.caseKey);
 
-    const metadata = existingCase
-        ? { ...existingCase.metadata, ...snapshot.metadata }
-        : snapshot.metadata;
-    const symptomVector = snapshot.symptomVector.length > 0
-        ? snapshot.symptomVector
-        : existingCase?.symptom_vector ?? [];
+    const patientMetadata = mergeJsonRecords(
+        existingCase?.patient_metadata ?? existingCase?.metadata ?? {},
+        snapshot.patientMetadata,
+    );
+    const symptomsNormalized = snapshot.symptomsNormalized.length > 0
+        ? snapshot.symptomsNormalized
+        : existingCase?.symptoms_normalized ??
+            existingCase?.symptom_vector ??
+            [];
+    const symptomSummary = snapshot.symptomSummary ??
+        (symptomsNormalized.length > 0 ? symptomsNormalized.slice(0, 8).join(', ') : null) ??
+        existingCase?.symptom_summary ??
+        null;
 
     return store.upsert({
         id: existingCase?.id ?? snapshot.preferredCaseId ?? undefined,
         tenant_id: input.tenantId,
+        user_id: input.userId ?? existingCase?.user_id ?? null,
         clinic_id: input.clinicId ?? existingCase?.clinic_id ?? null,
+        source_module: input.sourceModule ?? existingCase?.source_module ?? null,
         case_key: existingCase?.case_key ?? snapshot.caseKey,
         source_case_reference: existingCase?.source_case_reference ?? snapshot.sourceCaseReference,
-        species: snapshot.species ?? existingCase?.species ?? null,
+        species: snapshot.speciesCanonical ?? existingCase?.species ?? null,
+        species_canonical: snapshot.speciesCanonical ?? existingCase?.species_canonical ?? existingCase?.species ?? null,
+        species_display: snapshot.speciesDisplay ?? existingCase?.species_display ?? existingCase?.species_raw ?? existingCase?.species ?? null,
         species_raw: snapshot.speciesRaw ?? existingCase?.species_raw ?? null,
         breed: snapshot.breed ?? existingCase?.breed ?? null,
-        symptom_vector: symptomVector,
-        symptom_summary:
-            snapshot.symptomSummary ??
-            (symptomVector.length > 0 ? symptomVector.slice(0, 8).join(', ') : null) ??
-            existingCase?.symptom_summary ??
-            null,
-        metadata,
+        symptoms_raw: snapshot.symptomsRaw ?? existingCase?.symptoms_raw ?? null,
+        symptoms_normalized: symptomsNormalized,
+        symptom_vector: symptomsNormalized,
+        symptom_summary: symptomSummary,
+        patient_metadata: patientMetadata,
+        metadata: patientMetadata,
         latest_input_signature: snapshot.latestInputSignature,
         latest_inference_event_id: existingCase?.latest_inference_event_id ?? null,
+        latest_outcome_event_id: existingCase?.latest_outcome_event_id ?? null,
+        latest_simulation_event_id: existingCase?.latest_simulation_event_id ?? null,
         inference_event_count: existingCase?.inference_event_count ?? 0,
         first_inference_at: existingCase?.first_inference_at ?? input.observedAt,
-        last_inference_at: input.observedAt,
+        last_inference_at: existingCase?.last_inference_at ?? input.observedAt,
     });
 }
 
@@ -223,13 +270,35 @@ export async function finalizeClinicalCaseAfterInference(
     store: ClinicalCaseStore,
     clinicalCase: ClinicalCaseRecord,
     inferenceEventId: string,
-    observedAt: string,
+    context: ClinicalCaseEventContext,
 ): Promise<ClinicalCaseRecord> {
-    return store.updateById(clinicalCase.tenant_id, clinicalCase.id, {
+    return updateClinicalCaseActivity(store, clinicalCase, {
         latest_inference_event_id: inferenceEventId,
         inference_event_count: clinicalCase.inference_event_count + 1,
-        last_inference_at: observedAt,
-    });
+        last_inference_at: context.observedAt,
+    }, context);
+}
+
+export async function finalizeClinicalCaseAfterOutcome(
+    store: ClinicalCaseStore,
+    clinicalCase: ClinicalCaseRecord,
+    outcomeEventId: string,
+    context: ClinicalCaseEventContext,
+): Promise<ClinicalCaseRecord> {
+    return updateClinicalCaseActivity(store, clinicalCase, {
+        latest_outcome_event_id: outcomeEventId,
+    }, context);
+}
+
+export async function finalizeClinicalCaseAfterSimulation(
+    store: ClinicalCaseStore,
+    clinicalCase: ClinicalCaseRecord,
+    simulationEventId: string,
+    context: ClinicalCaseEventContext,
+): Promise<ClinicalCaseRecord> {
+    return updateClinicalCaseActivity(store, clinicalCase, {
+        latest_simulation_event_id: simulationEventId,
+    }, context);
 }
 
 export function createSupabaseClinicalCaseStore(client: SupabaseClient): ClinicalCaseStore {
@@ -304,10 +373,10 @@ function buildClinicalCaseKey(input: {
     clinicId: string | null;
     preferredCaseId: string | null;
     sourceCaseReference: string | null;
-    species: string | null;
+    speciesCanonical: string | null;
     breed: string | null;
-    symptomVector: string[];
-    metadata: Record<string, unknown>;
+    symptomsNormalized: string[];
+    patientMetadata: Record<string, unknown>;
     latestInputSignature: Record<string, unknown>;
 }): string {
     if (input.preferredCaseId) {
@@ -320,10 +389,10 @@ function buildClinicalCaseKey(input: {
 
     const fingerprint = {
         clinic_id: input.clinicId,
-        species: input.species,
+        species: input.speciesCanonical,
         breed: input.breed?.toLowerCase() ?? null,
-        symptoms: [...input.symptomVector].sort(),
-        metadata: normalizeFingerprintMetadata(input.metadata),
+        symptoms: [...input.symptomsNormalized].sort(),
+        metadata: normalizeFingerprintMetadata(input.patientMetadata),
         signature: input.latestInputSignature,
     };
 
@@ -349,9 +418,11 @@ function sanitizeSignatureForCase(signature: Record<string, unknown>): Record<st
     const symptoms = normalizeSymptomVector(signature.symptoms).sort();
 
     const base: Record<string, unknown> = {
-        species: normalizeSpeciesValue(signature.species) ?? normalizeText(signature.species),
+        species_canonical: normalizeSpeciesValue(signature.species) ?? normalizeText(signature.species),
+        species_display: normalizeText(signature.species) ?? normalizeSpeciesValue(signature.species),
         breed: normalizeBreedValue(signature.breed),
-        symptoms,
+        symptoms_raw: normalizeSymptomsRaw(signature.symptoms),
+        symptoms_normalized: symptoms,
         metadata: extractCaseMetadata(signature),
     };
 
@@ -370,28 +441,80 @@ function normalizeFingerprintMetadata(metadata: Record<string, unknown>): Record
 }
 
 function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRecord {
+    const patientMetadata = isRecord(row.patient_metadata)
+        ? row.patient_metadata
+        : isRecord(row.metadata)
+            ? row.metadata
+            : {};
+    const symptomsNormalized = Array.isArray(row.symptoms_normalized)
+        ? row.symptoms_normalized.filter((value): value is string => typeof value === 'string')
+        : Array.isArray(row.symptom_vector)
+            ? row.symptom_vector.filter((value): value is string => typeof value === 'string')
+            : [];
+    const speciesCanonical = normalizeText(row.species_canonical) ?? normalizeText(row.species);
+    const speciesDisplay = normalizeText(row.species_display)
+        ?? normalizeText(row.species_raw)
+        ?? speciesCanonical;
+
     return {
         id: String(row.id),
         tenant_id: String(row.tenant_id),
+        user_id: normalizeUuid(row.user_id) ?? normalizeText(row.user_id),
         clinic_id: normalizeText(row.clinic_id),
+        source_module: normalizeText(row.source_module),
         case_key: String(row.case_key),
         source_case_reference: normalizeText(row.source_case_reference),
-        species: normalizeText(row.species),
+        species: speciesCanonical,
+        species_canonical: speciesCanonical,
+        species_display: speciesDisplay,
         species_raw: normalizeText(row.species_raw),
         breed: normalizeText(row.breed),
-        symptom_vector: Array.isArray(row.symptom_vector)
-            ? row.symptom_vector.filter((value): value is string => typeof value === 'string')
-            : [],
+        symptoms_raw: normalizeText(row.symptoms_raw),
+        symptoms_normalized: symptomsNormalized,
+        symptom_vector: symptomsNormalized,
         symptom_summary: normalizeText(row.symptom_summary),
-        metadata: isRecord(row.metadata) ? row.metadata : {},
+        patient_metadata: patientMetadata,
+        metadata: patientMetadata,
         latest_input_signature: isRecord(row.latest_input_signature) ? row.latest_input_signature : {},
         latest_inference_event_id: normalizeText(row.latest_inference_event_id),
+        latest_outcome_event_id: normalizeText(row.latest_outcome_event_id),
+        latest_simulation_event_id: normalizeText(row.latest_simulation_event_id),
         inference_event_count: typeof row.inference_event_count === 'number' ? row.inference_event_count : 0,
         first_inference_at: String(row.first_inference_at),
         last_inference_at: String(row.last_inference_at),
         created_at: String(row.created_at),
         updated_at: String(row.updated_at),
     };
+}
+
+async function updateClinicalCaseActivity(
+    store: ClinicalCaseStore,
+    clinicalCase: ClinicalCaseRecord,
+    patch: Partial<ClinicalCaseUpsertRecord>,
+    context: ClinicalCaseEventContext,
+): Promise<ClinicalCaseRecord> {
+    const metadata = mergeJsonRecords(
+        clinicalCase.patient_metadata,
+        context.metadataPatch ?? {},
+    );
+
+    return store.updateById(clinicalCase.tenant_id, clinicalCase.id, {
+        ...patch,
+        user_id: context.userId ?? clinicalCase.user_id ?? null,
+        source_module: context.sourceModule ?? clinicalCase.source_module ?? null,
+        patient_metadata: metadata,
+        metadata,
+    });
+}
+
+function mergeJsonRecords(
+    base: Record<string, unknown>,
+    patch: Record<string, unknown>,
+): Record<string, unknown> {
+    return sanitizeJsonRecord({
+        ...base,
+        ...patch,
+    });
 }
 
 function sanitizeJsonRecord(record: Record<string, unknown>): Record<string, unknown> {
@@ -448,6 +571,23 @@ function scientificNameCase(value: string): string {
                 : token.toLowerCase(),
         )
         .join(' ');
+}
+
+function normalizeSymptomsRaw(value: unknown): string | null {
+    if (typeof value === 'string') {
+        return normalizeText(value);
+    }
+
+    if (!Array.isArray(value)) {
+        return null;
+    }
+
+    const normalized = value
+        .filter((entry): entry is string => typeof entry === 'string')
+        .map((entry) => entry.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+
+    return normalized.length > 0 ? normalized.join(', ') : null;
 }
 
 function normalizeUuid(value: unknown): string | null {

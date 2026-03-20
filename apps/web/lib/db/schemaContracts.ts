@@ -11,8 +11,10 @@ export const AI_INFERENCE_EVENTS = {
     COLUMNS: {
         id: 'id',                                 // uuid, PK
         tenant_id: 'tenant_id',                   // uuid, NOT NULL
+        user_id: 'user_id',                       // uuid, nullable
         clinic_id: 'clinic_id',                   // uuid, nullable
         case_id: 'case_id',                       // uuid, nullable
+        source_module: 'source_module',           // text, nullable
         model_name: 'model_name',                 // text, NOT NULL
         model_version: 'model_version',           // text, NOT NULL
         input_signature: 'input_signature',       // jsonb, NOT NULL
@@ -31,17 +33,26 @@ export const CLINICAL_CASES = {
     COLUMNS: {
         id: 'id',                                 // uuid, PK
         tenant_id: 'tenant_id',                   // uuid, NOT NULL
+        user_id: 'user_id',                       // uuid, nullable
         clinic_id: 'clinic_id',                   // uuid, nullable
+        source_module: 'source_module',           // text, nullable
         case_key: 'case_key',                     // text, NOT NULL
         source_case_reference: 'source_case_reference', // text, nullable
         species: 'species',                       // text, nullable
+        species_canonical: 'species_canonical',   // text, nullable
+        species_display: 'species_display',       // text, nullable
         species_raw: 'species_raw',               // text, nullable
         breed: 'breed',                           // text, nullable
+        symptoms_raw: 'symptoms_raw',             // text, nullable
+        symptoms_normalized: 'symptoms_normalized', // text[], NOT NULL
         symptom_vector: 'symptom_vector',         // text[], NOT NULL
         symptom_summary: 'symptom_summary',       // text, nullable
+        patient_metadata: 'patient_metadata',     // jsonb, NOT NULL
         metadata: 'metadata',                     // jsonb, NOT NULL
         latest_input_signature: 'latest_input_signature', // jsonb, NOT NULL
         latest_inference_event_id: 'latest_inference_event_id', // uuid, nullable
+        latest_outcome_event_id: 'latest_outcome_event_id', // uuid, nullable
+        latest_simulation_event_id: 'latest_simulation_event_id', // uuid, nullable
         inference_event_count: 'inference_event_count', // integer, NOT NULL
         first_inference_at: 'first_inference_at', // timestamptz, NOT NULL
         last_inference_at: 'last_inference_at',   // timestamptz, NOT NULL
@@ -50,13 +61,34 @@ export const CLINICAL_CASES = {
     },
 } as const;
 
+export const CLINICAL_CASE_LIVE_VIEW = {
+    TABLE: 'clinical_case_live_view',
+    COLUMNS: {
+        case_id: 'case_id',
+        tenant_id: 'tenant_id',
+        user_id: 'user_id',
+        species: 'species',
+        breed: 'breed',
+        symptoms_summary: 'symptoms_summary',
+        latest_inference_event_id: 'latest_inference_event_id',
+        latest_outcome_event_id: 'latest_outcome_event_id',
+        latest_simulation_event_id: 'latest_simulation_event_id',
+        latest_confidence: 'latest_confidence',
+        latest_emergency_level: 'latest_emergency_level',
+        source_module: 'source_module',
+        updated_at: 'updated_at',
+    },
+} as const;
+
 export const CLINICAL_OUTCOME_EVENTS = {
     TABLE: 'clinical_outcome_events',
     COLUMNS: {
         id: 'id',                                 // uuid, PK
         tenant_id: 'tenant_id',                   // uuid, NOT NULL
+        user_id: 'user_id',                       // uuid, nullable
         clinic_id: 'clinic_id',                   // uuid, nullable
         case_id: 'case_id',                       // uuid, nullable
+        source_module: 'source_module',           // text, nullable
         inference_event_id: 'inference_event_id', // uuid, nullable
         outcome_type: 'outcome_type',             // text, NOT NULL
         outcome_payload: 'outcome_payload',       // jsonb, NOT NULL
@@ -134,12 +166,15 @@ export const ERROR_CLUSTERS = {
 } as const;
 
 // ─── edge_simulation_events ─────────────────────────────────────────────────
-// NOTE: This table has NO tenant_id, NO scenario, NO inference_output.
-//       It uses stress_metrics (jsonb) and is_real_world (boolean).
 export const EDGE_SIMULATION_EVENTS = {
     TABLE: 'edge_simulation_events',
     COLUMNS: {
         id: 'id',                                     // uuid, PK
+        tenant_id: 'tenant_id',                       // uuid, nullable
+        user_id: 'user_id',                           // uuid, nullable
+        clinic_id: 'clinic_id',                       // uuid, nullable
+        case_id: 'case_id',                           // uuid, nullable
+        source_module: 'source_module',               // text, nullable
         simulation_type: 'simulation_type',           // text, NOT NULL
         simulation_parameters: 'simulation_parameters', // jsonb, NOT NULL
         triggered_inference_id: 'triggered_inference_id', // uuid, nullable

@@ -24,14 +24,31 @@ export function ClinicalDatasetClient({
     const deferredQuery = useDeferredValue(query.trim().toLowerCase());
 
     useEffect(() => {
-        const interval = window.setInterval(() => {
-            if (document.visibilityState !== 'visible') return;
+        const refreshDataset = () => {
             startRefreshTransition(() => {
                 router.refresh();
             });
-        }, 15_000);
+        };
 
-        return () => window.clearInterval(interval);
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                refreshDataset();
+            }
+        };
+
+        const interval = window.setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
+            refreshDataset();
+        }, 10_000);
+
+        window.addEventListener('focus', refreshDataset);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            window.clearInterval(interval);
+            window.removeEventListener('focus', refreshDataset);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
     }, [router]);
 
     const filteredClinicalCases = useMemo(

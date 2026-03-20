@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
+import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
@@ -23,6 +24,7 @@ import {
     ensureCanonicalClinicalCase,
     finalizeClinicalCaseAfterInference,
 } from '@/lib/clinicalCases/clinicalCaseManager';
+import { logClinicalDatasetMutation } from '@/lib/dataset/clinicalDatasetDiagnostics';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { InferenceRequestSchema, formatZodErrors } from '@/lib/http/schemas';
@@ -44,7 +46,7 @@ export async function POST(req: Request) {
             { status: 401 }
         );
     }
-    const tenantId = session?.tenantId || process.env.VETIOS_DEV_TENANT_ID || 'dev_tenant_001';
+    const { tenantId, userId } = resolveRequestActor(session);
 
     // ── Parse + validate ──
     const parsed = await safeJson(req);
@@ -138,16 +140,20 @@ export async function POST(req: Request) {
         const observedAt = new Date().toISOString();
         const canonicalClinicalCase = await ensureCanonicalClinicalCase(caseStore, {
             tenantId,
+            userId,
             clinicId: body.clinic_id ?? null,
             requestedCaseId: body.case_id ?? null,
+            sourceModule: 'inference_console',
             inputSignature: signatureForLog,
             observedAt,
         });
         const persistedInferenceEventId = await logInference(supabase, {
             id: inferenceEventId,
             tenant_id: tenantId,
+            user_id: userId,
             clinic_id: body.clinic_id ?? null,
             case_id: canonicalClinicalCase.id,
+            source_module: 'inference_console',
             model_name: body.model.name,
             model_version: body.model.version,
             input_signature: signatureForLog,
@@ -161,8 +167,27 @@ export async function POST(req: Request) {
             caseStore,
             canonicalClinicalCase,
             persistedInferenceEventId,
-            observedAt,
+            {
+                observedAt,
+                userId,
+                sourceModule: 'inference_console',
+                metadataPatch: {
+                    latest_inference_confidence: inferenceResult.confidence_score,
+                    latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
+                    latest_inference_model_version: body.model.version,
+                    latest_inference_source: 'inference_console',
+                },
+            },
         );
+        logClinicalDatasetMutation({
+            source: 'api/inference',
+            mutationType: 'inference',
+            authenticatedUserId: userId,
+            resolvedTenantId: tenantId,
+            writeTenantId: tenantId,
+            caseId: canonicalClinicalCase.id,
+            inferenceEventId: persistedInferenceEventId,
+        });
         revalidatePath('/dataset');
 
         // ── Evaluation (non-blocking) ──
@@ -219,4 +244,19 @@ export async function POST(req: Request) {
             { status: 500 }
         );
     }
+}
+
+function extractEmergencyLevel(outputPayload: Record<string, unknown>): string | null {
+    const riskAssessment = outputPayload.risk_assessment;
+    if (
+        typeof riskAssessment !== 'object' ||
+        riskAssessment === null ||
+        Array.isArray(riskAssessment)
+    ) {
+        return null;
+    }
+
+    return typeof (riskAssessment as Record<string, unknown>).emergency_level === 'string'
+        ? (riskAssessment as Record<string, unknown>).emergency_level as string
+        : null;
 }

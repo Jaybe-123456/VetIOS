@@ -20,7 +20,10 @@ export default async function ClinicalDatasetPage() {
 
     const supabase = getSupabaseServer();
     const datasetStore = createSupabaseClinicalDatasetStore(supabase);
-    const dataset = await getTenantClinicalDataset(datasetStore, tenantId);
+    const dataset = await getTenantClinicalDataset(datasetStore, tenantId, 50, {
+        authenticatedUserId: session?.userId ?? null,
+        source: 'dataset_page',
+    });
 
     return <ClinicalDatasetClient {...dataset} />;
 }

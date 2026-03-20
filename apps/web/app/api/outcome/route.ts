@@ -12,43 +12,47 @@
  */
 
 import { NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
+import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { logOutcome } from '@/lib/logging/outcomeLogger';
 import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
 import { logOutcomeCalibration } from '@/lib/evaluation/calibrationEngine';
 import { logErrorCluster } from '@/lib/learning/errorClustering';
 import { routeReinforcement } from '@/lib/learning/reinforcementRouter';
 import { logModelImprovementAudit } from '@/lib/learning/modelImprover';
+import {
+    createSupabaseClinicalCaseStore,
+    ensureCanonicalClinicalCase,
+    finalizeClinicalCaseAfterOutcome,
+} from '@/lib/clinicalCases/clinicalCaseManager';
+import { logClinicalDatasetMutation } from '@/lib/dataset/clinicalDatasetDiagnostics';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { OutcomeRequestSchema, formatZodErrors } from '@/lib/http/schemas';
 import { safeJson } from '@/lib/http/safeJson';
 
 export async function POST(req: Request) {
-    // ── Guard ──
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    // ── Auth ──
     const session = await resolveSessionTenant();
     if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
         return NextResponse.json(
             { error: 'Unauthorized', request_id: requestId },
-            { status: 401 }
+            { status: 401 },
         );
     }
-    const tenantId = session?.tenantId || process.env.VETIOS_DEV_TENANT_ID || 'dev_tenant_001';
+    const { tenantId, userId } = resolveRequestActor(session);
 
-    // ── Idempotency key ──
     const idempotencyKey = req.headers.get('x-idempotency-key');
 
-    // ── Parse + validate ──
     const parsed = await safeJson(req);
     if (!parsed.ok) {
         return NextResponse.json(
             { error: parsed.error, request_id: requestId },
-            { status: 400 }
+            { status: 400 },
         );
     }
 
@@ -56,7 +60,7 @@ export async function POST(req: Request) {
     if (!result.success) {
         return NextResponse.json(
             { error: formatZodErrors(result.error), request_id: requestId },
-            { status: 400 }
+            { status: 400 },
         );
     }
     const body = result.data;
@@ -64,7 +68,6 @@ export async function POST(req: Request) {
     try {
         const supabase = getSupabaseServer();
 
-        // ── Idempotency check ──
         if (idempotencyKey) {
             const { data: existing } = await supabase
                 .from('clinical_outcome_events')
@@ -84,39 +87,89 @@ export async function POST(req: Request) {
             }
         }
 
-        // ── Verify inference exists AND belongs to tenant ──
         const { data: inferenceRecord, error: lookupError } = await supabase
             .from('ai_inference_events')
-            .select('id, tenant_id, case_id')
+            .select('id, tenant_id, clinic_id, case_id, input_signature')
             .eq('id', body.inference_event_id)
             .single();
 
         if (lookupError || !inferenceRecord) {
             return NextResponse.json(
                 { error: `Inference event not found: ${body.inference_event_id}`, request_id: requestId },
-                { status: 404 }
+                { status: 404 },
             );
         }
 
-        if ((inferenceRecord as { tenant_id: string }).tenant_id !== tenantId) {
+        const resolvedInferenceRecord = inferenceRecord as {
+            tenant_id: string;
+            clinic_id?: string | null;
+            case_id?: string | null;
+            input_signature?: Record<string, unknown>;
+        };
+
+        if (resolvedInferenceRecord.tenant_id !== tenantId) {
             return NextResponse.json(
                 { error: 'Inference event does not belong to this tenant', request_id: requestId },
-                { status: 403 }
+                { status: 403 },
             );
         }
 
-        // ── Insert outcome ──
+        const caseStore = createSupabaseClinicalCaseStore(supabase);
+        const requestedCaseId = body.case_id ?? resolvedInferenceRecord.case_id ?? null;
+        let canonicalClinicalCase = requestedCaseId
+            ? await caseStore.findById(tenantId, requestedCaseId)
+            : null;
+
+        if (!canonicalClinicalCase) {
+            canonicalClinicalCase = await ensureCanonicalClinicalCase(caseStore, {
+                tenantId,
+                userId,
+                clinicId: body.clinic_id ?? resolvedInferenceRecord.clinic_id ?? null,
+                requestedCaseId,
+                sourceModule: 'outcome_learning',
+                inputSignature:
+                    resolvedInferenceRecord.input_signature &&
+                        typeof resolvedInferenceRecord.input_signature === 'object'
+                        ? resolvedInferenceRecord.input_signature
+                        : {},
+                observedAt: body.outcome.timestamp,
+            });
+        }
+
         const outcomeEventId = await logOutcome(supabase, {
             tenant_id: tenantId,
-            clinic_id: body.clinic_id ?? null,
-            case_id: body.case_id ?? (inferenceRecord as { case_id?: string | null }).case_id ?? null,
+            user_id: userId,
+            clinic_id: body.clinic_id ?? resolvedInferenceRecord.clinic_id ?? null,
+            case_id: canonicalClinicalCase.id,
+            source_module: 'outcome_learning',
             inference_event_id: body.inference_event_id,
             outcome_type: body.outcome.type,
             outcome_payload: body.outcome.payload,
             outcome_timestamp: body.outcome.timestamp,
         });
 
-        // ── Full Outcome Learning Pipeline (non-blocking) ──
+        await finalizeClinicalCaseAfterOutcome(caseStore, canonicalClinicalCase, outcomeEventId, {
+            observedAt: body.outcome.timestamp,
+            userId,
+            sourceModule: 'outcome_learning',
+            metadataPatch: {
+                latest_outcome_type: body.outcome.type,
+                latest_outcome_timestamp: body.outcome.timestamp,
+                latest_outcome_payload: body.outcome.payload,
+            },
+        });
+        logClinicalDatasetMutation({
+            source: 'api/outcome',
+            mutationType: 'outcome',
+            authenticatedUserId: userId,
+            resolvedTenantId: tenantId,
+            writeTenantId: tenantId,
+            caseId: canonicalClinicalCase.id,
+            inferenceEventId: body.inference_event_id,
+            outcomeEventId,
+        });
+        revalidatePath('/dataset');
+
         let pipelineResult: any = {};
         try {
             const { data: inferenceData } = await supabase
@@ -136,7 +189,7 @@ export async function POST(req: Request) {
 
                 const diagPayload = (inf.output_payload?.diagnosis || {}) as Record<string, unknown>;
                 const riskPayload = (inf.output_payload?.risk_assessment || {}) as Record<string, unknown>;
-                
+
                 const predictedClass = diagPayload.primary_condition_class as string | undefined;
                 const predictedDiagnosis = (diagPayload.top_differentials as any[])?.[0]?.name as string | undefined;
                 const predictedSeverity = riskPayload.severity_score as number | undefined;
@@ -146,7 +199,6 @@ export async function POST(req: Request) {
                 const actualDiagnosis = actualOutcome.diagnosis as string | undefined;
                 const actualSeverity = actualOutcome.severity_score as number | undefined;
 
-                // 1. Log Old Evaluation Event (for backwards compat)
                 const recentEvals = await getRecentEvaluations(supabase, tenantId, inf.model_name, 20);
                 pipelineResult.evaluation = await createEvaluationEvent(supabase, {
                     tenant_id: tenantId,
@@ -162,7 +214,6 @@ export async function POST(req: Request) {
                     recent_evaluations: recentEvals,
                 });
 
-                // 2. Calibration Engine
                 pipelineResult.calibration = await logOutcomeCalibration(supabase, {
                     tenant_id: tenantId,
                     inference_event_id: body.inference_event_id,
@@ -171,7 +222,6 @@ export async function POST(req: Request) {
                     actual_correctness: (predictedClass === actualClass && predictedDiagnosis === actualDiagnosis) ? 1.0 : 0.0,
                 });
 
-                // 3. Error Clustering Engine
                 pipelineResult.error_cluster = await logErrorCluster(supabase, {
                     tenant_id: tenantId,
                     predicted_class: predictedClass,
@@ -181,15 +231,13 @@ export async function POST(req: Request) {
                     had_contradictions:
                         typeof inf.output_payload?.contradiction_score === 'number'
                             ? (inf.output_payload.contradiction_score as number) > 0
-                            : ((inf.output_payload?.contradiction_analysis as any)?.is_plausible === false)
+                            : ((inf.output_payload?.contradiction_analysis as any)?.is_plausible === false),
                 });
 
-                // 4. Structured Reinforcement Pipeline
                 pipelineResult.reinforcement = await routeReinforcement(supabase, {
                     tenant_id: tenantId,
                     inference_event_id: body.inference_event_id,
-                    // Typically 'label_type' would come from body, assuming synthetic for now if absent
-                    label_type: (actualOutcome.label_type as string) || 'expert', 
+                    label_type: (actualOutcome.label_type as string) || 'expert',
                     predicted_diagnosis: predictedDiagnosis,
                     predicted_class: predictedClass,
                     actual_diagnosis: actualDiagnosis,
@@ -197,18 +245,19 @@ export async function POST(req: Request) {
                     predicted_severity: predictedSeverity,
                     actual_severity: actualSeverity,
                     calibration_error: pipelineResult.calibration?.calibration_error,
-                    extracted_features: (inf.output_payload?.diagnosis_feature_importance as any) || {}
+                    extracted_features: (inf.output_payload?.diagnosis_feature_importance as any) || {},
                 });
 
-                // 5. Before vs After Proof Tracking
                 pipelineResult.audit = await logModelImprovementAudit(supabase, {
                     tenant_id: tenantId,
                     inference_event_id: body.inference_event_id,
                     pre_update_prediction: inf.output_payload,
                     pre_confidence: inf.confidence_score,
-                    reinforcement_applied: pipelineResult.reinforcement.diagnostic_updates_applied > 0 || pipelineResult.reinforcement.severity_updates_applied > 0,
+                    reinforcement_applied:
+                        pipelineResult.reinforcement.diagnostic_updates_applied > 0 ||
+                        pipelineResult.reinforcement.severity_updates_applied > 0,
                     actual_correctness: (predictedClass === actualClass && predictedDiagnosis === actualDiagnosis) ? 1.0 : 0.0,
-                    calibration_improvement: pipelineResult.calibration?.calibration_error ?? 0
+                    calibration_improvement: pipelineResult.calibration?.calibration_error ?? 0,
                 });
             }
         } catch (pipelineErr) {
@@ -217,6 +266,7 @@ export async function POST(req: Request) {
 
         const response = NextResponse.json({
             outcome_event_id: outcomeEventId,
+            clinical_case_id: canonicalClinicalCase.id,
             linked_inference_event_id: body.inference_event_id,
             learning_pipeline: pipelineResult,
             request_id: requestId,
@@ -228,7 +278,7 @@ export async function POST(req: Request) {
         const message = err instanceof Error ? err.stack || err.message : 'Unknown error';
         return NextResponse.json(
             { error: message, request_id: requestId },
-            { status: 500 }
+            { status: 500 },
         );
     }
 }

@@ -15,6 +15,7 @@ import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
+import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { logSimulation } from '@/lib/logging/simulationLogger';
@@ -22,7 +23,9 @@ import {
     createSupabaseClinicalCaseStore,
     ensureCanonicalClinicalCase,
     finalizeClinicalCaseAfterInference,
+    finalizeClinicalCaseAfterSimulation,
 } from '@/lib/clinicalCases/clinicalCaseManager';
+import { logClinicalDatasetMutation } from '@/lib/dataset/clinicalDatasetDiagnostics';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { SimulateRequestSchema, formatZodErrors } from '@/lib/http/schemas';
@@ -31,27 +34,24 @@ import { safeJson } from '@/lib/http/safeJson';
 const AI_TIMEOUT_MS = 55_000;
 
 export async function POST(req: Request) {
-    // ── Guard ──
     const guard = await apiGuard(req, { maxRequests: 10, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    // ── Auth ──
     const session = await resolveSessionTenant();
     if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
         return NextResponse.json(
             { error: 'Unauthorized', request_id: requestId },
-            { status: 401 }
+            { status: 401 },
         );
     }
-    const tenantId = session?.tenantId || process.env.VETIOS_DEV_TENANT_ID || 'dev_tenant_001';
+    const { tenantId, userId } = resolveRequestActor(session);
 
-    // ── Parse + validate ──
     const parsed = await safeJson(req);
     if (!parsed.ok) {
         return NextResponse.json(
             { error: parsed.error, request_id: requestId },
-            { status: 400 }
+            { status: 400 },
         );
     }
 
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
     if (!result.success) {
         return NextResponse.json(
             { error: formatZodErrors(result.error), request_id: requestId },
-            { status: 400 }
+            { status: 400 },
         );
     }
     const body = result.data;
@@ -70,14 +70,10 @@ export async function POST(req: Request) {
             ...body.simulation.parameters,
         };
 
-        // ── FIX: Neutralize target bias ──
-        // Strip target_disease from inference payload so it does NOT influence the prediction.
-        // Preserve it separately for post-hoc evaluation only.
         const targetDisease = inputSignature.target_disease ?? inputSignature.target_rare_disease_profile ?? null;
         delete inputSignature.target_disease;
         delete inputSignature.target_rare_disease_profile;
 
-        // ── AI inference with timeout ──
         const inferenceResult = await Promise.race([
             runInferencePipeline({
                 model: body.inference.model,
@@ -85,7 +81,7 @@ export async function POST(req: Request) {
                 inputMode: 'json',
             }),
             new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS)
+                setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS),
             ),
         ]);
 
@@ -107,31 +103,34 @@ export async function POST(req: Request) {
             signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map((img: any) => ({
                 file_name: img.file_name,
                 mime_type: img.mime_type,
-                size_bytes: img.size_bytes
+                size_bytes: img.size_bytes,
             }));
         }
         if (Array.isArray(signatureForLog.lab_results)) {
             signatureForLog.lab_results = signatureForLog.lab_results.map((doc: any) => ({
                 file_name: doc.file_name,
                 mime_type: doc.mime_type,
-                size_bytes: doc.size_bytes
+                size_bytes: doc.size_bytes,
             }));
         }
 
-        // ── Log inference ──
         const caseStore = createSupabaseClinicalCaseStore(supabase);
         const observedAt = new Date().toISOString();
         const canonicalClinicalCase = await ensureCanonicalClinicalCase(caseStore, {
             tenantId,
+            userId,
             clinicId: null,
             requestedCaseId: null,
+            sourceModule: 'adversarial_simulation',
             inputSignature: signatureForLog,
             observedAt,
         });
         const triggeredInferenceId = await logInference(supabase, {
             id: inferenceEventId,
             tenant_id: tenantId,
+            user_id: userId,
             case_id: canonicalClinicalCase.id,
+            source_module: 'adversarial_simulation',
             model_name: body.inference.model,
             model_version: body.inference.model_version ?? body.inference.model,
             input_signature: signatureForLog,
@@ -141,17 +140,25 @@ export async function POST(req: Request) {
             compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
-        await finalizeClinicalCaseAfterInference(
-            caseStore,
-            canonicalClinicalCase,
-            triggeredInferenceId,
+        await finalizeClinicalCaseAfterInference(caseStore, canonicalClinicalCase, triggeredInferenceId, {
             observedAt,
-        );
-        revalidatePath('/dataset');
+            userId,
+            sourceModule: 'adversarial_simulation',
+            metadataPatch: {
+                latest_inference_confidence: inferenceResult.confidence_score,
+                latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
+                latest_inference_model_version: body.inference.model_version ?? body.inference.model,
+                latest_inference_source: 'adversarial_simulation',
+            },
+        });
 
-        // ── Log simulation ──
         const persistedSimulationEventId = await logSimulation(supabase, {
             id: simulationEventId,
+            tenant_id: tenantId,
+            user_id: userId,
+            clinic_id: null,
+            case_id: canonicalClinicalCase.id,
+            source_module: 'adversarial_simulation',
             simulation_type: body.simulation.type,
             simulation_parameters: body.simulation.parameters,
             triggered_inference_id: triggeredInferenceId,
@@ -161,8 +168,28 @@ export async function POST(req: Request) {
             },
             is_real_world: false,
         });
+        await finalizeClinicalCaseAfterSimulation(caseStore, canonicalClinicalCase, persistedSimulationEventId, {
+            observedAt,
+            userId,
+            sourceModule: 'adversarial_simulation',
+            metadataPatch: {
+                latest_simulation_type: body.simulation.type,
+                latest_simulation_timestamp: observedAt,
+                latest_simulation_target_disease: targetDisease,
+            },
+        });
+        logClinicalDatasetMutation({
+            source: 'api/simulate',
+            mutationType: 'simulation',
+            authenticatedUserId: userId,
+            resolvedTenantId: tenantId,
+            writeTenantId: tenantId,
+            caseId: canonicalClinicalCase.id,
+            inferenceEventId: triggeredInferenceId,
+            simulationEventId: persistedSimulationEventId,
+        });
+        revalidatePath('/dataset');
 
-        // ── Post-hoc target evaluation ──
         const parsedDiag = inferenceResult.output_payload.diagnosis as Record<string, unknown>;
         const differentialDiagnosis = parsedDiag && Array.isArray(parsedDiag.top_differentials)
             ? parsedDiag.top_differentials
@@ -172,7 +199,6 @@ export async function POST(req: Request) {
             ? topDiagnosis?.toLowerCase().includes(String(targetDisease).toLowerCase()) ?? false
             : null;
 
-        // Compute differential spread (how close top-3 are)
         const differentialSpread = (inferenceResult.output_payload.differential_spread as Record<string, unknown> | null) ?? (
             differentialDiagnosis.length >= 2
                 ? {
@@ -191,7 +217,6 @@ export async function POST(req: Request) {
             inference_output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             inference_latency_ms: latencyMs,
-            // Enhanced adversarial metrics
             contradiction_analysis: inferenceResult.contradiction_analysis,
             differential_diagnosis: differentialDiagnosis,
             differential_spread: differentialSpread,
@@ -210,14 +235,29 @@ export async function POST(req: Request) {
         if (err instanceof Error && err.message === 'AI_TIMEOUT') {
             return NextResponse.json(
                 { error: 'AI inference timed out', request_id: requestId },
-                { status: 504 }
+                { status: 504 },
             );
         }
 
         const message = err instanceof Error ? err.stack || err.message : 'Unknown error';
         return NextResponse.json(
             { error: message, request_id: requestId },
-            { status: 500 }
+            { status: 500 },
         );
     }
+}
+
+function extractEmergencyLevel(outputPayload: Record<string, unknown>): string | null {
+    const riskAssessment = outputPayload.risk_assessment;
+    if (
+        typeof riskAssessment !== 'object' ||
+        riskAssessment === null ||
+        Array.isArray(riskAssessment)
+    ) {
+        return null;
+    }
+
+    return typeof (riskAssessment as Record<string, unknown>).emergency_level === 'string'
+        ? (riskAssessment as Record<string, unknown>).emergency_level as string
+        : null;
 }

@@ -4,9 +4,8 @@
  * Inserts into edge_simulation_events using schema contracts.
  * Returns inserted row ID.
  *
- * ACTUAL DB COLUMNS (no tenant_id, no scenario, no inference_output):
- *   id, simulation_type, simulation_parameters, triggered_inference_id,
- *   failure_mode, stress_metrics, is_real_world, created_at
+ * Inserts into the tenant-scoped simulation event stream and links the
+ * simulation back to the canonical clinical case when available.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -14,6 +13,11 @@ import { EDGE_SIMULATION_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface SimulationLogInput {
     id?: string;
+    tenant_id: string;
+    user_id?: string | null;
+    clinic_id?: string | null;
+    case_id?: string | null;
+    source_module?: string | null;
     simulation_type: string;
     simulation_parameters: Record<string, unknown>;
     triggered_inference_id: string | null;
@@ -32,6 +36,11 @@ export async function logSimulation(
         .from(EDGE_SIMULATION_EVENTS.TABLE)
         .insert({
             [C.id]: input.id,
+            [C.tenant_id]: input.tenant_id,
+            [C.user_id]: input.user_id ?? null,
+            [C.clinic_id]: input.clinic_id ?? null,
+            [C.case_id]: input.case_id ?? null,
+            [C.source_module]: input.source_module ?? null,
             [C.simulation_type]: input.simulation_type,
             [C.simulation_parameters]: input.simulation_parameters,
             [C.triggered_inference_id]: input.triggered_inference_id,
