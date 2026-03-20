@@ -575,11 +575,25 @@ async function main() {
         sourceModule: 'inference_console',
         confidenceScore: null,
         modelVersion: 'risk_model_v2',
-        outputPayload: {},
+        outputPayload: {
+            diagnosis: {
+                primary_condition_class: 'Idiopathic / Unknown',
+                top_differentials: [],
+            },
+            risk_assessment: {
+                severity_score: '0.2',
+                emergency_level: 'LOW',
+            },
+            contradiction_score: '0.15',
+            contradiction_reasons: ['sparse clinical signal'],
+        },
     });
     assert.equal(lowSignalAfterInference.primary_condition_class, 'Undifferentiated');
     assert.equal(lowSignalAfterInference.top_diagnosis, 'Undifferentiated low-signal presentation');
     assert.equal(lowSignalAfterInference.emergency_level, 'LOW');
+    assert.equal(lowSignalAfterInference.severity_score, 0.2);
+    assert.equal(lowSignalAfterInference.contradiction_score, 0.15);
+    assert.deepEqual(lowSignalAfterInference.contradiction_flags, ['sparse clinical signal']);
 
     // 8. Historical backfill should repair empty legacy rows from inference history
     const legacyCase = await ensureCanonicalClinicalCase(store, {

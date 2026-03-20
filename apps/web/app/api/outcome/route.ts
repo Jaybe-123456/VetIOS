@@ -146,9 +146,7 @@ export async function POST(req: Request) {
             outcome_type: body.outcome.type,
             outcome_payload: body.outcome.payload,
             outcome_timestamp: body.outcome.timestamp,
-            label_type: typeof body.outcome.payload.label_type === 'string'
-                ? body.outcome.payload.label_type
-                : null,
+            label_type: deriveOutcomeLabelType(body.outcome.type, body.outcome.payload),
         });
 
         await finalizeClinicalCaseAfterOutcome(caseStore, canonicalClinicalCase, outcomeEventId, {
@@ -286,4 +284,34 @@ export async function POST(req: Request) {
             { status: 500 },
         );
     }
+}
+
+function deriveOutcomeLabelType(
+    outcomeType: string,
+    payload: Record<string, unknown>,
+): string {
+    const explicit = typeof payload.label_type === 'string'
+        ? payload.label_type.trim().toLowerCase()
+        : null;
+
+    if (explicit === 'lab_confirmed' || explicit === 'lab-confirmed' || payload.lab_confirmed === true) {
+        return 'lab_confirmed';
+    }
+
+    if (explicit === 'expert_reviewed' || explicit === 'expert-reviewed' || explicit === 'expert') {
+        return 'expert_reviewed';
+    }
+
+    if (
+        explicit === 'synthetic' ||
+        explicit === 'sandbox' ||
+        explicit === 'test' ||
+        outcomeType.toLowerCase().includes('synthetic') ||
+        outcomeType.toLowerCase().includes('sandbox') ||
+        outcomeType.toLowerCase().includes('test')
+    ) {
+        return 'synthetic';
+    }
+
+    return 'expert_reviewed';
 }
