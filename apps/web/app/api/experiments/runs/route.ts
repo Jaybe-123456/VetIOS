@@ -64,6 +64,8 @@ export async function POST(req: Request) {
         label_policy_version?: string | null;
         epochs_planned?: number | null;
         epochs_completed?: number | null;
+        metric_primary_name?: string | null;
+        metric_primary_value?: number | null;
         status?: ExperimentRunStatus;
         status_reason?: string | null;
         progress_percent?: number | null;
@@ -117,11 +119,13 @@ export async function POST(req: Request) {
         labelPolicyVersion: body.data.label_policy_version ?? null,
         epochsPlanned: body.data.epochs_planned ?? null,
         epochsCompleted: body.data.epochs_completed ?? null,
+        metricPrimaryName: body.data.metric_primary_name ?? null,
+        metricPrimaryValue: body.data.metric_primary_value ?? null,
         status: body.data.status ?? 'queued',
         statusReason: body.data.status_reason ?? null,
         progressPercent: body.data.progress_percent ?? 0,
         summaryOnly: body.data.summary_only ?? false,
-        createdBy: actor?.userId ?? null,
+        createdBy: body.data.created_by ?? actor?.userId ?? null,
         hyperparameters: body.data.hyperparameters ?? {},
         datasetLineage: body.data.dataset_lineage ?? {},
         configSnapshot: body.data.config_snapshot ?? {},

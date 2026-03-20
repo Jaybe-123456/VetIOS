@@ -32,6 +32,8 @@ export interface CreateExperimentRunInput {
     labelPolicyVersion?: string | null;
     epochsPlanned?: number | null;
     epochsCompleted?: number | null;
+    metricPrimaryName?: string | null;
+    metricPrimaryValue?: number | null;
     status?: ExperimentRunStatus;
     statusReason?: string | null;
     progressPercent?: number | null;
@@ -116,8 +118,8 @@ export async function createExperimentRun(
         label_policy_version: input.labelPolicyVersion ?? null,
         epochs_planned: input.epochsPlanned ?? null,
         epochs_completed: input.epochsCompleted ?? 0,
-        metric_primary_name: null,
-        metric_primary_value: null,
+        metric_primary_name: input.metricPrimaryName ?? null,
+        metric_primary_value: input.metricPrimaryValue ?? null,
         status: input.status ?? 'queued',
         status_reason: input.statusReason ?? null,
         progress_percent: clampPercent(input.progressPercent ?? 0),
@@ -328,7 +330,7 @@ export async function getExperimentDashboardSnapshot(
     });
     const selectedRunId = options.selectedRunId && runs.some((run) => run.run_id === options.selectedRunId)
         ? options.selectedRunId
-        : runs[0]?.run_id ?? null;
+        : pickDefaultSelectedRunId(runs);
     const [selectedRunDetail, comparison] = await Promise.all([
         selectedRunId ? getExperimentRunDetail(store, tenantId, selectedRunId) : Promise.resolve(null),
         options.compareRunIds?.length ? getExperimentComparison(store, tenantId, options.compareRunIds) : Promise.resolve(null),
@@ -612,6 +614,28 @@ function buildDashboardSummary(runs: ExperimentRunRecord[]): ExperimentDashboard
         failed_run_ids: failedRuns.map((run) => run.run_id),
         active_run_ids: activeRuns.map((run) => run.run_id),
     };
+}
+
+function pickDefaultSelectedRunId(runs: ExperimentRunRecord[]): string | null {
+    if (runs.length === 0) return null;
+
+    const bootstrapSmokeRun = runs.find((run) => run.run_id === 'run_diag_smoke_v1');
+    if (bootstrapSmokeRun) {
+        return bootstrapSmokeRun.run_id;
+    }
+
+    const activeRun = runs
+        .filter((run) => isActiveStatus(run.status))
+        .sort((left, right) => {
+            const leftKey = left.last_heartbeat_at ?? left.updated_at;
+            const rightKey = right.last_heartbeat_at ?? right.updated_at;
+            return rightKey.localeCompare(leftKey);
+        })[0];
+    if (activeRun) {
+        return activeRun.run_id;
+    }
+
+    return runs[0]?.run_id ?? null;
 }
 
 function filterAuditEventsForRun(
