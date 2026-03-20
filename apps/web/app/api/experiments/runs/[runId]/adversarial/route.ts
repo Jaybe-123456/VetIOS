@@ -44,6 +44,7 @@ export async function POST(
         contradiction_robustness?: number | null;
         critical_case_recall?: number | null;
         false_reassurance_rate?: number | null;
+        dangerous_false_reassurance_rate?: number | null;
         adversarial_pass?: boolean | null;
     }>(req);
     if (!body.ok) {
@@ -66,6 +67,7 @@ export async function POST(
         contradictionRobustness: body.data.contradiction_robustness ?? null,
         criticalCaseRecall: body.data.critical_case_recall ?? null,
         falseReassuranceRate: body.data.false_reassurance_rate ?? null,
+        dangerousFalseReassuranceRate: body.data.dangerous_false_reassurance_rate ?? null,
         adversarialPass: body.data.adversarial_pass ?? null,
     }, actor?.userId ?? null);
 

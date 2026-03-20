@@ -4,6 +4,8 @@ export type ExperimentRunStatus =
     | 'training'
     | 'validating'
     | 'checkpointing'
+    | 'stalled'
+    | 'interrupted'
     | 'completed'
     | 'failed'
     | 'aborted'
@@ -26,6 +28,9 @@ export type ExperimentModality =
 export type ExperimentRegistryRole = 'champion' | 'challenger' | 'candidate' | 'archived' | 'experimental';
 export type ModelRegistryStatus = 'candidate' | 'staging' | 'production' | 'archived';
 export type DeploymentDecisionStatus = 'approved' | 'rejected' | 'pending';
+export type ExperimentHeartbeatFreshness = 'healthy' | 'stale' | 'interrupted';
+export type ExperimentRegistryLinkState = 'linked' | 'pending' | 'unlinked';
+export type ExperimentSafetyCoverage = 'none' | 'partial' | 'full';
 
 export interface ExperimentRunRecord {
     id: string;
@@ -174,6 +179,11 @@ export interface CalibrationReliabilityBin {
     count: number;
 }
 
+export interface CalibrationConfidenceHistogramBin {
+    confidence: number;
+    count: number;
+}
+
 export interface CalibrationMetricRecord {
     id: string;
     tenant_id: string;
@@ -181,6 +191,7 @@ export interface CalibrationMetricRecord {
     ece: number | null;
     brier_score: number | null;
     reliability_bins: CalibrationReliabilityBin[];
+    confidence_histogram: CalibrationConfidenceHistogramBin[];
     calibration_pass: boolean | null;
     calibration_notes: string | null;
     created_at: string;
@@ -195,6 +206,7 @@ export interface AdversarialMetricRecord {
     contradiction_robustness: number | null;
     critical_case_recall: number | null;
     false_reassurance_rate: number | null;
+    dangerous_false_reassurance_rate: number | null;
     adversarial_pass: boolean | null;
     created_at: string;
     updated_at: string;
@@ -251,8 +263,26 @@ export interface ExperimentRunDetail {
     audit_history: ExperimentAuditEventRecord[];
     missing_telemetry_fields: string[];
     latest_metric: ExperimentMetricRecord | null;
-    heartbeat_freshness: 'fresh' | 'stale' | 'offline';
+    heartbeat_freshness: ExperimentHeartbeatFreshness;
+    registry_link_state: ExperimentRegistryLinkState;
+    registry_role: ExperimentRegistryRole | null;
+    safety_coverage: ExperimentSafetyCoverage;
+    safety_metrics_complete: boolean;
+    artifact_uris: {
+        log_uri: string | null;
+        checkpoint_uri: string | null;
+        best_checkpoint_uri: string | null;
+        calibration_report_uri: string | null;
+        adversarial_report_uri: string | null;
+        benchmark_report_uri: string | null;
+    };
+    promotion_gating: {
+        can_promote: boolean;
+        missing_requirements: string[];
+        tooltip: string;
+    };
     failure_guidance: {
+        root_cause_classification: 'high_lr' | 'no_clipping' | 'data_instability' | 'gradient_explosion' | 'unknown';
         suggested_cause: string;
         remediation_suggestions: string[];
     } | null;

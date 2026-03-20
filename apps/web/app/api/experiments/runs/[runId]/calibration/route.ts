@@ -43,6 +43,7 @@ export async function POST(
         ece?: number | null;
         brier_score?: number | null;
         reliability_bins?: Array<{ confidence: number; accuracy: number; count?: number }>;
+        confidence_histogram?: Array<{ confidence: number; count?: number }>;
         calibration_pass?: boolean | null;
         calibration_notes?: string | null;
     }>(req);
@@ -65,6 +66,7 @@ export async function POST(
         ece: body.data.ece ?? null,
         brierScore: body.data.brier_score ?? null,
         reliabilityBins: body.data.reliability_bins,
+        confidenceHistogram: body.data.confidence_histogram,
         calibrationPass: body.data.calibration_pass ?? null,
         calibrationNotes: body.data.calibration_notes ?? null,
     }, actor?.userId ?? null);

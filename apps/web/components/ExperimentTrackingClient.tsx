@@ -102,12 +102,12 @@ export function ExperimentTrackingClient({
             <div className="mb-8 flex flex-col gap-4">
                 <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
                     <SummaryCard label="Total Runs" value={snapshot.summary.total_runs} />
-                    <SummaryCard label="Active Runs" value={snapshot.summary.active_runs} tone={snapshot.summary.active_runs > 0 ? 'accent' : 'default'} />
+                    <SummaryCard label="Active Runs" value={snapshot.summary.active_runs} tone={snapshot.summary.active_runs > 0 ? 'accent' : 'default'} tooltip="Runs counted as active must be in a live execution state and have a healthy heartbeat." />
                     <SummaryCard label="Failed Runs" value={snapshot.summary.failed_runs} tone={snapshot.summary.failed_runs > 0 ? 'warn' : 'default'} />
-                    <SummaryCard label="Summary Only" value={snapshot.summary.summary_only_runs} />
-                    <SummaryCard label="Telemetry Coverage" value={`${snapshot.summary.telemetry_coverage_pct}%`} />
-                    <SummaryCard label="Registry Coverage" value={`${snapshot.summary.registry_link_coverage_pct}%`} />
-                    <SummaryCard label="Safety Coverage" value={`${snapshot.summary.safety_metric_coverage_pct}%`} />
+                    <SummaryCard label="Summary Only" value={snapshot.summary.summary_only_runs} tooltip="Historical runs without full telemetry remain visible, but they do not count toward telemetry completeness." />
+                    <SummaryCard label="Telemetry Coverage" value={`${snapshot.summary.telemetry_coverage_pct}%`} tooltip="Percentage of runs with complete stored metric streams: epoch, step, train/val loss, val accuracy, learning rate, gradient norm, and heartbeat." />
+                    <SummaryCard label="Registry Coverage" value={`${snapshot.summary.registry_link_coverage_pct}%`} tooltip="Percentage of runs linked to a registry candidate or champion record." />
+                    <SummaryCard label="Safety Coverage" value={`${snapshot.summary.safety_metric_coverage_pct}%`} tooltip="Percentage of runs with full clinical safety metrics, not just basic macro F1 and critical recall." />
                 </div>
 
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -197,7 +197,7 @@ export function ExperimentTrackingClient({
                                                 <td className="p-3">{renderEpochs(run)}</td>
                                                 <td className="p-3">{renderPrimaryMetric(run)}</td>
                                                 <td className="p-3">{renderStatusBadge(run)}</td>
-                                                <td className="p-3 text-xs text-muted">{formatHeartbeat(run.last_heartbeat_at)}</td>
+                                                <td className="p-3 text-xs">{renderHeartbeatCell(run)}</td>
                                                 <td className="p-3 text-xs">{renderRegistryContext(run)}</td>
                                                 <td className="p-3 text-xs">{renderEligibility(run)}</td>
                                             </tr>
@@ -261,6 +261,8 @@ function RunDetail({
     const [registryError, setRegistryError] = useState<string | null>(null);
     const [isApplyingAction, startRegistryActionTransition] = useTransition();
     const emptyMetricMessage = getEmptyMetricStateMessage(detail.run, detail.metrics);
+    const promotionDisabled = isApplyingAction || !detail.promotion_gating.can_promote;
+    const promotionTooltip = detail.promotion_gating.tooltip;
     const gradientSeries = useMemo(() => [{
         runId: detail.run.run_id,
         label: detail.run.run_id,
@@ -287,6 +289,7 @@ function RunDetail({
                         <DetailStat label="Failure Epoch" value={detail.failure.failure_epoch != null ? String(detail.failure.failure_epoch) : 'n/a'} />
                         <DetailStat label="Failure Step" value={detail.failure.failure_step != null ? String(detail.failure.failure_step) : 'n/a'} />
                         <DetailStat label="NaN Detected" value={detail.failure.nan_detected ? 'Yes' : 'No'} />
+                        <DetailStat label="Root Cause Class" value={detail.failure_guidance?.root_cause_classification ?? 'unknown'} />
                         <DetailStat label="Last Train Loss" value={formatMetricValue(detail.failure.last_train_loss)} />
                         <DetailStat label="Last Val Loss" value={formatMetricValue(detail.failure.last_val_loss)} />
                         <DetailStat label="Last LR" value={formatMetricValue(detail.failure.last_learning_rate, 'learning_rate')} />
@@ -341,17 +344,19 @@ function RunDetail({
                 <ConsoleInset title="Governance Decision">
                     <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                         <DetailStat label="Registry ID" value={detail.model_registry?.registry_id ?? detail.run.registry_id ?? 'Pending candidate'} />
+                        <DetailStat label="Registry Link" value={detail.registry_link_state.toUpperCase()} />
                         <DetailStat label="Registry Status" value={detail.model_registry?.status ?? 'candidate_pending'} />
-                        <DetailStat label="Registry Role" value={detail.model_registry?.role ?? detail.registry_link?.champion_or_challenger ?? 'Unlinked'} />
-                        <DetailStat label="Calibration Gate" value={detail.calibration_metrics?.calibration_pass === true ? 'PASS' : detail.calibration_metrics ? 'FAIL' : 'Pending'} />
-                        <DetailStat label="Adversarial Gate" value={detail.adversarial_metrics?.adversarial_pass === true ? 'PASS' : detail.adversarial_metrics ? 'FAIL' : 'Pending'} />
+                        <DetailStat label="Registry Role" value={detail.registry_role ?? 'Unlinked'} />
+                        <DetailStat label="Calibration Gate" value={renderGateStatus(detail.calibration_metrics?.calibration_pass)} />
+                        <DetailStat label="Adversarial Gate" value={renderGateStatus(detail.adversarial_metrics?.adversarial_pass)} />
+                        <DetailStat label="Safety Coverage" value={detail.safety_coverage.toUpperCase()} />
                         <DetailStat label="Deployment Decision" value={detail.deployment_decision ? detail.deployment_decision.decision.toUpperCase() : 'Pending'} />
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
-                        <TerminalButton variant="secondary" disabled={isApplyingAction} onClick={() => handleRegistryAction('promote_to_staging')}>
+                        <TerminalButton variant="secondary" disabled={promotionDisabled} title={promotionTooltip} onClick={() => handleRegistryAction('promote_to_staging')}>
                             Promote Staging
                         </TerminalButton>
-                        <TerminalButton variant="secondary" disabled={isApplyingAction || detail.deployment_decision?.decision !== 'approved'} onClick={() => handleRegistryAction('promote_to_production')}>
+                        <TerminalButton variant="secondary" disabled={promotionDisabled || detail.deployment_decision?.decision !== 'approved'} title={detail.deployment_decision?.decision === 'approved' ? promotionTooltip : detail.deployment_decision?.reason ?? promotionTooltip} onClick={() => handleRegistryAction('promote_to_production')}>
                             Promote Production
                         </TerminalButton>
                         <TerminalButton variant="secondary" disabled={isApplyingAction} onClick={() => handleRegistryAction('archive')}>
@@ -363,6 +368,11 @@ function RunDetail({
                     </div>
                     {registryMessage ? <div className="mt-3 font-mono text-xs text-accent">{registryMessage}</div> : null}
                     {registryError ? <div className="mt-3 font-mono text-xs text-danger">{registryError}</div> : null}
+                    {!detail.promotion_gating.can_promote ? (
+                        <div className="mt-3 border border-grid bg-black/20 p-3 font-mono text-xs text-muted">
+                            {detail.promotion_gating.tooltip}
+                        </div>
+                    ) : null}
                     <div className="mt-4 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
                         {detail.deployment_decision?.reason ?? 'Deployment decision will populate once calibration, adversarial, and clinical safety gates have all been evaluated.'}
                     </div>
@@ -398,7 +408,12 @@ function RunDetail({
                         <DetailStat label="Epochs" value={renderEpochs(detail.run)} />
                         <DetailStat label="Primary Metric" value={renderPrimaryMetric(detail.run)} />
                         <DetailStat label="Heartbeat Freshness" value={detail.heartbeat_freshness.toUpperCase()} />
-                        <DetailStat label="Artifact Path" value={detail.model_registry?.artifact_path ?? 'Not recorded'} />
+                        <DetailStat label="Best Checkpoint URI" value={detail.artifact_uris.best_checkpoint_uri ?? 'Not recorded'} />
+                        <DetailStat label="Checkpoint URI" value={detail.artifact_uris.checkpoint_uri ?? 'Not recorded'} />
+                        <DetailStat label="Log URI" value={detail.artifact_uris.log_uri ?? 'Not recorded'} />
+                        <DetailStat label="Calibration Report URI" value={detail.artifact_uris.calibration_report_uri ?? 'Not recorded'} />
+                        <DetailStat label="Adversarial Report URI" value={detail.artifact_uris.adversarial_report_uri ?? 'Not recorded'} />
+                        <DetailStat label="Benchmark Report URI" value={detail.artifact_uris.benchmark_report_uri ?? 'Not recorded'} />
                         <DetailStat label="Missing Telemetry" value={detail.missing_telemetry_fields.length > 0 ? detail.missing_telemetry_fields.join(', ') : 'None'} />
                     </div>
                 </div>
@@ -469,13 +484,14 @@ function CalibrationPanel({ detail }: { detail: ExperimentRunDetail }) {
                     <div className="grid gap-3 md:grid-cols-2">
                         <DetailStat label="ECE" value={formatMetricValue(calibration.ece)} />
                         <DetailStat label="Brier Score" value={formatMetricValue(calibration.brier_score)} />
-                        <DetailStat label="Calibration Gate" value={calibration.calibration_pass ? 'PASS' : 'FAIL'} />
+                        <DetailStat label="Calibration Gate" value={renderGateStatus(calibration.calibration_pass)} />
                         <DetailStat label="Notes" value={calibration.calibration_notes ?? 'No notes recorded'} />
                     </div>
                     <ReliabilityCurve bins={calibration.reliability_bins} />
+                    <ConfidenceHistogram bins={calibration.confidence_histogram} />
                 </div>
             ) : (
-                <EmptyPanel message="Calibration metrics have not been computed for this run yet." compact />
+                <EmptyPanel message={isGovernanceReviewState(detail.run.status) ? 'Calibration evaluation data is missing for this completed run and should be backfilled before promotion review.' : 'Calibration metrics have not been computed for this run yet.'} compact />
             )}
         </ConsoleInset>
     );
@@ -490,12 +506,12 @@ function AdversarialPanel({ detail }: { detail: ExperimentRunDetail }) {
                     <DetailStat label="Degradation Score" value={formatMetricValue(adversarial.degradation_score)} />
                     <DetailStat label="Contradiction Robustness" value={formatMetricValue(adversarial.contradiction_robustness)} />
                     <DetailStat label="Critical Recall" value={formatMetricValue(adversarial.critical_case_recall)} />
-                    <DetailStat label="False Reassurance" value={formatMetricValue(adversarial.false_reassurance_rate)} />
-                    <DetailStat label="Adversarial Gate" value={adversarial.adversarial_pass ? 'PASS' : 'FAIL'} />
+                    <DetailStat label="Dangerous False Reassurance" value={formatMetricValue(adversarial.dangerous_false_reassurance_rate ?? adversarial.false_reassurance_rate)} />
+                    <DetailStat label="Adversarial Gate" value={renderGateStatus(adversarial.adversarial_pass)} />
                     <DetailStat label="Gate Summary" value={adversarial.adversarial_pass ? 'Stable under contradiction stress.' : 'Blocked by degradation or safety regression.'} />
                 </div>
             ) : (
-                <EmptyPanel message="Adversarial benchmark metrics have not been stored for this run yet." compact />
+                <EmptyPanel message={isGovernanceReviewState(detail.run.status) ? 'Adversarial evaluation data is missing for this completed run and should be backfilled before promotion review.' : 'Adversarial benchmark metrics have not been stored for this run yet.'} compact />
             )}
         </ConsoleInset>
     );
@@ -506,6 +522,7 @@ function SafetyPanel({ detail }: { detail: ExperimentRunDetail }) {
     return (
         <ConsoleInset title="Clinical Safety">
             <div className="grid gap-3 md:grid-cols-2">
+                <DetailStat label="Coverage" value={detail.safety_coverage.toUpperCase()} />
                 <DetailStat label="Macro F1" value={formatMetricValue(latest?.macro_f1 ?? readNumber(detail.run.safety_metrics, 'macro_f1'))} />
                 <DetailStat label="Critical Recall" value={formatMetricValue(latest?.recall_critical ?? readNumber(detail.run.safety_metrics, 'recall_critical'))} />
                 <DetailStat label="FN Critical Rate" value={formatMetricValue(latest?.false_negative_critical_rate ?? readNumber(detail.run.safety_metrics, 'false_negative_critical_rate'))} />
@@ -636,7 +653,7 @@ function ComparisonPanel({
                                 <div key={runId} className="flex items-center justify-between gap-3 border-b border-grid/20 pb-2">
                                     <span>{runId}</span>
                                     <span className="text-muted">
-                                        cal={comparison.calibration[runId]?.calibration_pass === true ? 'PASS' : comparison.calibration[runId] ? 'FAIL' : 'PENDING'} / adv={comparison.adversarial[runId]?.adversarial_pass === true ? 'PASS' : comparison.adversarial[runId] ? 'FAIL' : 'PENDING'}
+                                        cal={renderGateStatus(comparison.calibration[runId]?.calibration_pass)} / adv={renderGateStatus(comparison.adversarial[runId]?.adversarial_pass)}
                                     </span>
                                 </div>
                             ))}
@@ -717,6 +734,34 @@ function ReliabilityCurve({
                         <div className="h-2 overflow-hidden border border-grid bg-black/20">
                             <div className="h-full bg-accent/80" style={{ width: `${Math.max(2, bin.accuracy * 100)}%` }} />
                         </div>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+function ConfidenceHistogram({
+    bins,
+}: {
+    bins: Array<{ confidence: number; count: number }>;
+}) {
+    if (bins.length === 0) {
+        return <EmptyPanel message="No confidence histogram source data is stored for this run yet." compact />;
+    }
+
+    const maxCount = Math.max(...bins.map((bin) => bin.count), 1);
+    return (
+        <div className="space-y-2">
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Confidence Histogram</div>
+            {bins.map((bin, index) => (
+                <div key={`${bin.confidence}:${index}`} className="space-y-1 font-mono text-xs">
+                    <div className="flex items-center justify-between gap-3 text-muted">
+                        <span>{bin.confidence.toFixed(2)}</span>
+                        <span>n={bin.count}</span>
+                    </div>
+                    <div className="h-2 overflow-hidden border border-grid bg-black/20">
+                        <div className="h-full bg-accent/80" style={{ width: `${Math.max(3, (bin.count / maxCount) * 100)}%` }} />
                     </div>
                 </div>
             ))}
@@ -867,25 +912,44 @@ function renderPrimaryMetric(run: ExperimentRunRecord) {
     return `${run.metric_primary_name}: ${formatMetricValue(run.metric_primary_value, run.metric_primary_name)}`;
 }
 
+function renderHeartbeatCell(run: ExperimentRunRecord) {
+    const freshness = classifyHeartbeat(run);
+    return (
+        <div className="flex flex-col gap-1">
+            <span>{freshness.toUpperCase()}</span>
+            <span className="text-muted">{formatHeartbeat(run.last_heartbeat_at)}</span>
+        </div>
+    );
+}
+
 function renderRegistryContext(run: ExperimentRunRecord) {
-    const role = String(run.registry_context.champion_or_challenger ?? run.registry_context.registry_role ?? '').trim();
-    const status = String(run.registry_context.promotion_status ?? run.registry_context.registry_status ?? '').trim();
-    if (!role && !status) return run.registry_id ? 'candidate' : 'Unlinked';
-    return [role, status].filter(Boolean).join(' / ');
+    const linkState = String(run.registry_context.registry_link_state ?? (run.registry_id ? 'linked' : isGovernanceReviewState(run.status) ? 'pending' : 'unlinked')).trim();
+    const role = String(run.registry_context.registry_role ?? run.registry_context.champion_or_challenger ?? '').trim();
+    return [linkState, role].filter(Boolean).join(' / ');
 }
 
 function renderEligibility(run: ExperimentRunRecord) {
     return String(run.registry_context.deployment_eligibility ?? 'Pending review');
 }
 
+function renderGateStatus(value: boolean | null | undefined) {
+    if (value === true) return 'PASS';
+    if (value === false) return 'FAIL';
+    return 'PENDING';
+}
+
 function renderStatusBadge(run: ExperimentRunRecord) {
     const tone = run.status === 'failed'
         ? 'text-danger border-danger/30 bg-danger/10'
-        : run.status === 'promoted'
-            ? 'text-accent border-accent/30 bg-accent/10'
-            : isActiveRun(run)
-                ? 'text-accent border-accent/30 bg-accent/10'
-                : 'text-muted border-grid bg-black/20';
+        : run.status === 'interrupted'
+            ? 'text-danger border-danger/30 bg-danger/10'
+            : run.status === 'stalled'
+                ? 'text-yellow-300 border-yellow-500/30 bg-yellow-500/10'
+                : run.status === 'promoted'
+                    ? 'text-accent border-accent/30 bg-accent/10'
+                    : isActiveRun(run)
+                        ? 'text-accent border-accent/30 bg-accent/10'
+                        : 'text-muted border-grid bg-black/20';
 
     return (
         <span className={`inline-flex items-center gap-2 border px-2 py-1 text-[10px] uppercase tracking-[0.15em] ${tone}`}>
@@ -901,6 +965,23 @@ function isActiveRun(run: ExperimentRunRecord) {
         run.status === 'training' ||
         run.status === 'validating' ||
         run.status === 'checkpointing';
+}
+
+function isGovernanceReviewState(status: ExperimentRunRecord['status']) {
+    return status === 'completed' ||
+        status === 'failed' ||
+        status === 'aborted' ||
+        status === 'promoted' ||
+        status === 'rolled_back';
+}
+
+function classifyHeartbeat(run: ExperimentRunRecord) {
+    if (!run.last_heartbeat_at) return 'interrupted';
+    const ageMs = Date.now() - new Date(run.last_heartbeat_at).getTime();
+    if (!Number.isFinite(ageMs)) return 'interrupted';
+    if (ageMs <= 10 * 60 * 1000) return 'healthy';
+    if (ageMs <= 30 * 60 * 1000) return 'stale';
+    return 'interrupted';
 }
 
 function formatHeartbeat(value: string | null) {
@@ -981,10 +1062,20 @@ function uniqueValues(values: string[]) {
     return Array.from(new Set(values.filter(Boolean))).sort();
 }
 
-function SummaryCard({ label, value, tone = 'default' }: { label: string; value: number | string; tone?: 'default' | 'warn' | 'accent' }) {
+function SummaryCard({
+    label,
+    value,
+    tone = 'default',
+    tooltip,
+}: {
+    label: string;
+    value: number | string;
+    tone?: 'default' | 'warn' | 'accent';
+    tooltip?: string;
+}) {
     const toneClass = tone === 'warn' ? 'text-danger' : tone === 'accent' ? 'text-accent' : 'text-foreground';
     return (
-        <div className="border border-grid bg-black/20 p-3 font-mono">
+        <div className="border border-grid bg-black/20 p-3 font-mono" title={tooltip}>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
             <div className={`mt-2 text-2xl ${toneClass}`}>{value}</div>
         </div>
@@ -1031,12 +1122,12 @@ function FreshnessBadge({
 }: {
     freshness: ExperimentRunDetail['heartbeat_freshness'];
 }) {
-    const tone = freshness === 'fresh'
+    const tone = freshness === 'healthy'
         ? 'border-accent/30 bg-accent/10 text-accent'
         : freshness === 'stale'
             ? 'border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
             : 'border-danger/30 bg-danger/10 text-danger';
-    const Icon = freshness === 'fresh' ? CheckCircle2 : freshness === 'stale' ? ShieldAlert : AlertTriangle;
+    const Icon = freshness === 'healthy' ? CheckCircle2 : freshness === 'stale' ? ShieldAlert : AlertTriangle;
 
     return (
         <span className={`inline-flex items-center gap-2 border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.15em] ${tone}`}>
