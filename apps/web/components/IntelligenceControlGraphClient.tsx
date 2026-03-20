@@ -113,7 +113,7 @@ export default function IntelligenceControlGraphClient() {
         if (mode === 'replay' && replayMarkers.length === 0) {
             void loadHistoricalSnapshot('24h', undefined, true);
         }
-    }, [mode]);
+    }, [mode, replayMarkers.length]);
 
     useEffect(() => {
         if (mode !== 'replay') return;
