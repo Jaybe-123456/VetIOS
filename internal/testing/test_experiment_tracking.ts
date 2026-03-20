@@ -9,6 +9,7 @@ import {
     getEmptyMetricStateMessage,
     getExperimentComparison,
     getExperimentDashboardSnapshot,
+    getModelRegistryControlPlaneSnapshot,
     getExperimentRunDetail,
     logExperimentMetrics,
     recordExperimentFailure,
@@ -28,7 +29,11 @@ import type {
     ExperimentRegistryLinkRecord,
     ExperimentRunRecord,
     ExperimentTrackingStore,
+    ListExperimentRunsOptions,
     ModelRegistryRecord,
+    PromotionRequirementsRecord,
+    RegistryAuditLogRecord,
+    RegistryRoutingPointerRecord,
     SubgroupMetricRecord,
 } from '../../apps/web/lib/experiments/types.ts';
 
@@ -45,13 +50,16 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
     deploymentDecisions: DeploymentDecisionRecord[] = [];
     subgroupMetrics: SubgroupMetricRecord[] = [];
     auditEvents: ExperimentAuditEventRecord[] = [];
+    promotionRequirements: PromotionRequirementsRecord[] = [];
+    registryAuditLog: RegistryAuditLogRecord[] = [];
+    registryRoutingPointers: RegistryRoutingPointerRecord[] = [];
     registryEntries: Array<Awaited<ReturnType<ExperimentTrackingStore['listModelRegistryEntries']>>[number]> = [];
     datasetVersions: Array<Awaited<ReturnType<ExperimentTrackingStore['listLearningDatasetVersions']>>[number]> = [];
     learningBenchmarks: Array<Awaited<ReturnType<ExperimentTrackingStore['listLearningBenchmarkReports']>>[number]> = [];
     learningCalibrations: Array<Awaited<ReturnType<ExperimentTrackingStore['listLearningCalibrationReports']>>[number]> = [];
     learningAudits: Array<Awaited<ReturnType<ExperimentTrackingStore['listLearningAuditEvents']>>[number]> = [];
 
-    async listExperimentRuns(tenantId: string, options = {}) {
+    async listExperimentRuns(tenantId: string, options: ListExperimentRunsOptions = {}) {
         let rows = this.runs.filter((run) => run.tenant_id === tenantId);
         if (options.includeSummaryOnly === false) {
             rows = rows.filter((run) => !run.summary_only);
@@ -200,6 +208,13 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
         return record ? clone(record) : null;
     }
 
+    async listModelRegistry(tenantId: string) {
+        return this.modelRegistry
+            .filter((row) => row.tenant_id === tenantId)
+            .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
+            .map(clone);
+    }
+
     async upsertModelRegistry(record: Omit<ModelRegistryRecord, 'created_at' | 'updated_at'>) {
         const existing = this.modelRegistry.find((row) => row.registry_id === record.registry_id);
         if (existing) {
@@ -213,6 +228,38 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
             updated_at: now,
         };
         this.modelRegistry.push(created);
+        return clone(created);
+    }
+
+    async getPromotionRequirements(tenantId: string, runId: string) {
+        const record = this.promotionRequirements.find((row) => row.tenant_id === tenantId && row.run_id === runId);
+        return record ? clone(record) : null;
+    }
+
+    async listPromotionRequirements(tenantId: string) {
+        return this.promotionRequirements
+            .filter((row) => row.tenant_id === tenantId)
+            .sort((left, right) => right.updated_at.localeCompare(left.updated_at))
+            .map(clone);
+    }
+
+    async upsertPromotionRequirements(record: Omit<PromotionRequirementsRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }) {
+        const existing = this.promotionRequirements.find((row) =>
+            row.tenant_id === record.tenant_id &&
+            row.run_id === record.run_id,
+        );
+        if (existing) {
+            Object.assign(existing, record, { updated_at: new Date().toISOString() });
+            return clone(existing);
+        }
+        const now = new Date().toISOString();
+        const created: PromotionRequirementsRecord = {
+            ...record,
+            id: record.id ?? randomUUID(),
+            created_at: now,
+            updated_at: now,
+        };
+        this.promotionRequirements.push(created);
         return clone(created);
     }
 
@@ -331,6 +378,358 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
         return clone(created);
     }
 
+    async listRegistryAuditLog(tenantId: string, limit = 200) {
+        return this.registryAuditLog
+            .filter((row) => row.tenant_id === tenantId)
+            .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+            .slice(0, limit)
+            .map(clone);
+    }
+
+    async createRegistryAuditLog(record: Omit<RegistryAuditLogRecord, 'created_at'>) {
+        const existing = this.registryAuditLog.find((row) => row.event_id === record.event_id);
+        if (existing) {
+            Object.assign(existing, record);
+            return clone(existing);
+        }
+        const created: RegistryAuditLogRecord = {
+            ...record,
+            created_at: new Date().toISOString(),
+        };
+        this.registryAuditLog.push(created);
+        return clone(created);
+    }
+
+    async listRegistryRoutingPointers(tenantId: string) {
+        return this.registryRoutingPointers
+            .filter((row) => row.tenant_id === tenantId)
+            .sort((left, right) => left.model_family.localeCompare(right.model_family))
+            .map(clone);
+    }
+
+    async upsertRegistryRoutingPointer(record: Omit<RegistryRoutingPointerRecord, 'id' | 'updated_at'> & { id?: string }) {
+        const existing = this.registryRoutingPointers.find((row) =>
+            row.tenant_id === record.tenant_id &&
+            row.model_family === record.model_family,
+        );
+        if (existing) {
+            Object.assign(existing, record, { updated_at: new Date().toISOString() });
+            return clone(existing);
+        }
+        const created: RegistryRoutingPointerRecord = {
+            ...record,
+            id: record.id ?? randomUUID(),
+            updated_at: new Date().toISOString(),
+        };
+        this.registryRoutingPointers.push(created);
+        return clone(created);
+    }
+
+    async promoteRegistryToProduction(input: {
+        tenantId: string;
+        runId: string;
+        actor: string | null;
+    }) {
+        const now = new Date().toISOString();
+        const target = this.modelRegistry.find((row) => row.tenant_id === input.tenantId && row.run_id === input.runId);
+        if (!target) {
+            throw new Error(`Model registry entry not found for run ${input.runId}.`);
+        }
+
+        const requirements = this.promotionRequirements.find((row) => row.tenant_id === input.tenantId && row.run_id === input.runId);
+        const promotionAllowed = requirements?.calibration_pass === true &&
+            requirements.adversarial_pass === true &&
+            requirements.safety_pass === true &&
+            requirements.benchmark_pass === true &&
+            requirements.manual_approval === true;
+        if (!promotionAllowed) {
+            throw new Error(`Promotion requirements are not satisfied for registry ${target.registry_id}.`);
+        }
+
+        const previousChampion = this.modelRegistry.find((row) =>
+            row.tenant_id === input.tenantId &&
+            row.model_family === target.model_family &&
+            row.lifecycle_status === 'production' &&
+            row.registry_role === 'champion' &&
+            row.registry_id !== target.registry_id,
+        );
+
+        if (previousChampion) {
+            Object.assign(previousChampion, {
+                lifecycle_status: 'archived',
+                registry_role: 'rollback_target',
+                status: 'archived',
+                role: 'rollback_target',
+                archived_at: now,
+                rollback_metadata: null,
+                updated_at: now,
+            } satisfies Partial<ModelRegistryRecord>);
+
+            const previousRun = this.runs.find((row) => row.tenant_id === input.tenantId && row.run_id === previousChampion.run_id);
+            if (previousRun) {
+                previousRun.registry_context = {
+                    ...previousRun.registry_context,
+                    registry_id: previousChampion.registry_id,
+                    registry_link_state: 'linked',
+                    registry_status: 'archived',
+                    registry_role: 'rollback_target',
+                    champion_or_challenger: 'rollback_target',
+                    promotion_status: 'archived',
+                    rollback_target: null,
+                    model_family: previousChampion.model_family,
+                };
+                previousRun.updated_at = now;
+            }
+
+            const previousLink = this.registryLinks.find((row) => row.tenant_id === input.tenantId && row.run_id === previousChampion.run_id);
+            if (previousLink) {
+                Object.assign(previousLink, {
+                    registry_candidate_id: previousChampion.registry_id,
+                    champion_or_challenger: 'rollback_target',
+                    promotion_status: 'archived',
+                    deployment_eligibility: 'blocked',
+                    updated_at: now,
+                } satisfies Partial<ExperimentRegistryLinkRecord>);
+            }
+
+            await this.createRegistryAuditLog({
+                event_id: `evt_archived_${previousChampion.registry_id}_${now}`,
+                tenant_id: input.tenantId,
+                registry_id: previousChampion.registry_id,
+                run_id: previousChampion.run_id,
+                event_type: 'archived',
+                timestamp: now,
+                actor: input.actor,
+                metadata: {
+                    reason: 'superseded_by_promotion',
+                    replaced_by: target.registry_id,
+                    model_family: previousChampion.model_family,
+                },
+            });
+        }
+
+        Object.assign(target, {
+            lifecycle_status: 'production',
+            registry_role: 'champion',
+            status: 'production',
+            role: 'champion',
+            deployed_at: now,
+            archived_at: null,
+            promoted_from: previousChampion?.registry_id ?? target.promoted_from,
+            rollback_target: previousChampion?.registry_id ?? target.rollback_target,
+            rollback_metadata: null,
+            artifact_path: target.artifact_uri ?? target.artifact_path,
+            updated_at: now,
+        } satisfies Partial<ModelRegistryRecord>);
+
+        await this.upsertRegistryRoutingPointer({
+            tenant_id: input.tenantId,
+            model_family: target.model_family,
+            active_registry_id: target.registry_id,
+            active_run_id: target.run_id,
+            updated_by: input.actor,
+        });
+
+        const promotedRun = this.runs.find((row) => row.tenant_id === input.tenantId && row.run_id === target.run_id);
+        if (promotedRun) {
+            promotedRun.status = 'promoted';
+            promotedRun.registry_id = target.registry_id;
+            promotedRun.registry_context = {
+                ...promotedRun.registry_context,
+                registry_id: target.registry_id,
+                registry_link_state: 'linked',
+                registry_status: 'production',
+                registry_role: 'champion',
+                champion_or_challenger: 'champion',
+                promotion_status: 'production',
+                rollback_target: previousChampion?.registry_id ?? null,
+                model_family: target.model_family,
+                active_routing_registry_id: target.registry_id,
+            };
+            promotedRun.updated_at = now;
+        }
+
+        const targetLink = this.registryLinks.find((row) => row.tenant_id === input.tenantId && row.run_id === target.run_id);
+        if (targetLink) {
+            Object.assign(targetLink, {
+                registry_candidate_id: target.registry_id,
+                champion_or_challenger: 'champion',
+                promotion_status: 'production',
+                benchmark_status: requirements?.benchmark_pass === true ? 'passed' : 'failed',
+                manual_approval_status: 'passed',
+                deployment_eligibility: 'eligible_review',
+                updated_at: now,
+            } satisfies Partial<ExperimentRegistryLinkRecord>);
+        }
+
+        await this.createRegistryAuditLog({
+            event_id: `evt_promoted_${target.registry_id}_${now}`,
+            tenant_id: input.tenantId,
+            registry_id: target.registry_id,
+            run_id: target.run_id,
+            event_type: 'promoted',
+            timestamp: now,
+            actor: input.actor,
+            metadata: {
+                promoted_from: previousChampion?.registry_id ?? null,
+                rollback_target: previousChampion?.registry_id ?? null,
+                model_family: target.model_family,
+            },
+        });
+
+        return clone(target);
+    }
+
+    async rollbackRegistryToTarget(input: {
+        tenantId: string;
+        runId: string;
+        actor: string | null;
+        reason: string;
+        incidentId?: string | null;
+    }) {
+        const now = new Date().toISOString();
+        const currentChampion = this.modelRegistry.find((row) =>
+            row.tenant_id === input.tenantId &&
+            row.run_id === input.runId &&
+            row.lifecycle_status === 'production' &&
+            row.registry_role === 'champion',
+        );
+        if (!currentChampion) {
+            throw new Error(`Active production registry entry not found for run ${input.runId}.`);
+        }
+
+        const restoreTarget = (currentChampion.rollback_target
+            ? this.modelRegistry.find((row) => row.tenant_id === input.tenantId && row.registry_id === currentChampion.rollback_target)
+            : undefined)
+            ?? this.modelRegistry
+                .filter((row) =>
+                    row.tenant_id === input.tenantId &&
+                    row.model_family === currentChampion.model_family &&
+                    row.registry_role === 'rollback_target',
+                )
+                .sort((left, right) => (right.deployed_at ?? right.updated_at ?? right.created_at).localeCompare(left.deployed_at ?? left.updated_at ?? left.created_at))[0];
+
+        if (!restoreTarget) {
+            throw new Error(`No rollback target exists for registry ${currentChampion.registry_id}.`);
+        }
+
+        const rollbackMetadata = {
+            triggered_at: now,
+            triggered_by: input.actor,
+            reason: input.reason,
+            incident_id: input.incidentId ?? null,
+        };
+
+        Object.assign(currentChampion, {
+            lifecycle_status: 'archived',
+            registry_role: 'experimental',
+            status: 'archived',
+            role: 'experimental',
+            archived_at: now,
+            rollback_metadata: rollbackMetadata,
+            updated_at: now,
+        } satisfies Partial<ModelRegistryRecord>);
+
+        Object.assign(restoreTarget, {
+            lifecycle_status: 'production',
+            registry_role: 'champion',
+            status: 'production',
+            role: 'champion',
+            deployed_at: now,
+            archived_at: null,
+            promoted_from: currentChampion.registry_id,
+            rollback_target: currentChampion.registry_id,
+            rollback_metadata: null,
+            artifact_path: restoreTarget.artifact_uri ?? restoreTarget.artifact_path,
+            updated_at: now,
+        } satisfies Partial<ModelRegistryRecord>);
+
+        await this.upsertRegistryRoutingPointer({
+            tenant_id: input.tenantId,
+            model_family: restoreTarget.model_family,
+            active_registry_id: restoreTarget.registry_id,
+            active_run_id: restoreTarget.run_id,
+            updated_by: input.actor,
+        });
+
+        const rolledBackRun = this.runs.find((row) => row.tenant_id === input.tenantId && row.run_id === currentChampion.run_id);
+        if (rolledBackRun) {
+            rolledBackRun.status = 'rolled_back';
+            rolledBackRun.registry_id = currentChampion.registry_id;
+            rolledBackRun.registry_context = {
+                ...rolledBackRun.registry_context,
+                registry_id: currentChampion.registry_id,
+                registry_link_state: 'linked',
+                registry_status: 'archived',
+                registry_role: 'experimental',
+                champion_or_challenger: 'experimental',
+                promotion_status: 'archived',
+                rollback_target: restoreTarget.registry_id,
+                model_family: currentChampion.model_family,
+            };
+            rolledBackRun.updated_at = now;
+        }
+
+        const restoredRun = this.runs.find((row) => row.tenant_id === input.tenantId && row.run_id === restoreTarget.run_id);
+        if (restoredRun) {
+            restoredRun.status = 'promoted';
+            restoredRun.registry_id = restoreTarget.registry_id;
+            restoredRun.registry_context = {
+                ...restoredRun.registry_context,
+                registry_id: restoreTarget.registry_id,
+                registry_link_state: 'linked',
+                registry_status: 'production',
+                registry_role: 'champion',
+                champion_or_challenger: 'champion',
+                promotion_status: 'production',
+                rollback_target: currentChampion.registry_id,
+                model_family: restoreTarget.model_family,
+                active_routing_registry_id: restoreTarget.registry_id,
+            };
+            restoredRun.updated_at = now;
+        }
+
+        const currentLink = this.registryLinks.find((row) => row.tenant_id === input.tenantId && row.run_id === currentChampion.run_id);
+        if (currentLink) {
+            Object.assign(currentLink, {
+                registry_candidate_id: currentChampion.registry_id,
+                champion_or_challenger: 'experimental',
+                promotion_status: 'archived',
+                deployment_eligibility: 'blocked',
+                updated_at: now,
+            } satisfies Partial<ExperimentRegistryLinkRecord>);
+        }
+
+        const restoreLink = this.registryLinks.find((row) => row.tenant_id === input.tenantId && row.run_id === restoreTarget.run_id);
+        if (restoreLink) {
+            Object.assign(restoreLink, {
+                registry_candidate_id: restoreTarget.registry_id,
+                champion_or_challenger: 'champion',
+                promotion_status: 'production',
+                deployment_eligibility: 'eligible_review',
+                updated_at: now,
+            } satisfies Partial<ExperimentRegistryLinkRecord>);
+        }
+
+        await this.createRegistryAuditLog({
+            event_id: `evt_rollback_${currentChampion.registry_id}_${now}`,
+            tenant_id: input.tenantId,
+            registry_id: restoreTarget.registry_id,
+            run_id: restoreTarget.run_id,
+            event_type: 'rolled_back',
+            timestamp: now,
+            actor: input.actor,
+            metadata: {
+                restored_from: currentChampion.registry_id,
+                rollback_metadata: rollbackMetadata,
+                reason: input.reason,
+                incident_id: input.incidentId ?? null,
+            },
+        });
+
+        return clone(restoreTarget);
+    }
+
     async listModelRegistryEntries(tenantId: string) {
         return this.registryEntries.filter((entry) => entry.tenant_id === tenantId).map(clone);
     }
@@ -356,6 +755,7 @@ async function main() {
     await testExperimentTrackingServiceFlow();
     await testHeartbeatStateConsistency();
     await testExperimentBootstrapSeed();
+    await testRegistryGovernanceControlPlane();
 
     console.log('Experiment tracking integration tests passed.');
 }
@@ -547,6 +947,21 @@ async function testExperimentBootstrapSeed() {
     const stagingRegistry = await applyExperimentRegistryAction(store, tenantId, 'run_diag_complete_v1', 'promote_to_staging', 'qa_user');
     assert.equal(stagingRegistry.status, 'staging');
 
+    const pendingDecision = await store.getDeploymentDecision(tenantId, 'run_diag_complete_v1');
+    assert.equal(pendingDecision?.decision, 'pending');
+
+    await applyExperimentRegistryAction(
+        store,
+        tenantId,
+        'run_diag_complete_v1',
+        'set_manual_approval',
+        'qa_user',
+        {
+            manualApproval: true,
+            reason: 'Clinical governance sign-off completed.',
+        },
+    );
+
     const decision = await store.getDeploymentDecision(tenantId, 'run_diag_complete_v1');
     assert.equal(decision?.decision, 'approved');
 
@@ -576,6 +991,94 @@ async function testExperimentBootstrapSeed() {
     assert.ok(auditTypes.has('adversarial_completed'));
     assert.ok(auditTypes.has('deployment_evaluated'));
     assert.ok(auditTypes.has('benchmark_completed'));
+}
+
+async function testRegistryGovernanceControlPlane() {
+    const tenantId = makeUuid(4);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_stable_001',
+        modelVersion: 'diag_stable_v1',
+        datasetVersion: 'ldv_diag_2026_03_20_a',
+    });
+
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_stable_001', 'promote_to_staging', 'qa_user');
+    const stablePending = await getExperimentRunDetail(store, tenantId, 'run_diag_stable_001');
+    assert.equal(stablePending?.promotion_gating.gates.manual_approval, 'pending');
+    assert.equal(stablePending?.decision_panel.deployment_decision, 'hold');
+
+    await applyExperimentRegistryAction(
+        store,
+        tenantId,
+        'run_diag_stable_001',
+        'set_manual_approval',
+        'qa_user',
+        {
+            manualApproval: true,
+            reason: 'Primary stable release approved.',
+        },
+    );
+    const stableApproved = await getExperimentRunDetail(store, tenantId, 'run_diag_stable_001');
+    assert.equal(stableApproved?.decision_panel.deployment_decision, 'approved');
+
+    const stableChampion = await applyExperimentRegistryAction(store, tenantId, 'run_diag_stable_001', 'promote_to_production', 'qa_user');
+    assert.equal(stableChampion.registry_role, 'champion');
+    assert.equal(stableChampion.lifecycle_status, 'production');
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_candidate_002',
+        modelVersion: 'diag_candidate_v2',
+        datasetVersion: 'ldv_diag_2026_03_20_b',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_candidate_002', 'promote_to_staging', 'qa_user');
+    await applyExperimentRegistryAction(
+        store,
+        tenantId,
+        'run_diag_candidate_002',
+        'set_manual_approval',
+        'qa_user',
+        {
+            manualApproval: true,
+            reason: 'Challenger cleared governance review.',
+        },
+    );
+    const candidateChampion = await applyExperimentRegistryAction(store, tenantId, 'run_diag_candidate_002', 'promote_to_production', 'qa_user');
+    assert.equal(candidateChampion.run_id, 'run_diag_candidate_002');
+    assert.equal(candidateChampion.rollback_target, stableChampion.registry_id);
+
+    const previousChampion = await getExperimentRunDetail(store, tenantId, 'run_diag_stable_001');
+    assert.equal(previousChampion?.model_registry?.registry_role, 'rollback_target');
+    assert.equal(previousChampion?.model_registry?.lifecycle_status, 'archived');
+
+    const snapshotBeforeRollback = await getModelRegistryControlPlaneSnapshot(store, tenantId);
+    const diagnosticsBeforeRollback = snapshotBeforeRollback.families.find((family) => family.model_family === 'diagnostics');
+    assert.equal(diagnosticsBeforeRollback?.active_model?.run_id, 'run_diag_candidate_002');
+    assert.equal(diagnosticsBeforeRollback?.last_stable_model?.run_id, 'run_diag_stable_001');
+
+    const restoredChampion = await applyExperimentRegistryAction(
+        store,
+        tenantId,
+        'run_diag_candidate_002',
+        'rollback',
+        'incident_commander',
+        {
+            reason: 'Clinical drift exceeded safety threshold.',
+            incidentId: 'INC-042',
+        },
+    );
+    assert.equal(restoredChampion.run_id, 'run_diag_stable_001');
+    assert.equal(restoredChampion.registry_role, 'champion');
+
+    const rolledBackCandidate = await getExperimentRunDetail(store, tenantId, 'run_diag_candidate_002');
+    assert.equal(rolledBackCandidate?.model_registry?.lifecycle_status, 'archived');
+    assert.equal(rolledBackCandidate?.model_registry?.registry_role, 'experimental');
+    assert.equal(rolledBackCandidate?.model_registry?.rollback_metadata?.reason, 'Clinical drift exceeded safety threshold.');
+
+    const snapshotAfterRollback = await getModelRegistryControlPlaneSnapshot(store, tenantId);
+    const diagnosticsAfterRollback = snapshotAfterRollback.families.find((family) => family.model_family === 'diagnostics');
+    assert.equal(diagnosticsAfterRollback?.active_model?.run_id, 'run_diag_stable_001');
+    assert.ok(snapshotAfterRollback.audit_history.some((event) => event.event_type === 'rolled_back'));
 }
 
 async function testHeartbeatStateConsistency() {
@@ -697,6 +1200,112 @@ function buildStore(tenantId: string) {
     }];
 
     return store;
+}
+
+async function createPromotableDiagnosticRun(
+    store: InMemoryExperimentTrackingStore,
+    tenantId: string,
+    input: {
+        runId: string;
+        modelVersion: string;
+        datasetVersion: string;
+    },
+) {
+    const run = await createExperimentRun(store, {
+        tenantId,
+        runId: input.runId,
+        taskType: 'clinical_diagnosis',
+        modality: 'tabular_clinical',
+        targetType: 'diagnosis',
+        modelArch: 'Transformer-Clinical-Governed',
+        modelVersion: input.modelVersion,
+        datasetName: input.datasetVersion,
+        datasetVersion: input.datasetVersion,
+        featureSchemaVersion: 'clinical-case-vector-v2',
+        labelPolicyVersion: 'learning-label-policy-v2',
+        epochsPlanned: 6,
+        hyperparameters: { optimizer: 'adamw', learning_rate_init: 0.00008 },
+        createdBy: 'qa_user',
+    });
+
+    await logExperimentMetrics(store, tenantId, run.run_id, [
+        {
+            epoch: 1,
+            global_step: 120,
+            train_loss: 0.72,
+            val_loss: 0.58,
+            val_accuracy: 0.82,
+            learning_rate: 0.00008,
+            gradient_norm: 0.9,
+            macro_f1: 0.8,
+            recall_critical: 0.92,
+            false_negative_critical_rate: 0.07,
+            dangerous_false_reassurance_rate: 0.03,
+            abstain_accuracy: 0.84,
+            contradiction_detection_rate: 0.86,
+        },
+        {
+            epoch: 2,
+            global_step: 240,
+            train_loss: 0.54,
+            val_loss: 0.41,
+            val_accuracy: 0.87,
+            learning_rate: 0.00005,
+            gradient_norm: 0.6,
+            macro_f1: 0.84,
+            recall_critical: 0.95,
+            false_negative_critical_rate: 0.04,
+            dangerous_false_reassurance_rate: 0.02,
+            abstain_accuracy: 0.88,
+            contradiction_detection_rate: 0.9,
+        },
+    ]);
+
+    await updateExperimentHeartbeat(store, tenantId, run.run_id, {
+        status: 'completed',
+        progressPercent: 100,
+        epochsCompleted: 6,
+    });
+
+    await store.upsertExperimentBenchmark({
+        tenant_id: tenantId,
+        run_id: run.run_id,
+        benchmark_family: 'clean_labeled_diagnosis',
+        task_type: 'diagnosis',
+        summary_score: 0.88,
+        pass_status: 'pass',
+        report_payload: {
+            macro_f1: 0.84,
+            accuracy: 0.87,
+        },
+    });
+
+    await upsertCalibrationEvaluation(store, tenantId, run.run_id, {
+        ece: 0.03,
+        brierScore: 0.05,
+        reliabilityBins: [
+            { confidence: 0.2, accuracy: 0.18, count: 16 },
+            { confidence: 0.5, accuracy: 0.51, count: 21 },
+            { confidence: 0.8, accuracy: 0.83, count: 19 },
+        ],
+        confidenceHistogram: [
+            { confidence: 0.2, count: 16 },
+            { confidence: 0.5, count: 21 },
+            { confidence: 0.8, count: 19 },
+        ],
+        calibrationPass: true,
+        calibrationNotes: 'Governance calibration validation complete.',
+    }, 'qa_user');
+
+    await upsertAdversarialEvaluation(store, tenantId, run.run_id, {
+        degradationScore: 0.11,
+        contradictionRobustness: 0.91,
+        criticalCaseRecall: 0.95,
+        dangerousFalseReassuranceRate: 0.03,
+        adversarialPass: true,
+    }, 'qa_user');
+
+    return run;
 }
 
 function clone<T>(value: T): T {

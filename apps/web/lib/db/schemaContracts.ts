@@ -549,6 +549,8 @@ export const EXPERIMENT_REGISTRY_LINKS = {
         promotion_status: 'promotion_status',
         calibration_status: 'calibration_status',
         adversarial_gate_status: 'adversarial_gate_status',
+        benchmark_status: 'benchmark_status',
+        manual_approval_status: 'manual_approval_status',
         deployment_eligibility: 'deployment_eligibility',
         linked_at: 'linked_at',
         updated_at: 'updated_at',
@@ -561,12 +563,44 @@ export const MODEL_REGISTRY = {
         registry_id: 'registry_id',
         tenant_id: 'tenant_id',
         run_id: 'run_id',
+        model_name: 'model_name',
         model_version: 'model_version',
+        model_family: 'model_family',
+        artifact_uri: 'artifact_uri',
+        dataset_version: 'dataset_version',
+        feature_schema_version: 'feature_schema_version',
+        label_policy_version: 'label_policy_version',
+        lifecycle_status: 'lifecycle_status',
+        registry_role: 'registry_role',
+        deployed_at: 'deployed_at',
+        archived_at: 'archived_at',
+        promoted_from: 'promoted_from',
+        rollback_target: 'rollback_target',
+        clinical_metrics: 'clinical_metrics',
+        lineage: 'lineage',
+        rollback_metadata: 'rollback_metadata',
         artifact_path: 'artifact_path',
         status: 'status',
         role: 'role',
         created_at: 'created_at',
         created_by: 'created_by',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PROMOTION_REQUIREMENTS = {
+    TABLE: 'promotion_requirements',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        registry_id: 'registry_id',
+        run_id: 'run_id',
+        calibration_pass: 'calibration_pass',
+        adversarial_pass: 'adversarial_pass',
+        safety_pass: 'safety_pass',
+        benchmark_pass: 'benchmark_pass',
+        manual_approval: 'manual_approval',
+        created_at: 'created_at',
         updated_at: 'updated_at',
     },
 } as const;
@@ -619,6 +653,21 @@ export const AUDIT_LOG = {
     },
 } as const;
 
+export const REGISTRY_AUDIT_LOG = {
+    TABLE: 'registry_audit_log',
+    COLUMNS: {
+        event_id: 'event_id',
+        tenant_id: 'tenant_id',
+        registry_id: 'registry_id',
+        run_id: 'run_id',
+        event_type: 'event_type',
+        actor: 'actor',
+        metadata: 'metadata',
+        timestamp: 'timestamp',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const DEPLOYMENT_DECISIONS = {
     TABLE: 'deployment_decisions',
     COLUMNS: {
@@ -630,10 +679,25 @@ export const DEPLOYMENT_DECISIONS = {
         calibration_pass: 'calibration_pass',
         adversarial_pass: 'adversarial_pass',
         safety_pass: 'safety_pass',
+        benchmark_pass: 'benchmark_pass',
+        manual_approval: 'manual_approval',
         approved_by: 'approved_by',
         timestamp: 'timestamp',
         created_at: 'created_at',
         updated_at: 'updated_at',
+    },
+} as const;
+
+export const MODEL_REGISTRY_ROUTING = {
+    TABLE: 'model_registry_routing',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        model_family: 'model_family',
+        active_registry_id: 'active_registry_id',
+        active_run_id: 'active_run_id',
+        updated_at: 'updated_at',
+        updated_by: 'updated_by',
     },
 } as const;
 

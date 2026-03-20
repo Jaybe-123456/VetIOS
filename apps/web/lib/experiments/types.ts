@@ -25,12 +25,20 @@ export type ExperimentModality =
     | 'multimodal'
     | 'text_structured';
 
-export type ExperimentRegistryRole = 'champion' | 'challenger' | 'candidate' | 'archived' | 'experimental';
-export type ModelRegistryStatus = 'candidate' | 'staging' | 'production' | 'archived';
+export type ModelFamily = 'diagnostics' | 'vision' | 'therapeutics';
+export type ExperimentRegistryRole =
+    | 'champion'
+    | 'challenger'
+    | 'candidate'
+    | 'archived'
+    | 'experimental'
+    | 'rollback_target';
+export type ModelRegistryStatus = 'training' | 'candidate' | 'staging' | 'production' | 'archived';
 export type DeploymentDecisionStatus = 'approved' | 'rejected' | 'pending';
 export type ExperimentHeartbeatFreshness = 'healthy' | 'stale' | 'interrupted';
 export type ExperimentRegistryLinkState = 'linked' | 'pending' | 'unlinked';
 export type ExperimentSafetyCoverage = 'none' | 'partial' | 'full';
+export type GateStatus = 'pass' | 'fail' | 'pending';
 
 export interface ExperimentRunRecord {
     id: string;
@@ -155,16 +163,61 @@ export interface ExperimentRegistryLinkRecord {
     promotion_status: string | null;
     calibration_status: string | null;
     adversarial_gate_status: string | null;
+    benchmark_status: string | null;
+    manual_approval_status: string | null;
     deployment_eligibility: string | null;
     linked_at: string;
     updated_at: string;
+}
+
+export interface ClinicalMetricsRecord {
+    global_accuracy: number | null;
+    macro_f1: number | null;
+    critical_recall: number | null;
+    false_reassurance_rate: number | null;
+    fn_critical_rate: number | null;
+    ece: number | null;
+    brier_score: number | null;
+    adversarial_degradation: number | null;
+    latency_p99: number | null;
+}
+
+export interface RegistryLineageRecord {
+    run_id: string;
+    experiment_group: string | null;
+    dataset_version: string | null;
+    benchmark_id: string | null;
+    calibration_report_uri: string | null;
+    adversarial_report_uri: string | null;
+}
+
+export interface RollbackMetadataRecord {
+    triggered_at: string;
+    triggered_by: string | null;
+    reason: string;
+    incident_id: string | null;
 }
 
 export interface ModelRegistryRecord {
     registry_id: string;
     tenant_id: string;
     run_id: string;
+    model_name: string;
     model_version: string;
+    model_family: ModelFamily;
+    artifact_uri: string | null;
+    dataset_version: string | null;
+    feature_schema_version: string | null;
+    label_policy_version: string | null;
+    lifecycle_status: ModelRegistryStatus;
+    registry_role: ExperimentRegistryRole;
+    deployed_at: string | null;
+    archived_at: string | null;
+    promoted_from: string | null;
+    rollback_target: string | null;
+    clinical_metrics: ClinicalMetricsRecord;
+    lineage: RegistryLineageRecord;
+    rollback_metadata: RollbackMetadataRecord | null;
     artifact_path: string | null;
     status: ModelRegistryStatus;
     role: ExperimentRegistryRole;
@@ -221,6 +274,8 @@ export interface DeploymentDecisionRecord {
     calibration_pass: boolean | null;
     adversarial_pass: boolean | null;
     safety_pass: boolean | null;
+    benchmark_pass: boolean | null;
+    manual_approval: boolean | null;
     approved_by: string | null;
     timestamp: string;
     created_at: string;
@@ -248,6 +303,49 @@ export interface ExperimentAuditEventRecord {
     payload: Record<string, unknown>;
 }
 
+export interface PromotionRequirementsRecord {
+    id: string;
+    tenant_id: string;
+    registry_id: string;
+    run_id: string;
+    calibration_pass: boolean | null;
+    adversarial_pass: boolean | null;
+    safety_pass: boolean | null;
+    benchmark_pass: boolean | null;
+    manual_approval: boolean | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface RegistryAuditLogRecord {
+    event_id: string;
+    tenant_id: string;
+    registry_id: string;
+    run_id: string | null;
+    event_type: string;
+    timestamp: string;
+    actor: string | null;
+    metadata: Record<string, unknown>;
+    created_at: string;
+}
+
+export interface RegistryRoutingPointerRecord {
+    id: string;
+    tenant_id: string;
+    model_family: ModelFamily;
+    active_registry_id: string | null;
+    active_run_id: string | null;
+    updated_at: string;
+    updated_by: string | null;
+}
+
+export interface RegistryDecisionPanel {
+    promotion_eligibility: boolean;
+    deployment_decision: 'approved' | 'hold' | 'rejected';
+    reasons: string[];
+    missing_evaluations: string[];
+}
+
 export interface ExperimentRunDetail {
     run: ExperimentRunRecord;
     metrics: ExperimentMetricRecord[];
@@ -256,11 +354,14 @@ export interface ExperimentRunDetail {
     benchmarks: ExperimentBenchmarkRecord[];
     registry_link: ExperimentRegistryLinkRecord | null;
     model_registry: ModelRegistryRecord | null;
+    promotion_requirements: PromotionRequirementsRecord | null;
     calibration_metrics: CalibrationMetricRecord | null;
     adversarial_metrics: AdversarialMetricRecord | null;
     deployment_decision: DeploymentDecisionRecord | null;
+    decision_panel: RegistryDecisionPanel;
     subgroup_metrics: SubgroupMetricRecord[];
     audit_history: ExperimentAuditEventRecord[];
+    registry_audit_history: RegistryAuditLogRecord[];
     missing_telemetry_fields: string[];
     latest_metric: ExperimentMetricRecord | null;
     heartbeat_freshness: ExperimentHeartbeatFreshness;
@@ -268,6 +369,9 @@ export interface ExperimentRunDetail {
     registry_role: ExperimentRegistryRole | null;
     safety_coverage: ExperimentSafetyCoverage;
     safety_metrics_complete: boolean;
+    clinical_scorecard: ClinicalMetricsRecord | null;
+    lineage: RegistryLineageRecord | null;
+    last_stable_model: ModelRegistryRecord | null;
     artifact_uris: {
         log_uri: string | null;
         checkpoint_uri: string | null;
@@ -278,7 +382,16 @@ export interface ExperimentRunDetail {
     };
     promotion_gating: {
         can_promote: boolean;
+        promotion_allowed: boolean;
         missing_requirements: string[];
+        blockers: string[];
+        gates: {
+            calibration: GateStatus;
+            adversarial: GateStatus;
+            safety: GateStatus;
+            benchmark: GateStatus;
+            manual_approval: GateStatus;
+        };
         tooltip: string;
     };
     failure_guidance: {
@@ -365,6 +478,36 @@ export interface ExperimentDashboardSnapshot {
     refreshed_at: string;
 }
 
+export interface ModelRegistryControlPlaneEntry {
+    registry: ModelRegistryRecord;
+    run: ExperimentRunRecord | null;
+    promotion_requirements: PromotionRequirementsRecord | null;
+    decision_panel: RegistryDecisionPanel;
+    promotion_gating: ExperimentRunDetail['promotion_gating'];
+    clinical_scorecard: ClinicalMetricsRecord;
+    lineage: RegistryLineageRecord;
+    rollback_history: RegistryAuditLogRecord[];
+    latest_registry_events: RegistryAuditLogRecord[];
+    is_active_route: boolean;
+    last_stable_model: ModelRegistryRecord | null;
+}
+
+export interface ModelRegistryFamilyGroup {
+    model_family: ModelFamily;
+    active_registry_id: string | null;
+    active_model: ModelRegistryRecord | null;
+    last_stable_model: ModelRegistryRecord | null;
+    entries: ModelRegistryControlPlaneEntry[];
+}
+
+export interface ModelRegistryControlPlaneSnapshot {
+    tenant_id: string;
+    families: ModelRegistryFamilyGroup[];
+    routing_pointers: RegistryRoutingPointerRecord[];
+    audit_history: RegistryAuditLogRecord[];
+    refreshed_at: string;
+}
+
 export interface ListExperimentRunsOptions {
     limit?: number;
     includeSummaryOnly?: boolean;
@@ -386,8 +529,12 @@ export interface ExperimentTrackingStore {
     upsertExperimentBenchmark(record: Omit<ExperimentBenchmarkRecord, 'id' | 'created_at'> & { id?: string }): Promise<ExperimentBenchmarkRecord>;
     getExperimentRegistryLink(tenantId: string, runId: string): Promise<ExperimentRegistryLinkRecord | null>;
     upsertExperimentRegistryLink(record: Omit<ExperimentRegistryLinkRecord, 'id' | 'linked_at' | 'updated_at'> & { id?: string }): Promise<ExperimentRegistryLinkRecord>;
+    listModelRegistry(tenantId: string): Promise<ModelRegistryRecord[]>;
     getModelRegistryForRun(tenantId: string, runId: string): Promise<ModelRegistryRecord | null>;
     upsertModelRegistry(record: Omit<ModelRegistryRecord, 'created_at' | 'updated_at'>): Promise<ModelRegistryRecord>;
+    getPromotionRequirements(tenantId: string, runId: string): Promise<PromotionRequirementsRecord | null>;
+    listPromotionRequirements(tenantId: string): Promise<PromotionRequirementsRecord[]>;
+    upsertPromotionRequirements(record: Omit<PromotionRequirementsRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }): Promise<PromotionRequirementsRecord>;
     getCalibrationMetrics(tenantId: string, runId: string): Promise<CalibrationMetricRecord | null>;
     upsertCalibrationMetrics(record: Omit<CalibrationMetricRecord, 'id' | 'created_at' | 'updated_at'> & { id?: string }): Promise<CalibrationMetricRecord>;
     getAdversarialMetrics(tenantId: string, runId: string): Promise<AdversarialMetricRecord | null>;
@@ -398,6 +545,22 @@ export interface ExperimentTrackingStore {
     upsertSubgroupMetric(record: Omit<SubgroupMetricRecord, 'id' | 'created_at'> & { id?: string }): Promise<SubgroupMetricRecord>;
     listAuditLog(tenantId: string, limit?: number): Promise<ExperimentAuditEventRecord[]>;
     createAuditLog(record: Omit<ExperimentAuditEventRecord, 'created_at'>): Promise<ExperimentAuditEventRecord>;
+    listRegistryAuditLog(tenantId: string, limit?: number): Promise<RegistryAuditLogRecord[]>;
+    createRegistryAuditLog(record: Omit<RegistryAuditLogRecord, 'created_at'>): Promise<RegistryAuditLogRecord>;
+    listRegistryRoutingPointers(tenantId: string): Promise<RegistryRoutingPointerRecord[]>;
+    upsertRegistryRoutingPointer(record: Omit<RegistryRoutingPointerRecord, 'id' | 'updated_at'> & { id?: string }): Promise<RegistryRoutingPointerRecord>;
+    promoteRegistryToProduction(input: {
+        tenantId: string;
+        runId: string;
+        actor: string | null;
+    }): Promise<ModelRegistryRecord>;
+    rollbackRegistryToTarget(input: {
+        tenantId: string;
+        runId: string;
+        actor: string | null;
+        reason: string;
+        incidentId?: string | null;
+    }): Promise<ModelRegistryRecord>;
     listModelRegistryEntries(tenantId: string): Promise<Array<{
         id: string;
         tenant_id: string;

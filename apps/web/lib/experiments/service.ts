@@ -1,6 +1,7 @@
 import type {
     AdversarialMetricRecord,
     CalibrationMetricRecord,
+    ClinicalMetricsRecord,
     DeploymentDecisionRecord,
     ExperimentAuditEventRecord,
     ExperimentArtifactRecord,
@@ -9,6 +10,7 @@ import type {
     ExperimentDashboardSnapshot,
     ExperimentDashboardSummary,
     ExperimentFailureRecord,
+    GateStatus,
     ExperimentHeartbeatFreshness,
     ExperimentMetricRecord,
     ExperimentMetricSeriesPoint,
@@ -21,7 +23,13 @@ import type {
     ExperimentSafetyCoverage,
     ExperimentTaskType,
     ExperimentTrackingStore,
+    ModelFamily,
+    ModelRegistryControlPlaneSnapshot,
     ModelRegistryRecord,
+    PromotionRequirementsRecord,
+    RegistryAuditLogRecord,
+    RegistryDecisionPanel,
+    RegistryLineageRecord,
     SubgroupMetricRecord,
 } from '@/lib/experiments/types';
 
@@ -131,11 +139,13 @@ export interface AdversarialEvaluationInput {
 export type ExperimentRegistryAction =
     | 'promote_to_staging'
     | 'promote_to_production'
+    | 'set_manual_approval'
     | 'archive'
     | 'rollback';
 
 const HEARTBEAT_HEALTHY_THRESHOLD_MS = 10 * 60 * 1000;
 const HEARTBEAT_INTERRUPTED_THRESHOLD_MS = 30 * 60 * 1000;
+const MODEL_FAMILY_ORDER: ModelFamily[] = ['diagnostics', 'vision', 'therapeutics'];
 
 export async function createExperimentRun(
     store: ExperimentTrackingStore,
@@ -362,6 +372,8 @@ export async function recordExperimentFailure(
         calibration_pass: false,
         adversarial_pass: false,
         safety_pass: false,
+        benchmark_pass: false,
+        manual_approval: null,
         approved_by: null,
         timestamp: new Date().toISOString(),
     });
@@ -504,106 +516,222 @@ export async function applyExperimentRegistryAction(
     runId: string,
     action: ExperimentRegistryAction,
     actor: string | null,
+    options: {
+        manualApproval?: boolean | null;
+        reason?: string | null;
+        incidentId?: string | null;
+    } = {},
 ): Promise<ModelRegistryRecord> {
+    await ensureGovernanceForRun(store, tenantId, runId, actor);
+
     const run = await store.getExperimentRun(tenantId, runId);
     if (!run) {
         throw new Error(`Experiment run not found: ${runId}`);
     }
 
-    const registry = await ensureModelRegistryRecord(
-        store,
-        run,
-        await store.listExperimentArtifacts(tenantId, runId),
-        actor,
-    );
-    const [decision, latestMetric, calibrationMetrics, adversarialMetrics, registryLink] = await Promise.all([
+    const [artifacts, metrics, benchmarks, registryLink, decision, registry, calibrationMetrics, adversarialMetrics, promotionRequirements] = await Promise.all([
+        store.listExperimentArtifacts(tenantId, runId),
+        store.listExperimentMetrics(tenantId, runId, 2_000),
+        store.listExperimentBenchmarks(tenantId, runId),
+        store.getExperimentRegistryLink(tenantId, runId),
         store.getDeploymentDecision(tenantId, runId),
-        store.listExperimentMetrics(tenantId, runId, 2_000).then((items) => items.at(-1) ?? null),
+        store.getModelRegistryForRun(tenantId, runId),
         store.getCalibrationMetrics(tenantId, runId),
         store.getAdversarialMetrics(tenantId, runId),
-        store.getExperimentRegistryLink(tenantId, runId),
+        store.getPromotionRequirements(tenantId, runId),
     ]);
-    const registryLinkState = deriveRegistryLinkState(run, registry, registryLink);
-    const promotionReadiness = evaluatePromotionReadiness(run, registryLinkState, calibrationMetrics, adversarialMetrics, latestMetric);
+    const ensuredRegistry = registry ?? await ensureModelRegistryRecord(store, run, artifacts, actor);
+    const latestMetric = metrics.at(-1) ?? null;
+    const registryLinkState = deriveRegistryLinkState(run, ensuredRegistry, registryLink);
+    const effectivePromotionRequirements = promotionRequirements ?? await ensurePromotionRequirements(
+        store,
+        run,
+        ensuredRegistry,
+        benchmarks,
+        calibrationMetrics,
+        adversarialMetrics,
+        latestMetric,
+        actor,
+    );
+    const promotionReadiness = evaluatePromotionReadiness(
+        run,
+        registryLinkState,
+        calibrationMetrics,
+        adversarialMetrics,
+        latestMetric,
+        effectivePromotionRequirements,
+    );
 
-    if ((action === 'promote_to_staging' || action === 'promote_to_production') && !promotionReadiness.can_promote) {
-        throw new Error(promotionReadiness.tooltip);
+    if (action === 'set_manual_approval') {
+        const updatedRequirements = await store.upsertPromotionRequirements({
+            id: effectivePromotionRequirements.id,
+            tenant_id: tenantId,
+            registry_id: ensuredRegistry.registry_id,
+            run_id: runId,
+            calibration_pass: effectivePromotionRequirements.calibration_pass,
+            adversarial_pass: effectivePromotionRequirements.adversarial_pass,
+            safety_pass: effectivePromotionRequirements.safety_pass,
+            benchmark_pass: effectivePromotionRequirements.benchmark_pass,
+            manual_approval: options.manualApproval === true,
+        });
+
+        await logRegistryAuditEvent(store, {
+            tenantId,
+            registryId: ensuredRegistry.registry_id,
+            runId,
+            eventType: 'manual_approval_updated',
+            actor,
+            metadata: {
+                manual_approval: updatedRequirements.manual_approval,
+                reason: options.reason ?? null,
+            },
+        });
+
+        await ensureGovernanceForRun(store, tenantId, runId, actor);
+        return (await store.getModelRegistryForRun(tenantId, runId)) ?? ensuredRegistry;
     }
 
-    if (action === 'promote_to_production' && decision?.decision !== 'approved') {
-        throw new Error('Model cannot be promoted to production until deployment eligibility is approved.');
+    if (action === 'promote_to_staging') {
+        if (ensuredRegistry.lifecycle_status === 'archived') {
+            throw new Error('Archived models cannot be promoted back into staging.');
+        }
+        if (ensuredRegistry.lifecycle_status === 'production' && ensuredRegistry.registry_role === 'champion') {
+            throw new Error('The active production champion cannot be moved to staging.');
+        }
+
+        const updated = await store.upsertModelRegistry({
+            ...ensuredRegistry,
+            lifecycle_status: 'staging',
+            registry_role: 'challenger',
+            status: 'staging',
+            role: 'challenger',
+            artifact_path: ensuredRegistry.artifact_uri ?? ensuredRegistry.artifact_path,
+            archived_at: null,
+        });
+
+        await logRegistryAuditEvent(store, {
+            tenantId,
+            registryId: updated.registry_id,
+            runId,
+            eventType: 'staged',
+            actor,
+            metadata: {
+                model_family: updated.model_family,
+                manual_approval: effectivePromotionRequirements.manual_approval,
+            },
+        });
+
+        await syncRegistryLinkForRun(
+            store,
+            run,
+            updated,
+            calibrationMetrics,
+            adversarialMetrics,
+            decision,
+            registryLink,
+            effectivePromotionRequirements,
+        );
+
+        await ensureGovernanceForRun(store, tenantId, runId, actor);
+        return (await store.getModelRegistryForRun(tenantId, runId)) ?? updated;
+    }
+
+    if (action === 'promote_to_production') {
+        if (!promotionReadiness.can_promote) {
+            throw new Error(promotionReadiness.tooltip);
+        }
+
+        const updated = await store.promoteRegistryToProduction({
+            tenantId,
+            runId,
+            actor,
+        });
+
+        await logExperimentAuditEvent(store, {
+            tenantId,
+            runId,
+            eventType: 'promoted',
+            actor,
+            metadata: {
+                action,
+                registry_id: updated.registry_id,
+                registry_status: updated.lifecycle_status,
+                registry_role: updated.registry_role,
+            },
+            deterministicKey: `${runId}:registry-action:${action}`,
+        });
+
+        await ensureGovernanceForRun(store, tenantId, runId, actor);
+        return (await store.getModelRegistryForRun(tenantId, runId)) ?? updated;
     }
 
     if (action === 'rollback') {
-        const runs = await store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true });
-        for (const candidate of runs) {
-            if (candidate.run_id === runId) continue;
-            const candidateRegistry = await store.getModelRegistryForRun(tenantId, candidate.run_id);
-            if (candidateRegistry?.status === 'production') {
-                await store.upsertModelRegistry({
-                    ...candidateRegistry,
-                    status: 'archived',
-                    role: 'challenger',
-                });
-                await store.updateExperimentRun(candidate.run_id, tenantId, {
-                    status: 'rolled_back',
-                    registry_context: {
-                        ...candidate.registry_context,
-                        registry_status: 'archived',
-                        registry_role: 'challenger',
-                    },
-                });
-            }
-        }
+        const updated = await store.rollbackRegistryToTarget({
+            tenantId,
+            runId,
+            actor,
+            reason: options.reason ?? 'Emergency rollback requested from registry control plane.',
+            incidentId: options.incidentId ?? null,
+        });
+
+        await logExperimentAuditEvent(store, {
+            tenantId,
+            runId,
+            eventType: 'rolled_back',
+            actor,
+            metadata: {
+                action,
+                registry_id: updated.registry_id,
+                registry_status: updated.lifecycle_status,
+                registry_role: updated.registry_role,
+                rollback_target: updated.rollback_target,
+            },
+            deterministicKey: `${runId}:registry-action:${action}:${updated.registry_id}`,
+        });
+
+        await ensureGovernanceForRun(store, tenantId, runId, actor);
+        return (await store.getModelRegistryForRun(tenantId, updated.run_id)) ?? updated;
     }
 
-    const nextStatus = action === 'promote_to_staging'
-        ? 'staging'
-        : action === 'promote_to_production' || action === 'rollback'
-            ? 'production'
-            : 'archived';
-    const nextRole = action === 'promote_to_production' || action === 'rollback'
-        ? 'champion'
-        : action === 'promote_to_staging'
-            ? 'challenger'
-            : 'experimental';
+    if (ensuredRegistry.lifecycle_status === 'production' && ensuredRegistry.registry_role === 'champion') {
+        throw new Error('Archive is disabled for the active production champion. Roll back or promote a challenger first.');
+    }
 
     const updated = await store.upsertModelRegistry({
-        ...registry,
-        status: nextStatus,
-        role: nextRole,
-        created_by: actor ?? registry.created_by,
-    });
-    await store.updateExperimentRun(runId, tenantId, {
-        status: nextStatus === 'production' ? 'promoted' : nextStatus === 'archived' ? run.status : run.status,
-        registry_id: updated.registry_id,
-        registry_context: {
-            ...run.registry_context,
-            registry_id: updated.registry_id,
-            registry_link_state: 'linked',
-            registry_status: updated.status,
-            registry_role: updated.role,
-            champion_or_challenger: updated.role,
-            promotion_status: updated.status,
-        },
+        ...ensuredRegistry,
+        lifecycle_status: 'archived',
+        registry_role: ensuredRegistry.registry_role === 'rollback_target' ? 'rollback_target' : 'experimental',
+        status: 'archived',
+        role: ensuredRegistry.registry_role === 'rollback_target' ? 'rollback_target' : 'experimental',
+        artifact_path: ensuredRegistry.artifact_uri ?? ensuredRegistry.artifact_path,
+        archived_at: new Date().toISOString(),
     });
 
-    await logExperimentAuditEvent(store, {
+    await logRegistryAuditEvent(store, {
         tenantId,
+        registryId: updated.registry_id,
         runId,
-        eventType: action === 'rollback' ? 'rolled_back' : 'promoted',
+        eventType: 'archived',
         actor,
         metadata: {
-            action,
-            registry_id: updated.registry_id,
-            registry_status: updated.status,
-            registry_role: updated.role,
+            reason: options.reason ?? 'manual_archive',
+            model_family: updated.model_family,
         },
-        deterministicKey: `${runId}:registry-action:${action}`,
     });
 
+    await syncRegistryLinkForRun(
+        store,
+        run,
+        updated,
+        calibrationMetrics,
+        adversarialMetrics,
+        decision,
+        registryLink,
+        effectivePromotionRequirements,
+    );
+
     await ensureGovernanceForRun(store, tenantId, runId, actor);
-    return updated;
+    return (await store.getModelRegistryForRun(tenantId, runId)) ?? updated;
 }
 
 export async function getExperimentRunDetail(
@@ -617,26 +745,43 @@ export async function getExperimentRunDetail(
     const run = await store.getExperimentRun(tenantId, runId);
     if (!run) return null;
 
-    const [metrics, artifacts, failure, benchmarks, registryLink, modelRegistry, calibrationMetrics, adversarialMetrics, deploymentDecision, subgroupMetrics, auditEvents, learningAuditEvents] = await Promise.all([
+    const [metrics, artifacts, failure, benchmarks, registryLink, modelRegistry, promotionRequirements, calibrationMetrics, adversarialMetrics, deploymentDecision, subgroupMetrics, auditEvents, registryAuditEvents, learningAuditEvents, registryRecords] = await Promise.all([
         store.listExperimentMetrics(tenantId, runId),
         store.listExperimentArtifacts(tenantId, runId),
         store.getExperimentFailure(tenantId, runId),
         store.listExperimentBenchmarks(tenantId, runId),
         store.getExperimentRegistryLink(tenantId, runId),
         store.getModelRegistryForRun(tenantId, runId),
+        store.getPromotionRequirements(tenantId, runId),
         store.getCalibrationMetrics(tenantId, runId),
         store.getAdversarialMetrics(tenantId, runId),
         store.getDeploymentDecision(tenantId, runId),
         store.listSubgroupMetrics(tenantId, runId),
         store.listAuditLog(tenantId, 100),
+        store.listRegistryAuditLog(tenantId, 200),
         store.listLearningAuditEvents(tenantId, 100),
+        store.listModelRegistry(tenantId),
     ]);
     const latestMetric = metrics[metrics.length - 1] ?? null;
     const heartbeatFreshness = classifyHeartbeatFreshness(run.last_heartbeat_at);
     const registryLinkState = deriveRegistryLinkState(run, modelRegistry, registryLink);
     const registryRole = deriveRegistryRole(modelRegistry, registryLink, registryLinkState);
     const safetyCoverage = getSafetyCoverageState(run, latestMetric);
-    const promotionGating = evaluatePromotionReadiness(run, registryLinkState, calibrationMetrics, adversarialMetrics, latestMetric);
+    const promotionGating = evaluatePromotionReadiness(
+        run,
+        registryLinkState,
+        calibrationMetrics,
+        adversarialMetrics,
+        latestMetric,
+        promotionRequirements,
+    );
+    const decisionPanel = buildRegistryDecisionPanel(
+        promotionGating,
+        promotionRequirements,
+        deploymentDecision,
+    );
+    const registryAuditHistory = filterRegistryAuditEventsForRun(run, modelRegistry, registryAuditEvents);
+    const lastStableModel = findLastStableModel(modelRegistry, registryRecords);
 
     return {
         run,
@@ -646,11 +791,14 @@ export async function getExperimentRunDetail(
         benchmarks,
         registry_link: registryLink,
         model_registry: modelRegistry,
+        promotion_requirements: promotionRequirements,
         calibration_metrics: calibrationMetrics,
         adversarial_metrics: adversarialMetrics,
         deployment_decision: deploymentDecision,
+        decision_panel: decisionPanel,
         subgroup_metrics: subgroupMetrics,
         audit_history: filterAuditEventsForRun(run, auditEvents, learningAuditEvents),
+        registry_audit_history: registryAuditHistory,
         missing_telemetry_fields: getMissingTelemetryFields(run, metrics),
         latest_metric: latestMetric,
         heartbeat_freshness: heartbeatFreshness,
@@ -658,6 +806,9 @@ export async function getExperimentRunDetail(
         registry_role: registryRole,
         safety_coverage: safetyCoverage,
         safety_metrics_complete: safetyCoverage === 'full',
+        clinical_scorecard: modelRegistry?.clinical_metrics ?? buildClinicalMetricsRecord(run, latestMetric, calibrationMetrics, adversarialMetrics),
+        lineage: modelRegistry?.lineage ?? buildRegistryLineage(run, buildArtifactUris(run, artifacts), benchmarks),
+        last_stable_model: lastStableModel,
         artifact_uris: buildArtifactUris(run, artifacts),
         promotion_gating: promotionGating,
         failure_guidance: failure ? deriveFailureGuidance(run, metrics, failure) : null,
@@ -754,6 +905,127 @@ export async function getExperimentDashboardSnapshot(
         selected_run_id: selectedRunId,
         selected_run_detail: selectedRunDetail,
         comparison,
+        refreshed_at: new Date().toISOString(),
+    };
+}
+
+export async function getModelRegistryControlPlaneSnapshot(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+): Promise<ModelRegistryControlPlaneSnapshot> {
+    await backfillSummaryExperimentRuns(store, tenantId);
+
+    const [runs, registryRecords, promotionRequirements, routingPointers, registryAuditEvents] = await Promise.all([
+        store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
+        store.listModelRegistry(tenantId),
+        store.listPromotionRequirements(tenantId),
+        store.listRegistryRoutingPointers(tenantId),
+        store.listRegistryAuditLog(tenantId, 400),
+    ]);
+
+    const runsById = new Map(runs.map((run) => [run.run_id, run]));
+    const requirementsByRunId = new Map(promotionRequirements.map((requirement) => [requirement.run_id, requirement]));
+    const routingByFamily = new Map(routingPointers.map((pointer) => [pointer.model_family, pointer]));
+
+    const entries = await Promise.all(
+        registryRecords.map(async (registry) => {
+            const run = runsById.get(registry.run_id) ?? null;
+            const [metrics, benchmarks, calibrationMetrics, adversarialMetrics, deploymentDecision] = await Promise.all([
+                store.listExperimentMetrics(tenantId, registry.run_id, 2_000),
+                store.listExperimentBenchmarks(tenantId, registry.run_id),
+                store.getCalibrationMetrics(tenantId, registry.run_id),
+                store.getAdversarialMetrics(tenantId, registry.run_id),
+                store.getDeploymentDecision(tenantId, registry.run_id),
+            ]);
+            const latestMetric = metrics.at(-1) ?? null;
+            const requirements = requirementsByRunId.get(registry.run_id) ?? null;
+            const promotionGating = run == null
+                ? {
+                    can_promote: false,
+                    promotion_allowed: false,
+                    missing_requirements: ['Experiment run metadata is unavailable for this registry record.'],
+                    blockers: ['Experiment run metadata is unavailable for this registry record.'],
+                    gates: {
+                        calibration: 'pending',
+                        adversarial: 'pending',
+                        safety: 'pending',
+                        benchmark: resolveGateStatus(requirements?.benchmark_pass ?? null),
+                        manual_approval: resolveGateStatus(requirements?.manual_approval ?? null),
+                    },
+                    tooltip: 'Experiment run metadata is unavailable for this registry record.',
+                } satisfies ModelRegistryControlPlaneSnapshot['families'][number]['entries'][number]['promotion_gating']
+                : evaluatePromotionReadiness(
+                    run,
+                    'linked',
+                    calibrationMetrics,
+                    adversarialMetrics,
+                    latestMetric,
+                    requirements,
+                );
+            const decisionPanel = buildRegistryDecisionPanel(
+                promotionGating,
+                requirements,
+                deploymentDecision,
+            );
+            const rollbackHistory = registryAuditEvents
+                .filter((event) => event.event_type === 'rolled_back' && event.registry_id === registry.registry_id)
+                .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+            const latestRegistryEvents = registryAuditEvents
+                .filter((event) => event.registry_id === registry.registry_id)
+                .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+                .slice(0, 8);
+            const lastStableModel = findLastStableModel(registry, registryRecords);
+            const activeRoute = routingByFamily.get(registry.model_family);
+
+            return {
+                registry,
+                run,
+                promotion_requirements: requirements,
+                decision_panel: decisionPanel,
+                promotion_gating: promotionGating,
+                clinical_scorecard: registry.clinical_metrics,
+                lineage: registry.lineage,
+                rollback_history: rollbackHistory,
+                latest_registry_events: latestRegistryEvents,
+                is_active_route: activeRoute?.active_registry_id === registry.registry_id,
+                last_stable_model: lastStableModel,
+            };
+        }),
+    );
+
+    const families = MODEL_FAMILY_ORDER.map((modelFamily) => {
+        const groupEntries = entries
+            .filter((entry) => entry.registry.model_family === modelFamily)
+            .sort((left, right) => {
+                const leftRank = rankRegistryEntry(left.registry);
+                const rightRank = rankRegistryEntry(right.registry);
+                if (leftRank !== rightRank) return leftRank - rightRank;
+                return (right.registry.deployed_at ?? right.registry.updated_at).localeCompare(left.registry.deployed_at ?? left.registry.updated_at);
+            });
+        const activePointer = routingByFamily.get(modelFamily) ?? null;
+        const activeModel = activePointer?.active_registry_id
+            ? registryRecords.find((entry) => entry.registry_id === activePointer.active_registry_id) ?? null
+            : groupEntries.find((entry) => entry.registry.lifecycle_status === 'production' && entry.registry.registry_role === 'champion')?.registry ?? null;
+        const lastStableModel = activeModel != null
+            ? findLastStableModel(activeModel, registryRecords)
+            : groupEntries.find((entry) => entry.registry.registry_role === 'rollback_target')?.registry ?? null;
+
+        return {
+            model_family: modelFamily,
+            active_registry_id: activePointer?.active_registry_id ?? activeModel?.registry_id ?? null,
+            active_model: activeModel,
+            last_stable_model: lastStableModel,
+            entries: groupEntries,
+        };
+    });
+
+    return {
+        tenant_id: tenantId,
+        families,
+        routing_pointers: routingPointers,
+        audit_history: registryAuditEvents
+            .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+            .slice(0, 50),
         refreshed_at: new Date().toISOString(),
     };
 }
@@ -887,6 +1159,9 @@ export async function backfillSummaryExperimentRuns(
             registry_role: entry.is_champion ? 'champion' : entry.promotion_status === 'challenger' ? 'challenger' : 'experimental',
             calibration_report_id: entry.calibration_report_id,
             parent_model_version: entry.parent_model_version,
+            model_family: entry.task_type === 'vision' ? 'vision' : 'diagnostics',
+            benchmark_status: 'pending',
+            manual_approval_status: 'pending',
         };
         const taskType = mapRegistryTaskToExperimentTask(entry.task_type);
         const modality = mapTaskToModality(taskType);
@@ -985,6 +1260,8 @@ export async function backfillSummaryExperimentRuns(
                 promotion_status: entry.promotion_status,
                 calibration_status: calibration?.status ?? 'pending',
                 adversarial_gate_status: safetyBenchmark?.pass_status ?? 'pending',
+                benchmark_status: safetyBenchmark?.pass_status ?? 'pending',
+                manual_approval_status: 'pending',
                 deployment_eligibility: entry.promotion_status === 'rejected'
                     ? 'blocked'
                     : calibration?.status === 'fail'
@@ -1156,25 +1433,79 @@ async function ensureGovernanceForRun(
     const latestMetric = metrics[metrics.length - 1] ?? null;
 
     if (run.status === 'failed') {
-        await syncRegistryLinkForRun(store, run, null, null, null, existingDecision, existingRegistryLink);
-        return;
-    }
-
-    if (!isGovernanceCandidateStatus(run.status)) {
+        const existingRegistry = await store.getModelRegistryForRun(tenantId, runId);
+        const promotionRequirements = existingRegistry
+            ? await ensurePromotionRequirements(
+                store,
+                run,
+                existingRegistry,
+                benchmarks,
+                null,
+                null,
+                latestMetric,
+                actor,
+            )
+            : null;
+        await syncRegistryLinkForRun(store, run, existingRegistry, null, null, existingDecision, existingRegistryLink, promotionRequirements);
         return;
     }
 
     const modelRegistry = await ensureModelRegistryRecord(store, run, artifacts, actor);
+
+    if (!isGovernanceCandidateStatus(run.status)) {
+        const promotionRequirements = await ensurePromotionRequirements(
+            store,
+            run,
+            modelRegistry,
+            benchmarks,
+            null,
+            null,
+            latestMetric,
+            actor,
+        );
+        const decision = await ensureDeploymentDecision(
+            store,
+            run,
+            latestMetric,
+            null,
+            null,
+            promotionRequirements,
+            actor,
+        );
+        await syncRegistryLinkForRun(
+            store,
+            run,
+            modelRegistry,
+            null,
+            null,
+            decision,
+            existingRegistryLink,
+            promotionRequirements,
+        );
+        return;
+    }
+
     const calibrationMetrics = await ensureCalibrationMetrics(store, run, metrics, actor);
     const adversarialMetrics = await ensureAdversarialMetrics(store, run, metrics, benchmarks, actor);
     await logBenchmarkAuditEvents(store, run, benchmarks, actor);
     await ensureSubgroupMetrics(store, run, latestMetric);
+    const promotionRequirements = await ensurePromotionRequirements(
+        store,
+        run,
+        modelRegistry,
+        benchmarks,
+        calibrationMetrics,
+        adversarialMetrics,
+        latestMetric,
+        actor,
+    );
     const decision = await ensureDeploymentDecision(
         store,
         run,
         latestMetric,
         calibrationMetrics,
         adversarialMetrics,
+        promotionRequirements,
         actor,
     );
 
@@ -1186,6 +1517,7 @@ async function ensureGovernanceForRun(
         adversarialMetrics,
         decision,
         existingRegistryLink,
+        promotionRequirements,
     );
 }
 
@@ -1197,20 +1529,40 @@ async function ensureModelRegistryRecord(
 ): Promise<ModelRegistryRecord> {
     const existing = await store.getModelRegistryForRun(run.tenant_id, run.run_id);
     const artifactPath = selectPrimaryArtifactPath(artifacts, run);
+    const artifactUris = buildArtifactUris(run, artifacts as ExperimentArtifactRecord[]);
     const nextStatus = mapRunStatusToRegistryStatus(run.status, existing?.status ?? null);
     const nextRole = mapRunToRegistryRole(run, existing?.role ?? null);
+    const modelFamily = resolveModelFamilyForRun(run);
     const registry = await store.upsertModelRegistry({
         registry_id: existing?.registry_id ?? createRegistryId(run),
         tenant_id: run.tenant_id,
         run_id: run.run_id,
+        model_name: existing?.model_name ?? run.model_arch,
         model_version: run.model_version ?? run.run_id,
+        model_family: existing?.model_family ?? modelFamily,
+        artifact_uri: artifactPath,
+        dataset_version: run.dataset_version ?? run.dataset_name,
+        feature_schema_version: run.feature_schema_version,
+        label_policy_version: run.label_policy_version,
+        lifecycle_status: nextStatus,
+        registry_role: nextRole,
+        deployed_at: nextStatus === 'production' ? existing?.deployed_at ?? run.ended_at ?? new Date().toISOString() : existing?.deployed_at ?? null,
+        archived_at: nextStatus === 'archived' ? existing?.archived_at ?? new Date().toISOString() : null,
+        promoted_from: existing?.promoted_from ?? null,
+        rollback_target: existing?.rollback_target ?? null,
+        clinical_metrics: existing?.clinical_metrics ?? buildClinicalMetricsRecord(run, null, null, null),
+        lineage: existing?.lineage ?? buildRegistryLineage(run, artifactUris, []),
+        rollback_metadata: existing?.rollback_metadata ?? null,
         artifact_path: artifactPath,
         status: nextStatus,
         role: nextRole,
-        created_by: actor ?? run.created_by,
+        created_by: actor ?? existing?.created_by ?? run.created_by,
     });
 
-    if (run.registry_id !== registry.registry_id || run.registry_context.registry_role !== registry.role || run.registry_context.registry_status !== registry.status) {
+    if (run.registry_id !== registry.registry_id ||
+        run.registry_context.registry_role !== registry.role ||
+        run.registry_context.registry_status !== registry.status ||
+        run.registry_context.model_family !== registry.model_family) {
         await store.updateExperimentRun(run.run_id, run.tenant_id, {
             registry_id: registry.registry_id,
             registry_context: {
@@ -1221,6 +1573,8 @@ async function ensureModelRegistryRecord(
                 registry_status: registry.status,
                 promotion_status: registry.status,
                 champion_or_challenger: registry.role,
+                model_family: registry.model_family,
+                artifact_uri: registry.artifact_uri,
             },
         });
     }
@@ -1234,7 +1588,8 @@ async function ensureModelRegistryRecord(
             registry_id: registry.registry_id,
             registry_status: registry.status,
             registry_role: registry.role,
-            artifact_path: registry.artifact_path,
+            model_family: registry.model_family,
+            artifact_uri: registry.artifact_uri,
         },
         deterministicKey: `${run.run_id}:registry:${registry.status}:${registry.role}`,
     });
@@ -1321,31 +1676,88 @@ async function ensureAdversarialMetrics(
     return record;
 }
 
+async function ensurePromotionRequirements(
+    store: ExperimentTrackingStore,
+    run: ExperimentRunRecord,
+    modelRegistry: ModelRegistryRecord,
+    benchmarks: ExperimentBenchmarkRecord[],
+    calibrationMetrics: CalibrationMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null,
+    latestMetric: ExperimentMetricRecord | null,
+    actor: string | null,
+): Promise<PromotionRequirementsRecord> {
+    const existing = await store.getPromotionRequirements(run.tenant_id, run.run_id);
+    const benchmarkPass = evaluateBenchmarkGate(benchmarks);
+    const safetyPass = deriveSafetyPassValue(run, latestMetric);
+    const refreshedRegistry = await store.upsertModelRegistry({
+        ...modelRegistry,
+        artifact_path: modelRegistry.artifact_uri ?? modelRegistry.artifact_path,
+        clinical_metrics: buildClinicalMetricsRecord(run, latestMetric, calibrationMetrics, adversarialMetrics),
+        lineage: buildRegistryLineage(run, buildArtifactUris(run, await store.listExperimentArtifacts(run.tenant_id, run.run_id)), benchmarks),
+        created_by: actor ?? modelRegistry.created_by,
+    });
+
+    const requirements = await store.upsertPromotionRequirements({
+        ...(existing?.id ? { id: existing.id } : {}),
+        tenant_id: run.tenant_id,
+        registry_id: refreshedRegistry.registry_id,
+        run_id: run.run_id,
+        calibration_pass: calibrationMetrics?.calibration_pass ?? null,
+        adversarial_pass: adversarialMetrics?.adversarial_pass ?? null,
+        safety_pass: safetyPass,
+        benchmark_pass: benchmarkPass,
+        manual_approval: existing?.manual_approval ?? (refreshedRegistry.lifecycle_status === 'production' && refreshedRegistry.registry_role === 'champion' ? true : null),
+    });
+
+    return requirements;
+}
+
 async function ensureDeploymentDecision(
     store: ExperimentTrackingStore,
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
     calibrationMetrics: CalibrationMetricRecord | null,
     adversarialMetrics: AdversarialMetricRecord | null,
+    promotionRequirements: PromotionRequirementsRecord | null,
     actor: string | null,
 ): Promise<DeploymentDecisionRecord> {
     const safetyCoverage = getSafetyCoverageState(run, latestMetric);
-    const safetyPass = evaluateSafetyGate(run, latestMetric);
-    const calibrationPass = calibrationMetrics?.calibration_pass ?? false;
-    const adversarialPass = adversarialMetrics?.adversarial_pass ?? false;
-    const gatesReady = calibrationMetrics != null && adversarialMetrics != null && safetyCoverage === 'full';
+    const safetyPass = promotionRequirements?.safety_pass ?? deriveSafetyPassValue(run, latestMetric);
+    const calibrationPass = promotionRequirements?.calibration_pass ?? calibrationMetrics?.calibration_pass ?? null;
+    const adversarialPass = promotionRequirements?.adversarial_pass ?? adversarialMetrics?.adversarial_pass ?? null;
+    const benchmarkPass = promotionRequirements?.benchmark_pass ?? null;
+    const manualApproval = promotionRequirements?.manual_approval ?? null;
+    const missingEvaluations = [
+        calibrationPass == null ? 'Calibration evaluation is still pending.' : null,
+        adversarialPass == null ? 'Adversarial evaluation is still pending.' : null,
+        benchmarkPass == null ? 'Benchmark evaluation is still pending.' : null,
+        safetyCoverage !== 'full' || safetyPass == null ? 'Clinical safety evaluation is still pending.' : null,
+        manualApproval !== true ? 'Manual approval has not been granted.' : null,
+    ].filter((value): value is string => Boolean(value));
+    const allEvaluated = calibrationPass != null &&
+        adversarialPass != null &&
+        benchmarkPass != null &&
+        safetyPass != null;
+    const anyGateFailed = calibrationPass === false ||
+        adversarialPass === false ||
+        benchmarkPass === false ||
+        safetyPass === false;
     const decision = run.status === 'failed'
         ? 'rejected'
-        : !gatesReady
+        : anyGateFailed || manualApproval === false
+            ? 'rejected'
+            : !allEvaluated || manualApproval !== true
             ? 'pending'
-            : calibrationPass && adversarialPass && safetyPass
-            ? 'approved'
-            : 'rejected';
+            : calibrationPass === true && adversarialPass === true && benchmarkPass === true && safetyPass === true
+                ? 'approved'
+                : 'rejected';
     const reason = decision === 'approved'
-        ? 'Passed calibration, adversarial, and clinical safety gates.'
+        ? 'Passed calibration, adversarial, safety, benchmark, and manual approval gates.'
         : decision === 'pending'
-            ? 'Deployment review is blocked until calibration, adversarial, and full clinical safety metrics are all available.'
-        : explainDecisionFailure(run, latestMetric, calibrationMetrics, adversarialMetrics, safetyPass);
+            ? missingEvaluations.join(' ')
+            : manualApproval === false && !anyGateFailed
+                ? 'Manual approval was explicitly denied.'
+        : explainDecisionFailure(run, latestMetric, calibrationMetrics, adversarialMetrics, benchmarkPass, safetyPass);
 
     const record = await store.upsertDeploymentDecision({
         tenant_id: run.tenant_id,
@@ -1355,6 +1767,8 @@ async function ensureDeploymentDecision(
         calibration_pass: calibrationPass,
         adversarial_pass: adversarialPass,
         safety_pass: safetyPass,
+        benchmark_pass: benchmarkPass,
+        manual_approval: manualApproval,
         approved_by: decision === 'approved' ? (actor ?? 'system:auto') : null,
         timestamp: new Date().toISOString(),
     });
@@ -1369,6 +1783,8 @@ async function ensureDeploymentDecision(
             calibration_pass: record.calibration_pass,
             adversarial_pass: record.adversarial_pass,
             safety_pass: record.safety_pass,
+            benchmark_pass: record.benchmark_pass,
+            manual_approval: record.manual_approval,
             safety_coverage: safetyCoverage,
             reason: record.reason,
         },
@@ -1425,11 +1841,21 @@ async function syncRegistryLinkForRun(
     adversarialMetrics: AdversarialMetricRecord | null,
     deploymentDecision: DeploymentDecisionRecord | null,
     existingRegistryLink: ExperimentRegistryLinkRecord | null,
+    promotionRequirements: PromotionRequirementsRecord | null,
 ): Promise<void> {
     const current = existingRegistryLink ?? await store.getExperimentRegistryLink(run.tenant_id, run.run_id);
     if (!modelRegistry && !current) return;
     const registryLinkState = deriveRegistryLinkState(run, modelRegistry, current);
     const registryRole = deriveRegistryRole(modelRegistry, current, registryLinkState);
+    const benchmarkStatus = resolveGateStatus(promotionRequirements?.benchmark_pass);
+    const manualApprovalStatus = resolveGateStatus(promotionRequirements?.manual_approval);
+    const deploymentEligibility = deploymentDecision == null
+        ? current?.deployment_eligibility ?? 'pending'
+        : deploymentDecision.decision === 'approved'
+            ? 'eligible_review'
+            : deploymentDecision.decision === 'pending'
+                ? 'pending'
+                : 'blocked';
 
     await store.upsertExperimentRegistryLink({
         tenant_id: run.tenant_id,
@@ -1444,9 +1870,9 @@ async function syncRegistryLinkForRun(
         adversarial_gate_status: adversarialMetrics == null
             ? current?.adversarial_gate_status ?? 'pending'
             : adversarialMetrics.adversarial_pass === true ? 'passed' : 'failed',
-        deployment_eligibility: deploymentDecision == null
-            ? current?.deployment_eligibility ?? 'pending'
-            : deploymentDecision.decision === 'approved' ? 'eligible_review' : 'blocked',
+        benchmark_status: benchmarkStatus === 'pending' ? current?.benchmark_status ?? 'pending' : benchmarkStatus === 'pass' ? 'passed' : 'failed',
+        manual_approval_status: manualApprovalStatus === 'pending' ? current?.manual_approval_status ?? 'pending' : manualApprovalStatus === 'pass' ? 'passed' : 'failed',
+        deployment_eligibility: deploymentEligibility,
     });
 
     await store.updateExperimentRun(run.run_id, run.tenant_id, {
@@ -1458,9 +1884,17 @@ async function syncRegistryLinkForRun(
             registry_role: registryRole,
             champion_or_challenger: registryRole,
             promotion_status: modelRegistry?.status ?? current?.promotion_status ?? null,
-            deployment_eligibility: deploymentDecision == null
-                ? current?.deployment_eligibility ?? 'pending'
-                : deploymentDecision.decision === 'approved' ? 'eligible_review' : 'blocked',
+            deployment_eligibility: deploymentEligibility,
+            calibration_status: calibrationMetrics == null
+                ? current?.calibration_status ?? 'pending'
+                : calibrationMetrics.calibration_pass === true ? 'passed' : 'failed',
+            adversarial_gate_status: adversarialMetrics == null
+                ? current?.adversarial_gate_status ?? 'pending'
+                : adversarialMetrics.adversarial_pass === true ? 'passed' : 'failed',
+            benchmark_status: benchmarkStatus,
+            manual_approval_status: manualApprovalStatus,
+            model_family: modelRegistry?.model_family ?? run.registry_context.model_family ?? null,
+            rollback_target: modelRegistry?.rollback_target ?? run.registry_context.rollback_target ?? null,
         },
     });
 }
@@ -1622,7 +2056,8 @@ function explainDecisionFailure(
     latestMetric: ExperimentMetricRecord | null,
     calibrationMetrics: CalibrationMetricRecord | null,
     adversarialMetrics: AdversarialMetricRecord | null,
-    safetyPass: boolean,
+    benchmarkPass: boolean | null,
+    safetyPass: boolean | null,
 ): string {
     const reasons: string[] = [];
     if (run.status === 'failed') {
@@ -1633,6 +2068,9 @@ function explainDecisionFailure(
     }
     if (adversarialMetrics?.adversarial_pass !== true) {
         reasons.push('Adversarial gate failed due to degradation, critical recall, or false reassurance thresholds.');
+    }
+    if (benchmarkPass === false) {
+        reasons.push('Benchmark gate failed on at least one required benchmark family.');
     }
     if (!safetyPass) {
         reasons.push(`Clinical safety gate failed (critical recall ${formatNullableNumber(latestMetric?.recall_critical)}).`);
@@ -1690,6 +2128,29 @@ async function logExperimentAuditEvent(
         event_type: input.eventType,
         actor: input.actor,
         payload: input.metadata,
+    });
+}
+
+async function logRegistryAuditEvent(
+    store: ExperimentTrackingStore,
+    input: {
+        tenantId: string;
+        registryId: string;
+        runId: string | null;
+        eventType: string;
+        actor: string | null;
+        metadata: Record<string, unknown>;
+    },
+): Promise<void> {
+    await store.createRegistryAuditLog({
+        event_id: createRegistryAuditEventId(input.tenantId, input.registryId, input.eventType),
+        tenant_id: input.tenantId,
+        registry_id: input.registryId,
+        run_id: input.runId,
+        event_type: input.eventType,
+        timestamp: new Date().toISOString(),
+        actor: input.actor,
+        metadata: input.metadata,
     });
 }
 
@@ -1837,29 +2298,216 @@ function evaluatePromotionReadiness(
     calibrationMetrics: CalibrationMetricRecord | null,
     adversarialMetrics: AdversarialMetricRecord | null,
     latestMetric: ExperimentMetricRecord | null,
+    promotionRequirements: PromotionRequirementsRecord | null,
 ): ExperimentRunDetail['promotion_gating'] {
-    const missingRequirements: string[] = [];
+    const calibrationGate = resolveGateStatus(promotionRequirements?.calibration_pass ?? calibrationMetrics?.calibration_pass ?? null);
+    const adversarialGate = resolveGateStatus(promotionRequirements?.adversarial_pass ?? adversarialMetrics?.adversarial_pass ?? null);
+    const safetyGate = resolveGateStatus(promotionRequirements?.safety_pass ?? deriveSafetyPassValue(run, latestMetric));
+    const benchmarkGate = resolveGateStatus(promotionRequirements?.benchmark_pass ?? null);
+    const manualApprovalGate = resolveGateStatus(promotionRequirements?.manual_approval ?? null);
+    const blockers: string[] = [];
 
     if (registryLinkState !== 'linked') {
-        missingRequirements.push('Registry candidate linkage is missing.');
+        blockers.push('Registry candidate linkage is missing.');
     }
-    if (calibrationMetrics?.calibration_pass !== true) {
-        missingRequirements.push('Calibration gate has not passed.');
+    if (calibrationGate !== 'pass') {
+        blockers.push(calibrationGate === 'pending'
+            ? 'Calibration gate is still pending.'
+            : 'Calibration gate has not passed.');
     }
-    if (adversarialMetrics?.adversarial_pass !== true) {
-        missingRequirements.push('Adversarial gate has not passed.');
+    if (adversarialGate !== 'pass') {
+        blockers.push(adversarialGate === 'pending'
+            ? 'Adversarial gate is still pending.'
+            : 'Adversarial gate has not passed.');
     }
-    if (getSafetyCoverageState(run, latestMetric) !== 'full') {
-        missingRequirements.push('Full clinical safety metrics are not complete yet.');
+    if (safetyGate !== 'pass') {
+        blockers.push(safetyGate === 'pending'
+            ? 'Clinical safety evaluation is still pending.'
+            : 'Clinical safety gate has not passed.');
+    }
+    if (benchmarkGate !== 'pass') {
+        blockers.push(benchmarkGate === 'pending'
+            ? 'Benchmark evaluation is still pending.'
+            : 'Benchmark gate has not passed.');
+    }
+    if (manualApprovalGate !== 'pass') {
+        blockers.push(manualApprovalGate === 'pending'
+            ? 'Manual approval is still pending.'
+            : 'Manual approval has not been granted.');
     }
 
     return {
-        can_promote: missingRequirements.length === 0,
-        missing_requirements: missingRequirements,
-        tooltip: missingRequirements.length === 0
+        can_promote: blockers.length === 0,
+        promotion_allowed: blockers.length === 0,
+        missing_requirements: blockers,
+        blockers,
+        gates: {
+            calibration: calibrationGate,
+            adversarial: adversarialGate,
+            safety: safetyGate,
+            benchmark: benchmarkGate,
+            manual_approval: manualApprovalGate,
+        },
+        tooltip: blockers.length === 0
             ? 'All governance requirements satisfied.'
-            : missingRequirements.join(' '),
+            : blockers.join(' '),
     };
+}
+
+function resolveGateStatus(value: boolean | null | undefined): GateStatus {
+    if (value === true) return 'pass';
+    if (value === false) return 'fail';
+    return 'pending';
+}
+
+function deriveSafetyPassValue(
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+): boolean | null {
+    return getSafetyCoverageState(run, latestMetric) === 'full'
+        ? evaluateSafetyGate(run, latestMetric)
+        : null;
+}
+
+function evaluateBenchmarkGate(
+    benchmarks: ExperimentBenchmarkRecord[],
+): boolean | null {
+    if (benchmarks.length === 0) return null;
+    if (benchmarks.some((benchmark) => benchmark.pass_status.toLowerCase() === 'fail')) {
+        return false;
+    }
+    return benchmarks.some((benchmark) => benchmark.pass_status.toLowerCase() === 'pass')
+        ? true
+        : null;
+}
+
+function buildClinicalMetricsRecord(
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+    calibrationMetrics: CalibrationMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null,
+): ClinicalMetricsRecord {
+    return {
+        global_accuracy: latestMetric?.val_accuracy ?? run.metric_primary_value,
+        macro_f1: latestMetric?.macro_f1 ?? numberOrNull(run.safety_metrics.macro_f1),
+        critical_recall: latestMetric?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical),
+        false_reassurance_rate: adversarialMetrics?.dangerous_false_reassurance_rate
+            ?? latestMetric?.dangerous_false_reassurance_rate
+            ?? numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate),
+        fn_critical_rate: latestMetric?.false_negative_critical_rate
+            ?? numberOrNull(run.safety_metrics.false_negative_critical_rate),
+        ece: calibrationMetrics?.ece ?? numberOrNull(run.safety_metrics.calibration_ece),
+        brier_score: calibrationMetrics?.brier_score ?? numberOrNull(run.safety_metrics.calibration_brier),
+        adversarial_degradation: adversarialMetrics?.degradation_score ?? latestMetric?.adversarial_score ?? null,
+        latency_p99: numberOrNull(run.resource_usage.latency_p99)
+            ?? numberOrNull(run.resource_usage.inference_latency_p99_ms),
+    };
+}
+
+function buildRegistryLineage(
+    run: ExperimentRunRecord,
+    artifactUris: ExperimentRunDetail['artifact_uris'],
+    benchmarks: ExperimentBenchmarkRecord[],
+): RegistryLineageRecord {
+    return {
+        run_id: run.run_id,
+        experiment_group: run.experiment_group_id,
+        dataset_version: run.dataset_version ?? run.dataset_name,
+        benchmark_id: benchmarks[0]?.id ?? null,
+        calibration_report_uri: artifactUris.calibration_report_uri,
+        adversarial_report_uri: artifactUris.adversarial_report_uri,
+    };
+}
+
+function buildRegistryDecisionPanel(
+    promotionGating: ExperimentRunDetail['promotion_gating'],
+    promotionRequirements: PromotionRequirementsRecord | null,
+    deploymentDecision: DeploymentDecisionRecord | null,
+): RegistryDecisionPanel {
+    const missingEvaluations = [
+        promotionGating.gates.calibration === 'pending' ? 'Calibration evaluation is pending.' : null,
+        promotionGating.gates.adversarial === 'pending' ? 'Adversarial evaluation is pending.' : null,
+        promotionGating.gates.safety === 'pending' ? 'Clinical safety evaluation is pending.' : null,
+        promotionGating.gates.benchmark === 'pending' ? 'Benchmark evaluation is pending.' : null,
+        promotionGating.gates.manual_approval === 'pending' ? 'Manual approval is pending.' : null,
+    ].filter((value): value is string => Boolean(value));
+
+    const reasons = deploymentDecision?.decision === 'rejected'
+        ? promotionGating.blockers
+        : deploymentDecision?.decision === 'approved'
+            ? ['All registry gates approved.']
+            : promotionRequirements?.manual_approval === false
+                ? ['Manual approval was explicitly denied.']
+                : promotionGating.blockers;
+
+    return {
+        promotion_eligibility: promotionGating.promotion_allowed,
+        deployment_decision: deploymentDecision?.decision === 'approved'
+            ? 'approved'
+            : deploymentDecision?.decision === 'rejected'
+                ? 'rejected'
+                : 'hold',
+        reasons,
+        missing_evaluations: missingEvaluations,
+    };
+}
+
+function filterRegistryAuditEventsForRun(
+    run: ExperimentRunRecord,
+    modelRegistry: ModelRegistryRecord | null,
+    auditEvents: RegistryAuditLogRecord[],
+): RegistryAuditLogRecord[] {
+    return auditEvents
+        .filter((event) => event.run_id === run.run_id || (modelRegistry != null && event.registry_id === modelRegistry.registry_id))
+        .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+        .slice(0, 30);
+}
+
+function findLastStableModel(
+    modelRegistry: ModelRegistryRecord | null,
+    registryRecords: ModelRegistryRecord[],
+): ModelRegistryRecord | null {
+    if (!modelRegistry) return null;
+    if (modelRegistry.rollback_target) {
+        return registryRecords.find((entry) => entry.registry_id === modelRegistry.rollback_target) ?? null;
+    }
+    return registryRecords
+        .filter((entry) =>
+            entry.model_family === modelRegistry.model_family &&
+            entry.registry_id !== modelRegistry.registry_id &&
+            entry.registry_role === 'rollback_target',
+        )
+        .sort((left, right) => (right.deployed_at ?? right.updated_at).localeCompare(left.deployed_at ?? left.updated_at))[0] ?? null;
+}
+
+function resolveModelFamilyForRun(run: ExperimentRunRecord): ModelFamily {
+    const values = [
+        run.task_type,
+        run.target_type,
+        run.model_arch,
+        run.model_version,
+        asString(run.registry_context.model_family),
+    ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+    if (values.includes('vision') || run.task_type === 'vision_classification') {
+        return 'vision';
+    }
+    if (values.includes('therapeut')) {
+        return 'therapeutics';
+    }
+    return 'diagnostics';
+}
+
+function rankRegistryEntry(registry: ModelRegistryRecord): number {
+    if (registry.lifecycle_status === 'production' && registry.registry_role === 'champion') return 0;
+    if (registry.lifecycle_status === 'staging' && registry.registry_role === 'challenger') return 1;
+    if (registry.lifecycle_status === 'candidate') return 2;
+    if (registry.lifecycle_status === 'training') return 3;
+    if (registry.registry_role === 'rollback_target') return 4;
+    return 5;
 }
 
 function buildArtifactUris(
@@ -2294,8 +2942,12 @@ function mapRunStatusToRegistryStatus(
     existingStatus: ModelRegistryRecord['status'] | null,
 ): ModelRegistryRecord['status'] {
     if (status === 'promoted') return 'production';
-    if (status === 'rolled_back') return 'archived';
-    if (existingStatus === 'production' || existingStatus === 'staging') return existingStatus;
+    if (status === 'rolled_back') return existingStatus === 'production' ? 'production' : 'archived';
+    if (status === 'queued' || status === 'initializing' || status === 'training' || status === 'validating' || status === 'checkpointing') {
+        if (existingStatus === 'production' || existingStatus === 'staging') return existingStatus;
+        return 'training';
+    }
+    if (existingStatus === 'production' || existingStatus === 'staging' || existingStatus === 'archived') return existingStatus;
     return 'candidate';
 }
 
@@ -2304,7 +2956,7 @@ function mapRunToRegistryRole(
     existingRole: ModelRegistryRecord['role'] | null,
 ): ModelRegistryRecord['role'] {
     if (run.status === 'promoted') return 'champion';
-    if (existingRole === 'champion' || existingRole === 'challenger') return existingRole;
+    if (existingRole === 'champion' || existingRole === 'challenger' || existingRole === 'rollback_target') return existingRole;
     return run.summary_only ? 'challenger' : 'experimental';
 }
 
@@ -2315,6 +2967,14 @@ function createRegistryId(run: ExperimentRunRecord): string {
 function createAuditEventId(tenantId: string, seed: string): string {
     const normalized = `${tenantId}:${seed}`.replace(/[^a-z0-9:_-]+/gi, '_').toLowerCase();
     return `evt_${normalized.slice(0, 100)}`;
+}
+
+function createRegistryAuditEventId(
+    tenantId: string,
+    registryId: string,
+    eventType: string,
+): string {
+    return createAuditEventId(tenantId, `${registryId}:${eventType}:${Date.now()}`);
 }
 
 function clampMetric(value: number): number {
