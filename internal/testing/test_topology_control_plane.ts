@@ -410,6 +410,18 @@ async function main() {
     });
     assert.equal(heartbeatOnlyState.control_plane_state, 'CONTROL_PLANE_INITIALIZING');
 
+    const idleButOperationalState = classifyTopologyControlPlaneState({
+        now: new Date().toISOString(),
+        telemetry_event_timestamps: [],
+        latest_telemetry_timestamp: new Date(Date.now() - 2_000).toISOString(),
+        latest_inference_timestamp: new Date(Date.now() - (45 * 60 * 1000)).toISOString(),
+        latest_outcome_timestamp: new Date(Date.now() - (43 * 60 * 1000)).toISOString(),
+        latest_evaluation_timestamp: new Date(Date.now() - (42 * 60 * 1000)).toISOString(),
+        evaluation_event_count: 3,
+        evaluation_events_table_exists: true,
+    });
+    assert.equal(idleButOperationalState.control_plane_state, 'READY');
+
     const readyState = classifyTopologyControlPlaneState({
         now: new Date().toISOString(),
         telemetry_event_timestamps: [

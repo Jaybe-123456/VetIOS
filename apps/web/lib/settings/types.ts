@@ -209,6 +209,45 @@ export interface ControlPlaneDebugSnapshot {
     };
 }
 
+export interface ControlPlaneDashboardInferenceRecord {
+    id: string;
+    timestamp: string;
+    model_name: string | null;
+    model_version: string | null;
+    confidence: number | null;
+    latency_ms: number | null;
+    prediction: string | null;
+    route_model_id: string | null;
+    source_module: string | null;
+}
+
+export interface ControlPlaneDashboardRoutingRow {
+    family: string;
+    top_model: string | null;
+    total_requests: number;
+}
+
+export interface ControlPlaneDashboardSnapshot {
+    workload_state: 'live' | 'idle';
+    recent_inferences: ControlPlaneDashboardInferenceRecord[];
+    latency_history: Array<{
+        time: string;
+        value: number;
+    }>;
+    drift_history: Array<{
+        time: string;
+        value: number;
+    }>;
+    routing: {
+        top_route: string | null;
+        route_shift_count: number;
+        fallback_count: number;
+        ensemble_count: number;
+        family_count: number;
+        family_rows: ControlPlaneDashboardRoutingRow[];
+    };
+}
+
 export interface ControlPlaneSnapshot {
     tenant_id: string;
     profile: ControlPlaneProfile;
@@ -229,6 +268,7 @@ export interface ControlPlaneSnapshot {
     actions: ControlPlaneActionRecord[];
     debug: ControlPlaneDebugSnapshot;
     telemetry_events: TelemetryEventRecord[];
+    dashboard: ControlPlaneDashboardSnapshot;
     refreshed_at: string;
 }
 

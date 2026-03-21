@@ -260,6 +260,7 @@ export async function getTopologySnapshot(
     const evaluations = evaluationLoad.events;
     const diagnostics = buildDiagnosticsState({
         until,
+        windowMs,
         telemetryEvents,
         evaluations,
         latestSourceTimestamps,
@@ -1816,7 +1817,45 @@ async function loadTelemetryEvents(
         throw new Error(`Failed to load topology telemetry events: ${error.message}`);
     }
 
-    return (data ?? []).slice().reverse().map((row) => asRecord(row));
+    const latestRows = (data ?? []).map((row) => asRecord(row));
+    const hasOperationalRows = latestRows.some((row) => {
+        const eventType = readString(row[C.event_type]);
+        if (eventType !== 'inference' && eventType !== 'outcome' && eventType !== 'evaluation') {
+            return false;
+        }
+        return !isSyntheticTelemetryEvent(mapTelemetryEvent(row));
+    });
+
+    let workloadRows: Record<string, unknown>[] = [];
+    if (!hasOperationalRows) {
+        const workloadResult = await client
+            .from(TELEMETRY_EVENTS.TABLE)
+            .select(selectColumns)
+            .eq(C.tenant_id, tenantId)
+            .gte(C.timestamp, from.toISOString())
+            .lte(C.timestamp, until.toISOString())
+            .in(C.event_type, ['inference', 'outcome', 'evaluation'])
+            .order(C.timestamp, { ascending: false })
+            .limit(240);
+
+        if (!workloadResult.error) {
+            workloadRows = (workloadResult.data ?? []).map((row) => asRecord(row));
+        }
+    }
+
+    const mergedRows = new Map<string, Record<string, unknown>>();
+    for (const row of [...latestRows, ...workloadRows]) {
+        const eventId = readString(row[C.event_id]);
+        if (!eventId) continue;
+        mergedRows.set(eventId, row);
+    }
+
+    return Array.from(mergedRows.values())
+        .sort((left, right) => {
+            const leftTimestamp = readString(left[C.timestamp]) ?? '';
+            const rightTimestamp = readString(right[C.timestamp]) ?? '';
+            return leftTimestamp.localeCompare(rightTimestamp);
+        });
 }
 
 async function loadClinicalCases(
@@ -1960,6 +1999,7 @@ async function loadLatestSourceTimestamps(
 
 function buildDiagnosticsState(input: {
     until: Date;
+    windowMs: number;
     telemetryEvents: ControlGraphTelemetryEvent[];
     evaluations: ControlGraphEvaluationEvent[];
     latestSourceTimestamps: {
@@ -1999,6 +2039,11 @@ function buildDiagnosticsState(input: {
     const latestEvaluationTimestamp = findLatestTimestamp(
         usableEvaluations.map((evaluation) => evaluation.created_at),
     );
+    const hasOperationalHistoryInWindow = [
+        latestInferenceTimestamp,
+        latestOutcomeTimestamp,
+        latestEvaluationTimestamp,
+    ].some((timestamp) => isTimestampWithinWindow(timestamp, input.until, input.windowMs));
 
     let controlPlaneState: TopologyControlPlaneState = 'READY';
     if (!evaluationTableExists) {
@@ -2007,10 +2052,10 @@ function buildDiagnosticsState(input: {
         controlPlaneState = 'CONTROL_PLANE_INITIALIZING';
     } else if (workloadTelemetryEvents.length === 0 && latestTelemetryTimestamp == null) {
         controlPlaneState = 'NO_TELEMETRY_EVENTS';
-    } else if (workloadTelemetryEvents.length === 0) {
-        controlPlaneState = 'CONTROL_PLANE_INITIALIZING';
     } else if (!telemetryStreamConnected) {
         controlPlaneState = 'STREAM_DISCONNECTED';
+    } else if (workloadTelemetryEvents.length === 0 && !hasOperationalHistoryInWindow) {
+        controlPlaneState = 'CONTROL_PLANE_INITIALIZING';
     } else if (latestOutcomeTimestamp && evaluationCount === 0) {
         controlPlaneState = 'WAITING_FOR_EVALUATION_EVENTS';
     } else if (evaluationCount < MIN_EVALUATION_EVENTS_FOR_DRIFT) {
@@ -2066,6 +2111,7 @@ export function classifyTopologyControlPlaneState(input: {
 }) {
     return buildDiagnosticsState({
         until: resolveUntil(input.now),
+        windowMs: WINDOW_TO_MS['24h'],
         telemetryEvents: [
             ...input.telemetry_event_timestamps.map((timestamp, index) => ({
                 event_id: `evt_test_${index}`,
@@ -2464,6 +2510,13 @@ function datasetLatencyEstimate(latencies: number[], invalidCount: number, total
 function isStale(timestamp: string | null, now: Date) {
     if (!timestamp) return true;
     return now.getTime() - new Date(timestamp).getTime() > OFFLINE_THRESHOLD_MS;
+}
+
+function isTimestampWithinWindow(timestamp: string | null, now: Date, windowMs: number) {
+    if (!timestamp) return false;
+    const parsed = new Date(timestamp).getTime();
+    if (!Number.isFinite(parsed)) return false;
+    return now.getTime() - parsed <= windowMs;
 }
 
 function shouldSuppressDerivedErrorAlert(
