@@ -250,6 +250,7 @@ function RegistryEntryCard({
     onStage: () => void;
 }) {
     const registry = entry.registry;
+    const isLiveProduction = registry.lifecycle_status === 'production' && registry.registry_role === 'champion';
     const canStage = registry.lifecycle_status === 'candidate' || registry.lifecycle_status === 'training';
     const canPromote = registry.lifecycle_status === 'staging' &&
         registry.registry_role === 'challenger' &&
@@ -321,9 +322,9 @@ function RegistryEntryCard({
                         <GateRow label="Manual Approval" status={entry.promotion_gating.gates.manual_approval} />
                     </div>
                     {entry.promotion_gating.blockers.length > 0 ? (
-                        <div className="mt-4 border border-danger/30 bg-danger/10 p-3">
-                            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-danger">
-                                Promotion Blockers
+                        <div className={`mt-4 p-3 ${isLiveProduction ? 'border border-yellow-500/30 bg-yellow-500/10' : 'border border-danger/30 bg-danger/10'}`}>
+                            <div className={`mb-2 font-mono text-[10px] uppercase tracking-[0.18em] ${isLiveProduction ? 'text-yellow-300' : 'text-danger'}`}>
+                                {isLiveProduction ? 'Operational Watchlist' : 'Promotion Blockers'}
                             </div>
                             <div className="space-y-2 font-mono text-xs text-foreground/85">
                                 {entry.promotion_gating.blockers.map((blocker) => (
@@ -336,13 +337,21 @@ function RegistryEntryCard({
 
                 <Section title="Decision Panel">
                     <div className="grid gap-3 md:grid-cols-2">
-                        <DecisionStat label="Promotion Eligibility" value={entry.decision_panel.promotion_eligibility ? 'YES' : 'NO'} tone={entry.decision_panel.promotion_eligibility ? 'accent' : 'warn'} />
-                        <DecisionStat label="Deployment Decision" value={entry.decision_panel.deployment_decision.toUpperCase()} tone={entry.decision_panel.deployment_decision === 'approved' ? 'accent' : entry.decision_panel.deployment_decision === 'hold' ? 'default' : 'warn'} />
+                        <DecisionStat
+                            label="Promotion Eligibility"
+                            value={renderPromotionEligibility(entry)}
+                            tone={resolvePromotionEligibilityTone(entry)}
+                        />
+                        <DecisionStat
+                            label="Deployment Decision"
+                            value={renderDeploymentDecision(entry)}
+                            tone={entry.decision_panel.deployment_decision === 'approved' ? 'accent' : entry.decision_panel.deployment_decision === 'hold' ? 'default' : 'warn'}
+                        />
                     </div>
                     <div className="mt-4 space-y-2 font-mono text-xs text-foreground/85">
                         {entry.decision_panel.reasons.length > 0 ? (
                             <div>
-                                <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">Reasons</div>
+                                <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">{isLiveProduction ? 'Live Deployment Notes' : 'Reasons'}</div>
                                 {entry.decision_panel.reasons.map((reason) => (
                                     <div key={reason}>{reason}</div>
                                 ))}
@@ -350,7 +359,7 @@ function RegistryEntryCard({
                         ) : null}
                         {entry.decision_panel.missing_evaluations.length > 0 ? (
                             <div>
-                                <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">Missing Evaluations</div>
+                                <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">{isLiveProduction ? 'Monitoring Gaps' : 'Missing Evaluations'}</div>
                                 {entry.decision_panel.missing_evaluations.map((item) => (
                                     <div key={item}>{item}</div>
                                 ))}
@@ -407,7 +416,7 @@ function RegistryEntryCard({
             ) : null}
 
             <div className="mt-5 flex flex-wrap gap-2 border-t border-grid/30 pt-4">
-                <TerminalButton variant="secondary" disabled={!canStage || isPending} onClick={onStage} title={canStage ? 'Move this candidate into governed staging.' : 'Only training or candidate artifacts can be staged.'}>
+                <TerminalButton variant="secondary" disabled={!canStage || isPending} onClick={onStage} title={canStage ? 'Move this candidate into governed staging.' : isLiveProduction ? 'The active production champion cannot be moved back to staging.' : 'Only training or candidate artifacts can be staged.'}>
                     <GitBranchPlus className="mr-2 h-3.5 w-3.5" />
                     Promote To Staging
                 </TerminalButton>
@@ -417,7 +426,7 @@ function RegistryEntryCard({
                         {approvalGranted ? 'Revoke Approval' : 'Grant Approval'}
                     </TerminalButton>
                 ) : null}
-                <TerminalButton variant="secondary" disabled={!canPromote || isPending} onClick={onPromote} title={canPromote ? 'Promote this staging challenger into production.' : entry.promotion_gating.tooltip}>
+                <TerminalButton variant="secondary" disabled={!canPromote || isPending} onClick={onPromote} title={canPromote ? 'Promote this staging challenger into production.' : isLiveProduction ? 'This model is already serving production traffic.' : entry.promotion_gating.tooltip}>
                     <ArrowRight className="mr-2 h-3.5 w-3.5" />
                     Promote To Production
                 </TerminalButton>
@@ -603,6 +612,33 @@ function LifecycleTimeline({
             })}
         </div>
     );
+}
+
+function renderPromotionEligibility(entry: ModelRegistryControlPlaneEntry) {
+    if (entry.registry.lifecycle_status === 'production' && entry.registry.registry_role === 'champion') {
+        return 'ALREADY LIVE';
+    }
+    if (entry.registry.registry_role === 'rollback_target') {
+        return 'ROLLBACK TARGET';
+    }
+    return entry.decision_panel.promotion_eligibility ? 'YES' : 'NO';
+}
+
+function resolvePromotionEligibilityTone(entry: ModelRegistryControlPlaneEntry): 'default' | 'accent' | 'warn' {
+    if (entry.registry.lifecycle_status === 'production' && entry.registry.registry_role === 'champion') {
+        return 'accent';
+    }
+    if (entry.registry.registry_role === 'rollback_target') {
+        return 'default';
+    }
+    return entry.decision_panel.promotion_eligibility ? 'accent' : 'warn';
+}
+
+function renderDeploymentDecision(entry: ModelRegistryControlPlaneEntry) {
+    if (entry.registry.lifecycle_status === 'production' && entry.registry.registry_role === 'champion') {
+        return 'APPROVED';
+    }
+    return entry.decision_panel.deployment_decision.toUpperCase();
 }
 
 function formatFamilyLabel(modelFamily: ModelFamily) {
