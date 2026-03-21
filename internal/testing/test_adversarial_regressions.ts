@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { extractClinicalSignals } from '../../apps/web/lib/ai/clinicalSignals.ts';
+import { detectContradictions } from '../../apps/web/lib/ai/contradictionEngine.ts';
 import { runInferencePipeline } from '../../apps/web/lib/ai/inferenceOrchestrator.ts';
 
 type PipelineResult = Awaited<ReturnType<typeof runInferencePipeline>>;
@@ -207,6 +209,25 @@ async function main() {
         getPrimaryConditionClass(kennelCoughContradiction),
         'Neoplastic',
         'Upper-airway contradiction noise should not drift into neoplastic classing',
+    );
+
+    const negatedFeverSignals = extractClinicalSignals({
+        species: 'dog',
+        symptoms: ['honking cough', 'no fever', 'nasal discharge'],
+        isolated_environment: true,
+    });
+    assert.equal(negatedFeverSignals.evidence.fever.present, false, 'Explicit fever negation should block positive fever attribution');
+    assert.ok(negatedFeverSignals.evidence.fever.negated_terms.length > 0, 'Explicit fever negation should be retained for contradiction reasoning');
+
+    const activityConflict = detectContradictions({
+        species: 'dog',
+        activity_status: 'normal',
+        symptoms: ['collapse', 'cyanosis', 'tachycardia'],
+    });
+    assert.ok(activityConflict.contradiction_score >= 0.2, 'Normal activity should conflict with collapse/cyanosis severity');
+    assert.ok(
+        activityConflict.contradiction_reasons.some((reason) => reason.includes('normal activity status')),
+        'Activity contradiction should be explained in the contradiction reasons',
     );
 
     const unknownMixed = await runInferencePipeline({

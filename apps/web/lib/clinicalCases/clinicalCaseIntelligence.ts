@@ -651,11 +651,32 @@ function deriveSeverityScoreFromEmergencyLevel(value: ClinicalEmergencyLevel | n
 function inferConditionClassFromDiagnosis(value: string | null): string | null {
     const normalized = (value ?? '').toLowerCase();
     if (!normalized) return null;
-    if (normalized.includes('gdv') || normalized.includes('dilatation') || normalized.includes('volvulus') || normalized.includes('obstruction')) {
+    if (
+        normalized.includes('gdv') ||
+        normalized.includes('dilatation') ||
+        normalized.includes('volvulus') ||
+        normalized.includes('obstruction') ||
+        normalized.includes('tracheal collapse')
+    ) {
         return 'Mechanical';
     }
-    if (normalized.includes('parvo') || normalized.includes('distemper') || normalized.includes('infect')) {
+    if (
+        normalized.includes('parvo') ||
+        normalized.includes('distemper') ||
+        normalized.includes('infect') ||
+        normalized.includes('tracheobronchitis') ||
+        normalized.includes('kennel cough') ||
+        normalized.includes('rhinotracheitis') ||
+        normalized.includes('herpesvirus') ||
+        normalized.includes('fhv') ||
+        normalized.includes('upper respiratory') ||
+        normalized.includes('respiratory infection') ||
+        normalized.includes('viral infection')
+    ) {
         return 'Infectious';
+    }
+    if (normalized.includes('bronchitis')) {
+        return 'Inflammatory';
     }
     if (normalized.includes('toxic')) {
         return 'Toxicology';

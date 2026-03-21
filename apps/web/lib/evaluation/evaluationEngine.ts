@@ -289,6 +289,17 @@ export async function createEvaluationEvent(
 
     const confidence = input.predicted_confidence ?? 0.5;
     const stratified = stratifyConfidence(confidence, calibrationError, driftScore);
+    const calibrationBucket = deriveCalibrationBucket(confidence);
+    const conditionClassMatch =
+        normalizeLabel(input.condition_class_pred) != null &&
+        normalizeLabel(input.condition_class_true) != null
+            ? normalizeLabel(input.condition_class_pred) === normalizeLabel(input.condition_class_true)
+            : null;
+    const severityMatch =
+        normalizeLabel(input.severity_pred) != null &&
+        normalizeLabel(input.severity_true) != null
+            ? normalizeLabel(input.severity_pred) === normalizeLabel(input.severity_true)
+            : null;
 
     // Persist evaluation event
     const { data, error } = await supabase
@@ -324,6 +335,9 @@ export async function createEvaluationEvent(
                 prediction,
                 ground_truth: groundTruth,
                 prediction_correct: predictionCorrect,
+                condition_class_match: conditionClassMatch,
+                severity_match: severityMatch,
+                calibration_bucket: calibrationBucket,
                 computed_at: new Date().toISOString(),
             },
         })
@@ -416,6 +430,16 @@ function normalizeLabel(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.replace(/\s+/g, ' ').trim();
     return normalized.length > 0 ? normalized : null;
+}
+
+function deriveCalibrationBucket(confidence: number | null): string | null {
+    if (confidence == null) return null;
+    const normalized = Math.max(0, Math.min(1, confidence));
+    if (normalized < 0.2) return '0-20';
+    if (normalized < 0.4) return '20-40';
+    if (normalized < 0.6) return '40-60';
+    if (normalized < 0.8) return '60-80';
+    return '80-100';
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

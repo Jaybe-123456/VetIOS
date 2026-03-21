@@ -595,7 +595,52 @@ async function main() {
     assert.equal(lowSignalAfterInference.contradiction_score, 0.15);
     assert.deepEqual(lowSignalAfterInference.contradiction_flags, ['sparse clinical signal']);
 
-    // 8. Historical backfill should repair empty legacy rows from inference history
+    // 8. Dataset inference rows should recover class and contradiction telemetry from newer payload shapes
+    const respiratoryInferenceId = makeUuid(15);
+    store.appendInferenceEvent(buildInferenceEvent({
+        id: respiratoryInferenceId,
+        tenantId,
+        caseId: lowSignalAfterInference.id,
+        modelVersion: 'diag_smoke_v1',
+        confidence: 0.85,
+        sourceModule: 'adversarial_simulation',
+        outputPayload: {
+            diagnosis: {
+                primary_condition_class: 'Idiopathic / Unknown',
+                condition_class_probabilities: {
+                    Infectious: 0.74,
+                    'Idiopathic / Unknown': 0.12,
+                },
+                top_differentials: [
+                    { name: 'Canine Infectious Tracheobronchitis (Kennel Cough)', probability: 0.85 },
+                ],
+            },
+            emergency_level: 'MODERATE',
+            contradiction_analysis: {
+                contradiction_score: 0.27,
+                contradiction_reasons: ['isolated exposure history conflicts with infectious pattern'],
+            },
+        },
+        createdAt: '2026-03-19T18:55:00.000Z',
+    }));
+    const respiratoryDataset = await getTenantClinicalDataset(store, tenantId);
+    const respiratoryInference = respiratoryDataset.inferenceEvents.find((row) => row.event_id === respiratoryInferenceId);
+    assert.ok(respiratoryInference);
+    assert.equal(respiratoryInference.top_prediction, 'Canine Infectious Tracheobronchitis (Kennel Cough)');
+    assert.equal(respiratoryInference.primary_condition_class, 'Infectious');
+    assert.equal(respiratoryInference.emergency_level, 'MODERATE');
+    assert.equal(respiratoryInference.contradiction_score, 0.27);
+
+    await store.updateById(tenantId, distemperCase.id, {
+        primary_condition_class: 'Idiopathic / Unknown',
+        top_diagnosis: 'Feline Viral Rhinotracheitis',
+    });
+    const normalizedCaseDataset = await getTenantClinicalDataset(store, tenantId);
+    const normalizedCaseRow = normalizedCaseDataset.clinicalCases.find((row) => row.case_id === distemperCase.id);
+    assert.ok(normalizedCaseRow);
+    assert.equal(normalizedCaseRow.primary_condition_class, 'Infectious');
+
+    // 9. Historical backfill should repair empty legacy rows from inference history
     const legacyCase = await ensureCanonicalClinicalCase(store, {
         tenantId,
         userId,
@@ -682,6 +727,7 @@ function buildInferenceEvent(input: {
     caseId: string;
     modelVersion: string;
     confidence: number;
+    sourceModule?: string;
     outputPayload: Record<string, unknown>;
     createdAt: string;
 }): DatasetInferenceEventRecord {
@@ -690,7 +736,7 @@ function buildInferenceEvent(input: {
         tenant_id: input.tenantId,
         user_id: input.tenantId,
         case_id: input.caseId,
-        source_module: 'inference_console',
+        source_module: input.sourceModule ?? 'inference_console',
         model_version: input.modelVersion,
         confidence_score: input.confidence,
         output_payload: input.outputPayload,

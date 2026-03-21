@@ -202,17 +202,31 @@ export async function POST(req: Request) {
                 const diagPayload = (inf.output_payload?.diagnosis || {}) as Record<string, unknown>;
                 const riskPayload = (inf.output_payload?.risk_assessment || {}) as Record<string, unknown>;
 
-                const predictedClass = diagPayload.primary_condition_class as string | undefined;
-                const predictedDiagnosis = (diagPayload.top_differentials as any[])?.[0]?.name as string | undefined;
+                const predictedLabel = extractPredictionLabel(inf.output_payload);
+                const predictedDiagnosis = predictedLabel ?? undefined;
+                const predictedClass = resolveConditionClassLabel(
+                    typeof diagPayload.primary_condition_class === 'string'
+                        ? diagPayload.primary_condition_class
+                        : typeof diagPayload.condition_class === 'string'
+                            ? diagPayload.condition_class
+                            : null,
+                    predictedLabel,
+                );
                 const predictedSeverity = riskPayload.severity_score as number | undefined;
 
                 const actualOutcome = body.outcome.payload as Record<string, unknown>;
-                const actualClass = actualOutcome.primary_condition_class as string | undefined;
-                const actualDiagnosis = actualOutcome.diagnosis as string | undefined;
+                const groundTruthLabel = resolveOutcomeGroundTruth(actualOutcome);
+                const actualDiagnosis = groundTruthLabel ?? undefined;
+                const actualClass = resolveConditionClassLabel(
+                    typeof actualOutcome.primary_condition_class === 'string'
+                        ? actualOutcome.primary_condition_class
+                        : typeof actualOutcome.condition_class === 'string'
+                            ? actualOutcome.condition_class
+                            : null,
+                    groundTruthLabel,
+                );
                 const actualSeverity = actualOutcome.severity_score as number | undefined;
                 const telemetryRecord = asRecord(inf.output_payload.telemetry);
-                const predictedLabel = extractPredictionLabel(inf.output_payload);
-                const groundTruthLabel = resolveOutcomeGroundTruth(actualOutcome);
                 const telemetryCorrect = predictedLabel && groundTruthLabel
                     ? areLabelsEqual(predictedLabel, groundTruthLabel)
                     : null;
@@ -238,6 +252,7 @@ export async function POST(req: Request) {
                         outcome_event_id: outcomeEventId,
                         outcome_type: body.outcome.type,
                         predicted_label: predictedLabel,
+                        pipeline_stage_completion: ['outcome_linked'],
                     },
                 });
                 await attachRoutingOutcomeFeedback({
@@ -317,6 +332,7 @@ export async function POST(req: Request) {
                         severity_true: actualSeverityLabel,
                         contradiction_score: contradictionScore,
                         adversarial_case: canonicalClinicalCase.adversarial_case === true,
+                        pipeline_stage_completion: ['outcome_linked', 'evaluation_created', 'calibration_logged'],
                     },
                 });
                 await attachRoutingOutcomeFeedback({
@@ -327,19 +343,23 @@ export async function POST(req: Request) {
                     evaluationEventId: pipelineResult.evaluation.evaluation_event_id,
                     predictionCorrect: pipelineResult.evaluation.prediction_correct,
                 });
+                const evaluationCorrectness =
+                    pipelineResult.evaluation.prediction_correct == null
+                        ? telemetryCorrect
+                        : pipelineResult.evaluation.prediction_correct;
 
                 pipelineResult.calibration = await logOutcomeCalibration(supabase, {
                     tenant_id: tenantId,
                     inference_event_id: body.inference_event_id,
                     outcome_event_id: outcomeEventId,
                     predicted_confidence: inf.confidence_score,
-                    actual_correctness: (predictedClass === actualClass && predictedDiagnosis === actualDiagnosis) ? 1.0 : 0.0,
+                    actual_correctness: evaluationCorrectness == null ? null : (evaluationCorrectness ? 1.0 : 0.0),
                 });
 
                 pipelineResult.error_cluster = await logErrorCluster(supabase, {
                     tenant_id: tenantId,
-                    predicted_class: predictedClass,
-                    actual_class: actualClass,
+                    predicted_class: predictedClass ?? undefined,
+                    actual_class: actualClass ?? undefined,
                     predicted_severity: predictedSeverity,
                     actual_severity: actualSeverity,
                     had_contradictions:
@@ -351,10 +371,10 @@ export async function POST(req: Request) {
                     tenant_id: tenantId,
                     inference_event_id: body.inference_event_id,
                     label_type: (actualOutcome.label_type as string) || 'expert',
-                    predicted_diagnosis: predictedDiagnosis,
-                    predicted_class: predictedClass,
-                    actual_diagnosis: actualDiagnosis,
-                    actual_class: actualClass,
+                    predicted_diagnosis: predictedDiagnosis ?? undefined,
+                    predicted_class: predictedClass ?? undefined,
+                    actual_diagnosis: actualDiagnosis ?? undefined,
+                    actual_class: actualClass ?? undefined,
                     predicted_severity: predictedSeverity,
                     actual_severity: actualSeverity,
                     calibration_error: pipelineResult.calibration?.calibration_error,
@@ -369,7 +389,7 @@ export async function POST(req: Request) {
                     reinforcement_applied:
                         pipelineResult.reinforcement.diagnostic_updates_applied > 0 ||
                         pipelineResult.reinforcement.severity_updates_applied > 0,
-                    actual_correctness: (predictedClass === actualClass && predictedDiagnosis === actualDiagnosis) ? 1.0 : 0.0,
+                    actual_correctness: evaluationCorrectness == null ? 0.0 : (evaluationCorrectness ? 1.0 : 0.0),
                     calibration_improvement: pipelineResult.calibration?.calibration_error ?? 0,
                 });
             }
@@ -492,6 +512,47 @@ function normalizeOptionalLabel(value: string | null | undefined) {
     return typeof value === 'string' && value.trim().length > 0
         ? value.trim()
         : null;
+}
+
+function resolveConditionClassLabel(explicit: string | null, diagnosisLabel: string | null) {
+    const normalizedExplicit = normalizeOptionalLabel(explicit);
+    if (normalizedExplicit && normalizedExplicit.toLowerCase() !== 'idiopathic / unknown' && normalizedExplicit.toLowerCase() !== 'unknown') {
+        return normalizedExplicit;
+    }
+
+    const normalizedDiagnosis = normalizeOptionalLabel(diagnosisLabel)?.toLowerCase() ?? '';
+    if (!normalizedDiagnosis) {
+        return normalizedExplicit;
+    }
+    if (
+        normalizedDiagnosis.includes('gdv') ||
+        normalizedDiagnosis.includes('dilatation') ||
+        normalizedDiagnosis.includes('volvulus') ||
+        normalizedDiagnosis.includes('obstruction') ||
+        normalizedDiagnosis.includes('tracheal collapse')
+    ) {
+        return 'Mechanical';
+    }
+    if (
+        normalizedDiagnosis.includes('herpesvirus') ||
+        normalizedDiagnosis.includes('tracheobronchitis') ||
+        normalizedDiagnosis.includes('viral') ||
+        normalizedDiagnosis.includes('bacterial') ||
+        normalizedDiagnosis.includes('infection') ||
+        normalizedDiagnosis.includes('parvo') ||
+        normalizedDiagnosis.includes('distemper') ||
+        normalizedDiagnosis.includes('rhinotracheitis') ||
+        normalizedDiagnosis.includes('kennel cough')
+    ) {
+        return 'Infectious';
+    }
+    if (normalizedDiagnosis.includes('bronchitis') || normalizedDiagnosis.includes('pancreatitis')) {
+        return 'Inflammatory';
+    }
+    if (normalizedDiagnosis.includes('toxic')) {
+        return 'Toxicology';
+    }
+    return normalizedExplicit;
 }
 
 function readNumber(value: unknown) {
