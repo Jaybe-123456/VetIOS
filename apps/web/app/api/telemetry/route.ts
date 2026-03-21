@@ -3,7 +3,7 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
-import { getTelemetrySnapshot } from '@/lib/telemetry/service';
+import { emitTelemetryHeartbeat, getTelemetrySnapshot } from '@/lib/telemetry/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,6 +25,14 @@ export async function GET(req: Request) {
     const supabase = getSupabaseServer();
 
     try {
+        await emitTelemetryHeartbeat(supabase, {
+            tenantId,
+            source: 'telemetry_api',
+            targetNodeId: 'telemetry_observer',
+            metadata: {
+                endpoint: 'api/telemetry',
+            },
+        });
         const snapshot = await getTelemetrySnapshot(supabase, tenantId);
         const response = NextResponse.json({
             snapshot,

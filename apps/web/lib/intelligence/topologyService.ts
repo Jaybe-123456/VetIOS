@@ -267,6 +267,7 @@ export async function getTopologySnapshot(
         until,
         windowMs,
         controlPlane,
+        diagnostics,
         familyContexts,
         evaluations,
         caseRows,
@@ -330,6 +331,7 @@ function buildNodes(input: {
     until: Date;
     windowMs: number;
     controlPlane: Awaited<ReturnType<typeof getModelRegistryControlPlaneSnapshot>>;
+    diagnostics: TopologyDiagnosticsState;
     familyContexts: FamilyTelemetryContext[];
     evaluations: ControlGraphEvaluationEvent[];
     caseRows: CaseEvent[];
@@ -471,6 +473,13 @@ function buildNodes(input: {
     const familyNodes = input.familyContexts.map((familyContext) => {
         const nodeId = FAMILY_TO_NODE[familyContext.family];
         const governance = buildGovernanceState(familyContext.group);
+        const hasActiveRoute = familyContext.group.active_model != null;
+        const liveInferenceCount = familyContext.inference_events.length;
+        const observabilityState = liveInferenceCount > 0
+            ? 'LIVE'
+            : hasActiveRoute
+                ? 'NO_DATA'
+                : 'OFFLINE';
         const latencyValues = familyContext.inference_events
             .map((event) => event.metrics.latency_ms)
             .filter((value): value is number => value != null && value <= 5_000);
@@ -479,23 +488,34 @@ function buildNodes(input: {
             .filter((value): value is number => value != null);
         const errorRate = calculateInferenceErrorRate(familyContext.inference_events, familyContext.evaluations);
         const drift = familyContext.evaluation_drift;
-        const lastUpdated = findLatestTimestamp(familyContext.inference_events.map((event) => event.timestamp));
+        const lastInferenceUpdate = findLatestTimestamp(familyContext.inference_events.map((event) => event.timestamp));
+        const lastUpdated = lastInferenceUpdate
+            ?? familyContext.group.active_model?.updated_at
+            ?? familyContext.group.entries[0]?.registry.updated_at
+            ?? null;
 
         return createNode({
             id: nodeId,
             kind: 'model',
             state: applyOverride({
-                status: resolveNodeStatus({
-                    hasData: familyContext.group.active_model != null || familyContext.inference_events.length > 0,
-                    lastUpdated,
-                    latency: percentile(latencyValues, 95),
-                    errorRate,
-                    drift,
-                    confidence: mean(confidenceValues),
-                    governanceFailure: governance.border_state === 'failed',
-                    governancePending: governance.border_state === 'pending',
-                    now: input.until,
-                }),
+                status: liveInferenceCount > 0
+                    ? resolveNodeStatus({
+                        hasData: true,
+                        lastUpdated,
+                        latency: percentile(latencyValues, 95),
+                        errorRate,
+                        drift,
+                        confidence: mean(confidenceValues),
+                        governanceFailure: governance.border_state === 'failed',
+                        governancePending: governance.border_state === 'pending',
+                        now: input.until,
+                    })
+                    : resolveIdleNodeStatus({
+                        hasActiveRoute,
+                        governanceFailure: governance.border_state === 'failed',
+                        governancePending: governance.border_state === 'pending',
+                        telemetryStreamConnected: input.diagnostics.telemetry_stream_connected,
+                    }),
                 latency: percentile(latencyValues, 95),
                 throughput: roundNumber(familyContext.inference_events.length / windowMinutes, 2),
                 error_rate: errorRate,
@@ -510,6 +530,8 @@ function buildNodes(input: {
                 registry_id: familyContext.group.active_model?.registry_id ?? null,
                 last_stable_model_version: familyContext.group.last_stable_model?.model_version ?? null,
                 drift_state: familyContext.drift_state,
+                observability_state: observabilityState,
+                last_live_telemetry_at: lastInferenceUpdate,
                 evaluation_count: familyContext.evaluations.length,
                 routed_model_distribution: familyContext.routed_model_distribution,
                 routing_shift_count: familyContext.routing_shift_count,
@@ -833,9 +855,13 @@ function finalizeNodes(
         const routingShiftCount = readNumber(node.metadata.routing_shift_count) ?? 0;
         const fallbackCount = readNumber(node.metadata.fallback_count) ?? 0;
         const ensembleCount = readNumber(node.metadata.ensemble_count) ?? 0;
+        const observabilityState = readString(node.metadata.observability_state);
         const recommendations = node.kind === 'model' && familyGroup?.last_stable_model?.model_version
             ? [`Rollback target available: ${familyGroup.last_stable_model.model_version}`]
             : [];
+        if (node.kind === 'model' && observabilityState === 'NO_DATA') {
+            recommendations.push('No routed traffic in the active window; displaying registry readiness until live telemetry arrives.');
+        }
         if (node.kind === 'model' && routedDistribution.length > 0) {
             recommendations.push(`Load distribution: ${routedDistribution.map((entry) => `${entry.model_id} (${entry.request_count})`).join(', ')}`);
         }
@@ -846,6 +872,7 @@ function finalizeNodes(
             recommendations.push(`Router shifted ${routingShiftCount} case(s) away from the requested/default path.`);
         }
         const routingErrors = [
+            ...(node.kind === 'model' && observabilityState === 'NO_DATA' ? ['No live inference telemetry observed in the active window.'] : []),
             ...(fallbackCount > 0 ? [`Routing fallback engaged ${fallbackCount} time(s) in this window.`] : []),
             ...(ensembleCount > 0 ? [`Routing ensemble consensus executed ${ensembleCount} time(s).`] : []),
         ];
@@ -942,7 +969,7 @@ function buildAlerts(
     }
 
     for (const node of nodes) {
-        if (node.state.status === 'offline') {
+        if (node.state.status === 'offline' && readString(node.metadata.observability_state) !== 'NO_DATA') {
             alerts.push({
                 id: `alert_offline_${node.id}`,
                 node_id: node.id,
@@ -1339,17 +1366,30 @@ function buildRoutingDistribution(events: ControlGraphTelemetryEvent[]) {
 }
 
 function buildGovernanceState(group: ModelRegistryFamilyGroup): TopologyNodeGovernance {
-    const active = group.active_model ?? group.entries[0]?.registry ?? null;
-    const pendingEntries = group.entries.filter((entry) => entry.registry.lifecycle_status === 'staging');
-    const failedEntries = group.entries.filter((entry) => entry.decision_panel.deployment_decision === 'rejected');
-    const pendingBlockers = pendingEntries.flatMap((entry) => entry.promotion_gating.blockers).slice(0, 3);
+    const active = group.active_model ?? group.entries.find((entry) => entry.is_active_route)?.registry ?? group.entries[0]?.registry ?? null;
+    const activeEntry = group.entries.find((entry) => entry.is_active_route || entry.registry.registry_id === active?.registry_id) ?? null;
+    const pendingEntries = group.entries.filter((entry) =>
+        entry.registry.lifecycle_status === 'staging'
+        && entry.decision_panel.deployment_decision !== 'rejected',
+    );
+    const rejectedCandidateCount = group.entries.filter((entry) =>
+        entry.decision_panel.deployment_decision === 'rejected'
+        && entry.registry.registry_id !== active?.registry_id,
+    ).length;
+    const activeFailed = activeEntry?.decision_panel.deployment_decision === 'rejected'
+        || active?.registry_role === 'at_risk';
+    const activePending = activeEntry?.decision_panel.deployment_decision === 'hold';
+    const pendingBlockers = [
+        ...pendingEntries.flatMap((entry) => entry.promotion_gating.blockers),
+        ...(rejectedCandidateCount > 0 ? [`${rejectedCandidateCount} rejected candidate(s) remain blocked from live routing.`] : []),
+    ].slice(0, 3);
 
     return {
         model_version: active?.model_version ?? null,
         registry_role: active?.registry_role ?? null,
         deployment_status: active?.status ?? null,
         lifecycle_status: active?.lifecycle_status ?? null,
-        border_state: failedEntries.length > 0 ? 'failed' : pendingEntries.length > 0 ? 'pending' : 'normal',
+        border_state: activeFailed ? 'failed' : activePending || pendingEntries.length > 0 ? 'pending' : 'normal',
         promotion_blockers: pendingBlockers,
     };
 }
@@ -1360,14 +1400,21 @@ function buildRegistryState(
 ): TopologyNodeState {
     const activeCount = controlPlane.families.filter((family) => family.active_model != null).length;
     const pendingCount = controlPlane.families.flatMap((family) => family.entries).filter((entry) => entry.registry.lifecycle_status === 'staging').length;
-    const rejectedCount = controlPlane.families.flatMap((family) => family.entries).filter((entry) => entry.decision_panel.deployment_decision === 'rejected').length;
+    const activeIssueCount = controlPlane.families.filter((family) => {
+        const active = family.active_model;
+        const activeEntry = family.entries.find((entry) => entry.is_active_route || entry.registry.registry_id === active?.registry_id) ?? null;
+        return active?.registry_role === 'at_risk' || activeEntry?.decision_panel.deployment_decision === 'rejected';
+    }).length;
+    const rejectedCandidateCount = controlPlane.families.flatMap((family) => family.entries).filter((entry) =>
+        entry.decision_panel.deployment_decision === 'rejected' && !entry.is_active_route,
+    ).length;
     const latestAudit = controlPlane.audit_history[0]?.timestamp ?? controlPlane.refreshed_at;
 
     return {
-        status: rejectedCount > 0 ? 'critical' : pendingCount > 0 ? 'degraded' : activeCount === 0 ? 'offline' : 'healthy',
-        latency: Number((25 + pendingCount * 15 + rejectedCount * 40).toFixed(1)),
+        status: activeIssueCount > 0 ? 'critical' : pendingCount > 0 || rejectedCandidateCount > 0 ? 'degraded' : activeCount === 0 ? 'offline' : 'healthy',
+        latency: Number((25 + pendingCount * 15 + activeIssueCount * 40 + rejectedCandidateCount * 5).toFixed(1)),
         throughput: Number((controlPlane.audit_history.length / 60).toFixed(2)),
-        error_rate: ratio(rejectedCount, Math.max(controlPlane.families.length, 1)),
+        error_rate: ratio(activeIssueCount, Math.max(activeCount, 1)),
         drift_score: maxValue(controlPlane.families.map((family) => family.entries[0]?.registry.clinical_metrics.adversarial_degradation ?? null)),
         confidence_avg: mean(controlPlane.families.map((family) => family.active_model?.clinical_metrics.global_accuracy ?? null).filter((value): value is number => value != null)),
         last_updated: latestAudit ?? now.toISOString(),
@@ -1568,6 +1615,18 @@ function resolveNodeStatus(input: {
     return 'healthy';
 }
 
+function resolveIdleNodeStatus(input: {
+    hasActiveRoute: boolean;
+    governanceFailure: boolean;
+    governancePending: boolean;
+    telemetryStreamConnected: boolean;
+}): TopologyNodeState['status'] {
+    if (!input.hasActiveRoute) return 'offline';
+    if (input.governanceFailure) return 'critical';
+    if (input.governancePending || !input.telemetryStreamConnected) return 'degraded';
+    return 'healthy';
+}
+
 function resolveAggregateStatus(statuses: Array<TopologyNodeState['status']>) {
     if (statuses.includes('critical')) return 'critical';
     if (statuses.includes('degraded')) return 'degraded';
@@ -1598,6 +1657,10 @@ function buildTimelineLabel(event: ControlGraphTelemetryEvent) {
     return source
         ? `${event.event_type.toUpperCase()} ${source}`
         : `${event.event_type.toUpperCase()} ${event.model_version}`;
+}
+
+function isHeartbeatTelemetryEvent(event: ControlGraphTelemetryEvent) {
+    return event.event_type === 'system' && readString(event.metadata.action) === 'heartbeat';
 }
 
 function resolveEventFamily(
@@ -1794,6 +1857,7 @@ function buildDiagnosticsState(input: {
     evaluationLoadError: string | null;
 }): TopologyDiagnosticsState {
     const latestTelemetryTimestamp = findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp));
+    const workloadTelemetryEvents = input.telemetryEvents.filter((event) => !isHeartbeatTelemetryEvent(event));
     const telemetryStreamConnected = latestTelemetryTimestamp != null
         && input.until.getTime() - new Date(latestTelemetryTimestamp).getTime() <= HEARTBEAT_STALE_MS;
     const evaluationTableExists = input.evaluationTableExists && input.latestSourceTimestamps.evaluation_table_exists;
@@ -1804,7 +1868,7 @@ function buildDiagnosticsState(input: {
         controlPlaneState = 'MISSING_EVALUATION_EVENTS_TABLE';
     } else if (input.evaluationLoadError) {
         controlPlaneState = 'CONTROL_PLANE_INITIALIZING';
-    } else if (input.telemetryEvents.length === 0) {
+    } else if (workloadTelemetryEvents.length === 0) {
         controlPlaneState = 'NO_TELEMETRY_EVENTS';
     } else if (!telemetryStreamConnected) {
         controlPlaneState = 'STREAM_DISCONNECTED';

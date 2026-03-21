@@ -9,6 +9,7 @@ import {
 } from '../../apps/web/lib/intelligence/topologyService.ts';
 import type { TopologyNodeSnapshot } from '../../apps/web/lib/intelligence/types.ts';
 import {
+    emitTelemetryHeartbeat,
     emitTelemetryEvent,
     telemetryEvaluationEventId,
     telemetrySimulationEventId,
@@ -181,10 +182,21 @@ async function main() {
         },
     });
 
+    await emitTelemetryHeartbeat(client as any, {
+        tenantId,
+        source: 'topology_stream',
+        targetNodeId: 'telemetry_observer',
+        metadata: {
+            stream: 'intelligence',
+        },
+    });
+
     const telemetryRows = client.tables.get('telemetry_events') ?? [];
-    assert.equal(telemetryRows.length, 2, 'expected evaluation and simulation telemetry events');
+    assert.equal(telemetryRows.length, 3, 'expected evaluation, simulation, and heartbeat telemetry events');
     assert.equal(telemetryRows[0]?.event_type, 'evaluation');
     assert.equal(telemetryRows[1]?.event_type, 'simulation');
+    assert.equal(telemetryRows[2]?.event_type, 'system');
+    assert.equal(telemetryRows[2]?.metadata?.action, 'heartbeat');
 
     const driftReady = computeTopologyDriftSignal([
         { prediction: 'Parvovirus', ground_truth: 'Parvovirus' },
@@ -250,6 +262,32 @@ async function main() {
     });
     assert.ok(alerts.some((alert) => alert.category === 'latency' && alert.node_id === 'telemetry_observer'));
     assert.ok(alerts.some((alert) => alert.category === 'drift'));
+
+    const idleFamilyAlerts = buildTopologyAlertsForTest({
+        nodes: [
+            {
+                ...makeNode('vision_model', 'Vision Inference', {
+                    status: 'offline',
+                    latency: null,
+                    throughput: 0,
+                    error_rate: null,
+                    drift_score: null,
+                    confidence_avg: null,
+                }),
+                metadata: {
+                    observability_state: 'NO_DATA',
+                },
+            },
+        ],
+        now: new Date().toISOString(),
+        diagnostics: readyState,
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(
+        idleFamilyAlerts.some((alert) => alert.node_id === 'vision_model' && alert.category === 'heartbeat'),
+        false,
+        'idle model families should not raise heartbeat offline alerts',
+    );
 
     const networkHealth = computeTopologyNetworkHealth(criticalNodes, readyState);
     assert.ok(networkHealth < 70, `expected stressed network health, got ${networkHealth}`);

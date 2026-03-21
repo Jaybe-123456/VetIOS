@@ -971,7 +971,9 @@ function buildControlPlaneLogs(input: {
     const telemetryLogs = input.telemetryEvents.map<ControlPlaneLogRecord>((event) => ({
         id: event.event_id,
         category: event.event_type,
-        level: event.event_type === 'system' ? 'WARN' : 'INFO',
+        level: event.event_type === 'system'
+            ? (textOrNull(event.metadata.action) === 'heartbeat' ? 'INFO' : 'WARN')
+            : 'INFO',
         message: formatTelemetryMessage(event),
         timestamp: event.timestamp,
         run_id: event.run_id,
@@ -1173,6 +1175,9 @@ function formatTelemetryMessage(event: TelemetryEventRecord) {
     }
     if (event.event_type === 'system') {
         const action = textOrNull(event.metadata.action) ?? 'control-plane';
+        if (action === 'heartbeat') {
+            return `[HEARTBEAT] ${textOrNull(event.metadata.target_node_id) ?? 'telemetry_observer'} source=${textOrNull(event.metadata.source_module) ?? 'control_plane'} interval_ms=${numberOrNull(event.metadata.heartbeat_interval_ms)?.toFixed(0) ?? '15000'}`;
+        }
         if (action.startsWith('routing')) {
             return `[ROUTING] ${textOrNull(event.metadata.routing_decision_id) ?? event.event_id} model=${textOrNull(event.metadata.routing_selected_model_id) ?? textOrNull(event.metadata.routing_selected_model_name) ?? 'unknown'} mode=${textOrNull(event.metadata.routing_route_mode) ?? 'single'} fallback=${String(event.metadata.routing_fallback_used === true)}`;
         }

@@ -2,6 +2,7 @@ import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { applyDecisionEngineToTopologySnapshot, evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { getTopologySnapshot, syncControlPlaneAlerts } from '@/lib/intelligence/topologyService';
+import { emitTelemetryHeartbeat, TELEMETRY_HEARTBEAT_INTERVAL_MS } from '@/lib/telemetry/service';
 import type { TopologyWindow } from '@/lib/intelligence/types';
 
 export const runtime = 'nodejs';
@@ -21,6 +22,7 @@ export async function GET(req: Request) {
     const encoder = new TextEncoder();
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let closed = false;
+    let lastHeartbeatAtMs = 0;
 
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -37,6 +39,19 @@ export async function GET(req: Request) {
             const pushSnapshot = async () => {
                 try {
                     const client = getSupabaseServer();
+                    const nowMs = Date.now();
+                    if (nowMs - lastHeartbeatAtMs >= TELEMETRY_HEARTBEAT_INTERVAL_MS) {
+                        await emitTelemetryHeartbeat(client, {
+                            tenantId: actor.tenantId,
+                            source: 'topology_stream',
+                            targetNodeId: 'telemetry_observer',
+                            metadata: {
+                                stream: 'intelligence',
+                                window,
+                            },
+                        });
+                        lastHeartbeatAtMs = nowMs;
+                    }
                     const snapshot = await getTopologySnapshot(client, actor.tenantId, {
                         window,
                     });

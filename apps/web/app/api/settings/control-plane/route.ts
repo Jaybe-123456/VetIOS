@@ -18,6 +18,7 @@ import {
     updateControlPlaneConfig,
     updateControlPlaneProfile,
 } from '@/lib/settings/controlPlane';
+import { emitTelemetryHeartbeat } from '@/lib/telemetry/service';
 import type {
     ControlPlaneAlertSensitivity,
     ControlPlaneSimulationScenario,
@@ -94,6 +95,14 @@ export async function GET(req: Request) {
     try {
         const actor = resolveRequestActor(session);
         const adminClient = getSupabaseServer();
+        await emitTelemetryHeartbeat(adminClient, {
+            tenantId: actor.tenantId,
+            source: 'settings_control_plane',
+            targetNodeId: 'telemetry_observer',
+            metadata: {
+                view: 'settings',
+            },
+        });
         const userContext = await resolveUserContext(session);
         const snapshot = await getControlPlaneSnapshot({
             client: adminClient,
