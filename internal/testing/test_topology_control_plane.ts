@@ -190,13 +190,22 @@ async function main() {
             stream: 'intelligence',
         },
     });
+    await emitTelemetryHeartbeat(client as any, {
+        tenantId,
+        source: 'topology_stream',
+        targetNodeId: 'telemetry_observer',
+        metadata: {
+            stream: 'intelligence',
+        },
+    });
 
     const telemetryRows = client.tables.get('telemetry_events') ?? [];
-    assert.equal(telemetryRows.length, 3, 'expected evaluation, simulation, and heartbeat telemetry events');
+    assert.equal(telemetryRows.length, 4, 'expected evaluation, simulation, and append-only heartbeat telemetry events');
     assert.equal(telemetryRows[0]?.event_type, 'evaluation');
     assert.equal(telemetryRows[1]?.event_type, 'simulation');
     assert.equal(telemetryRows[2]?.event_type, 'system');
     assert.equal(telemetryRows[2]?.metadata?.action, 'heartbeat');
+    assert.equal(telemetryRows[3]?.event_type, 'system');
 
     const driftReady = computeTopologyDriftSignal([
         { prediction: 'Parvovirus', ground_truth: 'Parvovirus' },

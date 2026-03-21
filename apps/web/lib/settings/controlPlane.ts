@@ -169,7 +169,7 @@ export async function getControlPlaneSnapshot(input: {
             access_scope: accessScope,
             api_keys: apiKeys,
         },
-        system_health: buildSystemHealth(telemetrySnapshot, topologySnapshot),
+        system_health: buildSystemHealth(telemetrySnapshot, topologySnapshot, telemetryEvents),
         pipelines: buildPipelineStates(topologySnapshot.control_plane_state, topologySnapshot.alerts, topologySnapshot.diagnostics),
         governance: {
             families: governanceFamilies,
@@ -467,7 +467,7 @@ export async function listTelemetryEvents(client: SupabaseClient, tenantId: stri
         .select('*')
         .eq(C.tenant_id, tenantId)
         .order(C.timestamp, { ascending: false })
-        .limit(120);
+        .limit(360);
 
     if (error) {
         if (isMissingRelationError(error, TELEMETRY_EVENTS.TABLE)) return [];
@@ -838,6 +838,7 @@ function buildAccessScope(role: ControlPlaneUserRole, tenantId: string) {
 function buildSystemHealth(
     telemetrySnapshot: Awaited<ReturnType<typeof getTelemetrySnapshot>>,
     topologySnapshot: Awaited<ReturnType<typeof getTopologySnapshot>>,
+    telemetryEvents: TelemetryEventRecord[],
 ): ControlPlaneSystemHealth {
     const warnings: string[] = [];
     if (!topologySnapshot.diagnostics.latest_inference_timestamp) warnings.push('No inference activity observed yet.');
@@ -853,7 +854,7 @@ function buildSystemHealth(
     return {
         telemetry_status: topologySnapshot.diagnostics.telemetry_stream_connected ? 'connected' : 'disconnected',
         topology_state: topologySnapshot.control_plane_state,
-        event_ingestion_rate: ratePerMinute(topologySnapshot.playback.event_timeline.map((marker) => marker.timestamp), 15),
+        event_ingestion_rate: ratePerMinute(telemetryEvents.map((event) => event.timestamp), 15),
         network_health_score: topologySnapshot.network_health_score,
         last_inference_timestamp: topologySnapshot.diagnostics.latest_inference_timestamp,
         last_outcome_timestamp: topologySnapshot.diagnostics.latest_outcome_timestamp,
@@ -875,9 +876,9 @@ function buildPipelineStates(
         {
             key: 'inference',
             label: 'Inference Pipeline',
-            status: classifyPipelineStatus(diagnostics.latest_inference_timestamp, alerts, ['latency', 'error_rate']),
+            status: classifyPipelineStatus(diagnostics.latest_inference_timestamp, alerts, ['latency', 'error_rate', 'heartbeat', 'governance'], 'diagnostics_model'),
             last_successful_event: diagnostics.latest_inference_timestamp,
-            error_logs: collectAlertMessages(alerts, ['latency', 'error_rate'], 'diagnostics_model'),
+            error_logs: collectAlertMessages(alerts, ['latency', 'error_rate', 'heartbeat', 'governance'], 'diagnostics_model'),
         },
         {
             key: 'outcome',
@@ -893,10 +894,10 @@ function buildPipelineStates(
                 || controlPlaneState === 'MISSING_EVALUATION_EVENTS_TABLE'
                 ? 'FAILED'
                 : diagnostics.latest_evaluation_timestamp
-                    ? 'ACTIVE'
+                    ? classifyPipelineStatus(diagnostics.latest_evaluation_timestamp, alerts, ['evaluation'], 'outcome_feedback')
                     : 'INITIALIZING',
             last_successful_event: diagnostics.latest_evaluation_timestamp,
-            error_logs: collectAlertMessages(alerts, ['evaluation'], 'control_plane'),
+            error_logs: collectAlertMessages(alerts, ['evaluation']),
         },
         {
             key: 'telemetry_stream',
@@ -912,7 +913,7 @@ function buildPipelineStates(
             last_successful_event: diagnostics.latest_simulation_timestamp
                 ?? diagnostics.latest_evaluation_timestamp
                 ?? diagnostics.latest_inference_timestamp,
-            error_logs: collectAlertMessages(alerts, ['stream', 'heartbeat'], 'control_plane'),
+            error_logs: collectAlertMessages(alerts, ['stream', 'heartbeat']),
         },
     ];
 }
@@ -1136,9 +1137,13 @@ async function findLatestEvaluationEventId(client: SupabaseClient, tenantId: str
     }
 }
 
-function classifyPipelineStatus(timestamp: string | null, alerts: TopologyAlert[], categories: string[]) {
+function classifyPipelineStatus(timestamp: string | null, alerts: TopologyAlert[], categories: string[], nodeId?: string) {
     if (!timestamp) return 'INITIALIZING' as const;
-    const hasFailure = alerts.some((alert) => categories.includes(alert.category) && alert.severity === 'critical');
+    const hasFailure = alerts.some((alert) =>
+        categories.includes(alert.category)
+        && alert.severity === 'critical'
+        && (nodeId == null || alert.node_id === nodeId),
+    );
     return hasFailure ? 'FAILED' : 'ACTIVE';
 }
 

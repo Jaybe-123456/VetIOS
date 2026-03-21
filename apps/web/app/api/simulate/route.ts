@@ -179,6 +179,7 @@ export async function POST(req: Request) {
                     case_id: canonicalClinicalCase.id,
                     simulation_type: body.simulation.type,
                     target_disease: targetDisease,
+                    synthetic: true,
                 },
             });
         } catch (telemetryErr) {

@@ -1413,6 +1413,7 @@ function mapRoutingProfileRow(row: Record<string, unknown>): RoutingModelProfile
         return null;
     }
 
+    const metadata = asRecord(row[C.metadata]);
     return {
         id: readString(row[C.id]) ?? modelId,
         tenant_id: readString(row[C.tenant_id]) ?? '',
@@ -1430,7 +1431,10 @@ function mapRoutingProfileRow(row: Record<string, unknown>): RoutingModelProfile
         base_cost: clampNumber(numberOrNull(row[C.base_cost]) ?? defaultCostForType(modelType), 0, 1),
         robustness_score: clampNumber(numberOrNull(row[C.robustness_score]) ?? defaultRobustnessForType(modelType), 0, 1),
         recall_score: clampNumber(numberOrNull(row[C.recall_score]) ?? defaultRecallForType(modelType), 0, 1),
-        metadata: asRecord(row[C.metadata]),
+        metadata: {
+            source: readString(metadata.source) ?? 'router_profile',
+            ...metadata,
+        },
     };
 }
 
@@ -1458,7 +1462,11 @@ function resolveBlockedReason(
             ? 'Model approval is still pending.'
             : 'Model has been blocked from routing.';
     }
-    if (!registryRecord) return null;
+    if (!registryRecord) {
+        return isExplicitlyApprovedUngovernedProfile(profile)
+            ? null
+            : 'Ungoverned requested/default models cannot receive routed traffic until they are approved in the router profile or model registry.';
+    }
     if (registryRecord.registry_role === 'at_risk') {
         return 'Registry marks this model as at_risk.';
     }
@@ -1469,6 +1477,12 @@ function resolveBlockedReason(
         return 'Only production or approved rollback-safe models may receive routed traffic.';
     }
     return null;
+}
+
+function isExplicitlyApprovedUngovernedProfile(profile: RoutingModelProfile) {
+    const source = readString(profile.metadata.source);
+    if (profile.metadata.explicitly_approved === true) return true;
+    return source === 'router_profile' || source === 'model_registry';
 }
 
 function readRoutingDirective(inputSignature: Record<string, unknown>): RoutingDirective {

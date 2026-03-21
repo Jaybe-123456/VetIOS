@@ -248,11 +248,13 @@ export async function createEvaluationEvent(
     const prediction = normalizeLabel(
         input.prediction
         ?? extractPredictionLabel(input.predicted_output)
+        ?? input.condition_class_pred
         ?? null,
     );
     const groundTruth = normalizeLabel(
         input.ground_truth
         ?? extractOutcomeLabel(input.actual_outcome)
+        ?? input.condition_class_true
         ?? null,
     );
     const predictionCorrect = prediction && groundTruth

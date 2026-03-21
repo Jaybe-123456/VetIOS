@@ -197,8 +197,9 @@ export function telemetrySimulationEventId(simulationEventId: string) {
     return `evt_simulation_${simulationEventId}`;
 }
 
-export function telemetryHeartbeatEventId(source: string) {
-    return `evt_system_heartbeat_${normalizeTelemetryIdentifier(source)}`;
+export function telemetryHeartbeatEventId(source: string, timestamp: string = new Date().toISOString()) {
+    const suffix = timestamp.replace(/\D/g, '').slice(-17);
+    return `evt_system_heartbeat_${normalizeTelemetryIdentifier(source)}_${suffix}`;
 }
 
 export function resolveTelemetryRunId(modelVersion: string, candidate: unknown) {
@@ -218,11 +219,12 @@ export async function emitTelemetryHeartbeat(
         metadata?: Record<string, unknown>;
     },
 ) {
+    const timestamp = new Date().toISOString();
     return emitTelemetryEvent(client, {
-        event_id: telemetryHeartbeatEventId(input.source),
+        event_id: telemetryHeartbeatEventId(input.source, timestamp),
         tenant_id: input.tenantId,
         event_type: 'system',
-        timestamp: new Date().toISOString(),
+        timestamp,
         model_version: textOrNull(input.modelVersion) ?? 'control-plane-heartbeat',
         run_id: textOrNull(input.runId) ?? 'control-plane-heartbeat',
         metrics: {},
@@ -303,9 +305,10 @@ export function finishTelemetryExecutionSample(sample: TelemetryExecutionSample)
 }
 
 function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapshot {
-    const inferenceEvents = events.filter((event) => event.event_type === 'inference');
-    const outcomeEvents = events.filter((event) => event.event_type === 'outcome');
-    const evaluationEvents = events.filter((event) => event.event_type === 'evaluation');
+    const productionEvents = events.filter((event) => !isSyntheticTelemetryRecord(event));
+    const inferenceEvents = productionEvents.filter((event) => event.event_type === 'inference');
+    const outcomeEvents = productionEvents.filter((event) => event.event_type === 'outcome');
+    const evaluationEvents = productionEvents.filter((event) => event.event_type === 'evaluation');
     const inferenceById = new Map(inferenceEvents.map((event) => [event.event_id, event]));
 
     const validLatencyEvents = inferenceEvents.filter((event) => {
@@ -583,6 +586,13 @@ function computeDistributionDrift(
     }
 
     return roundNumber(Math.sqrt(squaredDistance), 4);
+}
+
+function isSyntheticTelemetryRecord(event: Pick<TelemetryEventRecord, 'event_type' | 'metadata'>) {
+    if (event.event_type === 'simulation') return true;
+    if (event.metadata.synthetic === true || event.metadata.simulated === true) return true;
+    const source = textOrNull(event.metadata.source_module) ?? textOrNull(event.metadata.source);
+    return source === 'adversarial_simulation' || source === 'telemetry_stream_generator';
 }
 
 function findLatestSystemMetrics(events: TelemetryEventRecord[]): TelemetrySystemPayload {

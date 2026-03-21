@@ -123,11 +123,33 @@ async function main() {
         requestedModelName: 'gpt-4o-mini',
         requestedModelVersion: 'requested_v1',
     });
+    const explicitlyApprovedProfiles = profiles.map((profile) => ({
+        ...profile,
+        metadata: {
+            ...profile.metadata,
+            explicitly_approved: true,
+        },
+    }));
+
+    const unapprovedCandidates = rankRoutingCandidatesForTest({
+        tenantId: TENANT_ID,
+        family: 'diagnostics',
+        profiles,
+        analysis: simpleAnalysis,
+        systemState: makeSystemState(),
+        requestedModelName: 'gpt-4o-mini',
+        requestedModelVersion: 'requested_v1',
+    });
+    assert.equal(
+        unapprovedCandidates.every((candidate) => candidate.blocked_reason != null),
+        true,
+        'requested/default profiles should be blocked until explicitly approved or registry-backed',
+    );
 
     const simpleCandidates = rankRoutingCandidatesForTest({
         tenantId: TENANT_ID,
         family: 'diagnostics',
-        profiles,
+        profiles: explicitlyApprovedProfiles,
         analysis: simpleAnalysis,
         systemState: makeSystemState(),
         requestedModelName: 'gpt-4o-mini',
@@ -138,7 +160,7 @@ async function main() {
     const contradictoryCandidates = rankRoutingCandidatesForTest({
         tenantId: TENANT_ID,
         family: 'diagnostics',
-        profiles,
+        profiles: explicitlyApprovedProfiles,
         analysis: contradictionAnalysis,
         systemState: makeSystemState(),
         requestedModelName: 'gpt-4o-mini',
@@ -149,7 +171,7 @@ async function main() {
     const criticalCandidates = rankRoutingCandidatesForTest({
         tenantId: TENANT_ID,
         family: 'diagnostics',
-        profiles,
+        profiles: explicitlyApprovedProfiles,
         analysis: complexAnalysis,
         systemState: makeSystemState({ safe_mode_enabled: true, alert_pressure: 3 }),
         requestedModelName: 'gpt-4o-mini',
@@ -163,7 +185,7 @@ async function main() {
     assert.equal(criticalPlan.route_mode, 'ensemble');
     assert.ok(criticalPlan.selected_models.length >= 2);
 
-    const blockedProfiles = profiles.map((profile) =>
+    const blockedProfiles = explicitlyApprovedProfiles.map((profile) =>
         profile.model_type === 'fast'
             ? { ...profile, approval_status: 'blocked' as const }
             : profile,
@@ -179,8 +201,8 @@ async function main() {
     });
     assert.notEqual(topCandidate(blockedCandidates), 'fast');
 
-    const fastProfile = profiles.find((profile) => profile.model_type === 'fast');
-    const robustProfile = profiles.find((profile) => profile.model_type === 'adversarial_resistant');
+    const fastProfile = explicitlyApprovedProfiles.find((profile) => profile.model_type === 'fast');
+    const robustProfile = explicitlyApprovedProfiles.find((profile) => profile.model_type === 'adversarial_resistant');
     assert.ok(fastProfile && robustProfile, 'expected fast and robust profiles');
 
     const fallbackPlan = makeExecutorFailurePlan(fastProfile!, robustProfile!);

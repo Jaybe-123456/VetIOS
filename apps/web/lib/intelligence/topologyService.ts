@@ -71,6 +71,7 @@ interface ControlGraphEvaluationEvent {
     id: string;
     evaluation_event_id: string;
     tenant_id: string;
+    trigger_type: 'inference' | 'outcome' | 'simulation';
     inference_event_id: string | null;
     outcome_event_id: string | null;
     case_id: string | null;
@@ -340,9 +341,10 @@ function buildNodes(input: {
     nodeOverrides: Map<NodeId, NodeOverride>;
 }): TopologyNodeSnapshot[] {
     const windowMinutes = Math.max(1, input.windowMs / 60_000);
-    const totalInferenceEvents = input.telemetryEvents.filter((event) => event.event_type === 'inference');
-    const totalOutcomeEvents = input.telemetryEvents.filter((event) => event.event_type === 'outcome');
-    const totalEvaluationEvents = input.evaluations.filter((event) => event.prediction != null && event.ground_truth != null);
+    const productionTelemetryEvents = input.telemetryEvents.filter((event) => !isSyntheticTelemetryEvent(event));
+    const totalInferenceEvents = productionTelemetryEvents.filter((event) => event.event_type === 'inference');
+    const totalOutcomeEvents = productionTelemetryEvents.filter((event) => event.event_type === 'outcome');
+    const totalEvaluationEvents = input.evaluations.filter((event) => hasUsableEvaluationSignal(event) && event.trigger_type !== 'simulation');
     const globalLatencyValues = totalInferenceEvents
         .map((event) => event.metrics.latency_ms)
         .filter((value): value is number => value != null && value <= 5_000);
@@ -361,6 +363,7 @@ function buildNodes(input: {
     const simulationTelemetry = input.telemetryEvents.filter((event) => {
         const source = readString(event.metadata.source_module) ?? readString(event.metadata.source);
         return event.event_type === 'simulation'
+            || isSyntheticTelemetryEvent(event)
             || source === 'adversarial_simulation'
             || source === 'telemetry_stream_generator';
     });
@@ -395,7 +398,7 @@ function buildNodes(input: {
                 now: input.until,
             }),
             latency: percentile(globalLatencyValues, 95),
-            throughput: roundNumber(totalInferenceEvents.length / windowMinutes, 2),
+            throughput: roundNumber(input.telemetryEvents.length / windowMinutes, 2),
             error_rate: calculateInferenceErrorRate(totalInferenceEvents, totalEvaluationEvents),
             drift_score: globalDrift,
             confidence_avg: mean(globalConfidenceValues),
@@ -724,8 +727,9 @@ function buildEdges(input: {
     const nodeMap = new Map(input.nodes.map((node) => [node.id, node]));
     const windowMinutes = Math.max(1, input.windowMs / 60_000);
     const impactedEdges = new Set(input.failureImpacts.flatMap((impact) => impact.impacted_edge_ids));
-    const totalInference = input.telemetryEvents.filter((event) => event.event_type === 'inference');
-    const totalOutcome = input.telemetryEvents.filter((event) => event.event_type === 'outcome');
+    const productionTelemetryEvents = input.telemetryEvents.filter((event) => !isSyntheticTelemetryEvent(event));
+    const totalInference = productionTelemetryEvents.filter((event) => event.event_type === 'inference');
+    const totalOutcome = productionTelemetryEvents.filter((event) => event.event_type === 'outcome');
     const familyByNode = new Map(input.familyContexts.map((context) => [FAMILY_TO_NODE[context.family], context]));
 
     return EDGE_LAYOUT.map((layout) => {
@@ -1288,17 +1292,17 @@ function buildFamilyContexts(
     evaluations: ControlGraphEvaluationEvent[],
 ): FamilyTelemetryContext[] {
     const allVersionFamilies = buildVersionLookup(families);
-    const inferenceEvents = telemetryEvents.filter((event) => event.event_type === 'inference');
+    const inferenceEvents = telemetryEvents.filter((event) => event.event_type === 'inference' && !isSyntheticTelemetryEvent(event));
 
     return families.map((family) => {
         const versions = allVersionFamilies.get(family.model_family) ?? new Set<string>();
         const familyInference = inferenceEvents.filter((event) => resolveEventFamily(event.model_version, allVersionFamilies, families) === family.model_family);
         const modelVersions = Array.from(versions);
         const familyEvaluations = evaluations.filter((evaluation) =>
-            evaluation.model_version != null
+            evaluation.trigger_type !== 'simulation'
+            && hasUsableEvaluationSignal(evaluation)
+            && evaluation.model_version != null
             && modelVersions.includes(evaluation.model_version)
-            && evaluation.prediction != null
-            && evaluation.ground_truth != null,
         );
         const familyOutcomes = familyEvaluations
             .map((evaluation) => {
@@ -1663,6 +1667,13 @@ function isHeartbeatTelemetryEvent(event: ControlGraphTelemetryEvent) {
     return event.event_type === 'system' && readString(event.metadata.action) === 'heartbeat';
 }
 
+function isSyntheticTelemetryEvent(event: ControlGraphTelemetryEvent) {
+    if (event.event_type === 'simulation') return true;
+    if (event.metadata.synthetic === true || event.metadata.simulated === true) return true;
+    const source = readString(event.metadata.source_module) ?? readString(event.metadata.source);
+    return source === 'adversarial_simulation' || source === 'telemetry_stream_generator';
+}
+
 function resolveEventFamily(
     modelVersion: string,
     versionLookup: Map<ModelFamily, Set<string>>,
@@ -1719,6 +1730,7 @@ async function loadClinicalCases(
         .select([
             C.id,
             C.clinic_id,
+            C.source_module,
             C.invalid_case,
             C.diagnosis_confidence,
             C.prediction_correct,
@@ -1736,9 +1748,10 @@ async function loadClinicalCases(
         throw new Error(`Failed to load topology clinical cases: ${error.message}`);
     }
 
-    return (data ?? []).map((row) => {
-        const record = asRecord(row);
-        return {
+    return (data ?? [])
+        .map((row) => asRecord(row))
+        .filter((record) => readString(record.source_module) !== 'adversarial_simulation')
+        .map((record) => ({
             case_id: readString(record.id) ?? '',
             clinic_id: readString(record.clinic_id),
             invalid_case: record.invalid_case === true,
@@ -1747,8 +1760,7 @@ async function loadClinicalCases(
             updated_at: readString(record.updated_at) ?? new Date().toISOString(),
             telemetry_status: readString(record.telemetry_status),
             calibration_status: readString(record.calibration_status),
-        };
-    });
+        }));
 }
 
 async function loadSimulationEvents(
@@ -1777,6 +1789,7 @@ async function loadEvaluationEvents(
         C.id,
         C.evaluation_event_id,
         C.tenant_id,
+        C.trigger_type,
         C.inference_event_id,
         C.outcome_event_id,
         C.case_id,
@@ -1793,6 +1806,7 @@ async function loadEvaluationEvents(
         C.contradiction_score,
         C.adversarial_case,
         C.drift_score,
+        C.evaluation_payload,
         C.created_at,
     ].join(',');
 
@@ -1825,9 +1839,9 @@ async function loadLatestSourceTimestamps(
     tenantId: string,
 ) {
     const [latestInference, latestOutcome, latestEvaluation, latestSimulation] = await Promise.all([
-        fetchLatestTimestamp(client, AI_INFERENCE_EVENTS.TABLE, tenantId, AI_INFERENCE_EVENTS.COLUMNS.created_at),
+        fetchLatestOperationalInferenceTimestamp(client, tenantId),
         fetchLatestTimestamp(client, CLINICAL_OUTCOME_EVENTS.TABLE, tenantId, CLINICAL_OUTCOME_EVENTS.COLUMNS.outcome_timestamp),
-        fetchLatestTimestamp(client, MODEL_EVALUATION_EVENTS.TABLE, tenantId, MODEL_EVALUATION_EVENTS.COLUMNS.created_at),
+        fetchLatestOperationalEvaluationTimestamp(client, tenantId),
         fetchLatestTimestamp(client, EDGE_SIMULATION_EVENTS.TABLE, tenantId, EDGE_SIMULATION_EVENTS.COLUMNS.created_at),
     ]);
 
@@ -1857,11 +1871,29 @@ function buildDiagnosticsState(input: {
     evaluationLoadError: string | null;
 }): TopologyDiagnosticsState {
     const latestTelemetryTimestamp = findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp));
-    const workloadTelemetryEvents = input.telemetryEvents.filter((event) => !isHeartbeatTelemetryEvent(event));
+    const workloadTelemetryEvents = input.telemetryEvents.filter((event) =>
+        !isHeartbeatTelemetryEvent(event) && !isSyntheticTelemetryEvent(event),
+    );
     const telemetryStreamConnected = latestTelemetryTimestamp != null
         && input.until.getTime() - new Date(latestTelemetryTimestamp).getTime() <= HEARTBEAT_STALE_MS;
     const evaluationTableExists = input.evaluationTableExists && input.latestSourceTimestamps.evaluation_table_exists;
-    const evaluationCount = input.evaluations.filter((evaluation) => evaluation.prediction != null && evaluation.ground_truth != null).length;
+    const usableEvaluations = input.evaluations.filter((evaluation) =>
+        hasUsableEvaluationSignal(evaluation) && evaluation.trigger_type !== 'simulation',
+    );
+    const evaluationCount = usableEvaluations.length;
+    const latestInferenceTimestamp = findLatestTimestamp(
+        workloadTelemetryEvents
+            .filter((event) => event.event_type === 'inference')
+            .map((event) => event.timestamp),
+    ) ?? input.latestSourceTimestamps.latest_inference_timestamp;
+    const latestOutcomeTimestamp = findLatestTimestamp(
+        workloadTelemetryEvents
+            .filter((event) => event.event_type === 'outcome')
+            .map((event) => event.timestamp),
+    ) ?? input.latestSourceTimestamps.latest_outcome_timestamp;
+    const latestEvaluationTimestamp = findLatestTimestamp(
+        usableEvaluations.map((evaluation) => evaluation.created_at),
+    );
 
     let controlPlaneState: TopologyControlPlaneState = 'READY';
     if (!evaluationTableExists) {
@@ -1872,7 +1904,7 @@ function buildDiagnosticsState(input: {
         controlPlaneState = 'NO_TELEMETRY_EVENTS';
     } else if (!telemetryStreamConnected) {
         controlPlaneState = 'STREAM_DISCONNECTED';
-    } else if (input.latestSourceTimestamps.latest_outcome_timestamp && evaluationCount === 0) {
+    } else if (latestOutcomeTimestamp && evaluationCount === 0) {
         controlPlaneState = 'WAITING_FOR_EVALUATION_EVENTS';
     } else if (evaluationCount < MIN_EVALUATION_EVENTS_FOR_DRIFT) {
         controlPlaneState = 'INSUFFICIENT_OUTCOMES_FOR_DRIFT';
@@ -1882,9 +1914,9 @@ function buildDiagnosticsState(input: {
         control_plane_state: controlPlaneState,
         telemetry_stream_connected: telemetryStreamConnected,
         evaluation_events_table_exists: evaluationTableExists,
-        latest_inference_timestamp: input.latestSourceTimestamps.latest_inference_timestamp,
-        latest_outcome_timestamp: input.latestSourceTimestamps.latest_outcome_timestamp,
-        latest_evaluation_timestamp: input.latestSourceTimestamps.latest_evaluation_timestamp,
+        latest_inference_timestamp: latestInferenceTimestamp,
+        latest_outcome_timestamp: latestOutcomeTimestamp,
+        latest_evaluation_timestamp: latestEvaluationTimestamp,
         latest_simulation_timestamp: input.latestSourceTimestamps.latest_simulation_timestamp,
         latest_telemetry_timestamp: latestTelemetryTimestamp,
         evaluation_load_error: input.evaluationLoadError ?? input.latestSourceTimestamps.evaluation_error,
@@ -1949,6 +1981,7 @@ export function classifyTopologyControlPlaneState(input: {
             id: `eval_${index}`,
             evaluation_event_id: `eval_${index}`,
             tenant_id: 'tenant',
+            trigger_type: 'outcome',
             inference_event_id: null,
             outcome_event_id: null,
             case_id: null,
@@ -2110,22 +2143,95 @@ async function fetchLatestTimestamp(
     };
 }
 
+async function fetchLatestOperationalInferenceTimestamp(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<{ timestamp: string | null; table_exists: boolean; error: string | null }> {
+    const C = AI_INFERENCE_EVENTS.COLUMNS;
+    const { data, error } = await client
+        .from(AI_INFERENCE_EVENTS.TABLE)
+        .select(`${C.created_at},${C.source_module}`)
+        .eq(C.tenant_id, tenantId)
+        .order(C.created_at, { ascending: false })
+        .limit(20);
+
+    if (error) {
+        return {
+            timestamp: null,
+            table_exists: !isMissingRelationError(error.message),
+            error: error.message,
+        };
+    }
+
+    const row = (data ?? [])
+        .map((entry) => asRecord(entry))
+        .find((entry) => readString(entry[C.source_module]) !== 'adversarial_simulation');
+
+    return {
+        timestamp: row ? readString(row[C.created_at]) : null,
+        table_exists: true,
+        error: null,
+    };
+}
+
+async function fetchLatestOperationalEvaluationTimestamp(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<{ timestamp: string | null; table_exists: boolean; error: string | null }> {
+    const C = MODEL_EVALUATION_EVENTS.COLUMNS;
+    const { data, error } = await client
+        .from(MODEL_EVALUATION_EVENTS.TABLE)
+        .select(`${C.created_at},${C.trigger_type},${C.prediction},${C.ground_truth},${C.condition_class_pred},${C.condition_class_true},${C.evaluation_payload}`)
+        .eq(C.tenant_id, tenantId)
+        .order(C.created_at, { ascending: false })
+        .limit(50);
+
+    if (error) {
+        return {
+            timestamp: null,
+            table_exists: !isMissingRelationError(error.message),
+            error: error.message,
+        };
+    }
+
+    const row = (data ?? [])
+        .map((entry) => mapEvaluationEvent(asRecord(entry)))
+        .find((entry) => entry.trigger_type !== 'simulation' && hasUsableEvaluationSignal(entry));
+
+    return {
+        timestamp: row?.created_at ?? null,
+        table_exists: true,
+        error: null,
+    };
+}
+
 function mapEvaluationEvent(row: Record<string, unknown>): ControlGraphEvaluationEvent {
+    const payload = asRecord(row.evaluation_payload);
+    const prediction = readString(row.prediction)
+        ?? readString(payload.prediction)
+        ?? readString(row.condition_class_pred)
+        ?? readString(payload.condition_class_pred);
+    const groundTruth = readString(row.ground_truth)
+        ?? readString(payload.ground_truth)
+        ?? readString(row.condition_class_true)
+        ?? readString(payload.condition_class_true);
     return {
         id: readString(row.id) ?? readString(row.evaluation_event_id) ?? 'eval_unknown',
         evaluation_event_id: readString(row.evaluation_event_id) ?? readString(row.id) ?? 'eval_unknown',
         tenant_id: readString(row.tenant_id) ?? '',
+        trigger_type: readEvaluationTriggerType(row.trigger_type),
         inference_event_id: readString(row.inference_event_id),
         outcome_event_id: readString(row.outcome_event_id),
         case_id: readString(row.case_id),
         model_name: readString(row.model_name),
         model_version: readString(row.model_version),
-        prediction: readString(row.prediction),
+        prediction,
         prediction_confidence: readNumber(row.prediction_confidence),
-        ground_truth: readString(row.ground_truth),
-        prediction_correct: readBoolean(row.prediction_correct),
-        condition_class_pred: readString(row.condition_class_pred),
-        condition_class_true: readString(row.condition_class_true),
+        ground_truth: groundTruth,
+        prediction_correct: readBoolean(row.prediction_correct)
+            ?? (prediction && groundTruth ? prediction === groundTruth : null),
+        condition_class_pred: readString(row.condition_class_pred) ?? readString(payload.condition_class_pred),
+        condition_class_true: readString(row.condition_class_true) ?? readString(payload.condition_class_true),
         severity_pred: readString(row.severity_pred),
         severity_true: readString(row.severity_true),
         contradiction_score: readNumber(row.contradiction_score),
@@ -2243,6 +2349,14 @@ function maxNumber(values: number[]) {
 function ratio(numerator: number, denominator: number) {
     if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return null;
     return roundNumber(numerator / denominator, 4);
+}
+
+function hasUsableEvaluationSignal(evaluation: Pick<ControlGraphEvaluationEvent, 'prediction' | 'ground_truth'>) {
+    return evaluation.prediction != null && evaluation.ground_truth != null;
+}
+
+function readEvaluationTriggerType(value: unknown): ControlGraphEvaluationEvent['trigger_type'] {
+    return value === 'inference' || value === 'simulation' ? value : 'outcome';
 }
 
 function edgeStrokeWidth(requestsPerMinute: number | null) {
