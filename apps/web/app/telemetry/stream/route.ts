@@ -59,7 +59,9 @@ export async function GET(req: Request) {
                         lastHeartbeatAtMs = nowMs;
                     }
 
-                    const snapshot = await getTelemetrySnapshot(supabase, tenantId);
+                    const snapshot = await getTelemetrySnapshot(supabase, tenantId, {
+                        trafficMode: simulationMode ? 'simulation' : 'production',
+                    });
                     if (closed) return;
 
                     controller.enqueue(
