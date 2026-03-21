@@ -325,6 +325,57 @@ export const CONTROL_PLANE_ALERTS = {
     },
 } as const;
 
+export const CONTROL_PLANE_CONFIGS = {
+    TABLE: 'control_plane_configs',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        latency_threshold_ms: 'latency_threshold_ms',
+        drift_threshold: 'drift_threshold',
+        confidence_threshold: 'confidence_threshold',
+        alert_sensitivity: 'alert_sensitivity',
+        simulation_enabled: 'simulation_enabled',
+        updated_by: 'updated_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const CONTROL_PLANE_API_KEYS = {
+    TABLE: 'control_plane_api_keys',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        label: 'label',
+        key_prefix: 'key_prefix',
+        key_hash: 'key_hash',
+        scopes: 'scopes',
+        status: 'status',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        revoked_by: 'revoked_by',
+        last_used_at: 'last_used_at',
+        created_at: 'created_at',
+        revoked_at: 'revoked_at',
+    },
+} as const;
+
+export const CONTROL_PLANE_ACTION_LOG = {
+    TABLE: 'control_plane_action_log',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        actor: 'actor',
+        action_type: 'action_type',
+        target_type: 'target_type',
+        target_id: 'target_id',
+        status: 'status',
+        requires_confirmation: 'requires_confirmation',
+        metadata: 'metadata',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const LEARNING_DATASET_VERSIONS = {
     TABLE: 'learning_dataset_versions',
     COLUMNS: {
