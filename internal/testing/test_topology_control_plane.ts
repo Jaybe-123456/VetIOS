@@ -244,6 +244,19 @@ async function main() {
     });
     assert.equal(readyState.control_plane_state, 'READY');
 
+    const graceWindowState = classifyTopologyControlPlaneState({
+        now: new Date().toISOString(),
+        telemetry_event_timestamps: [
+            new Date(Date.now() - 45_000).toISOString(),
+        ],
+        evaluation_event_count: 3,
+        evaluation_events_table_exists: true,
+        latest_outcome_timestamp: new Date(Date.now() - 30_000).toISOString(),
+        latest_inference_timestamp: new Date(Date.now() - 45_000).toISOString(),
+        latest_evaluation_timestamp: new Date(Date.now() - 25_000).toISOString(),
+    });
+    assert.notEqual(graceWindowState.control_plane_state, 'STREAM_DISCONNECTED', 'fresh heartbeat grace should not trip stream disconnects');
+
     const criticalNodes: TopologyNodeSnapshot[] = [
         makeNode('telemetry_observer', 'Telemetry Observer', {
             status: 'critical',
@@ -296,6 +309,75 @@ async function main() {
         idleFamilyAlerts.some((alert) => alert.node_id === 'vision_model' && alert.category === 'heartbeat'),
         false,
         'idle model families should not raise heartbeat offline alerts',
+    );
+
+    const unroutedFamilyAlerts = buildTopologyAlertsForTest({
+        nodes: [
+            {
+                ...makeNode('vision_model', 'Vision Inference', {
+                    status: 'healthy',
+                    latency: null,
+                    throughput: 0,
+                    error_rate: null,
+                    drift_score: null,
+                    confidence_avg: null,
+                }),
+                metadata: {
+                    observability_state: 'UNROUTED',
+                },
+            },
+        ],
+        now: new Date().toISOString(),
+        diagnostics: readyState,
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(
+        unroutedFamilyAlerts.some((alert) => alert.node_id === 'vision_model' && alert.category === 'heartbeat'),
+        false,
+        'unrouted model families should not page as heartbeat outages',
+    );
+
+    const dedupedErrorAlerts = buildTopologyAlertsForTest({
+        nodes: [
+            makeNode('diagnostics_model', 'Diagnostics Inference', {
+                status: 'critical',
+                latency: 420,
+                throughput: 12,
+                error_rate: 0.21,
+                drift_score: null,
+                confidence_avg: 0.61,
+            }),
+            {
+                ...makeNode('decision_fabric', 'Decision Fabric', {
+                    status: 'critical',
+                    latency: 430,
+                    throughput: 12,
+                    error_rate: 0.21,
+                    drift_score: null,
+                    confidence_avg: 0.61,
+                }),
+                kind: 'decision',
+            },
+            {
+                ...makeNode('control_plane', 'VetIOS Control Plane', {
+                    status: 'critical',
+                    latency: 440,
+                    throughput: 12,
+                    error_rate: 0.21,
+                    drift_score: null,
+                    confidence_avg: 0.61,
+                }),
+                kind: 'control',
+            },
+        ],
+        now: new Date().toISOString(),
+        diagnostics: readyState,
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(
+        dedupedErrorAlerts.filter((alert) => alert.category === 'error_rate').map((alert) => alert.node_id).join(','),
+        'diagnostics_model',
+        'aggregate nodes should not duplicate upstream error-rate alerts',
     );
 
     const networkHealth = computeTopologyNetworkHealth(criticalNodes, readyState);
