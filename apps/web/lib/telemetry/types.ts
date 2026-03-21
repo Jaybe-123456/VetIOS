@@ -1,5 +1,6 @@
 export type TelemetryEventType = 'inference' | 'outcome' | 'evaluation' | 'simulation' | 'system' | 'training';
 export type TelemetrySystemState = 'LIVE' | 'STALE';
+export type TelemetryTrafficMode = 'production' | 'simulation';
 export type TelemetryMetricState =
     | 'READY'
     | 'NO_DATA'
@@ -51,6 +52,7 @@ export interface TelemetryLogEntry {
 
 export interface TelemetrySnapshot {
     generated_at: string;
+    traffic_mode: TelemetryTrafficMode;
     system_state: TelemetrySystemState;
     last_event_timestamp: string | null;
     metrics: {

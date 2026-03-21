@@ -194,6 +194,10 @@ export default function TelemetryObserverPage() {
                             value={snapshot?.last_event_timestamp ? new Date(snapshot.last_event_timestamp).toLocaleString() : stateForMissingSnapshot(streamStatus)}
                         />
                         <DataRow
+                            label="Traffic Mode"
+                            value={snapshot?.traffic_mode === 'simulation' ? 'SIMULATION' : 'PRODUCTION'}
+                        />
+                        <DataRow
                             label="CPU"
                             value={formatUtilization(snapshot?.latest_system.cpu, streamStatus)}
                         />

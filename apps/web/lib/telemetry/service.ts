@@ -8,6 +8,7 @@ import type {
     TelemetryMetricsPayload,
     TelemetrySnapshot,
     TelemetrySystemPayload,
+    TelemetryTrafficMode,
 } from '@/lib/telemetry/types';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -99,6 +100,9 @@ export async function emitTelemetryEvent(
 export async function getTelemetrySnapshot(
     client: SupabaseClient,
     tenantId: string,
+    options?: {
+        trafficMode?: TelemetryTrafficMode;
+    },
 ): Promise<TelemetrySnapshot> {
     const C = TELEMETRY_EVENTS.COLUMNS;
     const windowStart = new Date(Date.now() - WINDOW_MS).toISOString();
@@ -119,7 +123,7 @@ export async function getTelemetrySnapshot(
         .slice()
         .reverse()
         .map(mapTelemetryEventRow);
-    return buildTelemetrySnapshot(events);
+    return buildTelemetrySnapshot(events, options);
 }
 
 export async function generateFakeEvents(
@@ -305,11 +309,17 @@ export function finishTelemetryExecutionSample(sample: TelemetryExecutionSample)
     };
 }
 
-function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapshot {
-    const productionEvents = events.filter((event) => !isSyntheticTelemetryRecord(event));
-    const inferenceEvents = productionEvents.filter((event) => event.event_type === 'inference');
-    const outcomeEvents = productionEvents.filter((event) => event.event_type === 'outcome');
-    const evaluationEvents = productionEvents.filter((event) => event.event_type === 'evaluation');
+function buildTelemetrySnapshot(
+    events: TelemetryEventRecord[],
+    options?: {
+        trafficMode?: TelemetryTrafficMode;
+    },
+): TelemetrySnapshot {
+    const trafficMode = options?.trafficMode === 'simulation' ? 'simulation' : 'production';
+    const observerEvents = filterObserverTraffic(events, trafficMode);
+    const inferenceEvents = observerEvents.filter((event) => event.event_type === 'inference');
+    const outcomeEvents = observerEvents.filter((event) => event.event_type === 'outcome');
+    const evaluationEvents = observerEvents.filter((event) => event.event_type === 'evaluation');
     const inferenceById = new Map(inferenceEvents.map((event) => [event.event_id, event]));
 
     const latencyEvents = inferenceEvents.filter((event) => {
@@ -368,7 +378,7 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
     const accuracyPairs = evaluationPairs.length > 0 ? evaluationPairs : outcomePairs;
     const driftPairs = evaluationPairs.length > 0 ? evaluationPairs : outcomePairs;
 
-    const lastEvent = events.at(-1) ?? null;
+    const lastEvent = observerEvents.at(-1) ?? events.at(-1) ?? null;
     const lastEventTimestamp = lastEvent?.timestamp ?? null;
     const systemState = lastEventTimestamp != null && Date.now() - new Date(lastEventTimestamp).getTime() <= HEARTBEAT_STALE_MS
         ? 'LIVE'
@@ -385,6 +395,7 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
 
     return {
         generated_at: new Date().toISOString(),
+        traffic_mode: trafficMode,
         system_state: systemState,
         last_event_timestamp: lastEventTimestamp,
         metrics: {
@@ -402,7 +413,7 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
             accuracy: accuracyPairs.length > 0 ? 'READY' : 'INSUFFICIENT_OUTCOMES',
             drift_score: driftPairs.length >= MIN_OUTCOMES_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_OUTCOMES',
         },
-        latest_system: findLatestSystemMetrics(events),
+        latest_system: findLatestSystemMetrics(observerEvents.length > 0 ? observerEvents : events),
         charts: {
             latency: latencyEvents.slice(-40).map((event) => ({
                 time: formatChartTime(event.timestamp),
@@ -410,7 +421,7 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
             })),
             drift: buildDriftTimeline(driftPairs),
         },
-        logs: buildLogs(events, {
+        logs: buildLogs(observerEvents, {
             p95Latency,
             avgConfidence,
             accuracy,
@@ -554,6 +565,19 @@ function buildDriftTimeline(
 }
 
 export const buildTelemetrySnapshotForTest = buildTelemetrySnapshot;
+
+function filterObserverTraffic(
+    events: TelemetryEventRecord[],
+    trafficMode: TelemetryTrafficMode,
+) {
+    return events.filter((event) => {
+        if (event.event_type === 'system') {
+            return true;
+        }
+        const synthetic = isSyntheticTelemetryRecord(event);
+        return trafficMode === 'simulation' ? synthetic : !synthetic;
+    });
+}
 
 function computeDriftScore(
     outcomePairs: Array<{ prediction: string; groundTruth: string }>,

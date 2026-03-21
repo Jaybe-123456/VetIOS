@@ -205,11 +205,90 @@ async function main() {
         outcomeTelemetry,
         evaluationTelemetry,
     ]);
+    assert.equal(snapshot.traffic_mode, 'production');
     assert.equal(snapshot.metrics.p95_latency_ms, 5400, 'anomalous inference latency should still appear in p95');
     assert.equal(snapshot.metrics.anomaly_count, 1, 'anomalous latency should still be counted separately');
     assert.equal(snapshot.metric_states.accuracy, 'READY');
     assert.equal(snapshot.metrics.accuracy, 1);
     assert.equal(snapshot.metric_states.drift_score, 'INSUFFICIENT_OUTCOMES');
+
+    const syntheticInferenceA = {
+        ...inferenceTelemetry,
+        event_id: 'evt_sim_inference_a',
+        timestamp: new Date().toISOString(),
+        metrics: {
+            latency_ms: 253.7,
+            confidence: 0.832,
+            prediction: 'Otitis externa',
+            ground_truth: null,
+            correct: null,
+        },
+        metadata: {
+            synthetic: true,
+            source: 'telemetry_stream_generator',
+        },
+    };
+    const syntheticInferenceB = {
+        ...inferenceTelemetry,
+        event_id: 'evt_sim_inference_b',
+        timestamp: new Date().toISOString(),
+        metrics: {
+            latency_ms: 130.0,
+            confidence: 0.843,
+            prediction: 'Pancreatitis',
+            ground_truth: null,
+            correct: null,
+        },
+        metadata: {
+            synthetic: true,
+            source: 'telemetry_stream_generator',
+        },
+    };
+    const syntheticOutcomeA = {
+        ...outcomeTelemetry,
+        event_id: 'evt_sim_outcome_a',
+        linked_event_id: syntheticInferenceA.event_id,
+        timestamp: new Date().toISOString(),
+        metrics: {
+            ground_truth: 'Otitis externa',
+            correct: true,
+        },
+        metadata: {
+            synthetic: true,
+            source: 'telemetry_stream_generator',
+        },
+    };
+    const syntheticOutcomeB = {
+        ...outcomeTelemetry,
+        event_id: 'evt_sim_outcome_b',
+        linked_event_id: syntheticInferenceB.event_id,
+        timestamp: new Date().toISOString(),
+        metrics: {
+            ground_truth: 'Pancreatitis',
+            correct: true,
+        },
+        metadata: {
+            synthetic: true,
+            source: 'telemetry_stream_generator',
+        },
+    };
+
+    const simulationSnapshot = buildTelemetrySnapshotForTest([
+        syntheticInferenceA,
+        syntheticInferenceB,
+        syntheticOutcomeA,
+        syntheticOutcomeB,
+    ], {
+        trafficMode: 'simulation',
+    });
+    assert.equal(simulationSnapshot.traffic_mode, 'simulation');
+    assert.equal(simulationSnapshot.metrics.inference_count, 2);
+    assert.equal(simulationSnapshot.metrics.outcome_count, 2);
+    assert.equal(simulationSnapshot.metrics.p95_latency_ms, 253.7);
+    assert.equal(simulationSnapshot.metrics.anomaly_count, 0);
+    assert.equal(simulationSnapshot.metrics.accuracy, 1);
+    assert.equal(simulationSnapshot.metric_states.drift_score, 'READY');
+    assert.equal(simulationSnapshot.metrics.drift_score, 0);
 
     await emitTelemetryEvent(client as any, {
         event_id: telemetrySimulationEventId(randomUUID()),
