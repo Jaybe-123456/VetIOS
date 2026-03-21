@@ -1020,6 +1020,8 @@ export async function getExperimentComparison(
     store: ExperimentTrackingStore,
     tenantId: string,
     runIds: string[],
+    source: ExperimentComparison['source'] = 'manual',
+    rationale = 'Manual comparison selection from the experiment table.',
 ): Promise<ExperimentComparison | null> {
     const uniqueRunIds = [...new Set(runIds)].filter(Boolean).slice(0, 4);
     if (uniqueRunIds.length === 0) return null;
@@ -1046,6 +1048,8 @@ export async function getExperimentComparison(
     const baselineRun = presentRuns[0] ?? null;
 
     return {
+        source,
+        rationale,
         run_ids: presentRuns.map((run) => run.run_id),
         runs: presentRuns,
         metrics: Object.fromEntries(metricEntries),
@@ -1094,9 +1098,18 @@ export async function getExperimentDashboardSnapshot(
         runs.map(async (run) => [run.run_id, await store.listExperimentMetrics(tenantId, run.run_id, 2_000)] as const),
     );
     const metricsByRun = Object.fromEntries(runMetrics);
+    const comparisonRequest = resolveDashboardComparisonRequest(runs, selectedRunId, options.compareRunIds ?? []);
     const [selectedRunDetail, comparison] = await Promise.all([
         selectedRunId ? getExperimentRunDetail(store, tenantId, selectedRunId) : Promise.resolve(null),
-        options.compareRunIds?.length ? getExperimentComparison(store, tenantId, options.compareRunIds) : Promise.resolve(null),
+        comparisonRequest.run_ids.length > 1
+            ? getExperimentComparison(
+                store,
+                tenantId,
+                comparisonRequest.run_ids,
+                comparisonRequest.source,
+                comparisonRequest.rationale,
+            )
+            : Promise.resolve(null),
     ]);
 
     return {
@@ -1743,13 +1756,137 @@ function buildDashboardSummary(
     };
 }
 
+function resolveDashboardComparisonRequest(
+    runs: ExperimentRunRecord[],
+    selectedRunId: string | null,
+    compareRunIds: string[],
+): {
+    run_ids: string[];
+    source: ExperimentComparison['source'];
+    rationale: string;
+} {
+    const requestedRunIds = [...new Set(compareRunIds.filter(Boolean))].slice(0, 4);
+    if (requestedRunIds.length > 1) {
+        return {
+            run_ids: requestedRunIds,
+            source: 'manual',
+            rationale: 'Manual comparison selection from the experiment table.',
+        };
+    }
+
+    if (requestedRunIds.length === 1 && selectedRunId && requestedRunIds[0] !== selectedRunId) {
+        return {
+            run_ids: [selectedRunId, requestedRunIds[0]],
+            source: 'manual',
+            rationale: 'Manual comparison between the selected run and one comparison target.',
+        };
+    }
+
+    return selectAutomaticComparisonRuns(runs, selectedRunId);
+}
+
+function selectAutomaticComparisonRuns(
+    runs: ExperimentRunRecord[],
+    selectedRunId: string | null,
+): {
+    run_ids: string[];
+    source: ExperimentComparison['source'];
+    rationale: string;
+} {
+    const selectedRun = runs.find((run) => run.run_id === selectedRunId) ?? runs[0] ?? null;
+    if (!selectedRun) {
+        return {
+            run_ids: [],
+            source: 'automatic',
+            rationale: 'No experiment runs are available for automatic comparison yet.',
+        };
+    }
+
+    const comparableRuns = runs.filter((run) =>
+        run.run_id !== selectedRun.run_id &&
+        run.task_type === selectedRun.task_type &&
+        run.modality === selectedRun.modality,
+    );
+    const candidatePool = comparableRuns.length > 0
+        ? comparableRuns
+        : runs.filter((run) => run.run_id !== selectedRun.run_id);
+
+    if (candidatePool.length === 0) {
+        return {
+            run_ids: [selectedRun.run_id],
+            source: 'automatic',
+            rationale: 'No comparable baseline run is available yet.',
+        };
+    }
+
+    const selectedIsChampion = isProductionChampionRun(selectedRun);
+    const championCandidate = candidatePool.find((run) => isProductionChampionRun(run)) ?? null;
+    const strongestAlternative = [...candidatePool].sort(rankComparisonCandidates)[0] ?? null;
+    const comparator = selectedIsChampion
+        ? strongestAlternative
+        : championCandidate ?? strongestAlternative;
+
+    if (!comparator) {
+        return {
+            run_ids: [selectedRun.run_id],
+            source: 'automatic',
+            rationale: 'No comparable baseline run is available yet.',
+        };
+    }
+
+    if (!selectedIsChampion && championCandidate) {
+        return {
+            run_ids: [championCandidate.run_id, selectedRun.run_id],
+            source: 'automatic',
+            rationale: 'Auto-comparing the selected run against the active production champion for the same task.',
+        };
+    }
+
+    return {
+        run_ids: [selectedRun.run_id, comparator.run_id],
+        source: 'automatic',
+        rationale: selectedIsChampion
+            ? 'Auto-comparing the active production run against the strongest alternate run for the same task.'
+            : 'Auto-comparing the selected run against the strongest comparable run for the same task.',
+    };
+}
+
+function isProductionChampionRun(run: ExperimentRunRecord): boolean {
+    const registryRole = (asString(run.registry_context.registry_role) ?? '').toLowerCase();
+    const registryStatus = (asString(run.registry_context.registry_status ?? run.registry_context.promotion_status) ?? '').toLowerCase();
+    const eligibility = (asString(run.registry_context.deployment_eligibility) ?? '').toLowerCase();
+    return eligibility === 'live_production' ||
+        (registryRole === 'champion' && registryStatus === 'production') ||
+        (run.status === 'promoted' && registryRole === 'champion' && registryStatus === 'production');
+}
+
+function rankComparisonCandidates(
+    left: ExperimentRunRecord,
+    right: ExperimentRunRecord,
+): number {
+    const leftChampion = isProductionChampionRun(left) ? 1 : 0;
+    const rightChampion = isProductionChampionRun(right) ? 1 : 0;
+    if (leftChampion !== rightChampion) return rightChampion - leftChampion;
+
+    const leftLinked = deriveRegistryLinkState(left, null, null) === 'linked' ? 1 : 0;
+    const rightLinked = deriveRegistryLinkState(right, null, null) === 'linked' ? 1 : 0;
+    if (leftLinked !== rightLinked) return rightLinked - leftLinked;
+
+    const leftFailed = left.status === 'failed' ? 1 : 0;
+    const rightFailed = right.status === 'failed' ? 1 : 0;
+    if (leftFailed !== rightFailed) return leftFailed - rightFailed;
+
+    const leftMetric = left.metric_primary_value ?? Number.NEGATIVE_INFINITY;
+    const rightMetric = right.metric_primary_value ?? Number.NEGATIVE_INFINITY;
+    if (leftMetric !== rightMetric) return rightMetric - leftMetric;
+
+    const leftHeartbeat = left.last_heartbeat_at ?? left.updated_at;
+    const rightHeartbeat = right.last_heartbeat_at ?? right.updated_at;
+    return rightHeartbeat.localeCompare(leftHeartbeat);
+}
+
 function pickDefaultSelectedRunId(runs: ExperimentRunRecord[]): string | null {
     if (runs.length === 0) return null;
-
-    const bootstrapSmokeRun = runs.find((run) => run.run_id === 'run_diag_smoke_v1');
-    if (bootstrapSmokeRun) {
-        return bootstrapSmokeRun.run_id;
-    }
 
     const activeRun = runs
         .filter((run) => isHealthyActiveRun(run))
@@ -1760,6 +1897,18 @@ function pickDefaultSelectedRunId(runs: ExperimentRunRecord[]): string | null {
         })[0];
     if (activeRun) {
         return activeRun.run_id;
+    }
+
+    const liveChampion = runs
+        .filter((run) => isProductionChampionRun(run))
+        .sort(rankComparisonCandidates)[0];
+    if (liveChampion) {
+        return liveChampion.run_id;
+    }
+
+    const bootstrapSmokeRun = runs.find((run) => run.run_id === 'run_diag_smoke_v1');
+    if (bootstrapSmokeRun) {
+        return bootstrapSmokeRun.run_id;
     }
 
     return runs[0]?.run_id ?? null;

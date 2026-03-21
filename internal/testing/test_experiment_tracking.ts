@@ -863,6 +863,7 @@ async function testExperimentTrackingServiceFlow() {
     const comparison = await getExperimentComparison(store, tenantId, [run.run_id, summaryOnlyRun.run_id]);
     assert.ok(comparison);
     assert.equal(comparison?.runs.length, 2);
+    assert.equal(comparison?.source, 'manual');
 }
 
 async function testExperimentBootstrapSeed() {
@@ -996,6 +997,10 @@ async function testExperimentBootstrapSeed() {
     assert.ok(dashboard.summary.safety_metric_coverage_pct > 0);
     assert.ok(dashboard.summary.safety_metric_coverage_pct <= 100);
     assert.equal(dashboard.selected_run_detail?.heartbeat_freshness, 'healthy');
+    assert.equal(dashboard.comparison?.source, 'automatic');
+    assert.ok((dashboard.comparison?.runs.length ?? 0) >= 2);
+    assert.ok(dashboard.comparison?.rationale.includes('Auto-comparing'));
+    assert.ok(dashboard.comparison?.run_ids.includes('run_diag_smoke_v1'));
 
     const auditTypes = new Set((await getExperimentRunDetail(store, tenantId, 'run_diag_complete_v1'))?.audit_history.map((event) => event.event_type));
     assert.ok(auditTypes.has('registry_candidate_created') || auditTypes.has('registry_synced'));
@@ -1272,11 +1277,20 @@ async function testHeartbeatStateConsistency() {
 
     const snapshot = await getExperimentDashboardSnapshot(store, tenantId);
     assert.equal(snapshot.summary.active_runs, 0);
+    assert.equal(snapshot.comparison?.source, 'automatic');
+    assert.ok((snapshot.comparison?.runs.length ?? 0) >= 2);
 
     const staleDetail = await getExperimentRunDetail(store, tenantId, 'run_stale_v1');
     const interruptedDetail = await getExperimentRunDetail(store, tenantId, 'run_interrupted_v1');
     assert.equal(staleDetail?.heartbeat_freshness, 'stale');
     assert.equal(interruptedDetail?.heartbeat_freshness, 'interrupted');
+
+    const selectedCompare = await getExperimentDashboardSnapshot(store, tenantId, {
+        selectedRunId: 'run_stale_v1',
+        compareRunIds: ['run_interrupted_v1'],
+    });
+    assert.equal(selectedCompare.comparison?.source, 'manual');
+    assert.deepEqual(selectedCompare.comparison?.run_ids, ['run_stale_v1', 'run_interrupted_v1']);
 }
 
 function buildStore(tenantId: string) {

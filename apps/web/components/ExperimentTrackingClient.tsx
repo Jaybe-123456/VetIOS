@@ -22,7 +22,9 @@ export function ExperimentTrackingClient({
 }) {
     const [snapshot, setSnapshot] = useState(initialSnapshot);
     const [selectedRunId, setSelectedRunId] = useState(initialSnapshot.selected_run_id);
-    const [compareRunIds, setCompareRunIds] = useState<string[]>(initialSnapshot.comparison?.run_ids ?? []);
+    const [compareRunIds, setCompareRunIds] = useState<string[]>(
+        initialSnapshot.comparison?.source === 'manual' ? initialSnapshot.comparison.run_ids : [],
+    );
     const [query, setQuery] = useState('');
     const [statusFilter, setStatusFilter] = useState('all');
     const [taskFilter, setTaskFilter] = useState('all');
@@ -59,8 +61,8 @@ export function ExperimentTrackingClient({
         [snapshot.selected_run_detail, selectedRunId],
     );
     const comparison = useMemo(
-        () => normalizeComparison(snapshot.comparison, compareRunIds),
-        [snapshot.comparison, compareRunIds],
+        () => normalizeComparison(snapshot.comparison, compareRunIds, selectedRunId),
+        [snapshot.comparison, compareRunIds, selectedRunId],
     );
     const chartSeries = useMemo(
         () => buildChartSeries(selectedRunDetail, comparison),
@@ -209,8 +211,8 @@ export function ExperimentTrackingClient({
                     )}
                 </ConsoleCard>
                 <div className="space-y-6">
-                    <ConsoleCard title="Active Monitoring"><ActiveMonitoringPanel detail={selectedRunDetail} activeRunIds={snapshot.summary.active_run_ids} /></ConsoleCard>
-                    <ConsoleCard title="Comparison">{comparison && comparison.runs.length > 1 ? <ComparisonPanel comparison={comparison} /> : <EmptyPanel message="Select at least two runs in the table to compare metrics, calibration, adversarial robustness, and dataset/hyperparameter deltas." compact />}</ConsoleCard>
+                    <ConsoleCard title="Active Monitoring"><ActiveMonitoringPanel detail={selectedRunDetail} activeRunIds={snapshot.summary.active_run_ids} runs={snapshot.runs} /></ConsoleCard>
+                    <ConsoleCard title="Comparison">{comparison && comparison.runs.length > 1 ? <ComparisonPanel comparison={comparison} /> : <EmptyPanel message="No comparable run pair is available yet. Once another structured run with the same task exists, this panel will auto-build a baseline comparison." compact />}</ConsoleCard>
                 </div>
             </div>
 
@@ -436,6 +438,8 @@ function RunDetail({
                 </ConsoleInset>
             </div>
 
+            <ContinuousLearningEvidencePanel detail={detail} />
+
             <div className="grid gap-6 xl:grid-cols-[1.05fr,0.95fr]">
                 <div className="space-y-4">
                     <CodeBlock title="Hyperparameters" value={stringifyJson(detail.run.hyperparameters, 'No hyperparameters recorded')} />
@@ -579,16 +583,57 @@ function SafetyPanel({ detail }: { detail: ExperimentRunDetail }) {
 function ActiveMonitoringPanel({
     detail,
     activeRunIds,
+    runs,
 }: {
     detail: ExperimentRunDetail | null;
     activeRunIds: string[];
+    runs: ExperimentRunRecord[];
 }) {
     if (detail && isActiveRun(detail.run)) {
         return <ActiveRunTelemetry detail={detail} emptyMessage="No live telemetry available for the selected active run yet." />;
     }
 
+    if (detail?.latest_metric) {
+        return (
+            <div className="space-y-3">
+                <div className="border border-grid bg-black/20 px-3 py-3 font-mono text-xs text-muted">
+                    No runs are actively heartbeating right now. Showing the latest structured monitoring evidence for the selected run so telemetry, calibration, and safety context stay reviewable.
+                </div>
+                <ActiveRunTelemetry detail={detail} emptyMessage="No stored telemetry is available for the selected run." />
+            </div>
+        );
+    }
+
     if (activeRunIds.length === 0) {
-        return <EmptyPanel message="No active runs are currently emitting heartbeat telemetry." compact />;
+        const recentRuns = runs
+            .filter((run) => run.last_heartbeat_at || run.metric_primary_value != null)
+            .sort((left, right) => (right.last_heartbeat_at ?? right.updated_at).localeCompare(left.last_heartbeat_at ?? left.updated_at))
+            .slice(0, 3);
+        if (recentRuns.length === 0) {
+            return <EmptyPanel message="No active runs are currently emitting heartbeat telemetry." compact />;
+        }
+
+        return (
+            <div className="space-y-3">
+                <div className="border border-grid bg-black/20 px-3 py-3 font-mono text-xs text-muted">
+                    No runs are actively heartbeating right now. Most recent monitored runs are shown below for clinical accountability continuity.
+                </div>
+                {recentRuns.map((run) => (
+                    <div key={run.run_id} className="flex items-center justify-between border border-grid bg-black/20 px-3 py-3 font-mono text-xs">
+                        <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                                <Gauge className="h-4 w-4 text-accent" />
+                                <span className="text-accent">{run.run_id}</span>
+                            </div>
+                            <div className="text-muted">
+                                last heartbeat {formatHeartbeat(run.last_heartbeat_at)} | primary {renderPrimaryMetric(run)}
+                            </div>
+                        </div>
+                        <FreshnessBadge freshness={classifyHeartbeat(run)} />
+                    </div>
+                ))}
+            </div>
+        );
     }
 
     return (
@@ -654,8 +699,9 @@ function ComparisonPanel({
 }) {
     return (
         <div className="space-y-4">
-            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
-                Baseline: {comparison.run_ids[0] ?? 'n/a'}
+            <div className="flex flex-col gap-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
+                <span>Baseline: {comparison.run_ids[0] ?? 'n/a'}</span>
+                <span>{comparison.source === 'automatic' ? 'Auto baseline' : 'Manual comparison'} | {comparison.rationale}</span>
             </div>
             <div className="overflow-x-auto">
                 <table className="min-w-[980px] w-full text-left border-collapse">
@@ -718,6 +764,68 @@ function ComparisonPanel({
                 </div>
             ) : null}
         </div>
+    );
+}
+
+function ContinuousLearningEvidencePanel({ detail }: { detail: ExperimentRunDetail }) {
+    const evidenceRows = [
+        {
+            label: 'Iteration Telemetry',
+            value: detail.missing_telemetry_fields.length === 0
+                ? `${detail.metrics.length} metric events / complete`
+                : `${detail.metrics.length} metric events / missing ${detail.missing_telemetry_fields.length} fields`,
+        },
+        {
+            label: 'Calibration Evidence',
+            value: detail.calibration_metrics ? `READY / ECE ${formatMetricValue(detail.calibration_metrics.ece)}` : 'MISSING',
+        },
+        {
+            label: 'Adversarial Evidence',
+            value: detail.adversarial_metrics ? `READY / degradation ${formatMetricValue(detail.adversarial_metrics.degradation_score)}` : 'MISSING',
+        },
+        {
+            label: 'Clinical Safety',
+            value: detail.safety_coverage === 'none' ? 'MISSING' : detail.safety_coverage.toUpperCase(),
+        },
+        {
+            label: 'Benchmark Trail',
+            value: detail.benchmarks.length > 0 ? `${detail.benchmarks.length} benchmark report(s)` : 'MISSING',
+        },
+        {
+            label: 'Dataset Lineage',
+            value: detail.lineage?.dataset_version ?? detail.run.dataset_version ?? 'MISSING',
+        },
+        {
+            label: 'Registry Trace',
+            value: detail.registry_link_state.toUpperCase(),
+        },
+        {
+            label: 'Audit Trail',
+            value: `${detail.audit_history.length} linked event(s)`,
+        },
+    ];
+    const accountabilityGaps = [
+        detail.missing_telemetry_fields.length > 0 ? `metric stream gaps: ${detail.missing_telemetry_fields.join(', ')}` : null,
+        !detail.calibration_metrics ? 'calibration evidence missing' : null,
+        !detail.adversarial_metrics ? 'adversarial evidence missing' : null,
+        detail.safety_coverage === 'none' ? 'clinical safety metrics missing' : null,
+        detail.benchmarks.length === 0 ? 'benchmark evidence missing' : null,
+        detail.audit_history.length === 0 ? 'audit trail missing' : null,
+    ].filter(Boolean) as string[];
+
+    return (
+        <ConsoleInset title="Continuous Learning Evidence">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                {evidenceRows.map((row) => (
+                    <DetailStat key={row.label} label={row.label} value={row.value} />
+                ))}
+            </div>
+            <div className="mt-4 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
+                {accountabilityGaps.length === 0
+                    ? 'Model iterations are linked to telemetry, governance evidence, lineage, and audit history. This run is fully convertible into structured accountability evidence.'
+                    : `Accountability gaps still present: ${accountabilityGaps.join('; ')}.`}
+            </div>
+        </ConsoleInset>
     );
 }
 
@@ -875,9 +983,15 @@ function resolveSelectedRunDetail(
 function normalizeComparison(
     comparison: ExperimentComparison | null,
     compareRunIds: string[],
+    selectedRunId: string | null,
 ) {
     if (!comparison) return null;
-    const filteredRuns = comparison.runs.filter((run) => compareRunIds.includes(run.run_id));
+    const requestedRunIds = compareRunIds.length === 0
+        ? comparison.run_ids
+        : compareRunIds.length === 1 && selectedRunId && !compareRunIds.includes(selectedRunId)
+            ? [selectedRunId, ...compareRunIds]
+            : compareRunIds;
+    const filteredRuns = comparison.runs.filter((run) => requestedRunIds.includes(run.run_id));
     const allowedRunIds = new Set(filteredRuns.map((run) => run.run_id));
     if (filteredRuns.length <= 1) return null;
 
