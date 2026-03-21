@@ -506,6 +506,8 @@ export interface ExperimentMetricSeriesPoint {
 }
 
 export interface ExperimentComparison {
+    source: 'manual' | 'automatic';
+    rationale: string;
     run_ids: string[];
     runs: ExperimentRunRecord[];
     metrics: Record<string, ExperimentMetricRecord[]>;
