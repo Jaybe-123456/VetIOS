@@ -12,6 +12,7 @@ import type {
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const HEARTBEAT_STALE_MS = 30 * 1000;
+export const TELEMETRY_HEARTBEAT_INTERVAL_MS = 15 * 1000;
 const LATENCY_ANOMALY_MS = 5_000;
 const MIN_OUTCOMES_FOR_DRIFT = 2;
 const MAX_EVENTS_PER_WINDOW = 5_000;
@@ -196,9 +197,45 @@ export function telemetrySimulationEventId(simulationEventId: string) {
     return `evt_simulation_${simulationEventId}`;
 }
 
+export function telemetryHeartbeatEventId(source: string) {
+    return `evt_system_heartbeat_${normalizeTelemetryIdentifier(source)}`;
+}
+
 export function resolveTelemetryRunId(modelVersion: string, candidate: unknown) {
     const explicit = textOrNull(candidate);
     return explicit ?? modelVersion;
+}
+
+export async function emitTelemetryHeartbeat(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        source: string;
+        targetNodeId?: string | null;
+        modelVersion?: string | null;
+        runId?: string | null;
+        system?: TelemetrySystemPayload;
+        metadata?: Record<string, unknown>;
+    },
+) {
+    return emitTelemetryEvent(client, {
+        event_id: telemetryHeartbeatEventId(input.source),
+        tenant_id: input.tenantId,
+        event_type: 'system',
+        timestamp: new Date().toISOString(),
+        model_version: textOrNull(input.modelVersion) ?? 'control-plane-heartbeat',
+        run_id: textOrNull(input.runId) ?? 'control-plane-heartbeat',
+        metrics: {},
+        system: input.system,
+        metadata: {
+            source_module: input.source,
+            action: 'heartbeat',
+            heartbeat: true,
+            heartbeat_interval_ms: TELEMETRY_HEARTBEAT_INTERVAL_MS,
+            target_node_id: textOrNull(input.targetNodeId) ?? 'telemetry_observer',
+            ...(input.metadata ?? {}),
+        },
+    });
 }
 
 export function extractPredictionLabel(outputPayload: Record<string, unknown>) {
@@ -452,6 +489,14 @@ function mapEventToLog(event: TelemetryEventRecord): TelemetryLogEntry {
 
     if (event.event_type === 'system') {
         const action = textOrNull(event.metadata.action) ?? 'system';
+        if (action === 'heartbeat') {
+            return {
+                id: event.event_id,
+                level: 'INFO',
+                timestamp: event.timestamp,
+                message: `[INFO] HEARTBEAT ${textOrNull(event.metadata.target_node_id) ?? 'telemetry_observer'} source=${textOrNull(event.metadata.source_module) ?? 'control_plane'} interval_ms=${numberOrNull(event.metadata.heartbeat_interval_ms)?.toFixed(0) ?? 'NO DATA'}`,
+            };
+        }
         const selectedModel = textOrNull(event.metadata.routing_selected_model_id)
             ?? textOrNull(event.metadata.routing_selected_model_name)
             ?? 'NO DATA';
@@ -614,6 +659,15 @@ function numberOrNull(value: unknown) {
 
 function textOrNull(value: unknown) {
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function normalizeTelemetryIdentifier(value: string) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        || 'control_plane';
 }
 
 function booleanOrNull(value: unknown) {
