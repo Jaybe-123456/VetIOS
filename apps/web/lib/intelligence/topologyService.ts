@@ -314,6 +314,7 @@ export async function getTopologySnapshot(
         diagnostics: {
             telemetry_stream_connected: diagnostics.telemetry_stream_connected,
             evaluation_events_table_exists: diagnostics.evaluation_events_table_exists,
+            latest_telemetry_timestamp: diagnostics.latest_telemetry_timestamp,
             latest_inference_timestamp: diagnostics.latest_inference_timestamp,
             latest_outcome_timestamp: diagnostics.latest_outcome_timestamp,
             latest_evaluation_timestamp: diagnostics.latest_evaluation_timestamp,

@@ -251,6 +251,7 @@ function makeTopologySnapshot(overrides: Partial<TopologySnapshot> = {}): Topolo
         diagnostics: {
             telemetry_stream_connected: true,
             evaluation_events_table_exists: true,
+            latest_telemetry_timestamp: NOW,
             latest_inference_timestamp: NOW,
             latest_outcome_timestamp: NOW,
             latest_evaluation_timestamp: NOW,
@@ -452,23 +453,39 @@ async function main() {
         NOW,
     );
     assert.equal(decisionSnapshot.active_decision_count, 1);
-    assert.equal(decisionSnapshot.latest_trigger, 'latency_degradation');
+    assert.equal(decisionSnapshot.latest_trigger, 'model_drift_detected');
     assert.equal(decisionSnapshot.summary.where_failing, 'diagnostics_model');
 
     const enriched = applyDecisionEngineToTopologySnapshot(incidentSnapshot, decisionSnapshot);
-    assert.equal(enriched.summary.root_cause, 'latency_degradation');
-    assert.equal(enriched.summary.next_action, 'Executed switch_model(reg_diag_v1)');
+    assert.equal(enriched.summary.root_cause, 'model_drift_detected');
+    assert.equal(enriched.summary.next_action, 'Autonomous guardrail held action pending approval.');
     assert.equal(enriched.alerts[0]?.category, 'decision');
-    assert.equal(enriched.alerts[0]?.severity, 'info');
+    assert.equal(enriched.alerts[0]?.severity, 'warning');
     assert.equal(enriched.diagnostics.active_alert_count, incidentSnapshot.diagnostics.active_alert_count + 1);
 
     const decisionNode = enriched.nodes.find((node) => node.id === 'decision_fabric');
-    assert.equal(decisionNode?.metadata.latest_action, 'switch_model(reg_diag_v1)');
+    assert.equal(decisionNode?.metadata.latest_action, 'rollback_to_previous()');
     assert.equal(decisionNode?.metadata.decision_mode, 'autonomous');
 
     const sourceNode = enriched.nodes.find((node) => node.id === 'diagnostics_model');
-    assert.equal(sourceNode?.recommendations[0], 'switch_model(reg_diag_v1)');
-    assert.match(sourceNode?.recent_errors[0] ?? '', /latency_degradation/);
+    assert.equal(sourceNode?.recommendations[0], 'rollback_to_previous()');
+    assert.match(sourceNode?.recent_errors[0] ?? '', /model_drift_detected/);
+
+    const historicalOnlySnapshot = buildDecisionEngineSnapshot(
+        makeConfig({ mode: 'observe' }),
+        incidentSnapshot,
+        [latestDecision],
+        [makeAuditRecord(latestDecision.decision_id, latestDecision.action)],
+        NOW,
+    );
+    assert.equal(historicalOnlySnapshot.active_decision_count, 0);
+    assert.equal(historicalOnlySnapshot.latest_trigger, null);
+    assert.equal(historicalOnlySnapshot.latest_action, null);
+    assert.equal(historicalOnlySnapshot.summary.root_cause, incidentSnapshot.summary.root_cause);
+    assert.equal(
+        applyDecisionEngineToTopologySnapshot(incidentSnapshot, historicalOnlySnapshot).summary.root_cause,
+        incidentSnapshot.summary.root_cause,
+    );
 
     console.log('Self-healing decision engine integration tests passed.');
 }

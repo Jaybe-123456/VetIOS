@@ -338,7 +338,7 @@ export function applyDecisionEngineToTopologySnapshot(
     snapshot: TopologySnapshot,
     decisionSnapshot: DecisionEngineSnapshot,
 ): TopologySnapshot {
-    const topDecision = decisionSnapshot.decisions[0] ?? null;
+    const topDecision = resolveLatestActiveDecision(decisionSnapshot.decisions);
     if (!topDecision) return snapshot;
 
     const candidateSeverity: TopologyAlertSeverity = topDecision.metadata.severity === 'critical' ? 'critical' : 'warning';
@@ -381,7 +381,7 @@ export function buildDecisionEngineSnapshot(
     auditLog: DecisionAuditLogRecord[],
     now: string,
 ): DecisionEngineSnapshot {
-    const latest = decisions[0] ?? null;
+    const latest = resolveLatestActiveDecision(decisions);
     return {
         mode: config.mode,
         safe_mode_enabled: config.safe_mode_enabled,
@@ -404,6 +404,10 @@ export function buildDecisionEngineSnapshot(
                 : topologySnapshot.summary.next_action,
         },
     };
+}
+
+function resolveLatestActiveDecision(decisions: DecisionEngineRecord[]): DecisionEngineRecord | null {
+    return decisions.find((decision) => decision.status !== 'executed') ?? null;
 }
 
 async function maybeExecuteDecision(input: {
