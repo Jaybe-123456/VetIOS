@@ -1518,6 +1518,7 @@ function resolveModelFamily(inputSignature: Record<string, unknown>): ModelFamil
     const rawTaskType = readString(inputSignature.task_type) ?? readString(metadata.task_type) ?? '';
     const rawTargetType = readString(inputSignature.target_type) ?? readString(metadata.target_type) ?? '';
     const familyHint = readString(metadata.model_family) ?? readString(metadata.family);
+    const routeHint = `${readString(metadata.route_hint) ?? ''} ${readString(metadata.workflow) ?? ''}`.toLowerCase();
     if (familyHint === 'vision' || familyHint === 'therapeutics' || familyHint === 'diagnostics') {
         return familyHint;
     }
@@ -1525,9 +1526,18 @@ function resolveModelFamily(inputSignature: Record<string, unknown>): ModelFamil
     const lowerTask = rawTaskType.toLowerCase();
     const lowerTarget = rawTargetType.toLowerCase();
     const hasImages = countArray(inputSignature.diagnostic_images) > 0;
-    const therapeuticText = `${lowerTask} ${lowerTarget} ${readString(metadata.route_hint) ?? ''}`.toLowerCase();
+    const hasClinicalSymptoms = countArray(inputSignature.symptoms) > 0;
+    const therapeuticText = `${lowerTask} ${lowerTarget} ${routeHint}`.toLowerCase();
+    const visionHint = `${lowerTask} ${lowerTarget} ${routeHint}`.toLowerCase();
 
-    if (hasImages || lowerTask.includes('vision') || lowerTarget.includes('vision') || lowerTarget.includes('image')) {
+    if (
+        lowerTask.includes('vision')
+        || lowerTarget.includes('vision')
+        || lowerTarget.includes('image')
+        || visionHint.includes('vision')
+        || visionHint.includes('image_only')
+        || (hasImages && !hasClinicalSymptoms && !therapeuticText.includes('diagnos'))
+    ) {
         return 'vision';
     }
     if (therapeuticText.includes('therapeut') || therapeuticText.includes('treatment') || therapeuticText.includes('medication')) {

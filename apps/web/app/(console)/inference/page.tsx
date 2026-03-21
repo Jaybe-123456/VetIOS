@@ -167,6 +167,11 @@ export default function InferenceConsole() {
         }));
 
         try {
+            const metadata = {
+                ...(finalInput.metadata ?? {}),
+                model_family: (finalInput.metadata as Record<string, unknown> | undefined)?.model_family ?? 'diagnostics',
+                route_hint: (finalInput.metadata as Record<string, unknown> | undefined)?.route_hint ?? 'clinical_diagnosis',
+            };
             const data = {
                 model: {
                     name: "gpt-4-turbo",
@@ -177,7 +182,7 @@ export default function InferenceConsole() {
                         species: finalInput.species,
                         breed: finalInput.breed,
                         symptoms: finalInput.symptoms,
-                        metadata: finalInput.metadata,
+                        metadata,
                         diagnostic_images: state.diagnosticImages,
                         lab_results: state.labResults,
                     }

@@ -117,6 +117,24 @@ async function main() {
     const contradictionAnalysis = analyzeRoutingInput(makeContradictoryInput());
     assert.ok(contradictionAnalysis.contradiction_score > 0);
 
+    const multimodalDiagnosticsAnalysis = analyzeRoutingInput({
+        species: 'dog',
+        breed: 'labrador',
+        symptoms: ['vomiting', 'lethargy'],
+        diagnostic_images: [{ file_name: 'abdomen.png' }],
+        metadata: {},
+    });
+    assert.equal(multimodalDiagnosticsAnalysis.family, 'diagnostics');
+
+    const explicitVisionAnalysis = analyzeRoutingInput({
+        species: 'dog',
+        breed: 'labrador',
+        symptoms: [],
+        diagnostic_images: [{ file_name: 'retina.png' }],
+        metadata: { route_hint: 'vision' },
+    });
+    assert.equal(explicitVisionAnalysis.family, 'vision');
+
     const profiles = buildDefaultRoutingProfiles({
         tenantId: TENANT_ID,
         family: 'diagnostics',
