@@ -32,7 +32,8 @@ export type ExperimentRegistryRole =
     | 'candidate'
     | 'archived'
     | 'experimental'
-    | 'rollback_target';
+    | 'rollback_target'
+    | 'at_risk';
 export type ModelRegistryStatus = 'training' | 'candidate' | 'staging' | 'production' | 'archived';
 export type DeploymentDecisionStatus = 'approved' | 'rejected' | 'pending';
 export type ExperimentHeartbeatFreshness = 'healthy' | 'stale' | 'interrupted';

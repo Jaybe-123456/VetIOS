@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
+import { applyDecisionEngineToTopologySnapshot, evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
 import { getModelRegistryControlPlaneSnapshot } from '@/lib/experiments/service';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -52,9 +53,16 @@ export async function GET(req: Request) {
             until,
         });
         await syncControlPlaneAlerts(client, actor.tenantId, snapshot.alerts);
+        const decisionEngine = await evaluateDecisionEngine({
+            client,
+            tenantId: actor.tenantId,
+            topologySnapshot: snapshot,
+            triggerSource: 'topology_api',
+        });
+        const enrichedSnapshot = applyDecisionEngineToTopologySnapshot(snapshot, decisionEngine);
 
         const response = NextResponse.json({
-            snapshot,
+            snapshot: enrichedSnapshot,
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);

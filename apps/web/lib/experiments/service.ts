@@ -2503,11 +2503,12 @@ function resolveModelFamilyForRun(run: ExperimentRunRecord): ModelFamily {
 
 function rankRegistryEntry(registry: ModelRegistryRecord): number {
     if (registry.lifecycle_status === 'production' && registry.registry_role === 'champion') return 0;
-    if (registry.lifecycle_status === 'staging' && registry.registry_role === 'challenger') return 1;
-    if (registry.lifecycle_status === 'candidate') return 2;
-    if (registry.lifecycle_status === 'training') return 3;
-    if (registry.registry_role === 'rollback_target') return 4;
-    return 5;
+    if (registry.lifecycle_status === 'production' && registry.registry_role === 'at_risk') return 1;
+    if (registry.lifecycle_status === 'staging' && registry.registry_role === 'challenger') return 2;
+    if (registry.lifecycle_status === 'candidate') return 3;
+    if (registry.lifecycle_status === 'training') return 4;
+    if (registry.registry_role === 'rollback_target') return 5;
+    return 6;
 }
 
 function buildArtifactUris(
@@ -2956,7 +2957,7 @@ function mapRunToRegistryRole(
     existingRole: ModelRegistryRecord['role'] | null,
 ): ModelRegistryRecord['role'] {
     if (run.status === 'promoted') return 'champion';
-    if (existingRole === 'champion' || existingRole === 'challenger' || existingRole === 'rollback_target') return existingRole;
+    if (existingRole === 'champion' || existingRole === 'challenger' || existingRole === 'rollback_target' || existingRole === 'at_risk') return existingRole;
     return run.summary_only ? 'challenger' : 'experimental';
 }
 

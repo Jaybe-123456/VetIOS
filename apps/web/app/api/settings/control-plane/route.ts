@@ -51,6 +51,10 @@ type SettingsControlAction =
             confidence_threshold?: number;
             alert_sensitivity?: ControlPlaneAlertSensitivity;
             simulation_enabled?: boolean;
+            decision_mode?: 'observe' | 'assist' | 'autonomous';
+            safe_mode_enabled?: boolean;
+            abstain_threshold?: number;
+            auto_execute_confidence_threshold?: number;
         };
     }
     | {
@@ -389,6 +393,12 @@ function validateConfig(config: NonNullable<Extract<SettingsControlAction, { act
     }
     if (config.confidence_threshold != null && (config.confidence_threshold < 0 || config.confidence_threshold > 1)) {
         throw new Error('confidence_threshold must be between 0 and 1');
+    }
+    if (config.abstain_threshold != null && (config.abstain_threshold < 0 || config.abstain_threshold > 1)) {
+        throw new Error('abstain_threshold must be between 0 and 1');
+    }
+    if (config.auto_execute_confidence_threshold != null && (config.auto_execute_confidence_threshold < 0 || config.auto_execute_confidence_threshold > 1)) {
+        throw new Error('auto_execute_confidence_threshold must be between 0 and 1');
     }
 }
 

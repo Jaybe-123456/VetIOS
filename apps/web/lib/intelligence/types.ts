@@ -45,7 +45,7 @@ export interface TopologyAlert {
     id: string;
     node_id: string;
     severity: TopologyAlertSeverity;
-    category: 'latency' | 'drift' | 'error_rate' | 'governance' | 'heartbeat' | 'simulation' | 'stream' | 'evaluation';
+    category: 'latency' | 'drift' | 'error_rate' | 'governance' | 'heartbeat' | 'simulation' | 'stream' | 'evaluation' | 'decision';
     title: string;
     message: string;
     timestamp: string;
