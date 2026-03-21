@@ -756,6 +756,7 @@ async function main() {
     await testHeartbeatStateConsistency();
     await testExperimentBootstrapSeed();
     await testRegistryGovernanceControlPlane();
+    await testLiveChampionGovernanceConsistency();
 
     console.log('Experiment tracking integration tests passed.');
 }
@@ -982,7 +983,8 @@ async function testExperimentBootstrapSeed() {
     assert.ok(dashboard.selected_run_detail);
     assert.equal(dashboard.selected_run_detail?.metrics.length, 5);
     assert.ok(dashboard.summary.registry_link_coverage_pct > 0);
-    assert.ok(dashboard.summary.safety_metric_coverage_pct < 100);
+    assert.ok(dashboard.summary.safety_metric_coverage_pct > 0);
+    assert.ok(dashboard.summary.safety_metric_coverage_pct <= 100);
     assert.equal(dashboard.selected_run_detail?.heartbeat_freshness, 'healthy');
 
     const auditTypes = new Set((await getExperimentRunDetail(store, tenantId, 'run_diag_complete_v1'))?.audit_history.map((event) => event.event_type));
@@ -1079,6 +1081,58 @@ async function testRegistryGovernanceControlPlane() {
     const diagnosticsAfterRollback = snapshotAfterRollback.families.find((family) => family.model_family === 'diagnostics');
     assert.equal(diagnosticsAfterRollback?.active_model?.run_id, 'run_diag_stable_001');
     assert.ok(snapshotAfterRollback.audit_history.some((event) => event.event_type === 'rolled_back'));
+}
+
+async function testLiveChampionGovernanceConsistency() {
+    const tenantId = makeUuid(5);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_live_champion_001',
+        modelVersion: 'diag_live_champion_v1',
+        datasetVersion: 'ldv_diag_2026_03_21_a',
+    });
+
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_live_champion_001', 'promote_to_staging', 'qa_user');
+    await applyExperimentRegistryAction(
+        store,
+        tenantId,
+        'run_diag_live_champion_001',
+        'set_manual_approval',
+        'qa_user',
+        {
+            manualApproval: true,
+            reason: 'Champion promotion approved.',
+        },
+    );
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_live_champion_001', 'promote_to_production', 'qa_user');
+
+    await store.updateExperimentRun('run_diag_live_champion_001', tenantId, {
+        status_reason: 'heartbeat_interrupted',
+        last_heartbeat_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+    });
+
+    store.learningAudits.push({
+        id: `${tenantId}_audit_archive_mismatch`,
+        event_type: 'promoted',
+        event_payload: {
+            run_id: 'run_diag_live_champion_001',
+            action: 'archive',
+            registry_status: 'archived',
+            registry_role: 'experimental',
+        },
+        created_at: new Date().toISOString(),
+    });
+
+    const detail = await getExperimentRunDetail(store, tenantId, 'run_diag_live_champion_001');
+    assert.ok(detail);
+    assert.equal(detail?.run.status, 'promoted');
+    assert.equal(detail?.run.status_reason, null);
+    assert.equal(detail?.heartbeat_freshness, 'interrupted');
+    assert.equal(detail?.deployment_decision?.decision, 'approved');
+    assert.equal(detail?.decision_panel.deployment_decision, 'approved');
+    assert.equal(detail?.run.registry_context.deployment_eligibility, 'live_production');
+    assert.ok(detail?.audit_history.some((event) => event.event_type === 'archived'));
 }
 
 async function testHeartbeatStateConsistency() {
