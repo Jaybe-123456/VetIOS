@@ -357,6 +357,16 @@ export async function POST(req: Request) {
             );
         }
 
+        if (
+            err instanceof Error
+            && err.message.includes('Routing engine could not find an approved model candidate for this case.')
+        ) {
+            return NextResponse.json(
+                { error: err.message, request_id: requestId },
+                { status: 503 },
+            );
+        }
+
         const message = err instanceof Error ? err.stack || err.message : 'Unknown error';
         return NextResponse.json(
             { error: message, request_id: requestId },

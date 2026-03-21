@@ -217,6 +217,9 @@ export async function createRoutingDecisionRecord(
 ): Promise<RoutingDecisionRecord> {
     const C = MODEL_ROUTING_DECISIONS.COLUMNS;
     const primary = plan.selected_models[0] ?? null;
+    if (!primary) {
+        throw new Error(buildRoutingUnavailableMessage(plan));
+    }
     const payload = {
         [C.routing_decision_id]: plan.routing_decision_id,
         [C.tenant_id]: plan.tenant_id,
@@ -1137,6 +1140,18 @@ function buildRoutingReason(input: {
     if (input.fallbackModel) reasons.push(`fallback ready: ${input.fallbackModel.model_id}`);
 
     return `${primary.model_id} selected via ${dedupeStrings(reasons).join(', ') || 'balanced routing'}.`;
+}
+
+function buildRoutingUnavailableMessage(plan: RoutingPlan): string {
+    const blockerSummary = plan.candidates
+        .filter((candidate) => candidate.blocked_reason != null)
+        .slice(0, 3)
+        .map((candidate) => `${candidate.profile.model_id}: ${candidate.blocked_reason}`)
+        .join(' | ');
+
+    return blockerSummary
+        ? `Routing engine could not find an approved model candidate for this case. ${blockerSummary}`
+        : 'Routing engine could not find an approved model candidate for this case.';
 }
 
 function buildCandidateReason(input: {
