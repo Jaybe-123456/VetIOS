@@ -227,6 +227,76 @@ const CANDIDATES: CandidateDefinition[] = [
         },
     },
     {
+        name: 'Canine Infectious Tracheobronchitis',
+        aliases: ['kennel cough', 'infectious tracheobronchitis', 'canine infectious tracheobronchitis'],
+        conditionClass: 'Infectious',
+        features: {
+            honking_cough: 0.42,
+            cough: 0.2,
+            nasal_discharge: 0.12,
+            ocular_discharge: 0.1,
+            fever: 0.06,
+            lethargy: 0.04,
+        },
+        penalties: {
+            abdominal_distension: 0.08,
+            unproductive_retching: 0.08,
+            collapse: 0.05,
+            productive_vomiting: 0.05,
+        },
+    },
+    {
+        name: 'Tracheal Collapse',
+        aliases: ['tracheal collapse', 'collapsed trachea'],
+        conditionClass: 'Degenerative',
+        features: {
+            honking_cough: 0.34,
+            cough: 0.18,
+            dyspnea: 0.12,
+            weakness: 0.04,
+        },
+        penalties: {
+            fever: 0.09,
+            nasal_discharge: 0.06,
+            ocular_discharge: 0.06,
+            abdominal_distension: 0.06,
+        },
+    },
+    {
+        name: 'Bronchitis',
+        aliases: ['canine bronchitis', 'chronic bronchitis', 'bronchitis'],
+        conditionClass: 'Degenerative',
+        features: {
+            cough: 0.28,
+            honking_cough: 0.14,
+            dyspnea: 0.1,
+            lethargy: 0.05,
+            weakness: 0.04,
+        },
+        penalties: {
+            abdominal_distension: 0.06,
+            unproductive_retching: 0.06,
+        },
+    },
+    {
+        name: 'Upper Respiratory Infection',
+        aliases: ['upper respiratory infection', 'respiratory infection'],
+        conditionClass: 'Infectious',
+        features: {
+            cough: 0.18,
+            honking_cough: 0.12,
+            nasal_discharge: 0.22,
+            ocular_discharge: 0.18,
+            fever: 0.08,
+            lethargy: 0.04,
+        },
+        penalties: {
+            abdominal_distension: 0.08,
+            unproductive_retching: 0.08,
+            collapse: 0.04,
+        },
+    },
+    {
         name: 'Bacterial Pneumonia',
         aliases: ['pneumonia'],
         conditionClass: 'Infectious',
@@ -340,7 +410,7 @@ export function applyDiagnosticSafetyLayer(params: {
         existingNotes: params.existingUncertaintyNotes,
         signals,
     });
-    const primaryConditionClass = pickPrimaryConditionClass(mergedDifferentials, params.diagnosis.primary_condition_class);
+    const primaryConditionClass = pickPrimaryConditionClass(mergedDifferentials, params.diagnosis.primary_condition_class, signals);
     const diagnosisAnalysis = buildAnalysisText(params.diagnosis.analysis, mergedDifferentials, contradictionScore, params.emergencyEval);
 
     const diagnosis: Record<string, unknown> = {
@@ -458,6 +528,29 @@ function scoreCandidates(signals: ClinicalSignals): CandidateScore[] {
             drivers.push({ feature: 'young dog age profile', weight: 0.08 });
         }
 
+        if (candidate.name === 'Canine Infectious Tracheobronchitis' && signals.evidence.honking_cough.present) {
+            rawScore += 0.14;
+            drivers.push({ feature: 'anchor feature: honking cough', weight: 0.14 });
+        }
+
+        if (candidate.name === 'Tracheal Collapse' && signals.evidence.honking_cough.present) {
+            const airwayBias = signals.has_small_breed_tracheal_collapse_risk ? 0.12 : 0.05;
+            rawScore += airwayBias;
+            drivers.push({
+                feature: signals.has_small_breed_tracheal_collapse_risk ? 'small-breed airway risk' : 'airway symptom support',
+                weight: Number(airwayBias.toFixed(2)),
+            });
+        }
+
+        if (
+            (candidate.name === 'Upper Respiratory Infection' || candidate.name === 'Canine Infectious Tracheobronchitis')
+            && signals.evidence.ocular_discharge.present
+            && signals.evidence.nasal_discharge.present
+        ) {
+            rawScore += 0.12;
+            drivers.push({ feature: 'ocular + nasal discharge infectious anchor', weight: 0.12 });
+        }
+
         return {
             name: candidate.name,
             conditionClass: candidate.conditionClass,
@@ -514,6 +607,9 @@ function mergeDifferentials(params: {
     }
 
     applyPersistenceProtection(combined, params);
+    applyAnchorFeatureProtection(combined, params.signals);
+    applyConditionClassStabilization(combined, params.signals);
+    enforceDominantClusterConsistency(combined, params.signals);
     normalizeProbabilities(combined);
 
     return [...combined.values()]
@@ -568,6 +664,105 @@ function applyPersistenceProtection(
         if (gdv != null) {
             gdv.probability = Math.max(gdv.probability, params.contradictionScore >= 0.7 ? 0.24 : 0.28);
         }
+    }
+}
+
+function applyAnchorFeatureProtection(
+    combined: Map<string, DifferentialEntry>,
+    signals: ClinicalSignals,
+) {
+    const floors = new Map<string, number>();
+
+    if (signals.evidence.unproductive_retching.present) {
+        floors.set('Gastric Dilatation-Volvulus (GDV)', 0.15);
+        floors.set('Acute Mechanical Emergency', 0.12);
+    }
+
+    if (signals.evidence.honking_cough.present) {
+        floors.set('Canine Infectious Tracheobronchitis', Math.max(floors.get('Canine Infectious Tracheobronchitis') ?? 0, 0.18));
+        floors.set('Tracheal Collapse', Math.max(floors.get('Tracheal Collapse') ?? 0, 0.15));
+        floors.set('Bronchitis', Math.max(floors.get('Bronchitis') ?? 0, 0.12));
+    }
+
+    if (signals.evidence.ocular_discharge.present && signals.evidence.nasal_discharge.present) {
+        floors.set('Upper Respiratory Infection', Math.max(floors.get('Upper Respiratory Infection') ?? 0, 0.16));
+        floors.set('Canine Infectious Tracheobronchitis', Math.max(floors.get('Canine Infectious Tracheobronchitis') ?? 0, 0.15));
+    }
+
+    for (const [name, floor] of floors.entries()) {
+        const existing = combined.get(name);
+        combined.set(name, {
+            name,
+            probability: Math.max(existing?.probability ?? 0, floor),
+            key_drivers: existing?.key_drivers,
+        });
+    }
+}
+
+function applyConditionClassStabilization(
+    combined: Map<string, DifferentialEntry>,
+    signals: ClinicalSignals,
+) {
+    if (signals.upper_airway_pattern_strength < 2) {
+        return;
+    }
+
+    const boostNames = new Set([
+        'Canine Infectious Tracheobronchitis',
+        'Upper Respiratory Infection',
+        'Tracheal Collapse',
+        'Bronchitis',
+        'Bacterial Pneumonia',
+    ]);
+    const dampenedClasses = new Set<ConditionClass>([
+        'Neoplastic',
+        'Toxic',
+        'Metabolic / Endocrine',
+    ]);
+
+    for (const entry of combined.values()) {
+        const definition = CANDIDATES.find((candidate) => candidate.name === entry.name);
+        if (definition == null) continue;
+
+        if (boostNames.has(entry.name)) {
+            const boost = definition.conditionClass === 'Infectious'
+                ? (signals.respiratory_infection_pattern_strength >= 2.4 ? 0.08 : 0.05)
+                : 0.04;
+            entry.probability += boost;
+            continue;
+        }
+
+        if (dampenedClasses.has(definition.conditionClass)) {
+            entry.probability *= 0.82;
+        }
+    }
+}
+
+function enforceDominantClusterConsistency(
+    combined: Map<string, DifferentialEntry>,
+    signals: ClinicalSignals,
+) {
+    if (signals.upper_airway_pattern_strength < 2.2) {
+        return;
+    }
+
+    const respiratoryLeaders = [
+        'Canine Infectious Tracheobronchitis',
+        'Tracheal Collapse',
+        'Bronchitis',
+        'Upper Respiratory Infection',
+        'Bacterial Pneumonia',
+    ];
+    const ranked = [...combined.values()].sort((left, right) => right.probability - left.probability);
+    const top = ranked[0];
+    if (top && respiratoryLeaders.includes(top.name)) {
+        return;
+    }
+
+    for (const name of respiratoryLeaders) {
+        const entry = combined.get(name);
+        if (!entry) continue;
+        entry.probability = Math.max(entry.probability, 0.14);
     }
 }
 
@@ -669,10 +864,30 @@ function buildConditionClassProbabilities(differentials: DifferentialEntry[]): R
     return result;
 }
 
-function pickPrimaryConditionClass(differentials: DifferentialEntry[], fallback: unknown): ConditionClass {
+function pickPrimaryConditionClass(
+    differentials: DifferentialEntry[],
+    fallback: unknown,
+    signals: ClinicalSignals,
+): ConditionClass {
     const classProbabilities = buildConditionClassProbabilities(differentials);
     const sorted = Object.entries(classProbabilities)
         .sort((left, right) => right[1] - left[1]) as Array<[ConditionClass, number]>;
+    if (signals.upper_airway_pattern_strength >= 2) {
+        const preferred = sorted.find(([conditionClass]) =>
+            conditionClass === 'Infectious' || conditionClass === 'Degenerative',
+        );
+        const leading = sorted[0];
+        if (
+            preferred &&
+            leading &&
+            (leading[0] === 'Neoplastic'
+                || leading[0] === 'Toxic'
+                || leading[0] === 'Metabolic / Endocrine'
+                || (leading[0] === 'Idiopathic / Unknown' && preferred[1] >= leading[1] * 0.7))
+        ) {
+            return preferred[0];
+        }
+    }
     return sorted[0]?.[0] ?? (typeof fallback === 'string' ? (fallback as ConditionClass) : 'Idiopathic / Unknown');
 }
 

@@ -21,6 +21,11 @@ function getEmergencyLevel(result: PipelineResult): string {
     return typeof risk.emergency_level === 'string' ? risk.emergency_level : 'UNKNOWN';
 }
 
+function getPrimaryConditionClass(result: PipelineResult): string {
+    const diagnosis = result.output_payload.diagnosis as Record<string, unknown>;
+    return typeof diagnosis.primary_condition_class === 'string' ? diagnosis.primary_condition_class : 'UNKNOWN';
+}
+
 function getSpread(result: PipelineResult): number {
     const spread = result.output_payload.differential_spread as Record<string, unknown> | undefined;
     return typeof spread?.spread === 'number' ? spread.spread : 0;
@@ -129,6 +134,80 @@ async function main() {
     assert.ok(distemperNames.slice(0, 3).some((name) => name.includes('Canine Distemper')), 'Distemper contradiction case should preserve the distemper pattern');
     assert.ok((distemperContradiction.output_payload.contradiction_score as number) >= 0.15, 'Distemper contradiction case should raise contradiction score');
     assert.ok(getConfidence(distemperContradiction) < 0.7, 'Distemper contradiction case should reduce confidence');
+
+    const kennelCoughBaseline = await runInferencePipeline({
+        model: 'gpt-4o-mini',
+        rawInput: {
+            species: 'dog',
+            breed: 'Yorkshire Terrier',
+            weight_kg: 4.5,
+            age: '6 years',
+            duration_days: 4,
+            kennel_exposure: true,
+            symptoms: [
+                'honking cough',
+                'dry hacking cough',
+                'nasal discharge',
+                'ocular discharge',
+                'mild fever',
+            ],
+        },
+        inputMode: 'json',
+    });
+    const kennelBaselineNames = getDifferentialNames(kennelCoughBaseline);
+    assert.ok(
+        kennelBaselineNames.slice(0, 3).some((name) => name.includes('Canine Infectious Tracheobronchitis')),
+        'Kennel cough baseline should keep infectious tracheobronchitis in the top 3',
+    );
+    assert.ok(
+        includesAny(kennelBaselineNames, ['Tracheal Collapse', 'Bronchitis']),
+        'Kennel cough baseline should preserve the airway differential set',
+    );
+    assert.equal(getPrimaryConditionClass(kennelCoughBaseline), 'Infectious', 'Kennel cough baseline should bias the class toward infectious upper-airway disease');
+
+    const kennelCoughContradiction = await runInferencePipeline({
+        model: 'gpt-4o-mini',
+        rawInput: {
+            species: 'dog',
+            breed: 'Yorkshire Terrier',
+            weight_kg: 4.5,
+            age: '6 years',
+            duration_days: 28,
+            isolated_environment: true,
+            fever: false,
+            symptoms: [
+                'honking cough',
+                'dry hacking cough',
+                'nasal discharge',
+                'ocular discharge',
+                'mild fever',
+                'lethargy',
+            ],
+        },
+        inputMode: 'json',
+    });
+    const kennelContradictionNames = getDifferentialNames(kennelCoughContradiction);
+    assert.ok(
+        kennelContradictionNames.slice(0, 3).some((name) => name.includes('Canine Infectious Tracheobronchitis')),
+        'Contradictory kennel cough case should still preserve infectious tracheobronchitis in the top 3',
+    );
+    assert.ok(
+        includesAny(kennelContradictionNames, ['Tracheal Collapse', 'Bronchitis']),
+        'Contradictory kennel cough case should keep at least one airway fallback differential visible',
+    );
+    assert.ok(
+        (kennelCoughContradiction.output_payload.contradiction_score as number) >= 0.25,
+        'Contradictory kennel cough case should produce a non-zero contradiction burden',
+    );
+    assert.ok(
+        getConfidence(kennelCoughContradiction) < getConfidence(kennelCoughBaseline),
+        'Contradictions should lower confidence for the kennel cough case',
+    );
+    assert.notEqual(
+        getPrimaryConditionClass(kennelCoughContradiction),
+        'Neoplastic',
+        'Upper-airway contradiction noise should not drift into neoplastic classing',
+    );
 
     const unknownMixed = await runInferencePipeline({
         model: 'gpt-4o-mini',

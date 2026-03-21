@@ -5,6 +5,8 @@ export type SignalKey =
     | 'unproductive_retching'
     | 'abdominal_distension'
     | 'collapse'
+    | 'honking_cough'
+    | 'cough'
     | 'myoclonus'
     | 'dyspnea'
     | 'tachycardia'
@@ -18,6 +20,7 @@ export type SignalKey =
     | 'hypersalivation'
     | 'seizures'
     | 'nasal_discharge'
+    | 'ocular_discharge'
     | 'pneumonia';
 
 export interface SignalEvidence {
@@ -42,10 +45,15 @@ export interface ClinicalSignals {
     evidence: Record<SignalKey, SignalEvidence>;
     has_deep_chested_breed_risk: boolean;
     has_small_breed_gdv_mismatch: boolean;
+    has_small_breed_tracheal_collapse_risk: boolean;
+    has_exposure_risk: boolean;
+    has_isolated_environment: boolean;
     gdv_cluster_count: number;
     gdv_pattern_strength: number;
     shock_pattern_strength: number;
     distemper_pattern_strength: number;
+    upper_airway_pattern_strength: number;
+    respiratory_infection_pattern_strength: number;
 }
 
 interface SignalDefinition {
@@ -71,6 +79,16 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
         label: 'collapse',
         tier: 2,
         terms: ['collapse', 'collapsed', 'unresponsive', 'shock', 'moribund'],
+    },
+    honking_cough: {
+        label: 'honking cough',
+        tier: 1,
+        terms: ['honking cough', 'goose honk cough', 'goose-honk cough', 'hacking cough', 'harsh cough'],
+    },
+    cough: {
+        label: 'cough',
+        tier: 2,
+        terms: ['cough', 'coughing'],
     },
     myoclonus: {
         label: 'myoclonus',
@@ -136,7 +154,12 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
     nasal_discharge: {
         label: 'nasal discharge',
         tier: 2,
-        terms: ['nasal discharge', 'runny nose'],
+        terms: ['nasal discharge', 'runny nose', 'snotty nose'],
+    },
+    ocular_discharge: {
+        label: 'ocular discharge',
+        tier: 2,
+        terms: ['ocular discharge', 'eye discharge', 'watery eyes', 'conjunctival discharge'],
     },
     pneumonia: {
         label: 'pneumonia',
@@ -156,6 +179,18 @@ const DEEP_CHESTED_GDV_BREEDS = [
     'german shepherd',
     'old english sheepdog',
     'basset hound',
+];
+
+const SMALL_BREED_AIRWAY_BREEDS = [
+    'yorkshire terrier',
+    'pomeranian',
+    'chihuahua',
+    'maltese',
+    'toy poodle',
+    'miniature poodle',
+    'shih tzu',
+    'pug',
+    'dachshund',
 ];
 
 export const FEATURE_TIER_MULTIPLIER: Record<FeatureTier, number> = {
@@ -264,6 +299,27 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
         'pneumonia',
         'fever',
     ]);
+    const upperAirwayPatternStrength = weightedPresence(evidence, [
+        'honking_cough',
+        'cough',
+        'nasal_discharge',
+        'ocular_discharge',
+        'dyspnea',
+    ]);
+    const respiratoryInfectionPatternStrength = weightedPresence(evidence, [
+        'honking_cough',
+        'cough',
+        'nasal_discharge',
+        'ocular_discharge',
+        'fever',
+        'lethargy',
+    ]);
+    const hasSmallBreedTrachealCollapseRisk = Boolean(
+        (breed != null && SMALL_BREED_AIRWAY_BREEDS.some((candidate) => breed.includes(candidate)))
+        || (weightKg != null && weightKg <= 12)
+    );
+    const hasExposureRisk = hasExposureHistory(input, allText);
+    const hasIsolatedEnvironment = hasIsolationHistory(input, allText);
 
     evidence.collapse = {
         ...evidence.collapse,
@@ -291,10 +347,15 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
         evidence,
         has_deep_chested_breed_risk: hasDeepChestedBreedRisk,
         has_small_breed_gdv_mismatch: hasSmallBreedGdvMismatch,
+        has_small_breed_tracheal_collapse_risk: hasSmallBreedTrachealCollapseRisk,
+        has_exposure_risk: hasExposureRisk,
+        has_isolated_environment: hasIsolatedEnvironment,
         gdv_cluster_count: gdvClusterCount,
         gdv_pattern_strength: gdvPatternStrength,
         shock_pattern_strength: shockPatternStrength,
         distemper_pattern_strength: distemperPatternStrength,
+        upper_airway_pattern_strength: upperAirwayPatternStrength,
+        respiratory_infection_pattern_strength: respiratoryInfectionPatternStrength,
     };
 }
 
@@ -454,4 +515,37 @@ function weightedPresence(evidence: Record<SignalKey, SignalEvidence>, keys: Sig
         if (!signal.present) return total;
         return total + (FEATURE_TIER_MULTIPLIER[signal.tier] * signal.strength);
     }, 0);
+}
+
+function hasExposureHistory(input: Record<string, unknown>, allText: string): boolean {
+    if (readBooleanField(input, 'kennel_exposure') === true) return true;
+    if (readBooleanField(input, 'exposure_to_other_dogs') === true) return true;
+    if (readBooleanField(input, 'boarding_exposure') === true) return true;
+    return textIncludesAny(allText, [
+        'boarding',
+        'kennel',
+        'daycare',
+        'dog park',
+        'shelter',
+        'recent exposure',
+        'exposed to other dogs',
+        'multiple dogs',
+    ]);
+}
+
+function hasIsolationHistory(input: Record<string, unknown>, allText: string): boolean {
+    if (readBooleanField(input, 'isolated_environment') === true) return true;
+    if (readBooleanField(input, 'no_exposure') === true) return true;
+    return textIncludesAny(allText, [
+        'isolated',
+        'indoor only',
+        'single dog household',
+        'no exposure',
+        'no recent exposure',
+        'home isolation',
+    ]);
+}
+
+function textIncludesAny(value: string, terms: string[]) {
+    return terms.some((term) => value.includes(term));
 }

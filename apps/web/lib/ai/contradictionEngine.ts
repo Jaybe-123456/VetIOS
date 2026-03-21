@@ -81,6 +81,7 @@ export function detectContradictions(
 
     addMetadataConflict(contradictions, input, signals, 'abdominal_distension', false, 'abdominal distension present in symptom vector but false in metadata', 0.24);
     addMetadataConflict(contradictions, input, signals, 'productive_vomiting', true, 'retching/vomiting conflict: metadata indicates productive vomiting while symptom vector indicates unproductive retching', 0.22, 'unproductive_retching');
+    addMetadataConflict(contradictions, input, signals, 'fever', false, 'fever present in symptoms but false in metadata', 0.18, 'fever');
 
     if (
         signals.appetite_status === 'normal' &&
@@ -102,6 +103,40 @@ export function detectContradictions(
     if (signals.gdv_cluster_count >= 3 && signals.has_small_breed_gdv_mismatch) {
         contradictions.push({
             reason: 'breed/body-size profile lowers the classic GDV prior despite a strong abdominal emergency signal cluster',
+            weight: 0.08,
+        });
+    }
+
+    if (
+        signals.upper_airway_pattern_strength >= 2.2 &&
+        signals.duration_days != null &&
+        signals.duration_days > 20
+    ) {
+        contradictions.push({
+            reason: `acute upper-airway symptom pattern is difficult to reconcile with a duration of ${signals.duration_days} days without chronic progression`,
+            weight: 0.18,
+        });
+    }
+
+    if (
+        signals.respiratory_infection_pattern_strength >= 2.4 &&
+        signals.has_isolated_environment &&
+        !signals.has_exposure_risk
+    ) {
+        contradictions.push({
+            reason: 'infectious respiratory pattern conflicts with an isolated environment and absent exposure history',
+            weight: 0.14,
+        });
+    }
+
+    if (
+        signals.evidence.honking_cough.present &&
+        !signals.has_small_breed_tracheal_collapse_risk &&
+        signals.duration_days != null &&
+        signals.duration_days > 20
+    ) {
+        contradictions.push({
+            reason: 'breed/body profile weakens chronic tracheal-collapse priors despite a honking cough pattern',
             weight: 0.08,
         });
     }
