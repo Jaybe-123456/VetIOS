@@ -5,6 +5,7 @@ import {
     buildRoutingTelemetryMetadata,
     executeRoutingPlan,
     rankRoutingCandidatesForTest,
+    resolveRegistryProviderModelForTest,
     resolveRoutingPlanForTest,
 } from '../../apps/web/lib/routingEngine/service.ts';
 import type {
@@ -134,6 +135,14 @@ async function main() {
         metadata: { route_hint: 'vision' },
     });
     assert.equal(explicitVisionAnalysis.family, 'vision');
+    assert.equal(
+        resolveRegistryProviderModelForTest('Transformer-Clinical-Small', 'diag_smoke_v1', 'fast'),
+        process.env.AI_PROVIDER_FAST_MODEL || process.env.AI_PROVIDER_DEFAULT_MODEL || 'gpt-4o-mini',
+    );
+    assert.equal(
+        resolveRegistryProviderModelForTest('gpt-4o-mini', 'diag_live_v2', 'fast'),
+        'gpt-4o-mini',
+    );
 
     const profiles = buildDefaultRoutingProfiles({
         tenantId: TENANT_ID,

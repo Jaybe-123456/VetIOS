@@ -404,11 +404,11 @@ export function buildDefaultRoutingProfiles(input: {
     requestedModelVersion: string;
 }): RoutingModelProfile[] {
     const prefix = familyPrefix(input.family);
-    const defaultProvider = process.env.AI_PROVIDER_DEFAULT_MODEL || input.requestedModelName;
-    const fastProvider = process.env.AI_PROVIDER_FAST_MODEL || defaultProvider;
-    const deepProvider = process.env.AI_PROVIDER_DEEP_MODEL || process.env.AI_PROVIDER_DEFAULT_MODEL || input.requestedModelName;
-    const robustProvider = process.env.AI_PROVIDER_ROBUST_MODEL || deepProvider || fastProvider;
-    const recallProvider = process.env.AI_PROVIDER_HIGH_RECALL_MODEL || robustProvider;
+    const defaultProvider = resolveConfiguredProviderModel('deep_reasoning', input.requestedModelName);
+    const fastProvider = resolveConfiguredProviderModel('fast', defaultProvider);
+    const deepProvider = resolveConfiguredProviderModel('deep_reasoning', defaultProvider);
+    const robustProvider = resolveConfiguredProviderModel('adversarial_resistant', deepProvider || fastProvider);
+    const recallProvider = resolveConfiguredProviderModel('high_recall', robustProvider);
 
     return [
         buildRequestedModelProfile(input),
@@ -965,7 +965,7 @@ function buildRegistryProfiles(
             model_id: registry.model_version,
             model_family: registry.model_family,
             model_type: type,
-            provider_model: registry.model_name || registry.model_version,
+            provider_model: resolveRegistryProviderModel(registry.model_name, registry.model_version, type),
             model_name: registry.model_name || registry.model_version,
             model_version: registry.model_version,
             registry_id: registry.registry_id,
@@ -993,6 +993,7 @@ function buildRegistryProfiles(
             ),
             metadata: {
                 source: 'model_registry',
+                provider_model_source: resolveProviderModelSource(registry.model_name, registry.model_version),
                 lifecycle_status: registry.lifecycle_status,
                 registry_role: registry.registry_role,
                 is_active_route: entry.is_active_route,
@@ -1597,6 +1598,64 @@ function inferRegistryApprovalStatus(
     if (registry.registry_role === 'at_risk' || registry.lifecycle_status === 'archived') return 'blocked';
     if (registry.lifecycle_status === 'production' || isActiveRoute || promotionAllowed || registry.registry_role === 'rollback_target') return 'approved';
     return 'pending';
+}
+
+export function resolveRegistryProviderModelForTest(
+    modelName: string,
+    modelVersion: string,
+    modelType: RoutingModelProfile['model_type'],
+) {
+    return resolveRegistryProviderModel(modelName, modelVersion, modelType);
+}
+
+function resolveRegistryProviderModel(
+    modelName: string,
+    modelVersion: string,
+    modelType: RoutingModelProfile['model_type'],
+) {
+    if (looksLikeProviderModel(modelName)) return modelName;
+    if (looksLikeProviderModel(modelVersion)) return modelVersion;
+    return resolveConfiguredProviderModel(modelType, process.env.AI_PROVIDER_DEFAULT_MODEL || 'gpt-4o-mini');
+}
+
+function resolveProviderModelSource(
+    modelName: string,
+    modelVersion: string,
+) {
+    if (looksLikeProviderModel(modelName)) return 'registry_model_name';
+    if (looksLikeProviderModel(modelVersion)) return 'registry_model_version';
+    return 'configured_provider_fallback';
+}
+
+function resolveConfiguredProviderModel(
+    modelType: RoutingModelProfile['model_type'],
+    fallback: string,
+) {
+    switch (modelType) {
+        case 'fast':
+            return process.env.AI_PROVIDER_FAST_MODEL || process.env.AI_PROVIDER_DEFAULT_MODEL || fallback;
+        case 'adversarial_resistant':
+            return process.env.AI_PROVIDER_ROBUST_MODEL
+                || process.env.AI_PROVIDER_DEEP_MODEL
+                || process.env.AI_PROVIDER_DEFAULT_MODEL
+                || fallback;
+        case 'high_recall':
+            return process.env.AI_PROVIDER_HIGH_RECALL_MODEL
+                || process.env.AI_PROVIDER_ROBUST_MODEL
+                || process.env.AI_PROVIDER_DEEP_MODEL
+                || process.env.AI_PROVIDER_DEFAULT_MODEL
+                || fallback;
+        default:
+            return process.env.AI_PROVIDER_DEEP_MODEL || process.env.AI_PROVIDER_DEFAULT_MODEL || fallback;
+    }
+}
+
+function looksLikeProviderModel(value: string | null | undefined) {
+    if (!value) return false;
+    const normalized = value.trim();
+    if (!normalized) return false;
+    if (normalized.includes(' ')) return false;
+    return /^(gpt-|o[1-9]|claude|gemini|mistral|llama|meta-|deepseek|xai|openai\/|anthropic\/)/i.test(normalized);
 }
 
 function expectedLatencyForType(modelType: RoutingModelProfile['model_type']) {
