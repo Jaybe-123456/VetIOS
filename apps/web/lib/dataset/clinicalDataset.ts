@@ -337,8 +337,24 @@ export function createSupabaseClinicalDatasetStore(client: SupabaseClient): Clin
 }
 
 function mapCaseRecordToDatasetRow(row: ClinicalCaseLiveRecord): ClinicalCaseDatasetRow {
+    const topDiagnosis = row.top_diagnosis;
+    const predictedDiagnosis = row.predicted_diagnosis ?? topDiagnosis;
+    const confirmedDiagnosis = row.confirmed_diagnosis;
+
     return {
         ...row,
+        primary_condition_class: resolveConditionClassForDisplay(
+            row.primary_condition_class,
+            topDiagnosis,
+            predictedDiagnosis,
+            confirmedDiagnosis,
+        ),
+        diagnosis_confidence: readNumber(row.diagnosis_confidence),
+        severity_score: readNumber(row.severity_score),
+        contradiction_score: normalizeProbability(readNumber(row.contradiction_score)),
+        confidence_error: readNumber(row.confidence_error),
+        degraded_confidence: readNumber(row.degraded_confidence),
+        latest_confidence: readNumber(row.latest_confidence),
         timestamp: formatDatasetTimestamp(row.updated_at),
     };
 }
@@ -346,15 +362,19 @@ function mapCaseRecordToDatasetRow(row: ClinicalCaseLiveRecord): ClinicalCaseDat
 function mapInferenceEventToDatasetRow(row: DatasetInferenceEventRecord): DatasetInferenceEventView {
     const diagnosis = readObject(row.output_payload.diagnosis);
     const riskAssessment = readObject(row.output_payload.risk_assessment);
+    const topPrediction = readTopPrediction(row.output_payload);
+    const adversarialCase = isAdversarialInference(row);
 
     return {
         event_id: row.id,
         case_id: row.case_id,
-        top_prediction: readTopPrediction(row.output_payload),
-        primary_condition_class: readString(diagnosis.primary_condition_class),
+        top_prediction: topPrediction,
+        primary_condition_class: resolveInferenceConditionClass(row.output_payload, diagnosis, topPrediction),
         confidence: row.confidence_score,
-        emergency_level: readString(riskAssessment.emergency_level),
-        contradiction_score: typeof row.output_payload.contradiction_score === 'number' ? row.output_payload.contradiction_score : null,
+        emergency_level:
+            readString(riskAssessment.emergency_level) ??
+            readString(row.output_payload.emergency_level),
+        contradiction_score: resolveInferenceContradictionScore(row.output_payload, adversarialCase),
         model_version: row.model_version,
         timestamp: formatDatasetTimestamp(row.created_at),
     };
@@ -403,6 +423,10 @@ function serializeCaseForExport(row: ClinicalCaseDatasetRow): Record<string, unk
 }
 
 function mapClinicalCaseRecord(row: Record<string, unknown>, forceQuarantined = false): ClinicalCaseLiveRecord {
+    const topDiagnosis = readString(row.top_diagnosis);
+    const predictedDiagnosis = readString(row.predicted_diagnosis) ?? topDiagnosis;
+    const confirmedDiagnosis = readString(row.confirmed_diagnosis);
+
     return {
         case_id: String(row.case_id ?? row.id),
         tenant_id: String(row.tenant_id),
@@ -413,16 +437,16 @@ function mapClinicalCaseRecord(row: Record<string, unknown>, forceQuarantined = 
         symptom_vector_normalized: isRecord(row.symptom_vector_normalized)
             ? booleanRecord(row.symptom_vector_normalized)
             : {},
-        primary_condition_class: readString(row.primary_condition_class),
-        top_diagnosis: readString(row.top_diagnosis),
-        predicted_diagnosis: readString(row.predicted_diagnosis) ?? readString(row.top_diagnosis),
-        confirmed_diagnosis: readString(row.confirmed_diagnosis),
+        primary_condition_class: resolveStoredConditionClass(row, topDiagnosis, predictedDiagnosis, confirmedDiagnosis),
+        top_diagnosis: topDiagnosis,
+        predicted_diagnosis: predictedDiagnosis,
+        confirmed_diagnosis: confirmedDiagnosis,
         label_type: readString(row.label_type),
-        diagnosis_confidence: typeof row.diagnosis_confidence === 'number' ? row.diagnosis_confidence : typeof row.latest_confidence === 'number' ? row.latest_confidence : null,
-        severity_score: typeof row.severity_score === 'number' ? row.severity_score : null,
+        diagnosis_confidence: readNumber(row.diagnosis_confidence) ?? readNumber(row.latest_confidence),
+        severity_score: readNumber(row.severity_score),
         latest_emergency_level: readString(row.latest_emergency_level) ?? readString(row.emergency_level),
         triage_priority: readString(row.triage_priority),
-        contradiction_score: typeof row.contradiction_score === 'number' ? row.contradiction_score : null,
+        contradiction_score: normalizeProbability(readNumber(row.contradiction_score)),
         contradiction_flags: readStringArray(row.contradiction_flags),
         uncertainty_notes: readStringArray(row.uncertainty_notes),
         case_cluster: readString(row.case_cluster),
@@ -430,9 +454,9 @@ function mapClinicalCaseRecord(row: Record<string, unknown>, forceQuarantined = 
         telemetry_status: readString(row.telemetry_status),
         calibration_status: readString(row.calibration_status),
         prediction_correct: typeof row.prediction_correct === 'boolean' ? row.prediction_correct : null,
-        confidence_error: typeof row.confidence_error === 'number' ? row.confidence_error : null,
+        confidence_error: readNumber(row.confidence_error),
         calibration_bucket: readString(row.calibration_bucket),
-        degraded_confidence: typeof row.degraded_confidence === 'number' ? row.degraded_confidence : null,
+        degraded_confidence: readNumber(row.degraded_confidence),
         differential_spread: isRecord(row.differential_spread) ? row.differential_spread : null,
         ingestion_status: forceQuarantined ? (readString(row.ingestion_status) ?? 'quarantined') : (readString(row.ingestion_status) ?? 'accepted'),
         invalid_case: forceQuarantined ? true : row.invalid_case === true,
@@ -442,7 +466,7 @@ function mapClinicalCaseRecord(row: Record<string, unknown>, forceQuarantined = 
         latest_inference_event_id: readString(row.latest_inference_event_id),
         latest_outcome_event_id: readString(row.latest_outcome_event_id),
         latest_simulation_event_id: readString(row.latest_simulation_event_id),
-        latest_confidence: typeof row.latest_confidence === 'number' ? row.latest_confidence : typeof row.diagnosis_confidence === 'number' ? row.diagnosis_confidence : null,
+        latest_confidence: readNumber(row.latest_confidence) ?? readNumber(row.diagnosis_confidence),
         source_module: readString(row.source_module),
         updated_at: String(row.updated_at),
     };
@@ -451,11 +475,118 @@ function mapClinicalCaseRecord(row: Record<string, unknown>, forceQuarantined = 
 function readTopPrediction(outputPayload: Record<string, unknown>): string | null {
     const diagnosis = readObject(outputPayload.diagnosis);
     const topDifferentials = diagnosis.top_differentials;
-    if (!Array.isArray(topDifferentials) || topDifferentials.length === 0) {
-        return null;
+    if (Array.isArray(topDifferentials) && topDifferentials.length > 0) {
+        const top = topDifferentials[0];
+        if (isRecord(top)) {
+            return readString(top.name) ??
+                readString(top.diagnosis) ??
+                readString(top.condition) ??
+                readString(top.label);
+        }
     }
-    const top = topDifferentials[0];
-    return isRecord(top) && typeof top.name === 'string' ? top.name : null;
+
+    return readString(diagnosis.top_diagnosis) ??
+        readString(diagnosis.predicted_diagnosis) ??
+        readString(diagnosis.primary_diagnosis) ??
+        readString(outputPayload.top_diagnosis) ??
+        readString(outputPayload.predicted_diagnosis);
+}
+
+function resolveStoredConditionClass(
+    row: Record<string, unknown>,
+    topDiagnosis: string | null,
+    predictedDiagnosis: string | null,
+    confirmedDiagnosis: string | null,
+): string | null {
+    return resolveConditionClassForDisplay(
+        readString(row.primary_condition_class),
+        topDiagnosis,
+        predictedDiagnosis,
+        confirmedDiagnosis,
+    );
+}
+
+function resolveConditionClassForDisplay(
+    explicitClassRaw: string | null,
+    topDiagnosis: string | null,
+    predictedDiagnosis: string | null,
+    confirmedDiagnosis: string | null,
+): string | null {
+    const explicitClass = normalizeConditionClass(explicitClassRaw);
+    if (explicitClass && explicitClass !== 'Undifferentiated') {
+        return explicitClass;
+    }
+
+    return inferConditionClassFromDiagnosis(
+        confirmedDiagnosis ??
+        predictedDiagnosis ??
+        topDiagnosis,
+    ) ?? explicitClass;
+}
+
+function resolveInferenceConditionClass(
+    outputPayload: Record<string, unknown>,
+    diagnosis: Record<string, unknown>,
+    topPrediction: string | null,
+): string | null {
+    const explicitClass = normalizeConditionClass(
+        readString(diagnosis.primary_condition_class) ??
+        readString(diagnosis.condition_class) ??
+        readHighestProbabilityConditionClass(readObject(diagnosis.condition_class_probabilities)) ??
+        readString(outputPayload.primary_condition_class) ??
+        readString(outputPayload.condition_class) ??
+        readHighestProbabilityConditionClass(readObject(outputPayload.condition_class_probabilities)),
+    );
+
+    if (explicitClass && explicitClass !== 'Undifferentiated') {
+        return explicitClass;
+    }
+
+    return inferConditionClassFromDiagnosis(topPrediction) ?? explicitClass;
+}
+
+function resolveInferenceContradictionScore(
+    outputPayload: Record<string, unknown>,
+    adversarialCase: boolean,
+): number | null {
+    const contradictionAnalysis = readObject(outputPayload.contradiction_analysis);
+    const telemetry = readObject(outputPayload.telemetry);
+    const explicitScore = normalizeProbability(readNumber(
+        outputPayload.contradiction_score ??
+        contradictionAnalysis.contradiction_score ??
+        telemetry.contradiction_score,
+    ));
+
+    if (explicitScore !== null) {
+        return explicitScore;
+    }
+
+    const contradictionReasons = [
+        ...readStringArray(outputPayload.contradiction_flags),
+        ...readStringArray(outputPayload.contradiction_reasons),
+        ...readStringArray(contradictionAnalysis.contradiction_reasons),
+    ];
+
+    if (contradictionReasons.length > 0) {
+        return adversarialCase ? 0.55 : 0.35;
+    }
+
+    if (adversarialCase) {
+        return 0.25;
+    }
+
+    return null;
+}
+
+function isAdversarialInference(row: DatasetInferenceEventRecord): boolean {
+    if (row.source_module === 'adversarial_simulation') {
+        return true;
+    }
+
+    return row.output_payload.adversarial_case === true ||
+        readString(row.output_payload.adversarial_case_type) !== null ||
+        readString(row.output_payload.simulation_type) !== null ||
+        Object.keys(readObject(row.output_payload.stress_metrics)).length > 0;
 }
 
 function readObject(value: unknown): Record<string, unknown> {
@@ -468,6 +599,19 @@ function readString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.replace(/\s+/g, ' ').trim();
     return normalized.length > 0 ? normalized : null;
+}
+
+function readNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    if (typeof value === 'string') {
+        const normalized = value.trim();
+        if (!normalized) return null;
+        const parsed = Number(normalized);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
 
 function readStringArray(value: unknown): string[] {
@@ -504,7 +648,7 @@ function buildDatasetSummary(
     const labelCoverageCount = liveRows.filter((row) => hasLabelCoverage(row)).length;
     const severityCoverageCount = liveRows.filter((row) => hasSeverityCoverage(row)).length;
     const contradictionCoverageCount = [...liveRows, ...quarantinedRows].filter((row) => hasContradictionCoverage(row)).length;
-    const adversarialCount = liveRows.filter((row) => row.adversarial_case).length;
+    const adversarialCount = [...liveRows, ...quarantinedRows].filter((row) => hasAdversarialCoverage(row)).length;
     const calibrationReadyCount = liveRows.filter((row) => hasCalibrationCoverage(row)).length;
 
     return {
@@ -519,10 +663,72 @@ function buildDatasetSummary(
         label_coverage_pct: percentage(labelCoverageCount, liveRows.length),
         severity_coverage_pct: percentage(severityCoverageCount, liveRows.length),
         contradiction_coverage_pct: percentage(contradictionCoverageCount, totalRows),
-        adversarial_coverage_pct: percentage(adversarialCount, liveRows.length),
+        adversarial_coverage_pct: percentage(adversarialCount, totalRows),
         invalid_quarantined_pct: percentage(quarantinedRows.length, totalRows),
         calibration_readiness_pct: percentage(calibrationReadyCount, liveRows.length),
     };
+}
+
+function normalizeConditionClass(value: string | null): string | null {
+    if (!value) return null;
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (!normalized) return null;
+    if (normalized.toLowerCase() === 'idiopathic / unknown' || normalized.toLowerCase() === 'idiopathic' || normalized.toLowerCase() === 'unknown') {
+        return 'Undifferentiated';
+    }
+    return normalized;
+}
+
+function readHighestProbabilityConditionClass(probabilities: Record<string, unknown>): string | null {
+    let bestClass: string | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (const [candidate, rawScore] of Object.entries(probabilities)) {
+        const score = readNumber(rawScore);
+        if (score === null || score <= bestScore) {
+            continue;
+        }
+        bestClass = candidate;
+        bestScore = score;
+    }
+
+    return normalizeConditionClass(readString(bestClass));
+}
+
+function inferConditionClassFromDiagnosis(value: string | null): string | null {
+    const normalized = (value ?? '').toLowerCase();
+    if (!normalized) return null;
+    if (normalized.includes('gdv') || normalized.includes('dilatation') || normalized.includes('volvulus') || normalized.includes('obstruction') || normalized.includes('tracheal collapse')) {
+        return 'Mechanical';
+    }
+    if (
+        normalized.includes('parvo') ||
+        normalized.includes('distemper') ||
+        normalized.includes('infect') ||
+        normalized.includes('tracheobronchitis') ||
+        normalized.includes('kennel cough') ||
+        normalized.includes('rhinotracheitis') ||
+        normalized.includes('herpesvirus') ||
+        normalized.includes('fhv') ||
+        normalized.includes('upper respiratory') ||
+        normalized.includes('respiratory infection') ||
+        normalized.includes('viral infection')
+    ) {
+        return 'Infectious';
+    }
+    if (normalized.includes('bronchitis')) {
+        return 'Inflammatory';
+    }
+    if (normalized.includes('toxic')) {
+        return 'Toxicology';
+    }
+    if (normalized.includes('pancreatitis')) {
+        return 'Inflammatory';
+    }
+    if (normalized.includes('unknown') || normalized.includes('undifferentiated')) {
+        return 'Undifferentiated';
+    }
+    return null;
 }
 
 function hasLabelCoverage(row: ClinicalCaseDatasetRow): boolean {
@@ -537,6 +743,13 @@ function hasContradictionCoverage(row: ClinicalCaseDatasetRow): boolean {
     return row.contradiction_score !== null || row.contradiction_flags.length > 0 || row.adversarial_case;
 }
 
+function hasAdversarialCoverage(row: ClinicalCaseDatasetRow): boolean {
+    return row.adversarial_case ||
+        Boolean(row.adversarial_case_type) ||
+        Boolean(row.latest_simulation_event_id) ||
+        row.source_module === 'adversarial_simulation';
+}
+
 function hasCalibrationCoverage(row: ClinicalCaseDatasetRow): boolean {
     return Boolean(row.predicted_diagnosis) &&
         Boolean(row.confirmed_diagnosis) &&
@@ -547,6 +760,13 @@ function hasCalibrationCoverage(row: ClinicalCaseDatasetRow): boolean {
 function percentage(value: number, total: number): number {
     if (total <= 0) return 0;
     return Number(((value / total) * 100).toFixed(1));
+}
+
+function normalizeProbability(value: number | null): number | null {
+    if (value === null) return null;
+    if (value < 0) return 0;
+    if (value > 1) return 1;
+    return value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

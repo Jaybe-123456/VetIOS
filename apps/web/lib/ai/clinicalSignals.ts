@@ -5,6 +5,7 @@ export type SignalKey =
     | 'unproductive_retching'
     | 'abdominal_distension'
     | 'collapse'
+    | 'cyanosis'
     | 'honking_cough'
     | 'cough'
     | 'myoclonus'
@@ -27,6 +28,7 @@ export interface SignalEvidence {
     present: boolean;
     strength: number;
     matched_terms: string[];
+    negated_terms: string[];
     sources: EvidenceSource[];
     tier: FeatureTier;
 }
@@ -79,6 +81,11 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
         label: 'collapse',
         tier: 2,
         terms: ['collapse', 'collapsed', 'unresponsive', 'shock', 'moribund'],
+    },
+    cyanosis: {
+        label: 'cyanosis',
+        tier: 1,
+        terms: ['cyanosis', 'cyanotic', 'blue gums', 'bluish gums', 'blue tongue', 'cyanotic mucous membranes'],
     },
     honking_cough: {
         label: 'honking cough',
@@ -236,27 +243,32 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
     for (const [key, definition] of Object.entries(SIGNAL_DEFINITIONS) as Array<[SignalKey, SignalDefinition]>) {
         const matchedTerms = new Set<string>();
         const sources = new Set<EvidenceSource>();
+        const negatedTerms = new Set<string>();
 
         for (const symptom of symptoms) {
-            const matches = findMatchedTerms(symptom, definition.terms, key);
-            if (matches.length > 0) {
+            const matches = findSignalMatches(symptom, definition.terms, key);
+            if (matches.positive.length > 0) {
                 sources.add('symptom_vector');
-                for (const match of matches) matchedTerms.add(match);
+                for (const match of matches.positive) matchedTerms.add(match);
             }
+            for (const match of matches.negated) negatedTerms.add(match);
         }
 
         for (const fragment of freeTextFragments) {
-            const matches = findMatchedTerms(fragment, definition.terms, key);
-            if (matches.length > 0) {
+            const matches = findSignalMatches(fragment, definition.terms, key);
+            if (matches.positive.length > 0) {
                 sources.add('free_text');
-                for (const match of matches) matchedTerms.add(match);
+                for (const match of matches.positive) matchedTerms.add(match);
             }
+            for (const match of matches.negated) negatedTerms.add(match);
         }
 
         for (const field of definition.structured_fields ?? []) {
             if (readBooleanField(input, field) === true) {
                 sources.add('structured_field');
                 matchedTerms.add(field);
+            } else if (readBooleanField(input, field) === false) {
+                negatedTerms.add(field);
             }
         }
 
@@ -264,6 +276,7 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
             present: sources.size > 0,
             strength: sources.has('symptom_vector') || sources.has('free_text') ? 1 : sources.has('structured_field') ? 0.7 : 0,
             matched_terms: [...matchedTerms],
+            negated_terms: [...negatedTerms],
             sources: [...sources],
             tier: definition.tier,
         };
@@ -494,15 +507,62 @@ function extractAgeDescription(input: Record<string, unknown>): string | null {
     return null;
 }
 
-function findMatchedTerms(fragment: string, terms: string[], signal: SignalKey): string[] {
+function findSignalMatches(fragment: string, terms: string[], signal: SignalKey): {
+    positive: string[];
+    negated: string[];
+} {
     const normalized = fragment.toLowerCase();
-    const matches = terms.filter((term) => normalized.includes(term));
+    const positive: string[] = [];
+    const negated: string[] = [];
 
-    if (signal === 'productive_vomiting' && normalized.includes('unproductive')) {
-        return matches.filter((term) => term === 'productive vomiting');
+    for (const term of terms) {
+        if (!normalized.includes(term)) {
+            continue;
+        }
+
+        if (signal === 'productive_vomiting' && normalized.includes('unproductive') && term !== 'productive vomiting') {
+            continue;
+        }
+
+        if (isNegatedMention(normalized, term, signal)) {
+            negated.push(term);
+            continue;
+        }
+
+        positive.push(term);
     }
 
-    return matches;
+    if (signal === 'fever' && normalized.includes('afebrile')) {
+        negated.push('afebrile');
+    }
+
+    return {
+        positive,
+        negated,
+    };
+}
+
+function isNegatedMention(fragment: string, term: string, signal: SignalKey): boolean {
+    const escapedTerm = escapeRegExp(term);
+    const patterns = [
+        new RegExp(`\\bno\\s+${escapedTerm}\\b`, 'i'),
+        new RegExp(`\\bwithout\\s+${escapedTerm}\\b`, 'i'),
+        new RegExp(`\\bdenies?\\s+${escapedTerm}\\b`, 'i'),
+        new RegExp(`\\bnot\\s+${escapedTerm}\\b`, 'i'),
+        new RegExp(`\\bnegative\\s+for\\s+${escapedTerm}\\b`, 'i'),
+        new RegExp(`\\bfree\\s+of\\s+${escapedTerm}\\b`, 'i'),
+        new RegExp(`\\babsence\\s+of\\s+${escapedTerm}\\b`, 'i'),
+    ];
+
+    if (signal === 'fever') {
+        patterns.push(/\bafebrile\b/i);
+    }
+
+    return patterns.some((pattern) => pattern.test(fragment));
+}
+
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function countPresent(evidence: Record<SignalKey, SignalEvidence>, keys: SignalKey[]): number {

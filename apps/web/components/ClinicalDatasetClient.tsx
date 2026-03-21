@@ -134,7 +134,7 @@ export function ClinicalDatasetClient({
         { key: 'top_prediction', label: 'TOP_PRED', render: (row) => renderText(row.top_prediction, 'Undifferentiated') },
         { key: 'condition_class', label: 'CONDITION_CLASS', render: (row) => renderText(row.primary_condition_class, 'Undifferentiated') },
         { key: 'confidence', label: 'CONFIDENCE', render: (row) => formatPercent(row.confidence, 'Unscored') },
-        { key: 'emergency', label: 'EMERGENCY_LEVEL', render: (row) => renderText(row.emergency_level, 'Awaiting severity sync') },
+        { key: 'emergency', label: 'EMERGENCY_LEVEL', render: (row) => renderText(row.emergency_level, 'Severity unavailable') },
         { key: 'contradiction', label: 'CONTRADICTION', render: (row) => formatPercent(row.contradiction_score, 'No contradictions') },
         { key: 'model_version', label: 'MODEL_V', render: (row) => row.model_version },
         { key: 'timestamp', label: 'TIMESTAMP', render: (row) => row.timestamp },

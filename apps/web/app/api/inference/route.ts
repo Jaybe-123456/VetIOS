@@ -146,6 +146,7 @@ export async function POST(req: Request) {
             routedModel.model_version,
             resolveTelemetryRunCandidate(body.input.input_signature),
         );
+        const contradictionAnalysis = asRecord(inferenceResult.contradiction_analysis);
 
         const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
             ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
@@ -222,6 +223,15 @@ export async function POST(req: Request) {
                     inference_event_id: persistedInferenceEventId,
                     clinic_id: body.clinic_id ?? null,
                     case_id: canonicalClinicalCase.id,
+                    contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
+                        ? contradictionAnalysis.contradiction_reasons
+                        : [],
+                    persistence_rule_triggers: Array.isArray(inferenceResult.uncertainty_metrics?.persistence_rule_triggers)
+                        ? inferenceResult.uncertainty_metrics?.persistence_rule_triggers
+                        : [],
+                    pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
+                        ? inferenceResult.output_payload.pipeline_trace
+                        : [],
                     ...routingTelemetryMetadata,
                 },
             });
@@ -250,6 +260,12 @@ export async function POST(req: Request) {
                     request_id: requestId,
                     inference_event_id: persistedInferenceEventId,
                     case_id: canonicalClinicalCase.id,
+                    contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
+                        ? contradictionAnalysis.contradiction_reasons
+                        : [],
+                    pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
+                        ? inferenceResult.output_payload.pipeline_trace
+                        : [],
                     ...routingTelemetryMetadata,
                 },
             });

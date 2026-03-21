@@ -105,6 +105,7 @@ export async function POST(req: Request) {
         const simulationEventId = randomUUID();
         const modelVersion = body.inference.model_version ?? body.inference.model;
         const telemetryRunId = resolveTelemetryRunId(modelVersion, resolveTelemetryRunCandidate(inputSignature));
+        const contradictionAnalysis = asRecord(inferenceResult.contradiction_analysis);
 
         const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
             ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
@@ -180,6 +181,12 @@ export async function POST(req: Request) {
                     simulation_type: body.simulation.type,
                     target_disease: targetDisease,
                     synthetic: true,
+                    contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
+                        ? contradictionAnalysis.contradiction_reasons
+                        : [],
+                    pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
+                        ? inferenceResult.output_payload.pipeline_trace
+                        : [],
                 },
             });
         } catch (telemetryErr) {
@@ -242,6 +249,10 @@ export async function POST(req: Request) {
                     simulation_type: body.simulation.type,
                     target_disease: targetDisease,
                     synthetic: true,
+                    contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
+                        ? contradictionAnalysis.contradiction_reasons
+                        : [],
+                    pipeline_stage_completion: ['simulation_logged', 'dataset_benchmark_ready'],
                 },
             });
         } catch (telemetryErr) {

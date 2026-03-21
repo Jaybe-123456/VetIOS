@@ -83,6 +83,17 @@ export function detectContradictions(
     addMetadataConflict(contradictions, input, signals, 'productive_vomiting', true, 'retching/vomiting conflict: metadata indicates productive vomiting while symptom vector indicates unproductive retching', 0.22, 'unproductive_retching');
     addMetadataConflict(contradictions, input, signals, 'fever', false, 'fever present in symptoms but false in metadata', 0.18, 'fever');
 
+    const activityStatus = normalizeText(readNestedString(input, 'activity_status'));
+    if (
+        activityStatus === 'normal' &&
+        (signals.evidence.collapse.present || signals.evidence.cyanosis.present || signals.shock_pattern_strength >= 2.5)
+    ) {
+        contradictions.push({
+            reason: 'normal activity status conflicts with collapse, cyanosis, or shock-level severity cues',
+            weight: 0.22,
+        });
+    }
+
     if (
         signals.appetite_status === 'normal' &&
         (signals.evidence.collapse.present || signals.shock_pattern_strength >= 2.5)
@@ -104,6 +115,26 @@ export function detectContradictions(
         contradictions.push({
             reason: 'breed/body-size profile lowers the classic GDV prior despite a strong abdominal emergency signal cluster',
             weight: 0.08,
+        });
+    }
+
+    const acuteSignalCount = [
+        'collapse',
+        'cyanosis',
+        'unproductive_retching',
+        'abdominal_distension',
+        'honking_cough',
+        'dyspnea',
+        'fever',
+    ].filter((key) => signals.evidence[key as keyof typeof signals.evidence].present).length;
+    if (
+        signals.duration_days != null &&
+        signals.duration_days > 14 &&
+        acuteSignalCount >= 2
+    ) {
+        contradictions.push({
+            reason: `acute-severity symptom cluster conflicts with a chronic duration of ${signals.duration_days} days`,
+            weight: 0.18,
         });
     }
 
@@ -138,6 +169,16 @@ export function detectContradictions(
         contradictions.push({
             reason: 'breed/body profile weakens chronic tracheal-collapse priors despite a honking cough pattern',
             weight: 0.08,
+        });
+    }
+
+    if (
+        signals.evidence.fever.negated_terms.length > 0 &&
+        (signals.evidence.fever.present || readBooleanField(input, 'fever') === true)
+    ) {
+        contradictions.push({
+            reason: 'fever is explicitly negated in one part of the case but asserted elsewhere',
+            weight: 0.18,
         });
     }
 
@@ -291,4 +332,10 @@ function readNestedString(input: Record<string, unknown>, field: string): string
         ? (input.metadata as Record<string, unknown>)
         : {};
     return typeof metadata[field] === 'string' ? (metadata[field] as string) : null;
+}
+
+function normalizeText(value: string | null): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    return normalized.length > 0 ? normalized : null;
 }
