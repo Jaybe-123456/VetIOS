@@ -200,6 +200,13 @@ async function main() {
         requestedModelVersion: 'requested_v1',
     });
     assert.notEqual(topCandidate(blockedCandidates), 'fast');
+    const blockedPlan = resolveRoutingPlanForTest({
+        analysis: simpleAnalysis,
+        candidates: unapprovedCandidates,
+        systemState: makeSystemState(),
+    });
+    assert.equal(blockedPlan.selected_models.length, 0);
+    assert.equal(blockedPlan.fallback_model, null);
 
     const fastProfile = explicitlyApprovedProfiles.find((profile) => profile.model_type === 'fast');
     const robustProfile = explicitlyApprovedProfiles.find((profile) => profile.model_type === 'adversarial_resistant');
