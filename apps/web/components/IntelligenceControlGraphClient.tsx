@@ -32,6 +32,7 @@ import type {
     TopologyStreamPayload,
     TopologyWindow,
 } from '@/lib/intelligence/types';
+import type { ControlPlaneSnapshotResponse } from '@/lib/settings/types';
 
 type ControlMode = 'live' | 'rewind_1h' | 'rewind_24h' | 'replay';
 type StreamStatus = 'connecting' | 'live' | 'disconnected';
@@ -57,6 +58,39 @@ export default function IntelligenceControlGraphClient() {
     const [simulationSeverity, setSimulationSeverity] = useState<'degraded' | 'critical'>('critical');
     const [simulationMessage, setSimulationMessage] = useState<string | null>(null);
     const [simulationBusy, setSimulationBusy] = useState(false);
+    const [simulationModeError, setSimulationModeError] = useState<string | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const syncSimulationMode = async () => {
+            try {
+                const response = await fetch('/api/settings/control-plane', { cache: 'no-store' });
+                const payload = await response.json() as ControlPlaneSnapshotResponse | { error?: string };
+                if (!response.ok || !('snapshot' in payload)) {
+                    throw new Error('error' in payload && typeof payload.error === 'string' ? payload.error : 'Failed to load simulation mode.');
+                }
+                if (!cancelled) {
+                    setSimulationMode(payload.snapshot.configuration.simulation_enabled);
+                    setSimulationModeError(null);
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setSimulationModeError(error instanceof Error ? error.message : 'Failed to load simulation mode.');
+                }
+            }
+        };
+
+        void syncSimulationMode();
+        const interval = window.setInterval(() => {
+            void syncSimulationMode();
+        }, 15000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, []);
 
     useEffect(() => {
         if (mode !== 'live') return;
@@ -345,11 +379,16 @@ export default function IntelligenceControlGraphClient() {
                                 <button
                                     type="button"
                                     className={`text-xs transition-colors ${simulationMode ? 'text-accent' : 'text-muted hover:text-accent'}`}
-                                    onClick={() => setSimulationMode((current) => !current)}
+                                    onClick={() => void handleSimulationModeToggle()}
                                 >
-                                    {simulationMode ? 'ENABLED' : 'DISABLED'}
+                                    {simulationBusy ? 'SYNCING' : simulationMode ? 'ENABLED' : 'DISABLED'}
                                 </button>
                             </div>
+                            {simulationModeError ? (
+                                <div className="border border-[#ffcc00] bg-[#ffcc00]/5 p-2 text-[#ffcc00]">
+                                    {simulationModeError}
+                                </div>
+                            ) : null}
                             {simulationMode ? (
                                 <>
                                     <label className="block">
@@ -458,6 +497,35 @@ export default function IntelligenceControlGraphClient() {
             }
         } catch (error) {
             setSimulationMessage(error instanceof Error ? error.message : 'Failed to inject simulation');
+        } finally {
+            setSimulationBusy(false);
+        }
+    }
+
+    async function handleSimulationModeToggle() {
+        const nextMode = !simulationMode;
+        setSimulationBusy(true);
+        setSimulationModeError(null);
+
+        try {
+            const response = await fetch('/api/settings/control-plane', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'update_config',
+                    config: {
+                        simulation_enabled: nextMode,
+                    },
+                }),
+            });
+            const payload = await response.json() as { error?: string; snapshot?: { configuration?: { simulation_enabled?: boolean } } };
+            if (!response.ok) {
+                throw new Error(typeof payload.error === 'string' ? payload.error : 'Failed to update simulation mode.');
+            }
+            setSimulationMode(payload.snapshot?.configuration?.simulation_enabled ?? nextMode);
+            setSimulationMessage(nextMode ? 'Simulation mode enabled from the control plane.' : 'Simulation mode disabled from the control plane.');
+        } catch (error) {
+            setSimulationModeError(error instanceof Error ? error.message : 'Failed to update simulation mode.');
         } finally {
             setSimulationBusy(false);
         }

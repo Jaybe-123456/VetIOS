@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalButton } from '@/components/ui/terminal';
 import { TelemetryChart } from '@/components/ui/TelemetryChart';
+import type { ControlPlaneSnapshotResponse } from '@/lib/settings/types';
 import type {
     TelemetryLogEntry,
     TelemetryMetricState,
@@ -27,8 +28,42 @@ export default function TelemetryObserverPage() {
     const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
     const [streamError, setStreamError] = useState<string | null>(null);
     const [simulationMode, setSimulationMode] = useState(false);
+    const [simulationModeBusy, setSimulationModeBusy] = useState(false);
+    const [simulationModeError, setSimulationModeError] = useState<string | null>(null);
     const [streamNonce, setStreamNonce] = useState(0);
     const [lastStreamUpdate, setLastStreamUpdate] = useState<Date | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const syncSimulationMode = async () => {
+            try {
+                const response = await fetch('/api/settings/control-plane', { cache: 'no-store' });
+                const payload = await response.json() as ControlPlaneSnapshotResponse | { error?: string };
+                if (!response.ok || !('snapshot' in payload)) {
+                    throw new Error('error' in payload && typeof payload.error === 'string' ? payload.error : 'Failed to load simulation mode.');
+                }
+                if (!cancelled) {
+                    setSimulationMode(payload.snapshot.configuration.simulation_enabled);
+                    setSimulationModeError(null);
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setSimulationModeError(error instanceof Error ? error.message : 'Failed to load simulation mode.');
+                }
+            }
+        };
+
+        void syncSimulationMode();
+        const interval = window.setInterval(() => {
+            void syncSimulationMode();
+        }, 15000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, []);
 
     useEffect(() => {
         setStreamStatus('connecting');
@@ -94,9 +129,10 @@ export default function TelemetryObserverPage() {
                     <TerminalButton
                         type="button"
                         variant={simulationMode ? 'primary' : 'secondary'}
-                        onClick={() => setSimulationMode((value) => !value)}
+                        onClick={() => void handleSimulationModeToggle()}
+                        disabled={simulationModeBusy}
                     >
-                        SIMULATION MODE {simulationMode ? 'ON' : 'OFF'}
+                        SIMULATION MODE {simulationModeBusy ? 'SYNCING' : simulationMode ? 'ON' : 'OFF'}
                     </TerminalButton>
                     {lastStreamUpdate ? (
                         <span>Last stream update: {lastStreamUpdate.toLocaleTimeString()}</span>
@@ -112,6 +148,12 @@ export default function TelemetryObserverPage() {
                 {streamError && (
                     <div className="p-3 border border-danger bg-danger/5 font-mono text-xs text-danger">
                         {streamError}
+                    </div>
+                )}
+
+                {simulationModeError && (
+                    <div className="p-3 border border-[#ffcc00] bg-[#ffcc00]/5 font-mono text-xs text-[#ffcc00]">
+                        {simulationModeError}
                     </div>
                 )}
 
@@ -239,6 +281,35 @@ export default function TelemetryObserverPage() {
             </ConsoleCard>
         </Container>
     );
+
+    async function handleSimulationModeToggle() {
+        const nextMode = !simulationMode;
+        setSimulationModeBusy(true);
+        setSimulationModeError(null);
+
+        try {
+            const response = await fetch('/api/settings/control-plane', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'update_config',
+                    config: {
+                        simulation_enabled: nextMode,
+                    },
+                }),
+            });
+            const payload = await response.json() as { error?: string; snapshot?: { configuration?: { simulation_enabled?: boolean } } };
+            if (!response.ok) {
+                throw new Error(typeof payload.error === 'string' ? payload.error : 'Failed to update simulation mode.');
+            }
+            setSimulationMode(payload.snapshot?.configuration?.simulation_enabled ?? nextMode);
+            setStreamNonce((value) => value + 1);
+        } catch (error) {
+            setSimulationModeError(error instanceof Error ? error.message : 'Failed to update simulation mode.');
+        } finally {
+            setSimulationModeBusy(false);
+        }
+    }
 }
 
 function MetricCard({
