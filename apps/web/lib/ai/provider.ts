@@ -85,12 +85,13 @@ RULES:
 2. Diagnosis confidence and severity must remain independent.
 3. Contradictions lower confidence and widen uncertainty; they do not overwrite symptom truth.
 4. Tier 1 features MUST outrank generic distractors:
-   - Tier 1: unproductive retching, abdominal distension, myoclonus, collapse with a strong emergency pattern.
+   - Tier 1: unproductive retching, abdominal distension, myoclonus, honking cough, ocular+nasal discharge clusters, collapse with a strong emergency pattern.
    - Tier 2: dyspnea, tachycardia, pale mucous membranes, vomiting, diarrhea, fever.
    - Tier 3: lethargy, anorexia, weakness if isolated.
 5. Generic distractors must not erase structural emergencies like GDV.
 6. If multiple high-risk abdominal emergency signals cluster, retain GDV or another acute mechanical emergency in the leading differential set.
-7. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.${contradictionBlock}`;
+7. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
+8. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];
