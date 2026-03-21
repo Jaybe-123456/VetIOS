@@ -160,9 +160,11 @@ const ERROR_WARNING_THRESHOLD = 0.05;
 const ERROR_CRITICAL_THRESHOLD = 0.12;
 const LATENCY_WARNING_THRESHOLD = 800;
 const LATENCY_CRITICAL_THRESHOLD = 2_000;
-const OFFLINE_THRESHOLD_MS = 30 * 1000;
-const HEARTBEAT_STALE_MS = 30 * 1000;
+const OFFLINE_THRESHOLD_MS = 60 * 1000;
+const HEARTBEAT_STALE_MS = 60 * 1000;
+const SIMULATION_OVERRIDE_TTL_MS = 30 * 1000;
 const MIN_EVALUATION_EVENTS_FOR_DRIFT = 3;
+const MIN_EVALUATION_EVENTS_FOR_ERROR_RATE = 3;
 
 const NODE_POSITIONS: Record<NodeId, { x: number; y: number }> = {
     control_plane: { x: 560, y: 40 },
@@ -482,7 +484,7 @@ function buildNodes(input: {
             ? 'LIVE'
             : hasActiveRoute
                 ? 'NO_DATA'
-                : 'OFFLINE';
+                : 'UNROUTED';
         const latencyValues = familyContext.inference_events
             .map((event) => event.metrics.latency_ms)
             .filter((value): value is number => value != null && value <= 5_000);
@@ -866,6 +868,9 @@ function finalizeNodes(
         if (node.kind === 'model' && observabilityState === 'NO_DATA') {
             recommendations.push('No routed traffic in the active window; displaying registry readiness until live telemetry arrives.');
         }
+        if (node.kind === 'model' && observabilityState === 'UNROUTED') {
+            recommendations.push('No active governed route is configured for this model family yet.');
+        }
         if (node.kind === 'model' && routedDistribution.length > 0) {
             recommendations.push(`Load distribution: ${routedDistribution.map((entry) => `${entry.model_id} (${entry.request_count})`).join(', ')}`);
         }
@@ -877,6 +882,7 @@ function finalizeNodes(
         }
         const routingErrors = [
             ...(node.kind === 'model' && observabilityState === 'NO_DATA' ? ['No live inference telemetry observed in the active window.'] : []),
+            ...(node.kind === 'model' && observabilityState === 'UNROUTED' ? ['No active governed route is configured, so this family is excluded from live routing.'] : []),
             ...(fallbackCount > 0 ? [`Routing fallback engaged ${fallbackCount} time(s) in this window.`] : []),
             ...(ensembleCount > 0 ? [`Routing ensemble consensus executed ${ensembleCount} time(s).`] : []),
         ];
@@ -911,6 +917,7 @@ function buildAlerts(
 ): TopologyAlert[] {
     const alerts: TopologyAlert[] = [];
     const latestEventTimestamp = findLatestTimestamp(telemetryEvents.map((event) => event.timestamp));
+    const nodesById = new Map(nodes.map((node) => [node.id, node] as const));
 
     if (!diagnostics.evaluation_events_table_exists) {
         alerts.push({
@@ -973,7 +980,12 @@ function buildAlerts(
     }
 
     for (const node of nodes) {
-        if (node.state.status === 'offline' && readString(node.metadata.observability_state) !== 'NO_DATA') {
+        const observabilityState = readString(node.metadata.observability_state);
+        if (
+            node.state.status === 'offline'
+            && observabilityState !== 'NO_DATA'
+            && observabilityState !== 'UNROUTED'
+        ) {
             alerts.push({
                 id: `alert_offline_${node.id}`,
                 node_id: node.id,
@@ -1029,7 +1041,7 @@ function buildAlerts(
             });
         }
 
-        if ((node.state.error_rate ?? 0) >= ERROR_CRITICAL_THRESHOLD) {
+        if ((node.state.error_rate ?? 0) >= ERROR_CRITICAL_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
             alerts.push({
                 id: `alert_error_critical_${node.id}`,
                 node_id: node.id,
@@ -1039,7 +1051,7 @@ function buildAlerts(
                 message: `${node.label} error rate is above the critical threshold.`,
                 timestamp: node.state.last_updated ?? now.toISOString(),
             });
-        } else if ((node.state.error_rate ?? 0) >= ERROR_WARNING_THRESHOLD) {
+        } else if ((node.state.error_rate ?? 0) >= ERROR_WARNING_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
             alerts.push({
                 id: `alert_error_warning_${node.id}`,
                 node_id: node.id,
@@ -1460,7 +1472,7 @@ function applyOverride(
     now: Date,
 ): TopologyNodeState {
     if (!override) return state;
-    if (new Date(now).getTime() - new Date(override.timestamp).getTime() > OFFLINE_THRESHOLD_MS) {
+    if (new Date(now).getTime() - new Date(override.timestamp).getTime() > SIMULATION_OVERRIDE_TTL_MS) {
         return state;
     }
 
@@ -1535,8 +1547,17 @@ function calculateInferenceErrorRate(
 ) {
     if (inferenceEvents.length === 0) return null;
     const anomalyCount = inferenceEvents.filter((event) => (event.metrics.latency_ms ?? 0) > 5_000).length;
-    const incorrectCount = evaluations.filter((event) => event.prediction_correct === false).length;
-    return roundNumber((anomalyCount + incorrectCount) / inferenceEvents.length, 4);
+    const anomalyRate = anomalyCount === 0
+        ? null
+        : roundNumber(anomalyCount / inferenceEvents.length, 4);
+    const usableEvaluations = evaluations.filter((event) => event.prediction_correct != null);
+    if (usableEvaluations.length < MIN_EVALUATION_EVENTS_FOR_ERROR_RATE) {
+        return anomalyRate;
+    }
+
+    const incorrectCount = usableEvaluations.filter((event) => event.prediction_correct === false).length;
+    const correctnessErrorRate = roundNumber(incorrectCount / usableEvaluations.length, 4);
+    return maxValue([anomalyRate, correctnessErrorRate]);
 }
 
 function computeEvaluationDrift(
@@ -1625,8 +1646,8 @@ function resolveIdleNodeStatus(input: {
     governancePending: boolean;
     telemetryStreamConnected: boolean;
 }): TopologyNodeState['status'] {
-    if (!input.hasActiveRoute) return 'offline';
     if (input.governanceFailure) return 'critical';
+    if (!input.hasActiveRoute) return input.telemetryStreamConnected ? 'healthy' : 'degraded';
     if (input.governancePending || !input.telemetryStreamConnected) return 'degraded';
     return 'healthy';
 }
@@ -2318,6 +2339,31 @@ function datasetLatencyEstimate(latencies: number[], invalidCount: number, total
 function isStale(timestamp: string | null, now: Date) {
     if (!timestamp) return true;
     return now.getTime() - new Date(timestamp).getTime() > OFFLINE_THRESHOLD_MS;
+}
+
+function shouldSuppressDerivedErrorAlert(
+    nodeId: TopologyNodeSnapshot['id'],
+    nodesById: Map<TopologyNodeSnapshot['id'], TopologyNodeSnapshot>,
+) {
+    if (nodeId === 'decision_fabric') {
+        return ['diagnostics_model', 'vision_model', 'therapeutics_model']
+            .some((id) => (nodesById.get(id)?.state.error_rate ?? 0) >= ERROR_CRITICAL_THRESHOLD);
+    }
+
+    if (nodeId === 'control_plane') {
+        return [
+            'registry_control',
+            'telemetry_observer',
+            'decision_fabric',
+            'diagnostics_model',
+            'vision_model',
+            'therapeutics_model',
+        ].some((id) =>
+            id !== 'control_plane' && (nodesById.get(id)?.state.error_rate ?? 0) >= ERROR_CRITICAL_THRESHOLD,
+        );
+    }
+
+    return false;
 }
 
 function findLatestTimestamp(values: string[]) {

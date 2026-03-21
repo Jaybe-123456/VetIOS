@@ -11,7 +11,7 @@ import type {
 } from '@/lib/telemetry/types';
 
 const WINDOW_MS = 24 * 60 * 60 * 1000;
-const HEARTBEAT_STALE_MS = 30 * 1000;
+const HEARTBEAT_STALE_MS = 60 * 1000;
 export const TELEMETRY_HEARTBEAT_INTERVAL_MS = 15 * 1000;
 const LATENCY_ANOMALY_MS = 5_000;
 const MIN_OUTCOMES_FOR_DRIFT = 2;
@@ -199,7 +199,8 @@ export function telemetrySimulationEventId(simulationEventId: string) {
 
 export function telemetryHeartbeatEventId(source: string, timestamp: string = new Date().toISOString()) {
     const suffix = timestamp.replace(/\D/g, '').slice(-17);
-    return `evt_system_heartbeat_${normalizeTelemetryIdentifier(source)}_${suffix}`;
+    const nonce = randomUUID().replace(/-/g, '').slice(0, 8);
+    return `evt_system_heartbeat_${normalizeTelemetryIdentifier(source)}_${suffix}_${nonce}`;
 }
 
 export function resolveTelemetryRunId(modelVersion: string, candidate: unknown) {
