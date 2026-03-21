@@ -450,6 +450,29 @@ function mapEventToLog(event: TelemetryEventRecord): TelemetryLogEntry {
         };
     }
 
+    if (event.event_type === 'system') {
+        const action = textOrNull(event.metadata.action) ?? 'system';
+        const selectedModel = textOrNull(event.metadata.routing_selected_model_id)
+            ?? textOrNull(event.metadata.routing_selected_model_name)
+            ?? 'NO DATA';
+        const routeMode = textOrNull(event.metadata.routing_route_mode) ?? 'single';
+        const riskScore = numberOrNull(event.metadata.routing_risk_score);
+        const fallbackUsed = booleanOrNull(event.metadata.routing_fallback_used) === true;
+        const level = action === 'routing_fallback' || fallbackUsed ? 'WARN' : 'INFO';
+        const label = action === 'routing_ensemble'
+            ? 'ROUTING_ENSEMBLE'
+            : action === 'routing_fallback'
+                ? 'ROUTING_FALLBACK'
+                : 'ROUTING';
+
+        return {
+            id: event.event_id,
+            level,
+            timestamp: event.timestamp,
+            message: `[${level}] ${label} ${textOrNull(event.metadata.routing_decision_id) ?? event.event_id} model=${selectedModel} mode=${routeMode} risk=${formatScore(riskScore, 'NO DATA')} latency=${formatLatencyValue(numberOrNull(event.metrics.latency_ms))}`,
+        };
+    }
+
     return {
         id: event.event_id,
         level: 'INFO',

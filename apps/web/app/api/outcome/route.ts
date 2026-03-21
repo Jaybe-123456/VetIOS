@@ -40,6 +40,7 @@ import {
     telemetryOutcomeEventId,
 } from '@/lib/telemetry/service';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
+import { attachRoutingOutcomeFeedback } from '@/lib/routingEngine/service';
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
@@ -239,6 +240,13 @@ export async function POST(req: Request) {
                         predicted_label: predictedLabel,
                     },
                 });
+                await attachRoutingOutcomeFeedback({
+                    client: supabase,
+                    tenantId,
+                    inferenceEventId: body.inference_event_id,
+                    outcomeEventId,
+                    predictionCorrect: telemetryCorrect,
+                });
 
                 const recentEvals = await getRecentEvaluations(supabase, tenantId, inf.model_name, 20);
                 const contradictionAnalysis = asRecord(inf.output_payload.contradiction_analysis);
@@ -310,6 +318,14 @@ export async function POST(req: Request) {
                         contradiction_score: contradictionScore,
                         adversarial_case: canonicalClinicalCase.adversarial_case === true,
                     },
+                });
+                await attachRoutingOutcomeFeedback({
+                    client: supabase,
+                    tenantId,
+                    inferenceEventId: body.inference_event_id,
+                    outcomeEventId,
+                    evaluationEventId: pipelineResult.evaluation.evaluation_event_id,
+                    predictionCorrect: pipelineResult.evaluation.prediction_correct,
                 });
 
                 pipelineResult.calibration = await logOutcomeCalibration(supabase, {

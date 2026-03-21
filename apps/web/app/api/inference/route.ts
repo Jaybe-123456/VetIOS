@@ -1,14 +1,7 @@
 /**
  * POST /api/inference
  *
- * Runs AI inference, logs it to ai_inference_events, returns result.
- *
- * Protections:
- *   - Rate limit: 10 req/min per IP
- *   - Zod schema validation
- *   - Request ID tracing
- *   - AI provider timeout (15s)
- *   - Error sanitization (no stack traces in production)
+ * Runs routed AI inference, logs it to ai_inference_events, returns result.
  */
 
 import { NextResponse } from 'next/server';
@@ -38,40 +31,42 @@ import {
     telemetryInferenceEventId,
 } from '@/lib/telemetry/service';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
+import {
+    buildRoutingTelemetryMetadata,
+    createRoutingDecisionRecord,
+    executeRoutingPlan,
+    failRoutingDecisionRecord,
+    finalizeRoutingDecisionRecord,
+    planModelRoute,
+} from '@/lib/routingEngine/service';
 
 const AI_TIMEOUT_MS = 55_000;
 
 export async function POST(req: Request) {
-    // ── Guard: rate limit + size ──
     const guard = await apiGuard(req, { maxRequests: 10, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    // ── Auth ──
     const session = await resolveSessionTenant();
     if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
         return NextResponse.json(
             { error: 'Unauthorized', request_id: requestId },
-            { status: 401 }
+            { status: 401 },
         );
     }
     const { tenantId, userId } = resolveRequestActor(session);
 
-    // ── Parse + validate ──
     const parsed = await safeJson(req);
     if (!parsed.ok) {
         return NextResponse.json(
             { error: parsed.error, request_id: requestId },
-            { status: 400 }
+            { status: 400 },
         );
     }
 
-    // ── Server-side normalization safety net ──
-    // Coerce semi-structured payloads before Zod validation
     const rawBody = parsed.data as Record<string, unknown>;
     if (rawBody.input && typeof rawBody.input === 'object') {
         const inp = rawBody.input as Record<string, unknown>;
-        // If input_signature is a raw string, wrap it
         if (typeof inp.input_signature === 'string') {
             inp.input_signature = {
                 species: null,
@@ -80,14 +75,14 @@ export async function POST(req: Request) {
                 metadata: { raw_note: inp.input_signature },
             };
         }
-        // Ensure input_signature is an object
         if (inp.input_signature && typeof inp.input_signature === 'object') {
             const sig = inp.input_signature as Record<string, unknown>;
-            // Coerce string symptoms to array
             if (typeof sig.symptoms === 'string') {
-                sig.symptoms = (sig.symptoms as string).split(/[,;]/).map((s: string) => s.trim()).filter(Boolean);
+                sig.symptoms = (sig.symptoms as string)
+                    .split(/[,;]/)
+                    .map((entry: string) => entry.trim())
+                    .filter(Boolean);
             }
-            // Ensure metadata exists
             if (!sig.metadata || typeof sig.metadata !== 'object') {
                 sig.metadata = {};
             }
@@ -98,61 +93,84 @@ export async function POST(req: Request) {
     if (!result.success) {
         return NextResponse.json(
             { error: formatZodErrors(result.error), request_id: requestId },
-            { status: 400 }
+            { status: 400 },
         );
     }
+
     const body = result.data;
+    let routingPlan: Awaited<ReturnType<typeof planModelRoute>> | null = null;
 
     try {
-        // ── AI inference with timeout ──
+        const supabase = getSupabaseServer();
+        routingPlan = await planModelRoute({
+            client: supabase,
+            tenantId,
+            requestedModelName: body.model.name,
+            requestedModelVersion: body.model.version,
+            inputSignature: body.input.input_signature,
+            caseId: body.case_id ?? null,
+        });
+        await createRoutingDecisionRecord(supabase, routingPlan, {
+            caseId: body.case_id ?? null,
+        });
+
         const executionSample = beginTelemetryExecutionSample();
-        const inferenceResult = await Promise.race([
-            runInferencePipeline({
-                model: body.model.name,
-                rawInput: body.input,
-                inputMode: 'json', // We pass the validated JSON input
+        const routingExecution = await Promise.race([
+            executeRoutingPlan({
+                plan: routingPlan,
+                executor: async (profile) => await runInferencePipeline({
+                    model: profile.provider_model,
+                    rawInput: body.input,
+                    inputMode: 'json',
+                }),
             }),
             new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS)
+                setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS),
             ),
         ]);
 
+        const inferenceResult = routingExecution.routed_output;
+        const routedModel = routingExecution.selected_model;
+        const routingTelemetryMetadata = buildRoutingTelemetryMetadata({
+            plan: routingPlan,
+            execution: routingExecution,
+        });
         const executionMetrics = finishTelemetryExecutionSample(executionSample);
         const measuredLatencyMs = executionMetrics.latencyMs;
         const latencyMs = Math.max(1, Math.round(measuredLatencyMs));
         const inferenceEventId = randomUUID();
         const telemetryRunId = resolveTelemetryRunId(
-            body.model.version,
+            routedModel.model_version,
             resolveTelemetryRunCandidate(body.input.input_signature),
         );
 
         const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
             ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
             : {};
-        telemetry.model_version = body.model.version;
+        telemetry.model_version = routedModel.model_version;
+        telemetry.model_name = routedModel.model_name;
+        telemetry.provider_model = routedModel.provider_model;
         telemetry.inference_id = inferenceEventId;
         telemetry.run_id = telemetryRunId;
+        Object.assign(telemetry, routingTelemetryMetadata);
         inferenceResult.output_payload.telemetry = telemetry;
 
-        // Sanitize input signature to remove base64 payloads before logging to database
         const signatureForLog = { ...inferenceResult.normalizedInput };
         if (Array.isArray(signatureForLog.diagnostic_images)) {
             signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map((img: any) => ({
                 file_name: img.file_name,
                 mime_type: img.mime_type,
-                size_bytes: img.size_bytes
+                size_bytes: img.size_bytes,
             }));
         }
         if (Array.isArray(signatureForLog.lab_results)) {
             signatureForLog.lab_results = signatureForLog.lab_results.map((doc: any) => ({
                 file_name: doc.file_name,
                 mime_type: doc.mime_type,
-                size_bytes: doc.size_bytes
+                size_bytes: doc.size_bytes,
             }));
         }
 
-        // ── Log to Supabase ──
-        const supabase = getSupabaseServer();
         const caseStore = createSupabaseClinicalCaseStore(supabase);
         const observedAt = new Date().toISOString();
         const canonicalClinicalCase = await ensureCanonicalClinicalCase(caseStore, {
@@ -171,8 +189,8 @@ export async function POST(req: Request) {
             clinic_id: body.clinic_id ?? null,
             case_id: canonicalClinicalCase.id,
             source_module: 'inference_console',
-            model_name: body.model.name,
-            model_version: body.model.version,
+            model_name: routedModel.model_name,
+            model_version: routedModel.model_version,
             input_signature: signatureForLog,
             output_payload: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
@@ -180,13 +198,14 @@ export async function POST(req: Request) {
             compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
+
         try {
             await emitTelemetryEvent(supabase, {
                 event_id: telemetryInferenceEventId(persistedInferenceEventId),
                 tenant_id: tenantId,
                 event_type: 'inference',
                 timestamp: observedAt,
-                model_version: body.model.version,
+                model_version: routedModel.model_version,
                 run_id: telemetryRunId,
                 metrics: {
                     latency_ms: measuredLatencyMs,
@@ -200,11 +219,49 @@ export async function POST(req: Request) {
                     inference_event_id: persistedInferenceEventId,
                     clinic_id: body.clinic_id ?? null,
                     case_id: canonicalClinicalCase.id,
+                    ...routingTelemetryMetadata,
+                },
+            });
+            await emitTelemetryEvent(supabase, {
+                event_id: `evt_routing_${routingPlan.routing_decision_id}`,
+                tenant_id: tenantId,
+                linked_event_id: telemetryInferenceEventId(persistedInferenceEventId),
+                source_id: persistedInferenceEventId,
+                source_table: 'ai_inference_events',
+                event_type: 'system',
+                timestamp: observedAt,
+                model_version: routedModel.model_version,
+                run_id: telemetryRunId,
+                metrics: {
+                    latency_ms: measuredLatencyMs,
+                    confidence: inferenceResult.confidence_score,
+                    prediction: extractPredictionLabel(inferenceResult.output_payload),
+                },
+                metadata: {
+                    action: routingExecution.fallback_used
+                        ? 'routing_fallback'
+                        : routingExecution.route_mode === 'ensemble'
+                            ? 'routing_ensemble'
+                            : 'routing_decision',
+                    source_module: 'inference_console',
+                    request_id: requestId,
+                    inference_event_id: persistedInferenceEventId,
+                    case_id: canonicalClinicalCase.id,
+                    ...routingTelemetryMetadata,
                 },
             });
         } catch (telemetryErr) {
             console.error(`[${requestId}] Telemetry emission failed (non-fatal):`, telemetryErr);
         }
+
+        await finalizeRoutingDecisionRecord(supabase, routingPlan, routingExecution, {
+            inferenceEventId: persistedInferenceEventId,
+            caseId: canonicalClinicalCase.id,
+            actualLatencyMs: measuredLatencyMs,
+            prediction: extractPredictionLabel(inferenceResult.output_payload),
+            predictionConfidence: inferenceResult.confidence_score,
+        });
+
         await finalizeClinicalCaseAfterInference(
             caseStore,
             canonicalClinicalCase,
@@ -215,15 +272,16 @@ export async function POST(req: Request) {
                 sourceModule: 'inference_console',
                 outputPayload: inferenceResult.output_payload,
                 confidenceScore: inferenceResult.confidence_score,
-                modelVersion: body.model.version,
+                modelVersion: routedModel.model_version,
                 metadataPatch: {
                     latest_inference_confidence: inferenceResult.confidence_score,
                     latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
-                    latest_inference_model_version: body.model.version,
+                    latest_inference_model_version: routedModel.model_version,
                     latest_inference_source: 'inference_console',
                 },
             },
         );
+
         logClinicalDatasetMutation({
             source: 'api/inference',
             mutationType: 'inference',
@@ -234,6 +292,7 @@ export async function POST(req: Request) {
             inferenceEventId: persistedInferenceEventId,
         });
         revalidatePath('/dataset');
+
         try {
             await evaluateDecisionEngine({
                 client: supabase,
@@ -244,7 +303,6 @@ export async function POST(req: Request) {
             console.error(`[${requestId}] Decision engine evaluation failed (non-fatal):`, decisionErr);
         }
 
-        // ── Evaluation (non-blocking) ──
         const response = NextResponse.json({
             inference_event_id: persistedInferenceEventId,
             clinical_case_id: canonicalClinicalCase.id,
@@ -256,28 +314,50 @@ export async function POST(req: Request) {
             inference_latency_ms: measuredLatencyMs,
             evaluation: null,
             ml_risk: inferenceResult.mlRisk,
+            routing: {
+                routing_decision_id: routingPlan.routing_decision_id,
+                requested_model_name: body.model.name,
+                requested_model_version: body.model.version,
+                selected_model_id: routedModel.model_id,
+                selected_model_name: routedModel.model_name,
+                selected_provider_model: routedModel.provider_model,
+                selected_model_version: routedModel.model_version,
+                route_mode: routingExecution.route_mode,
+                fallback_used: routingExecution.fallback_used,
+                attempts: routingExecution.attempts,
+                analysis: routingPlan.analysis,
+                reason: routingPlan.reason,
+            },
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     } catch (err) {
         console.error(`[${requestId}] POST /api/inference Error:`, err);
+        if (routingPlan) {
+            try {
+                const supabase = getSupabaseServer();
+                await failRoutingDecisionRecord(
+                    supabase,
+                    routingPlan.routing_decision_id,
+                    err instanceof Error ? err.message : 'Unknown routing execution failure',
+                );
+            } catch (routingErr) {
+                console.error(`[${requestId}] Failed to mark routing decision as failed:`, routingErr);
+            }
+        }
 
-        // ── Timeout ──
         if (err instanceof Error && err.message === 'AI_TIMEOUT') {
             return NextResponse.json(
                 { error: 'AI inference timed out', request_id: requestId },
-                { status: 504 }
+                { status: 504 },
             );
         }
 
-        // ── Sanitized error ──
-        // TEMPORARY: Unmasking production errors to debug the 500 crashes
         const message = err instanceof Error ? err.stack || err.message : 'Unknown error';
-
         return NextResponse.json(
             { error: message, request_id: requestId },
-            { status: 500 }
+            { status: 500 },
         );
     }
 }

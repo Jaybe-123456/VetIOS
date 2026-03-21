@@ -127,6 +127,13 @@ interface FamilyTelemetryContext {
     }>;
     evaluation_drift: number | null;
     drift_state: 'READY' | 'INSUFFICIENT_DATA';
+    routed_model_distribution: Array<{
+        model_id: string;
+        request_count: number;
+    }>;
+    routing_shift_count: number;
+    fallback_count: number;
+    ensemble_count: number;
 }
 
 interface TopologyDiagnosticsState {
@@ -504,6 +511,10 @@ function buildNodes(input: {
                 last_stable_model_version: familyContext.group.last_stable_model?.model_version ?? null,
                 drift_state: familyContext.drift_state,
                 evaluation_count: familyContext.evaluations.length,
+                routed_model_distribution: familyContext.routed_model_distribution,
+                routing_shift_count: familyContext.routing_shift_count,
+                fallback_count: familyContext.fallback_count,
+                ensemble_count: familyContext.ensemble_count,
                 pending_entries: familyContext.group.entries
                     .filter((entry) => entry.registry.lifecycle_status === 'staging')
                     .map((entry) => entry.registry.model_version),
@@ -810,9 +821,34 @@ function finalizeNodes(
         const familyGroup = node.kind === 'model'
             ? controlPlane.families.find((family) => FAMILY_TO_NODE[family.model_family] === node.id)
             : null;
+        const routedDistribution = Array.isArray(node.metadata.routed_model_distribution)
+            ? node.metadata.routed_model_distribution
+                .map((entry) => asRecord(entry))
+                .map((entry) => ({
+                    model_id: readString(entry.model_id),
+                    request_count: readNumber(entry.request_count),
+                }))
+                .filter((entry): entry is { model_id: string; request_count: number } => entry.model_id != null && entry.request_count != null)
+            : [];
+        const routingShiftCount = readNumber(node.metadata.routing_shift_count) ?? 0;
+        const fallbackCount = readNumber(node.metadata.fallback_count) ?? 0;
+        const ensembleCount = readNumber(node.metadata.ensemble_count) ?? 0;
         const recommendations = node.kind === 'model' && familyGroup?.last_stable_model?.model_version
             ? [`Rollback target available: ${familyGroup.last_stable_model.model_version}`]
             : [];
+        if (node.kind === 'model' && routedDistribution.length > 0) {
+            recommendations.push(`Load distribution: ${routedDistribution.map((entry) => `${entry.model_id} (${entry.request_count})`).join(', ')}`);
+        }
+        if (node.kind === 'model' && ensembleCount > 0) {
+            recommendations.push(`Critical-case ensemble routing active for ${ensembleCount} case(s) in the current window.`);
+        }
+        if (node.kind === 'model' && routingShiftCount > 0) {
+            recommendations.push(`Router shifted ${routingShiftCount} case(s) away from the requested/default path.`);
+        }
+        const routingErrors = [
+            ...(fallbackCount > 0 ? [`Routing fallback engaged ${fallbackCount} time(s) in this window.`] : []),
+            ...(ensembleCount > 0 ? [`Routing ensemble consensus executed ${ensembleCount} time(s).`] : []),
+        ];
 
         return {
             ...node,
@@ -820,7 +856,10 @@ function finalizeNodes(
             propagated_risk: impactByNode.has(node.id as NodeId),
             impact_sources: Array.from(impactByNode.get(node.id as NodeId) ?? []),
             connected_node_ids: Array.from(connectedByNode.get(node.id as NodeId) ?? []),
-            recent_errors: (alertsByNode.get(node.id as NodeId) ?? []).map((alert) => alert.message).slice(0, 5),
+            recent_errors: [
+                ...routingErrors,
+                ...(alertsByNode.get(node.id as NodeId) ?? []).map((alert) => alert.message),
+            ].slice(0, 5),
             recommendations: [
                 ...recommendations,
                 ...(node.governance?.promotion_blockers.slice(0, 2) ?? []),
@@ -1249,6 +1288,10 @@ function buildFamilyContexts(
             })
             .filter((value): value is FamilyTelemetryContext['outcome_pairs'][number] => value != null);
         const familyDrift = computeEvaluationDrift(familyEvaluations);
+        const routedModelDistribution = buildRoutingDistribution(familyInference);
+        const routingShiftCount = familyInference.filter((event) => event.metadata.routing_shifted === true).length;
+        const fallbackCount = familyInference.filter((event) => event.metadata.routing_fallback_used === true).length;
+        const ensembleCount = familyInference.filter((event) => readString(event.metadata.routing_route_mode) === 'ensemble').length;
 
         return {
             family: family.model_family,
@@ -1259,6 +1302,10 @@ function buildFamilyContexts(
             outcome_pairs: familyOutcomes,
             evaluation_drift: familyDrift,
             drift_state: familyEvaluations.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
+            routed_model_distribution: routedModelDistribution,
+            routing_shift_count: routingShiftCount,
+            fallback_count: fallbackCount,
+            ensemble_count: ensembleCount,
         };
     });
 }
@@ -1274,6 +1321,21 @@ function buildVersionLookup(families: Awaited<ReturnType<typeof getModelRegistry
         lookup.set(family.model_family, versions);
     }
     return lookup;
+}
+
+function buildRoutingDistribution(events: ControlGraphTelemetryEvent[]) {
+    const counts = new Map<string, number>();
+    for (const event of events) {
+        const modelId = readString(event.metadata.routing_selected_model_id)
+            ?? readString(event.metadata.routing_selected_model_name)
+            ?? event.model_version;
+        counts.set(modelId, (counts.get(modelId) ?? 0) + 1);
+    }
+
+    return Array.from(counts.entries())
+        .map(([model_id, request_count]) => ({ model_id, request_count }))
+        .sort((left, right) => right.request_count - left.request_count)
+        .slice(0, 4);
 }
 
 function buildGovernanceState(group: ModelRegistryFamilyGroup): TopologyNodeGovernance {

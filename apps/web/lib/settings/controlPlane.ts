@@ -1172,7 +1172,11 @@ function formatTelemetryMessage(event: TelemetryEventRecord) {
         return `[SIMULATION] ${event.event_id} target=${textOrNull(event.metadata.target_node_id) ?? 'control_plane'} scenario=${textOrNull(event.metadata.scenario) ?? 'unknown'}`;
     }
     if (event.event_type === 'system') {
-        return `[SYSTEM] ${event.event_id} action=${textOrNull(event.metadata.action) ?? 'control-plane'}`;
+        const action = textOrNull(event.metadata.action) ?? 'control-plane';
+        if (action.startsWith('routing')) {
+            return `[ROUTING] ${textOrNull(event.metadata.routing_decision_id) ?? event.event_id} model=${textOrNull(event.metadata.routing_selected_model_id) ?? textOrNull(event.metadata.routing_selected_model_name) ?? 'unknown'} mode=${textOrNull(event.metadata.routing_route_mode) ?? 'single'} fallback=${String(event.metadata.routing_fallback_used === true)}`;
+        }
+        return `[SYSTEM] ${event.event_id} action=${action}`;
     }
     return `[${event.event_type.toUpperCase()}] ${event.event_id}`;
 }

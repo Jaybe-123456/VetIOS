@@ -442,6 +442,63 @@ export const DECISION_AUDIT_LOG = {
     },
 } as const;
 
+export const MODEL_ROUTER_PROFILES = {
+    TABLE: 'model_router_profiles',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        model_id: 'model_id',
+        model_family: 'model_family',
+        model_type: 'model_type',
+        provider_model: 'provider_model',
+        model_name: 'model_name',
+        model_version: 'model_version',
+        registry_id: 'registry_id',
+        approval_status: 'approval_status',
+        active: 'active',
+        expected_latency_ms: 'expected_latency_ms',
+        base_accuracy: 'base_accuracy',
+        base_cost: 'base_cost',
+        robustness_score: 'robustness_score',
+        recall_score: 'recall_score',
+        metadata: 'metadata',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const MODEL_ROUTING_DECISIONS = {
+    TABLE: 'model_routing_decisions',
+    COLUMNS: {
+        routing_decision_id: 'routing_decision_id',
+        tenant_id: 'tenant_id',
+        case_id: 'case_id',
+        inference_event_id: 'inference_event_id',
+        outcome_event_id: 'outcome_event_id',
+        evaluation_event_id: 'evaluation_event_id',
+        requested_model_name: 'requested_model_name',
+        requested_model_version: 'requested_model_version',
+        selected_model_id: 'selected_model_id',
+        selected_provider_model: 'selected_provider_model',
+        selected_model_version: 'selected_model_version',
+        selected_registry_id: 'selected_registry_id',
+        model_family: 'model_family',
+        route_mode: 'route_mode',
+        execution_status: 'execution_status',
+        trigger_reason: 'trigger_reason',
+        analysis: 'analysis',
+        candidates: 'candidates',
+        fallback_chain: 'fallback_chain',
+        consensus_payload: 'consensus_payload',
+        actual_latency_ms: 'actual_latency_ms',
+        prediction: 'prediction',
+        prediction_confidence: 'prediction_confidence',
+        outcome_correct: 'outcome_correct',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
 export const LEARNING_DATASET_VERSIONS = {
     TABLE: 'learning_dataset_versions',
     COLUMNS: {
