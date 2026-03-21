@@ -980,11 +980,16 @@ function buildAlerts(
     }
 
     for (const node of nodes) {
+        if (node.id === 'simulation_cluster' && isStale(node.state.last_updated, now)) {
+            continue;
+        }
+
         const observabilityState = readString(node.metadata.observability_state);
         if (
             node.state.status === 'offline'
             && observabilityState !== 'NO_DATA'
             && observabilityState !== 'UNROUTED'
+            && shouldRaiseHeartbeatAlert(node)
         ) {
             alerts.push({
                 id: `alert_offline_${node.id}`,
@@ -1382,8 +1387,10 @@ function buildRoutingDistribution(events: ControlGraphTelemetryEvent[]) {
 }
 
 function buildGovernanceState(group: ModelRegistryFamilyGroup): TopologyNodeGovernance {
-    const active = group.active_model ?? group.entries.find((entry) => entry.is_active_route)?.registry ?? group.entries[0]?.registry ?? null;
-    const activeEntry = group.entries.find((entry) => entry.is_active_route || entry.registry.registry_id === active?.registry_id) ?? null;
+    const active = group.active_model ?? group.entries.find((entry) => entry.is_active_route)?.registry ?? null;
+    const activeEntry = active
+        ? group.entries.find((entry) => entry.is_active_route || entry.registry.registry_id === active.registry_id) ?? null
+        : null;
     const pendingEntries = group.entries.filter((entry) =>
         entry.registry.lifecycle_status === 'staging'
         && entry.decision_panel.deployment_decision !== 'rejected',
@@ -1720,23 +1727,47 @@ async function loadTelemetryEvents(
     until: Date,
 ) {
     const C = TELEMETRY_EVENTS.COLUMNS;
-    const { data, error } = await client
+    const selectColumns = [
+        C.event_id,
+        C.linked_event_id,
+        C.source_id,
+        C.source_table,
+        C.event_type,
+        C.timestamp,
+        C.model_version,
+        C.run_id,
+        C.metrics,
+        C.system,
+        C.metadata,
+    ].join(',');
+    const loadPage = async (limit: number) => client
         .from(TELEMETRY_EVENTS.TABLE)
-        .select('*')
+        .select(selectColumns)
         .eq(C.tenant_id, tenantId)
         .gte(C.timestamp, from.toISOString())
         .lte(C.timestamp, until.toISOString())
-        .order(C.timestamp, { ascending: true })
-        .limit(2_500);
+        .order(C.timestamp, { ascending: false })
+        .limit(limit);
+
+    let result = await loadPage(1_500);
+    if (result.error && isTransientTopologyLoadError(result.error.message)) {
+        result = await loadPage(600);
+    }
+
+    const { data, error } = result;
 
     if (error) {
         if (isMissingRelationError(error.message)) {
             return [] as Record<string, unknown>[];
         }
+        if (isTransientTopologyLoadError(error.message)) {
+            console.error('[topology] transient telemetry load failure', error.message);
+            return [] as Record<string, unknown>[];
+        }
         throw new Error(`Failed to load topology telemetry events: ${error.message}`);
     }
 
-    return (data ?? []).map((row) => asRecord(row));
+    return (data ?? []).slice().reverse().map((row) => asRecord(row));
 }
 
 async function loadClinicalCases(
@@ -2304,6 +2335,16 @@ function isMissingRelationError(message: string | null | undefined) {
         && normalized.includes('does not exist');
 }
 
+function isTransientTopologyLoadError(message: string | null | undefined) {
+    if (!message) return false;
+    const normalized = message.toLowerCase();
+    return normalized.includes('fetch failed')
+        || normalized.includes('network')
+        || normalized.includes('timeout')
+        || normalized.includes('timed out')
+        || normalized.includes('socket');
+}
+
 function resolveUntil(until: string | null | undefined) {
     const date = until ? new Date(until) : new Date();
     return Number.isNaN(date.getTime()) ? new Date() : date;
@@ -2364,6 +2405,14 @@ function shouldSuppressDerivedErrorAlert(
     }
 
     return false;
+}
+
+function shouldRaiseHeartbeatAlert(node: TopologyNodeSnapshot) {
+    return node.kind !== 'clinic'
+        && node.kind !== 'data'
+        && node.kind !== 'simulation'
+        && node.kind !== 'registry'
+        && node.id !== 'control_plane';
 }
 
 function findLatestTimestamp(values: string[]) {

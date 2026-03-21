@@ -337,6 +337,60 @@ async function main() {
         'unrouted model families should not page as heartbeat outages',
     );
 
+    const datasetHeartbeatAlerts = buildTopologyAlertsForTest({
+        nodes: [
+            {
+                ...makeNode('dataset_hub', 'Clinical Data Hub', {
+                    status: 'offline',
+                    latency: null,
+                    throughput: 0,
+                    error_rate: null,
+                    drift_score: null,
+                    confidence_avg: null,
+                }),
+                kind: 'data',
+            },
+        ],
+        now: new Date().toISOString(),
+        diagnostics: readyState,
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(
+        datasetHeartbeatAlerts.some((alert) => alert.node_id === 'dataset_hub' && alert.category === 'heartbeat'),
+        false,
+        'dataset hub should not raise heartbeat offline alerts',
+    );
+
+    const staleSimulationAlerts = buildTopologyAlertsForTest({
+        nodes: [
+            {
+                ...makeNode('simulation_cluster', 'Adversarial Simulation', {
+                    status: 'critical',
+                    latency: 2_600,
+                    throughput: 1,
+                    error_rate: 0.34,
+                    drift_score: 0.41,
+                    confidence_avg: 0.31,
+                }),
+                kind: 'simulation',
+                state: {
+                    ...makeNode('simulation_cluster', 'Adversarial Simulation', {}).state,
+                    status: 'critical',
+                    latency: 2_600,
+                    throughput: 1,
+                    error_rate: 0.34,
+                    drift_score: 0.41,
+                    confidence_avg: 0.31,
+                    last_updated: new Date(Date.now() - 90_000).toISOString(),
+                },
+            },
+        ],
+        now: new Date().toISOString(),
+        diagnostics: readyState,
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(staleSimulationAlerts.length, 0, 'stale simulation alerts should auto-expire');
+
     const dedupedErrorAlerts = buildTopologyAlertsForTest({
         nodes: [
             makeNode('diagnostics_model', 'Diagnostics Inference', {

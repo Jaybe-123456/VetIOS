@@ -33,6 +33,13 @@ import type {
     SubgroupMetricRecord,
 } from '@/lib/experiments/types';
 
+const CONTROL_PLANE_SNAPSHOT_TTL_MS = 15 * 1000;
+const modelRegistryControlPlaneSnapshotCache = new Map<string, {
+    expiresAt: number;
+    snapshot: ModelRegistryControlPlaneSnapshot;
+}>();
+const modelRegistryControlPlaneInFlight = new Map<string, Promise<ModelRegistryControlPlaneSnapshot>>();
+
 export interface CreateExperimentRunInput {
     tenantId: string;
     runId: string;
@@ -913,121 +920,153 @@ export async function getModelRegistryControlPlaneSnapshot(
     store: ExperimentTrackingStore,
     tenantId: string,
 ): Promise<ModelRegistryControlPlaneSnapshot> {
-    await backfillSummaryExperimentRuns(store, tenantId);
+    const now = Date.now();
+    const cached = modelRegistryControlPlaneSnapshotCache.get(tenantId);
+    if (cached && cached.expiresAt > now) {
+        return cached.snapshot;
+    }
 
-    const [runs, registryRecords, promotionRequirements, routingPointers, registryAuditEvents] = await Promise.all([
-        store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
-        store.listModelRegistry(tenantId),
-        store.listPromotionRequirements(tenantId),
-        store.listRegistryRoutingPointers(tenantId),
-        store.listRegistryAuditLog(tenantId, 400),
-    ]);
+    const inFlight = modelRegistryControlPlaneInFlight.get(tenantId);
+    if (inFlight) {
+        return inFlight;
+    }
 
-    const runsById = new Map(runs.map((run) => [run.run_id, run]));
-    const requirementsByRunId = new Map(promotionRequirements.map((requirement) => [requirement.run_id, requirement]));
-    const routingByFamily = new Map(routingPointers.map((pointer) => [pointer.model_family, pointer]));
+    const promise = (async () => {
+        await backfillSummaryExperimentRuns(store, tenantId);
 
-    const entries = await Promise.all(
-        registryRecords.map(async (registry) => {
-            const run = runsById.get(registry.run_id) ?? null;
-            const [metrics, benchmarks, calibrationMetrics, adversarialMetrics, deploymentDecision] = await Promise.all([
-                store.listExperimentMetrics(tenantId, registry.run_id, 2_000),
-                store.listExperimentBenchmarks(tenantId, registry.run_id),
-                store.getCalibrationMetrics(tenantId, registry.run_id),
-                store.getAdversarialMetrics(tenantId, registry.run_id),
-                store.getDeploymentDecision(tenantId, registry.run_id),
-            ]);
-            const latestMetric = metrics.at(-1) ?? null;
-            const requirements = requirementsByRunId.get(registry.run_id) ?? null;
-            const promotionGating = run == null
-                ? {
-                    can_promote: false,
-                    promotion_allowed: false,
-                    missing_requirements: ['Experiment run metadata is unavailable for this registry record.'],
-                    blockers: ['Experiment run metadata is unavailable for this registry record.'],
-                    gates: {
-                        calibration: 'pending',
-                        adversarial: 'pending',
-                        safety: 'pending',
-                        benchmark: resolveGateStatus(requirements?.benchmark_pass ?? null),
-                        manual_approval: resolveGateStatus(requirements?.manual_approval ?? null),
-                    },
-                    tooltip: 'Experiment run metadata is unavailable for this registry record.',
-                } satisfies ModelRegistryControlPlaneSnapshot['families'][number]['entries'][number]['promotion_gating']
-                : evaluatePromotionReadiness(
-                    run,
-                    'linked',
-                    calibrationMetrics,
-                    adversarialMetrics,
-                    latestMetric,
+        const [runs, registryRecords, promotionRequirements, routingPointers, registryAuditEvents] = await Promise.all([
+            store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
+            store.listModelRegistry(tenantId),
+            store.listPromotionRequirements(tenantId),
+            store.listRegistryRoutingPointers(tenantId),
+            store.listRegistryAuditLog(tenantId, 400),
+        ]);
+
+        const runsById = new Map(runs.map((run) => [run.run_id, run]));
+        const requirementsByRunId = new Map(promotionRequirements.map((requirement) => [requirement.run_id, requirement]));
+        const routingByFamily = new Map(routingPointers.map((pointer) => [pointer.model_family, pointer]));
+
+        const entries = await Promise.all(
+            registryRecords.map(async (registry) => {
+                const run = runsById.get(registry.run_id) ?? null;
+                const [metrics, benchmarks, calibrationMetrics, adversarialMetrics, deploymentDecision] = await Promise.all([
+                    store.listExperimentMetrics(tenantId, registry.run_id, 2_000),
+                    store.listExperimentBenchmarks(tenantId, registry.run_id),
+                    store.getCalibrationMetrics(tenantId, registry.run_id),
+                    store.getAdversarialMetrics(tenantId, registry.run_id),
+                    store.getDeploymentDecision(tenantId, registry.run_id),
+                ]);
+                const latestMetric = metrics.at(-1) ?? null;
+                const requirements = requirementsByRunId.get(registry.run_id) ?? null;
+                const promotionGating = run == null
+                    ? {
+                        can_promote: false,
+                        promotion_allowed: false,
+                        missing_requirements: ['Experiment run metadata is unavailable for this registry record.'],
+                        blockers: ['Experiment run metadata is unavailable for this registry record.'],
+                        gates: {
+                            calibration: 'pending',
+                            adversarial: 'pending',
+                            safety: 'pending',
+                            benchmark: resolveGateStatus(requirements?.benchmark_pass ?? null),
+                            manual_approval: resolveGateStatus(requirements?.manual_approval ?? null),
+                        },
+                        tooltip: 'Experiment run metadata is unavailable for this registry record.',
+                    } satisfies ModelRegistryControlPlaneSnapshot['families'][number]['entries'][number]['promotion_gating']
+                    : evaluatePromotionReadiness(
+                        run,
+                        'linked',
+                        calibrationMetrics,
+                        adversarialMetrics,
+                        latestMetric,
+                        requirements,
+                    );
+                const decisionPanel = buildRegistryDecisionPanel(
+                    promotionGating,
                     requirements,
+                    deploymentDecision,
                 );
-            const decisionPanel = buildRegistryDecisionPanel(
-                promotionGating,
-                requirements,
-                deploymentDecision,
-            );
-            const rollbackHistory = registryAuditEvents
-                .filter((event) => event.event_type === 'rolled_back' && event.registry_id === registry.registry_id)
-                .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
-            const latestRegistryEvents = registryAuditEvents
-                .filter((event) => event.registry_id === registry.registry_id)
-                .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
-                .slice(0, 8);
-            const lastStableModel = findLastStableModel(registry, registryRecords);
-            const activeRoute = routingByFamily.get(registry.model_family);
+                const rollbackHistory = registryAuditEvents
+                    .filter((event) => event.event_type === 'rolled_back' && event.registry_id === registry.registry_id)
+                    .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+                const latestRegistryEvents = registryAuditEvents
+                    .filter((event) => event.registry_id === registry.registry_id)
+                    .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+                    .slice(0, 8);
+                const lastStableModel = findLastStableModel(registry, registryRecords);
+                const activeRoute = routingByFamily.get(registry.model_family);
+
+                return {
+                    registry,
+                    run,
+                    promotion_requirements: requirements,
+                    decision_panel: decisionPanel,
+                    promotion_gating: promotionGating,
+                    clinical_scorecard: registry.clinical_metrics,
+                    lineage: registry.lineage,
+                    rollback_history: rollbackHistory,
+                    latest_registry_events: latestRegistryEvents,
+                    is_active_route: activeRoute?.active_registry_id === registry.registry_id,
+                    last_stable_model: lastStableModel,
+                };
+            }),
+        );
+
+        const families = MODEL_FAMILY_ORDER.map((modelFamily) => {
+            const groupEntries = entries
+                .filter((entry) => entry.registry.model_family === modelFamily)
+                .sort((left, right) => {
+                    const leftRank = rankRegistryEntry(left.registry);
+                    const rightRank = rankRegistryEntry(right.registry);
+                    if (leftRank !== rightRank) return leftRank - rightRank;
+                    return (right.registry.deployed_at ?? right.registry.updated_at).localeCompare(left.registry.deployed_at ?? left.registry.updated_at);
+                });
+            const activePointer = routingByFamily.get(modelFamily) ?? null;
+            const activeModel = activePointer?.active_registry_id
+                ? registryRecords.find((entry) => entry.registry_id === activePointer.active_registry_id) ?? null
+                : groupEntries.find((entry) => entry.registry.lifecycle_status === 'production' && entry.registry.registry_role === 'champion')?.registry ?? null;
+            const lastStableModel = activeModel != null
+                ? findLastStableModel(activeModel, registryRecords)
+                : groupEntries.find((entry) => entry.registry.registry_role === 'rollback_target')?.registry ?? null;
 
             return {
-                registry,
-                run,
-                promotion_requirements: requirements,
-                decision_panel: decisionPanel,
-                promotion_gating: promotionGating,
-                clinical_scorecard: registry.clinical_metrics,
-                lineage: registry.lineage,
-                rollback_history: rollbackHistory,
-                latest_registry_events: latestRegistryEvents,
-                is_active_route: activeRoute?.active_registry_id === registry.registry_id,
+                model_family: modelFamily,
+                active_registry_id: activePointer?.active_registry_id ?? activeModel?.registry_id ?? null,
+                active_model: activeModel,
                 last_stable_model: lastStableModel,
+                entries: groupEntries,
             };
-        }),
-    );
+        });
 
-    const families = MODEL_FAMILY_ORDER.map((modelFamily) => {
-        const groupEntries = entries
-            .filter((entry) => entry.registry.model_family === modelFamily)
-            .sort((left, right) => {
-                const leftRank = rankRegistryEntry(left.registry);
-                const rightRank = rankRegistryEntry(right.registry);
-                if (leftRank !== rightRank) return leftRank - rightRank;
-                return (right.registry.deployed_at ?? right.registry.updated_at).localeCompare(left.registry.deployed_at ?? left.registry.updated_at);
-            });
-        const activePointer = routingByFamily.get(modelFamily) ?? null;
-        const activeModel = activePointer?.active_registry_id
-            ? registryRecords.find((entry) => entry.registry_id === activePointer.active_registry_id) ?? null
-            : groupEntries.find((entry) => entry.registry.lifecycle_status === 'production' && entry.registry.registry_role === 'champion')?.registry ?? null;
-        const lastStableModel = activeModel != null
-            ? findLastStableModel(activeModel, registryRecords)
-            : groupEntries.find((entry) => entry.registry.registry_role === 'rollback_target')?.registry ?? null;
+        const snapshot = {
+            tenant_id: tenantId,
+            families,
+            routing_pointers: routingPointers,
+            audit_history: registryAuditEvents
+                .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+                .slice(0, 50),
+            refreshed_at: new Date().toISOString(),
+        } satisfies ModelRegistryControlPlaneSnapshot;
 
-        return {
-            model_family: modelFamily,
-            active_registry_id: activePointer?.active_registry_id ?? activeModel?.registry_id ?? null,
-            active_model: activeModel,
-            last_stable_model: lastStableModel,
-            entries: groupEntries,
-        };
-    });
+        modelRegistryControlPlaneSnapshotCache.set(tenantId, {
+            snapshot,
+            expiresAt: Date.now() + CONTROL_PLANE_SNAPSHOT_TTL_MS,
+        });
 
-    return {
-        tenant_id: tenantId,
-        families,
-        routing_pointers: routingPointers,
-        audit_history: registryAuditEvents
-            .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
-            .slice(0, 50),
-        refreshed_at: new Date().toISOString(),
-    };
+        return snapshot;
+    })()
+        .catch((error) => {
+            if (cached?.snapshot) {
+                return cached.snapshot;
+            }
+            throw error;
+        })
+        .finally(() => {
+            modelRegistryControlPlaneInFlight.delete(tenantId);
+        });
+
+    modelRegistryControlPlaneInFlight.set(tenantId, promise);
+    return promise;
 }
 
 export function buildExperimentMetricSeries(
