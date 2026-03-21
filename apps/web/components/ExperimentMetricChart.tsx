@@ -71,7 +71,24 @@ export function ExperimentMetricChart({
                                 }}
                                 formatter={(value: unknown) => typeof value === 'number' ? formatTooltipValue(value, metricKey) : String(value ?? '')}
                             />
-                            <Legend wrapperStyle={{ fontFamily: 'monospace', fontSize: '10px' }} />
+                            <Legend
+                                verticalAlign="bottom"
+                                align="left"
+                                wrapperStyle={{ fontFamily: 'monospace', fontSize: '10px', paddingTop: '12px' }}
+                                content={({ payload }) => (
+                                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-2 pb-1 pt-2 text-[10px] uppercase tracking-[0.12em] text-muted">
+                                        {(payload ?? []).map((entry) => (
+                                            <div key={String(entry.value)} className="flex max-w-full items-center gap-2">
+                                                <span
+                                                    className="h-2.5 w-2.5 shrink-0 border border-grid"
+                                                    style={{ backgroundColor: String(entry.color ?? '#00ff41') }}
+                                                />
+                                                <span className="break-all">{String(entry.value ?? '')}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            />
                             {series.map((item) => (
                                 <Line
                                     key={`${item.runId}:${String(metricKey)}`}

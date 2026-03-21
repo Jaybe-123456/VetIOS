@@ -279,6 +279,17 @@ function RunDetail({
         detail.model_registry?.registry_role === 'champion' &&
         (detail.model_registry.rollback_target != null || detail.last_stable_model != null);
     const promotionTooltip = detail.promotion_gating.tooltip;
+    const isLiveProduction = detail.model_registry?.lifecycle_status === 'production' &&
+        detail.model_registry?.registry_role === 'champion';
+    const governanceNotes = dedupeText([
+        !isLiveProduction && !detail.promotion_gating.can_promote ? detail.promotion_gating.tooltip : null,
+        detail.deployment_decision?.reason ?? null,
+        ...detail.decision_panel.reasons,
+    ]);
+    const operationalWatchlist = dedupeText([
+        isLiveProduction && detail.adversarial_metrics?.adversarial_pass === false ? 'Adversarial gate has not passed.' : null,
+        isLiveProduction && detail.safety_coverage !== 'full' ? 'Clinical safety evaluation is still pending.' : null,
+    ]);
     const gradientSeries = useMemo(() => [{
         runId: detail.run.run_id,
         label: detail.run.run_id,
@@ -407,19 +418,20 @@ function RunDetail({
                     </div>
                     {registryMessage ? <div className="mt-3 font-mono text-xs text-accent">{registryMessage}</div> : null}
                     {registryError ? <div className="mt-3 font-mono text-xs text-danger">{registryError}</div> : null}
-                    {!detail.promotion_gating.can_promote ? (
+                    {operationalWatchlist.length > 0 ? (
                         <div className="mt-3 border border-grid bg-black/20 p-3 font-mono text-xs text-muted">
-                            {detail.promotion_gating.tooltip}
+                            Operational watchlist: {operationalWatchlist.join(' ')}
                         </div>
                     ) : null}
-                    <div className="mt-4 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
-                        {detail.deployment_decision?.reason ?? 'Deployment decision will populate once calibration, adversarial, and clinical safety gates have all been evaluated.'}
-                    </div>
-                    {detail.decision_panel.reasons.length > 0 ? (
-                        <div className="mt-3 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
-                            {detail.decision_panel.reasons.join(' ')}
+                    {governanceNotes.length > 0 ? governanceNotes.map((note, index) => (
+                        <div key={`${note}:${index}`} className={`${index === 0 ? 'mt-4' : 'mt-3'} border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85`}>
+                            {note}
                         </div>
-                    ) : null}
+                    )) : (
+                        <div className="mt-4 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
+                            Deployment decision will populate once calibration, adversarial, and clinical safety gates have all been evaluated.
+                        </div>
+                    )}
                 </ConsoleInset>
             </div>
 
@@ -812,6 +824,14 @@ function ContinuousLearningEvidencePanel({ detail }: { detail: ExperimentRunDeta
         detail.benchmarks.length === 0 ? 'benchmark evidence missing' : null,
         detail.audit_history.length === 0 ? 'audit trail missing' : null,
     ].filter(Boolean) as string[];
+    const clinicalGradeGaps = [
+        detail.safety_coverage !== 'full' ? `clinical safety coverage is ${detail.safety_coverage}` : null,
+        detail.calibration_metrics?.calibration_pass === false ? 'calibration gate failed' : null,
+        detail.adversarial_metrics?.adversarial_pass === false ? 'adversarial gate failed' : null,
+        detail.promotion_requirements?.benchmark_pass === false ? 'benchmark gate failed' : null,
+        detail.promotion_requirements?.manual_approval === false ? 'manual approval denied' : null,
+        detail.deployment_decision?.decision === 'rejected' ? 'deployment decision is rejected' : null,
+    ].filter(Boolean) as string[];
 
     return (
         <ConsoleInset title="Continuous Learning Evidence">
@@ -821,9 +841,11 @@ function ContinuousLearningEvidencePanel({ detail }: { detail: ExperimentRunDeta
                 ))}
             </div>
             <div className="mt-4 border border-grid bg-black/20 p-3 font-mono text-xs text-foreground/85">
-                {accountabilityGaps.length === 0
-                    ? 'Model iterations are linked to telemetry, governance evidence, lineage, and audit history. This run is fully convertible into structured accountability evidence.'
-                    : `Accountability gaps still present: ${accountabilityGaps.join('; ')}.`}
+                {accountabilityGaps.length > 0
+                    ? `Structured evidence is still incomplete: ${accountabilityGaps.join('; ')}.`
+                    : clinicalGradeGaps.length > 0
+                        ? `Structured accountability evidence is available, but clinical-grade readiness is still limited: ${clinicalGradeGaps.join('; ')}.`
+                        : 'Model iterations are linked to telemetry, governance evidence, lineage, and audit history, and the run is clinically ready for governance review.'}
             </div>
         </ConsoleInset>
     );
@@ -1172,6 +1194,10 @@ function isActiveRun(run: ExperimentRunRecord) {
 
 function isHeartbeatDerivedReason(statusReason: string | null | undefined) {
     return statusReason === 'heartbeat_stale' || statusReason === 'heartbeat_interrupted';
+}
+
+function dedupeText(values: Array<string | null | undefined>) {
+    return [...new Set(values.map((value) => value?.trim()).filter(Boolean))] as string[];
 }
 
 function isGovernanceReviewState(status: ExperimentRunRecord['status']) {
