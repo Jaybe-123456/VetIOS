@@ -213,7 +213,9 @@ function makeNode(overrides: Partial<TopologyNodeSnapshot> = {}): TopologyNodeSn
         connected_node_ids: overrides.connected_node_ids ?? ['clinic_ingest'],
         recent_errors: overrides.recent_errors ?? [],
         recommendations: overrides.recommendations ?? ['Monitor calibration'],
-        metadata: overrides.metadata ?? {},
+        metadata: overrides.metadata ?? {
+            observability_state: 'LIVE',
+        },
     };
 }
 
@@ -414,6 +416,51 @@ async function main() {
     const accuracyCandidate = candidates.find((candidate) => candidate.trigger_event === 'accuracy_drop');
     assert.ok(accuracyCandidate, 'expected accuracy-drop candidate');
     assert.equal(accuracyCandidate?.severity, 'critical');
+
+    const lowSampleCandidates = buildDecisionCandidates({
+        topologySnapshot: incidentSnapshot,
+        registrySnapshot,
+        config: makeConfig(),
+        evaluationRows: [
+            { model_version: 'diag_v2', prediction_correct: false },
+            { model_version: 'diag_v2', prediction_correct: false },
+        ],
+    });
+    assert.equal(
+        lowSampleCandidates.some((candidate) => candidate.trigger_event === 'accuracy_drop'),
+        false,
+        'accuracy-drop should not fire on thin evaluation samples',
+    );
+
+    const noDataAccuracyCandidates = buildDecisionCandidates({
+        topologySnapshot: {
+            ...incidentSnapshot,
+            nodes: incidentSnapshot.nodes.map((node) =>
+                node.id === 'diagnostics_model'
+                    ? {
+                        ...node,
+                        metadata: {
+                            ...node.metadata,
+                            observability_state: 'NO_DATA',
+                        },
+                    }
+                    : node,
+            ),
+        },
+        registrySnapshot,
+        config: makeConfig(),
+        evaluationRows: [
+            { model_version: 'diag_v2', prediction_correct: false },
+            { model_version: 'diag_v2', prediction_correct: false },
+            { model_version: 'diag_v2', prediction_correct: false },
+            { model_version: 'diag_v2', prediction_correct: true },
+        ],
+    });
+    assert.equal(
+        noDataAccuracyCandidates.some((candidate) => candidate.trigger_event === 'accuracy_drop'),
+        false,
+        'accuracy-drop should not fire when the family has no live observability signal',
+    );
 
     const disconnectedCandidates = buildDecisionCandidates({
         topologySnapshot: {

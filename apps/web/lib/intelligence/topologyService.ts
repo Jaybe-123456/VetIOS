@@ -165,6 +165,7 @@ const HEARTBEAT_STALE_MS = 60 * 1000;
 const SIMULATION_OVERRIDE_TTL_MS = 30 * 1000;
 const MIN_EVALUATION_EVENTS_FOR_DRIFT = 3;
 const MIN_EVALUATION_EVENTS_FOR_ERROR_RATE = 3;
+const MIN_INFERENCE_EVENTS_FOR_ERROR_RATE = 3;
 
 const NODE_POSITIONS: Record<NodeId, { x: number; y: number }> = {
     control_plane: { x: 560, y: 40 },
@@ -480,22 +481,26 @@ function buildNodes(input: {
         const nodeId = FAMILY_TO_NODE[familyContext.family];
         const governance = buildGovernanceState(familyContext.group);
         const hasActiveRoute = familyContext.group.active_model != null;
-        const liveInferenceCount = familyContext.inference_events.length;
+        const recentInferenceEvents = familyContext.inference_events.filter((event) => !isStale(event.timestamp, input.until));
+        const liveInferenceCount = recentInferenceEvents.length;
         const observabilityState = liveInferenceCount > 0
             ? 'LIVE'
             : hasActiveRoute
                 ? 'NO_DATA'
                 : 'UNROUTED';
-        const latencyValues = familyContext.inference_events
+        const latencyValues = recentInferenceEvents
             .map((event) => event.metrics.latency_ms)
             .filter((value): value is number => value != null && value <= 5_000);
-        const confidenceValues = familyContext.inference_events
+        const confidenceValues = recentInferenceEvents
             .map((event) => event.metrics.confidence)
             .filter((value): value is number => value != null);
-        const errorRate = calculateInferenceErrorRate(familyContext.inference_events, familyContext.evaluations);
+        const recentEvaluations = familyContext.evaluations.filter((evaluation) => !isStale(evaluation.created_at, input.until));
+        const errorRate = calculateInferenceErrorRate(recentInferenceEvents, recentEvaluations);
         const drift = familyContext.evaluation_drift;
         const lastInferenceUpdate = findLatestTimestamp(familyContext.inference_events.map((event) => event.timestamp));
-        const lastUpdated = lastInferenceUpdate
+        const lastLiveInferenceUpdate = findLatestTimestamp(recentInferenceEvents.map((event) => event.timestamp));
+        const lastUpdated = lastLiveInferenceUpdate
+            ?? lastInferenceUpdate
             ?? familyContext.group.active_model?.updated_at
             ?? familyContext.group.entries[0]?.registry.updated_at
             ?? null;
@@ -523,7 +528,7 @@ function buildNodes(input: {
                         telemetryStreamConnected: input.diagnostics.telemetry_stream_connected,
                     }),
                 latency: percentile(latencyValues, 95),
-                throughput: roundNumber(familyContext.inference_events.length / windowMinutes, 2),
+                throughput: roundNumber(recentInferenceEvents.length / windowMinutes, 2),
                 error_rate: errorRate,
                 drift_score: drift,
                 confidence_avg: mean(confidenceValues),
@@ -537,7 +542,8 @@ function buildNodes(input: {
                 last_stable_model_version: familyContext.group.last_stable_model?.model_version ?? null,
                 drift_state: familyContext.drift_state,
                 observability_state: observabilityState,
-                last_live_telemetry_at: lastInferenceUpdate,
+                last_live_telemetry_at: lastLiveInferenceUpdate,
+                last_workload_event_at: lastInferenceUpdate,
                 evaluation_count: familyContext.evaluations.length,
                 routed_model_distribution: familyContext.routed_model_distribution,
                 routing_shift_count: familyContext.routing_shift_count,
@@ -575,15 +581,23 @@ function buildNodes(input: {
     const outcomeNode = createNode({
         id: 'outcome_feedback',
         kind: 'outcome',
-        state: applyOverride({
-            status: totalOutcomeEvents.length > 0
+        state: applyOverride((() => {
+            const recentOutcomeEvents = totalOutcomeEvents.filter((event) => !isStale(event.timestamp, input.until));
+            const recentEvaluationEvents = totalEvaluationEvents.filter((event) => !isStale(event.created_at, input.until));
+            const recentAccuracy = recentEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_ERROR_RATE
+                ? ratio(recentEvaluationEvents.filter((event) => event.prediction_correct === true).length, recentEvaluationEvents.length)
+                : null;
+            const lastOutcomeUpdate = findLatestTimestamp(totalOutcomeEvents.map((event) => event.timestamp));
+            const lastRecentOutcomeUpdate = findLatestTimestamp(recentOutcomeEvents.map((event) => event.timestamp));
+            return {
+                status: recentOutcomeEvents.length > 0
                 ? resolveNodeStatus({
                     hasData: true,
-                    lastUpdated: findLatestTimestamp(totalOutcomeEvents.map((event) => event.timestamp)),
-                    latency: outcomeLoopLatency(totalInferenceEvents, totalOutcomeEvents),
-                    errorRate: globalAccuracy != null ? 1 - globalAccuracy : null,
+                    lastUpdated: lastRecentOutcomeUpdate,
+                    latency: outcomeLoopLatency(totalInferenceEvents.filter((event) => !isStale(event.timestamp, input.until)), recentOutcomeEvents),
+                    errorRate: recentAccuracy != null ? 1 - recentAccuracy : null,
                     drift: globalDrift,
-                    confidence: globalAccuracy,
+                    confidence: recentAccuracy,
                     governanceFailure: false,
                     governancePending: false,
                     now: input.until,
@@ -591,19 +605,20 @@ function buildNodes(input: {
                 : input.diagnostics.telemetry_stream_connected
                     ? 'healthy'
                     : 'degraded',
-            latency: outcomeLoopLatency(totalInferenceEvents, totalOutcomeEvents),
-            throughput: roundNumber(totalOutcomeEvents.length / windowMinutes, 2),
-            error_rate: globalAccuracy != null ? 1 - globalAccuracy : null,
-            drift_score: globalDrift,
-            confidence_avg: globalAccuracy,
-            last_updated: findLatestTimestamp(totalOutcomeEvents.map((event) => event.timestamp)),
-        }, input.nodeOverrides.get('outcome_feedback'), input.until),
+                latency: outcomeLoopLatency(totalInferenceEvents.filter((event) => !isStale(event.timestamp, input.until)), recentOutcomeEvents),
+                throughput: roundNumber(recentOutcomeEvents.length / windowMinutes, 2),
+                error_rate: recentAccuracy != null ? 1 - recentAccuracy : null,
+                drift_score: recentEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? globalDrift : null,
+                confidence_avg: recentAccuracy,
+                last_updated: lastRecentOutcomeUpdate ?? lastOutcomeUpdate,
+            };
+        })(), input.nodeOverrides.get('outcome_feedback'), input.until),
         governance: null,
         metadata: {
             linked_outcomes: totalEvaluationEvents.length,
             raw_outcomes: totalOutcomeEvents.length,
             drift_state: totalEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
-            observability_state: totalOutcomeEvents.length > 0 ? 'LIVE' : 'NO_DATA',
+            observability_state: totalOutcomeEvents.some((event) => !isStale(event.timestamp, input.until)) ? 'LIVE' : 'NO_DATA',
         },
     });
 
@@ -961,7 +976,10 @@ function buildAlerts(
         });
     }
 
-    if (diagnostics.control_plane_state === 'WAITING_FOR_EVALUATION_EVENTS') {
+    const hasFreshOutcomeSignal = diagnostics.latest_outcome_timestamp != null && !isStale(diagnostics.latest_outcome_timestamp, now);
+    const hasFreshEvaluationSignal = diagnostics.latest_evaluation_timestamp != null && !isStale(diagnostics.latest_evaluation_timestamp, now);
+
+    if (diagnostics.control_plane_state === 'WAITING_FOR_EVALUATION_EVENTS' && hasFreshOutcomeSignal) {
         alerts.push({
             id: 'alert_waiting_for_evaluations',
             node_id: 'outcome_feedback',
@@ -973,7 +991,7 @@ function buildAlerts(
         });
     }
 
-    if (diagnostics.control_plane_state === 'INSUFFICIENT_OUTCOMES_FOR_DRIFT') {
+    if (diagnostics.control_plane_state === 'INSUFFICIENT_OUTCOMES_FOR_DRIFT' && (hasFreshOutcomeSignal || hasFreshEvaluationSignal)) {
         alerts.push({
             id: 'alert_insufficient_outcomes_for_drift',
             node_id: 'outcome_feedback',
@@ -1563,8 +1581,9 @@ function calculateInferenceErrorRate(
     evaluations: Array<{ prediction_correct: boolean | null }>,
 ) {
     if (inferenceEvents.length === 0) return null;
+    const sufficientInferenceSample = inferenceEvents.length >= MIN_INFERENCE_EVENTS_FOR_ERROR_RATE;
     const anomalyCount = inferenceEvents.filter((event) => (event.metrics.latency_ms ?? 0) > 5_000).length;
-    const anomalyRate = anomalyCount === 0
+    const anomalyRate = !sufficientInferenceSample || anomalyCount === 0
         ? null
         : roundNumber(anomalyCount / inferenceEvents.length, 4);
     const usableEvaluations = evaluations.filter((event) => event.prediction_correct != null);
@@ -1576,6 +1595,8 @@ function calculateInferenceErrorRate(
     const correctnessErrorRate = roundNumber(incorrectCount / usableEvaluations.length, 4);
     return maxValue([anomalyRate, correctnessErrorRate]);
 }
+
+export const calculateInferenceErrorRateForTest = calculateInferenceErrorRate;
 
 function computeEvaluationDrift(
     evaluations: Array<{ prediction: string | null; ground_truth: string | null }>,

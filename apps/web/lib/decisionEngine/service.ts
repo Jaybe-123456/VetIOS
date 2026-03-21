@@ -54,6 +54,7 @@ const CRITICAL_DRIFT_AUTO_THRESHOLD = 0.5;
 const CRITICAL_RECALL_AUTO_ROLLBACK_THRESHOLD = 0.7;
 const ACCURACY_DROP_THRESHOLD = 0.78;
 const SAFE_MODE_ABSTAIN_FLOOR = 0.85;
+const MIN_EVALUATIONS_FOR_ACCURACY_DECISION = 3;
 
 const FAMILY_TO_NODE: Record<ModelFamily, string> = {
     diagnostics: 'diagnostics_model',
@@ -313,6 +314,8 @@ export function buildDecisionCandidates(input: {
         const lastStable = family.last_stable_model;
         const fallbackReady = active != null && lastStable != null && lastStable.run_id !== active.run_id;
         const criticalRecall = active?.clinical_metrics.critical_recall ?? null;
+        const evaluationCount = countFamilyEvaluations(input.registrySnapshot, input.evaluationRows, family.model_family);
+        const observabilityState = textOrNull(asRecord(node.metadata).observability_state);
 
         if (node.state.drift_score != null && node.state.drift_score > input.config.drift_threshold) {
             candidates.push(buildDriftCandidate(node, family, input.config, fallbackReady, criticalRecall));
@@ -326,8 +329,13 @@ export function buildDecisionCandidates(input: {
             candidates.push(buildConfidenceCandidate(node, family, input.config));
         }
 
-        if (accuracy != null && accuracy < ACCURACY_DROP_THRESHOLD) {
-            candidates.push(buildAccuracyCandidate(node, family, accuracy, fallbackReady, input.registrySnapshot, input.evaluationRows));
+        if (
+            accuracy != null
+            && accuracy < ACCURACY_DROP_THRESHOLD
+            && evaluationCount >= MIN_EVALUATIONS_FOR_ACCURACY_DECISION
+            && observabilityState === 'LIVE'
+        ) {
+            candidates.push(buildAccuracyCandidate(node, family, accuracy, fallbackReady, evaluationCount));
         }
     }
 
@@ -1363,8 +1371,7 @@ function buildAccuracyCandidate(
     family: ModelRegistryControlPlaneSnapshot['families'][number],
     accuracy: number,
     fallbackReady: boolean,
-    registrySnapshot: ModelRegistryControlPlaneSnapshot,
-    evaluationRows: EvaluationMetricRow[],
+    evaluationCount: number,
 ): DecisionEngineCandidate {
     const actions: DecisionActionPlan[] = [
         { kind: 'block_model_promotion', label: 'block_model_promotion()' },
@@ -1393,7 +1400,7 @@ function buildAccuracyCandidate(
         metadata: {
             node_label: node.label,
             accuracy,
-            evaluation_count: countFamilyEvaluations(registrySnapshot, evaluationRows, family.model_family),
+            evaluation_count: evaluationCount,
         },
     };
 }

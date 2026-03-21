@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { createEvaluationEvent } from '../../apps/web/lib/evaluation/evaluationEngine.ts';
 import {
     buildTopologyAlertsForTest,
+    calculateInferenceErrorRateForTest,
     classifyTopologyControlPlaneState,
     computeTopologyDriftSignal,
     computeTopologyNetworkHealth,
@@ -351,6 +352,34 @@ async function main() {
     assert.equal(driftInsufficient.drift_state, 'INSUFFICIENT_DATA');
     assert.equal(driftInsufficient.drift_score, null);
 
+    const thinSampleErrorRate = calculateInferenceErrorRateForTest(
+        [
+            {
+                ...inferenceTelemetry,
+                metrics: {
+                    latency_ms: 6_200,
+                    confidence: 0.51,
+                    prediction: 'Parvovirus',
+                    ground_truth: null,
+                    correct: null,
+                },
+            },
+            {
+                ...inferenceTelemetry,
+                event_id: telemetryInferenceEventId(randomUUID()),
+                metrics: {
+                    latency_ms: 6_400,
+                    confidence: 0.48,
+                    prediction: 'Pancreatitis',
+                    ground_truth: null,
+                    correct: null,
+                },
+            },
+        ],
+        [],
+    );
+    assert.equal(thinSampleErrorRate, null, 'thin anomaly samples should not trigger topology error-rate alarms');
+
     const noTelemetryState = classifyTopologyControlPlaneState({
         now: new Date().toISOString(),
         telemetry_event_timestamps: [],
@@ -525,6 +554,23 @@ async function main() {
         outcomeNoDataAlerts.some((alert) => alert.node_id === 'outcome_feedback' && alert.category === 'heartbeat'),
         false,
         'outcome feedback should not page as offline before any outcomes exist',
+    );
+
+    const staleOutcomeDriftAlerts = buildTopologyAlertsForTest({
+        nodes: [],
+        now: new Date().toISOString(),
+        diagnostics: {
+            ...readyState,
+            control_plane_state: 'INSUFFICIENT_OUTCOMES_FOR_DRIFT',
+            latest_outcome_timestamp: new Date(Date.now() - 90_000).toISOString(),
+            latest_evaluation_timestamp: new Date(Date.now() - 90_000).toISOString(),
+        },
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(
+        staleOutcomeDriftAlerts.some((alert) => alert.id === 'alert_insufficient_outcomes_for_drift'),
+        false,
+        'stale outcome windows should not raise insufficient-drift alerts',
     );
 
     const staleSimulationAlerts = buildTopologyAlertsForTest({
