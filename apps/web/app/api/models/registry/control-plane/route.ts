@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { resolveExperimentApiActor } from '@/lib/auth/internalApi';
 import {
     getModelRegistryControlPlaneSnapshot,
+    refreshModelRegistryControlPlaneSnapshot,
     RegistryControlPlaneError,
     verifyModelRegistryControlPlane,
 } from '@/lib/experiments/service';
@@ -13,7 +14,7 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 
 type RegistryControlPlaneAction =
     | {
-        action?: 'verify_control_plane';
+        action?: 'verify_control_plane' | 'refresh_registry';
     };
 
 export const runtime = 'nodejs';
@@ -72,7 +73,21 @@ export async function POST(req: Request) {
 
     try {
         const tenantId = actor?.tenantId ?? process.env.VETIOS_DEV_TENANT_ID ?? 'dev_tenant_001';
-        if ((body.data.action ?? 'verify_control_plane') !== 'verify_control_plane') {
+        const action = body.data.action ?? 'verify_control_plane';
+        if (action === 'refresh_registry') {
+            const snapshot = await refreshModelRegistryControlPlaneSnapshot(
+                createSupabaseExperimentTrackingStore(getSupabaseServer()),
+                tenantId,
+            );
+            const response = NextResponse.json({
+                snapshot,
+                request_id: requestId,
+            });
+            withRequestHeaders(response.headers, requestId, startTime);
+            return response;
+        }
+
+        if (action !== 'verify_control_plane') {
             throw new RegistryControlPlaneError('INVALID_ACTION', 'Unsupported registry control-plane action.', {
                 httpStatus: 400,
             });

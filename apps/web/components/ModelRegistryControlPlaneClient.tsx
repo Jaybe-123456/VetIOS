@@ -31,6 +31,7 @@ export function ModelRegistryControlPlaneClient({
     const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
     const [verification, setVerification] = useState<RegistryControlPlaneVerificationResult | null>(null);
     const [verificationBusy, setVerificationBusy] = useState(false);
+    const [refreshBusy, setRefreshBusy] = useState(false);
     const [pendingRunId, setPendingRunId] = useState<string | null>(null);
     const [isRefreshing, startRefreshTransition] = useTransition();
 
@@ -143,6 +144,43 @@ export function ModelRegistryControlPlaneClient({
         }
     };
 
+    const handleRefreshRegistry = async () => {
+        setRefreshBusy(true);
+        setMessage(null);
+        try {
+            const response = await fetch('/api/models/registry/control-plane', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    action: 'refresh_registry',
+                }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload?.snapshot) {
+                throw new Error(typeof payload?.error === 'string' ? payload.error : 'Registry refresh failed.');
+            }
+
+            setVerification(null);
+            setMessage({
+                tone: 'success',
+                text: 'Registry control plane refreshed from source.',
+            });
+            startRefreshTransition(() => {
+                router.refresh();
+            });
+        } catch (error) {
+            setMessage({
+                tone: 'error',
+                text: error instanceof Error ? error.message : 'Registry refresh failed.',
+            });
+        } finally {
+            setRefreshBusy(false);
+        }
+    };
+
     return (
         <Container className="max-w-[112rem]">
             <PageHeader
@@ -168,9 +206,9 @@ export function ModelRegistryControlPlaneClient({
             </div>
 
             <div className="mb-8 flex flex-wrap items-center gap-3">
-                <TerminalButton variant="secondary" onClick={() => router.refresh()}>
-                    <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                    Refresh Registry
+                <TerminalButton variant="secondary" onClick={() => void handleRefreshRegistry()} disabled={refreshBusy}>
+                    <RefreshCw className={`mr-2 h-3.5 w-3.5 ${(refreshBusy || isRefreshing) ? 'animate-spin' : ''}`} />
+                    {refreshBusy ? 'REFRESHING...' : 'Refresh Registry'}
                 </TerminalButton>
                 <TerminalButton variant="secondary" onClick={() => void handleVerifyControlPlane()} disabled={verificationBusy}>
                     <ShieldAlert className={`mr-2 h-3.5 w-3.5 ${verificationBusy ? 'animate-pulse' : ''}`} />

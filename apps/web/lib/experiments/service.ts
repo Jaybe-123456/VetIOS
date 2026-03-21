@@ -1290,6 +1290,14 @@ export async function getModelRegistryControlPlaneSnapshot(
     return promise;
 }
 
+export async function refreshModelRegistryControlPlaneSnapshot(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+): Promise<ModelRegistryControlPlaneSnapshot> {
+    invalidateModelRegistryControlPlaneSnapshot(tenantId);
+    return getModelRegistryControlPlaneSnapshot(store, tenantId);
+}
+
 export async function verifyModelRegistryControlPlane(
     store: ExperimentTrackingStore,
     tenantId: string,
