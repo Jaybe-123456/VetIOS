@@ -575,17 +575,21 @@ function buildNodes(input: {
         id: 'outcome_feedback',
         kind: 'outcome',
         state: applyOverride({
-            status: resolveNodeStatus({
-                hasData: totalOutcomeEvents.length > 0,
-                lastUpdated: findLatestTimestamp(totalOutcomeEvents.map((event) => event.timestamp)),
-                latency: outcomeLoopLatency(totalInferenceEvents, totalOutcomeEvents),
-                errorRate: globalAccuracy != null ? 1 - globalAccuracy : null,
-                drift: globalDrift,
-                confidence: globalAccuracy,
-                governanceFailure: false,
-                governancePending: false,
-                now: input.until,
-            }),
+            status: totalOutcomeEvents.length > 0
+                ? resolveNodeStatus({
+                    hasData: true,
+                    lastUpdated: findLatestTimestamp(totalOutcomeEvents.map((event) => event.timestamp)),
+                    latency: outcomeLoopLatency(totalInferenceEvents, totalOutcomeEvents),
+                    errorRate: globalAccuracy != null ? 1 - globalAccuracy : null,
+                    drift: globalDrift,
+                    confidence: globalAccuracy,
+                    governanceFailure: false,
+                    governancePending: false,
+                    now: input.until,
+                })
+                : input.diagnostics.telemetry_stream_connected
+                    ? 'healthy'
+                    : 'degraded',
             latency: outcomeLoopLatency(totalInferenceEvents, totalOutcomeEvents),
             throughput: roundNumber(totalOutcomeEvents.length / windowMinutes, 2),
             error_rate: globalAccuracy != null ? 1 - globalAccuracy : null,
@@ -598,6 +602,7 @@ function buildNodes(input: {
             linked_outcomes: totalEvaluationEvents.length,
             raw_outcomes: totalOutcomeEvents.length,
             drift_state: totalEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
+            observability_state: totalOutcomeEvents.length > 0 ? 'LIVE' : 'NO_DATA',
         },
     });
 
@@ -1024,7 +1029,7 @@ function buildAlerts(
             });
         }
 
-        if ((node.state.drift_score ?? 0) >= DRIFT_CRITICAL_THRESHOLD) {
+        if (node.kind !== 'registry' && (node.state.drift_score ?? 0) >= DRIFT_CRITICAL_THRESHOLD) {
             alerts.push({
                 id: `alert_drift_critical_${node.id}`,
                 node_id: node.id,
@@ -1034,7 +1039,7 @@ function buildAlerts(
                 message: `${node.label} drift is above the critical threshold.`,
                 timestamp: node.state.last_updated ?? now.toISOString(),
             });
-        } else if ((node.state.drift_score ?? 0) >= DRIFT_WARNING_THRESHOLD) {
+        } else if (node.kind !== 'registry' && (node.state.drift_score ?? 0) >= DRIFT_WARNING_THRESHOLD) {
             alerts.push({
                 id: `alert_drift_warning_${node.id}`,
                 node_id: node.id,
@@ -1046,7 +1051,7 @@ function buildAlerts(
             });
         }
 
-        if ((node.state.error_rate ?? 0) >= ERROR_CRITICAL_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
+        if (node.kind !== 'registry' && (node.state.error_rate ?? 0) >= ERROR_CRITICAL_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
             alerts.push({
                 id: `alert_error_critical_${node.id}`,
                 node_id: node.id,
@@ -1056,7 +1061,7 @@ function buildAlerts(
                 message: `${node.label} error rate is above the critical threshold.`,
                 timestamp: node.state.last_updated ?? now.toISOString(),
             });
-        } else if ((node.state.error_rate ?? 0) >= ERROR_WARNING_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
+        } else if (node.kind !== 'registry' && (node.state.error_rate ?? 0) >= ERROR_WARNING_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
             alerts.push({
                 id: `alert_error_warning_${node.id}`,
                 node_id: node.id,
@@ -1399,7 +1404,7 @@ function buildGovernanceState(group: ModelRegistryFamilyGroup): TopologyNodeGove
         entry.decision_panel.deployment_decision === 'rejected'
         && entry.registry.registry_id !== active?.registry_id,
     ).length;
-    const activeFailed = activeEntry?.decision_panel.deployment_decision === 'rejected'
+    const activeFailed = (activeEntry?.decision_panel.deployment_decision === 'rejected' && activeEntry.registry.lifecycle_status !== 'production')
         || active?.registry_role === 'at_risk';
     const activePending = activeEntry?.decision_panel.deployment_decision === 'hold';
     const pendingBlockers = [
@@ -1426,11 +1431,15 @@ function buildRegistryState(
     const activeIssueCount = controlPlane.families.filter((family) => {
         const active = family.active_model;
         const activeEntry = family.entries.find((entry) => entry.is_active_route || entry.registry.registry_id === active?.registry_id) ?? null;
-        return active?.registry_role === 'at_risk' || activeEntry?.decision_panel.deployment_decision === 'rejected';
+        return active?.registry_role === 'at_risk'
+            || (activeEntry?.decision_panel.deployment_decision === 'rejected' && activeEntry.registry.lifecycle_status !== 'production');
     }).length;
     const rejectedCandidateCount = controlPlane.families.flatMap((family) => family.entries).filter((entry) =>
         entry.decision_panel.deployment_decision === 'rejected' && !entry.is_active_route,
     ).length;
+    const activeDrift = controlPlane.families
+        .map((family) => family.active_model?.clinical_metrics.adversarial_degradation ?? null)
+        .filter((value): value is number => value != null);
     const latestAudit = controlPlane.audit_history[0]?.timestamp ?? controlPlane.refreshed_at;
 
     return {
@@ -1438,7 +1447,7 @@ function buildRegistryState(
         latency: Number((25 + pendingCount * 15 + activeIssueCount * 40 + rejectedCandidateCount * 5).toFixed(1)),
         throughput: Number((controlPlane.audit_history.length / 60).toFixed(2)),
         error_rate: ratio(activeIssueCount, Math.max(activeCount, 1)),
-        drift_score: maxValue(controlPlane.families.map((family) => family.entries[0]?.registry.clinical_metrics.adversarial_degradation ?? null)),
+        drift_score: maxValue(activeDrift),
         confidence_avg: mean(controlPlane.families.map((family) => family.active_model?.clinical_metrics.global_accuracy ?? null).filter((value): value is number => value != null)),
         last_updated: latestAudit ?? now.toISOString(),
     };
@@ -1890,7 +1899,8 @@ async function loadLatestSourceTimestamps(
     client: SupabaseClient,
     tenantId: string,
 ) {
-    const [latestInference, latestOutcome, latestEvaluation, latestSimulation] = await Promise.all([
+    const [latestTelemetry, latestInference, latestOutcome, latestEvaluation, latestSimulation] = await Promise.all([
+        fetchLatestTimestamp(client, TELEMETRY_EVENTS.TABLE, tenantId, TELEMETRY_EVENTS.COLUMNS.timestamp),
         fetchLatestOperationalInferenceTimestamp(client, tenantId),
         fetchLatestTimestamp(client, CLINICAL_OUTCOME_EVENTS.TABLE, tenantId, CLINICAL_OUTCOME_EVENTS.COLUMNS.outcome_timestamp),
         fetchLatestOperationalEvaluationTimestamp(client, tenantId),
@@ -1898,6 +1908,7 @@ async function loadLatestSourceTimestamps(
     ]);
 
     return {
+        latest_telemetry_timestamp: latestTelemetry.timestamp,
         latest_inference_timestamp: latestInference.timestamp,
         latest_outcome_timestamp: latestOutcome.timestamp,
         latest_evaluation_timestamp: latestEvaluation.timestamp,
@@ -1912,6 +1923,7 @@ function buildDiagnosticsState(input: {
     telemetryEvents: ControlGraphTelemetryEvent[];
     evaluations: ControlGraphEvaluationEvent[];
     latestSourceTimestamps: {
+        latest_telemetry_timestamp: string | null;
         latest_inference_timestamp: string | null;
         latest_outcome_timestamp: string | null;
         latest_evaluation_timestamp: string | null;
@@ -1922,7 +1934,8 @@ function buildDiagnosticsState(input: {
     evaluationTableExists: boolean;
     evaluationLoadError: string | null;
 }): TopologyDiagnosticsState {
-    const latestTelemetryTimestamp = findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp));
+    const latestTelemetryTimestamp = findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp))
+        ?? input.latestSourceTimestamps.latest_telemetry_timestamp;
     const workloadTelemetryEvents = input.telemetryEvents.filter((event) =>
         !isHeartbeatTelemetryEvent(event) && !isSyntheticTelemetryEvent(event),
     );
@@ -1952,8 +1965,10 @@ function buildDiagnosticsState(input: {
         controlPlaneState = 'MISSING_EVALUATION_EVENTS_TABLE';
     } else if (input.evaluationLoadError) {
         controlPlaneState = 'CONTROL_PLANE_INITIALIZING';
-    } else if (workloadTelemetryEvents.length === 0) {
+    } else if (workloadTelemetryEvents.length === 0 && latestTelemetryTimestamp == null) {
         controlPlaneState = 'NO_TELEMETRY_EVENTS';
+    } else if (workloadTelemetryEvents.length === 0) {
+        controlPlaneState = 'CONTROL_PLANE_INITIALIZING';
     } else if (!telemetryStreamConnected) {
         controlPlaneState = 'STREAM_DISCONNECTED';
     } else if (latestOutcomeTimestamp && evaluationCount === 0) {
@@ -2002,6 +2017,7 @@ export function classifyTopologyControlPlaneState(input: {
     telemetry_event_timestamps: string[];
     evaluation_event_count: number;
     evaluation_events_table_exists: boolean;
+    latest_telemetry_timestamp?: string | null;
     latest_inference_timestamp?: string | null;
     latest_outcome_timestamp?: string | null;
     latest_evaluation_timestamp?: string | null;
@@ -2010,25 +2026,52 @@ export function classifyTopologyControlPlaneState(input: {
 }) {
     return buildDiagnosticsState({
         until: resolveUntil(input.now),
-        telemetryEvents: input.telemetry_event_timestamps.map((timestamp, index) => ({
-            event_id: `evt_test_${index}`,
-            linked_event_id: null,
-            source_id: null,
-            source_table: null,
-            event_type: 'inference',
-            timestamp,
-            model_version: 'test',
-            run_id: 'test',
-            metrics: {
-                latency_ms: 200,
-                confidence: 0.82,
-                prediction: 'test',
-                ground_truth: null,
-                correct: null,
-            },
-            system: { cpu: null, gpu: null, memory: null },
-            metadata: {},
-        })),
+        telemetryEvents: [
+            ...input.telemetry_event_timestamps.map((timestamp, index) => ({
+                event_id: `evt_test_${index}`,
+                linked_event_id: null,
+                source_id: null,
+                source_table: null,
+                event_type: 'inference' as const,
+                timestamp,
+                model_version: 'test',
+                run_id: 'test',
+                metrics: {
+                    latency_ms: 200,
+                    confidence: 0.82,
+                    prediction: 'test',
+                    ground_truth: null,
+                    correct: null,
+                },
+                system: { cpu: null, gpu: null, memory: null },
+                metadata: {},
+            })),
+            ...(input.latest_telemetry_timestamp && input.telemetry_event_timestamps.length === 0
+                ? [{
+                    event_id: 'evt_test_heartbeat',
+                    linked_event_id: null,
+                    source_id: null,
+                    source_table: null,
+                    event_type: 'system' as const,
+                    timestamp: input.latest_telemetry_timestamp,
+                    model_version: 'test',
+                    run_id: 'test',
+                    metrics: {
+                        latency_ms: null,
+                        confidence: null,
+                        prediction: null,
+                        ground_truth: null,
+                        correct: null,
+                    },
+                    system: { cpu: null, gpu: null, memory: null },
+                    metadata: {
+                        action: 'heartbeat',
+                        source_module: 'test',
+                        target_node_id: 'telemetry_observer',
+                    },
+                }]
+                : []),
+        ],
         evaluations: Array.from({ length: input.evaluation_event_count }, (_, index) => ({
             id: `eval_${index}`,
             evaluation_event_id: `eval_${index}`,
@@ -2053,6 +2096,7 @@ export function classifyTopologyControlPlaneState(input: {
             created_at: input.latest_evaluation_timestamp ?? input.now,
         })),
         latestSourceTimestamps: {
+            latest_telemetry_timestamp: input.latest_telemetry_timestamp ?? null,
             latest_inference_timestamp: input.latest_inference_timestamp ?? null,
             latest_outcome_timestamp: input.latest_outcome_timestamp ?? null,
             latest_evaluation_timestamp: input.latest_evaluation_timestamp ?? null,

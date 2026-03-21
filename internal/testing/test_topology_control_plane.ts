@@ -230,6 +230,15 @@ async function main() {
     });
     assert.equal(noTelemetryState.control_plane_state, 'NO_TELEMETRY_EVENTS');
 
+    const heartbeatOnlyState = classifyTopologyControlPlaneState({
+        now: new Date().toISOString(),
+        telemetry_event_timestamps: [],
+        latest_telemetry_timestamp: new Date(Date.now() - 2_000).toISOString(),
+        evaluation_event_count: 0,
+        evaluation_events_table_exists: true,
+    });
+    assert.equal(heartbeatOnlyState.control_plane_state, 'CONTROL_PLANE_INITIALIZING');
+
     const readyState = classifyTopologyControlPlaneState({
         now: new Date().toISOString(),
         telemetry_event_timestamps: [
@@ -361,6 +370,34 @@ async function main() {
         'dataset hub should not raise heartbeat offline alerts',
     );
 
+    const outcomeNoDataAlerts = buildTopologyAlertsForTest({
+        nodes: [
+            {
+                ...makeNode('outcome_feedback', 'Outcome Feedback', {
+                    status: 'healthy',
+                    latency: null,
+                    throughput: 0,
+                    error_rate: null,
+                    drift_score: null,
+                    confidence_avg: null,
+                }),
+                kind: 'outcome',
+                metadata: {
+                    observability_state: 'NO_DATA',
+                    raw_outcomes: 0,
+                },
+            },
+        ],
+        now: new Date().toISOString(),
+        diagnostics: readyState,
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(
+        outcomeNoDataAlerts.some((alert) => alert.node_id === 'outcome_feedback' && alert.category === 'heartbeat'),
+        false,
+        'outcome feedback should not page as offline before any outcomes exist',
+    );
+
     const staleSimulationAlerts = buildTopologyAlertsForTest({
         nodes: [
             {
@@ -432,6 +469,30 @@ async function main() {
         dedupedErrorAlerts.filter((alert) => alert.category === 'error_rate').map((alert) => alert.node_id).join(','),
         'diagnostics_model',
         'aggregate nodes should not duplicate upstream error-rate alerts',
+    );
+
+    const registryOperationalAlerts = buildTopologyAlertsForTest({
+        nodes: [
+            {
+                ...makeNode('registry_control', 'Registry Governance', {
+                    status: 'degraded',
+                    latency: 140,
+                    throughput: 2,
+                    error_rate: 0.4,
+                    drift_score: 0.4,
+                    confidence_avg: 0.88,
+                }),
+                kind: 'registry',
+            },
+        ],
+        now: new Date().toISOString(),
+        diagnostics: readyState,
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(
+        registryOperationalAlerts.some((alert) => alert.node_id === 'registry_control' && (alert.category === 'error_rate' || alert.category === 'drift')),
+        false,
+        'registry governance should surface governance issues instead of runtime drift/error spikes',
     );
 
     const networkHealth = computeTopologyNetworkHealth(criticalNodes, readyState);
