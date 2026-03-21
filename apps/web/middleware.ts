@@ -1,74 +1,47 @@
 /**
- * Next.js Middleware: Auth Guard + Session Refresh
+ * Next.js Middleware: lightweight page auth gate.
  *
- * - Refreshes Supabase auth tokens on every request
- * - Redirects unauthenticated users to /login
- * - Allows public routes: /login, /signup, /auth/callback
+ * Keep middleware local-only. API routes still perform authoritative
+ * server-side auth checks, so page routing should not depend on a remote
+ * Supabase round-trip that can time out on the edge runtime.
  */
 
-import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback'];
 
+function hasSupabaseAuthCookie(request: NextRequest): boolean {
+    return request.cookies.getAll().some(({ name }) =>
+        name === 'supabase-auth-token'
+        || name.startsWith('supabase-auth-token.')
+        || (name.startsWith('sb-') && name.includes('-auth-token')),
+    );
+}
+
 export async function middleware(request: NextRequest) {
-    let supabaseResponse = NextResponse.next({ request });
+    const response = NextResponse.next({ request });
 
-    // ── DEV BYPASS: require explicit opt-in via env var ──
     if (process.env.VETIOS_DEV_BYPASS === 'true') {
-        return supabaseResponse;
+        return response;
     }
-
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-    if (!url || !anonKey) {
-        // If env vars are missing, let the request through (dev safety)
-        return supabaseResponse;
-    }
-
-    const supabase = createServerClient(url, anonKey, {
-        cookies: {
-            getAll() {
-                return request.cookies.getAll();
-            },
-            setAll(cookiesToSet) {
-                cookiesToSet.forEach(({ name, value }) =>
-                    request.cookies.set(name, value)
-                );
-                supabaseResponse = NextResponse.next({ request });
-                cookiesToSet.forEach(({ name, value, options }) =>
-                    supabaseResponse.cookies.set(name, value, options)
-                );
-            },
-        },
-    });
-
-    // Refresh session (important: do NOT use getSession — use getUser for security)
-    const { data: { user } } = await supabase.auth.getUser();
 
     const pathname = request.nextUrl.pathname;
+    const isPublicRoute = PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
+    const hasAuthCookie = hasSupabaseAuthCookie(request);
 
-    // Allow public routes without auth
-    const isPublicRoute = PUBLIC_ROUTES.some(route =>
-        pathname.startsWith(route)
-    );
-
-    if (!user && !isPublicRoute) {
-        // Redirect to login
+    if (!hasAuthCookie && !isPublicRoute) {
         const loginUrl = request.nextUrl.clone();
         loginUrl.pathname = '/login';
         return NextResponse.redirect(loginUrl);
     }
 
-    // If user is logged in and hitting /login or /signup, redirect to app
-    if (user && (pathname === '/login' || pathname === '/signup')) {
+    if (hasAuthCookie && (pathname === '/login' || pathname === '/signup')) {
         const appUrl = request.nextUrl.clone();
         appUrl.pathname = '/inference';
         return NextResponse.redirect(appUrl);
     }
 
-    return supabaseResponse;
+    return response;
 }
 
 export const config = {
