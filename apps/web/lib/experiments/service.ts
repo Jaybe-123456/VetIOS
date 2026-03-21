@@ -1149,6 +1149,7 @@ export async function getModelRegistryControlPlaneSnapshot(
             store.listRegistryAuditLog(tenantId, 400),
         ]);
 
+        const dedupedRegistryAuditEvents = dedupeRegistryAuditEvents(registryAuditEvents);
         const runsById = new Map(runs.map((run) => [run.run_id, run]));
         const requirementsByRunId = new Map(promotionRequirements.map((requirement) => [requirement.run_id, requirement]));
         const routingByFamily = new Map(routingPointers.map((pointer) => [pointer.model_family, pointer]));
@@ -1196,10 +1197,10 @@ export async function getModelRegistryControlPlaneSnapshot(
                     requirements,
                     deploymentDecision,
                 );
-                const rollbackHistory = registryAuditEvents
+                const rollbackHistory = dedupedRegistryAuditEvents
                     .filter((event) => event.event_type === 'rolled_back' && event.registry_id === registry.registry_id)
                     .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
-                const latestRegistryEvents = registryAuditEvents
+                const latestRegistryEvents = dedupedRegistryAuditEvents
                     .filter((event) => event.registry_id === registry.registry_id)
                     .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
                     .slice(0, 8);
@@ -1260,7 +1261,7 @@ export async function getModelRegistryControlPlaneSnapshot(
             tenant_id: tenantId,
             families,
             routing_pointers: routingPointers,
-            audit_history: registryAuditEvents
+            audit_history: dedupedRegistryAuditEvents
                 .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
                 .slice(0, 50),
             registry_health: consistencyIssues.some((issue) => issue.severity === 'critical') ? 'degraded' : 'healthy',
@@ -1986,6 +1987,7 @@ async function backfillExperimentGovernance(
     for (const run of runs) {
         await ensureGovernanceForRun(store, tenantId, run.run_id, run.created_by);
     }
+    await ensureRegistryRollbackTargets(store, tenantId);
 }
 
 async function ensureGovernanceForRun(
@@ -2176,7 +2178,7 @@ async function ensureModelRegistryRecord(
     const nextRole = mapRunToRegistryRole(run, existing?.role ?? null);
     const modelFamily = resolveModelFamilyForRun(run);
     const previousState = existing ? buildRegistryStateSnapshot(existing) : null;
-    const registry = await store.upsertModelRegistry({
+    const nextRegistryRecord: Omit<ModelRegistryRecord, 'created_at' | 'updated_at'> = {
         registry_id: existing?.registry_id ?? createRegistryId(run),
         tenant_id: run.tenant_id,
         run_id: run.run_id,
@@ -2200,7 +2202,10 @@ async function ensureModelRegistryRecord(
         status: nextStatus,
         role: nextRole,
         created_by: actor ?? existing?.created_by ?? run.created_by,
-    });
+    };
+    const registry = existing && isEquivalentRegistryRecord(existing, nextRegistryRecord)
+        ? existing
+        : await store.upsertModelRegistry(nextRegistryRecord);
 
     if (run.registry_id !== registry.registry_id ||
         run.registry_context.registry_role !== registry.role ||
@@ -2222,36 +2227,38 @@ async function ensureModelRegistryRecord(
         });
     }
 
-    await logExperimentAuditEvent(store, {
-        tenantId: run.tenant_id,
-        runId: run.run_id,
-        eventType: existing ? 'registry_synced' : 'registry_candidate_created',
-        actor: actor ?? run.created_by,
-        metadata: {
-            registry_id: registry.registry_id,
-            registry_status: registry.status,
-            registry_role: registry.role,
-            model_family: registry.model_family,
-            artifact_uri: registry.artifact_uri,
-        },
-        deterministicKey: `${run.run_id}:registry:${registry.status}:${registry.role}`,
-    });
-
-    await logRegistryAuditEvent(store, {
-        tenantId: run.tenant_id,
-        registryId: registry.registry_id,
-        runId: run.run_id,
-        eventType: existing ? 'registered' : 'registered',
-        actor: actor ?? run.created_by,
-        metadata: buildRegistryAuditMetadata({
-            eventType: 'register',
+    if (!existing || !isEquivalentRegistryRecord(existing, nextRegistryRecord)) {
+        await logExperimentAuditEvent(store, {
+            tenantId: run.tenant_id,
+            runId: run.run_id,
+            eventType: existing ? 'registry_synced' : 'registry_candidate_created',
             actor: actor ?? run.created_by,
-            previousState,
-            newState: buildRegistryStateSnapshot(registry),
-            reason: existing ? 'registry_sync' : 'registry_candidate_created',
-            validation: registrationValidation,
-        }),
-    });
+            metadata: {
+                registry_id: registry.registry_id,
+                registry_status: registry.status,
+                registry_role: registry.role,
+                model_family: registry.model_family,
+                artifact_uri: registry.artifact_uri,
+            },
+            deterministicKey: `${run.run_id}:registry:${registry.status}:${registry.role}:${registry.artifact_uri ?? 'na'}`,
+        });
+
+        await logRegistryAuditEvent(store, {
+            tenantId: run.tenant_id,
+            registryId: registry.registry_id,
+            runId: run.run_id,
+            eventType: 'registered',
+            actor: actor ?? run.created_by,
+            metadata: buildRegistryAuditMetadata({
+                eventType: 'register',
+                actor: actor ?? run.created_by,
+                previousState,
+                newState: buildRegistryStateSnapshot(registry),
+                reason: existing ? 'registry_sync' : 'registry_candidate_created',
+                validation: registrationValidation,
+            }),
+        });
+    }
 
     return registry;
 }
@@ -3694,6 +3701,14 @@ function evaluateRollbackReadiness(
     registry: ModelRegistryRecord,
     lastStableModel: ModelRegistryRecord | null,
 ): RegistryRollbackReadiness {
+    if (!isLiveProductionChampion(registry)) {
+        return {
+            ready: true,
+            target_registry_id: lastStableModel?.registry_id ?? null,
+            reasons: [],
+        };
+    }
+
     const targetRegistryId = registry.rollback_target ?? lastStableModel?.registry_id ?? null;
     const reasons: string[] = [];
     if (!targetRegistryId) {
@@ -3796,6 +3811,131 @@ function validateRegistryConsistency(
     }
 
     return dedupeRegistryConsistencyIssues(issues);
+}
+
+async function ensureRegistryRollbackTargets(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+): Promise<void> {
+    const [registryRecords, runs] = await Promise.all([
+        store.listModelRegistry(tenantId),
+        store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
+    ]);
+    const runsById = new Map(runs.map((run) => [run.run_id, run]));
+
+    for (const champion of registryRecords) {
+        if (!isLiveProductionChampion(champion) || champion.rollback_target) continue;
+        const fallback = selectRollbackProvisionCandidate(champion, registryRecords);
+        if (!fallback) continue;
+
+        const updated = await store.upsertModelRegistry({
+            ...champion,
+            rollback_target: fallback.registry_id,
+            artifact_path: champion.artifact_uri ?? champion.artifact_path,
+        });
+        const run = runsById.get(champion.run_id) ?? null;
+        if (run) {
+            await store.updateExperimentRun(run.run_id, run.tenant_id, {
+                registry_context: {
+                    ...run.registry_context,
+                    rollback_target: fallback.registry_id,
+                },
+            });
+        }
+        await logRegistryAuditEvent(store, {
+            tenantId,
+            registryId: updated.registry_id,
+            runId: updated.run_id,
+            eventType: 'rollback_target_assigned',
+            actor: run?.created_by ?? 'system:registry-governor',
+            metadata: buildRegistryAuditMetadata({
+                eventType: 'rollback_target_assigned',
+                actor: run?.created_by ?? 'system:registry-governor',
+                previousState: buildRegistryStateSnapshot(champion),
+                newState: buildRegistryStateSnapshot(updated),
+                reason: 'auto_provisioned_fallback_target',
+                fallback_registry_id: fallback.registry_id,
+                fallback_model_version: fallback.model_version,
+            }),
+        });
+    }
+}
+
+function selectRollbackProvisionCandidate(
+    champion: ModelRegistryRecord,
+    registryRecords: ModelRegistryRecord[],
+): ModelRegistryRecord | null {
+    return registryRecords
+        .filter((entry) =>
+            entry.model_family === champion.model_family &&
+            entry.registry_id !== champion.registry_id &&
+            entry.registry_role !== 'at_risk' &&
+            ((entry.artifact_uri ?? entry.artifact_path) != null) &&
+            entry.dataset_version != null &&
+            entry.feature_schema_version != null &&
+            (
+                entry.registry_role === 'rollback_target' ||
+                entry.lifecycle_status === 'staging' ||
+                entry.lifecycle_status === 'candidate' ||
+                entry.lifecycle_status === 'training'
+            )
+        )
+        .sort((left, right) => rankRollbackProvisionCandidate(left) - rankRollbackProvisionCandidate(right) || (right.updated_at ?? right.created_at).localeCompare(left.updated_at ?? left.created_at))[0] ?? null;
+}
+
+function rankRollbackProvisionCandidate(record: ModelRegistryRecord): number {
+    if (record.registry_role === 'rollback_target') return 0;
+    if (record.lifecycle_status === 'staging' && record.registry_role === 'challenger') return 1;
+    if (record.lifecycle_status === 'candidate') return 2;
+    if (record.lifecycle_status === 'training') return 3;
+    return 4;
+}
+
+function isEquivalentRegistryRecord(
+    left: Pick<ModelRegistryRecord, keyof Omit<ModelRegistryRecord, 'created_at' | 'updated_at'>>,
+    right: Pick<ModelRegistryRecord, keyof Omit<ModelRegistryRecord, 'created_at' | 'updated_at'>>,
+): boolean {
+    return left.registry_id === right.registry_id &&
+        left.run_id === right.run_id &&
+        left.model_name === right.model_name &&
+        left.model_version === right.model_version &&
+        left.model_family === right.model_family &&
+        (left.artifact_uri ?? null) === (right.artifact_uri ?? null) &&
+        (left.artifact_path ?? null) === (right.artifact_path ?? null) &&
+        (left.dataset_version ?? null) === (right.dataset_version ?? null) &&
+        (left.feature_schema_version ?? null) === (right.feature_schema_version ?? null) &&
+        (left.label_policy_version ?? null) === (right.label_policy_version ?? null) &&
+        left.lifecycle_status === right.lifecycle_status &&
+        left.registry_role === right.registry_role &&
+        (left.deployed_at ?? null) === (right.deployed_at ?? null) &&
+        (left.archived_at ?? null) === (right.archived_at ?? null) &&
+        (left.promoted_from ?? null) === (right.promoted_from ?? null) &&
+        (left.rollback_target ?? null) === (right.rollback_target ?? null) &&
+        left.status === right.status &&
+        left.role === right.role;
+}
+
+function dedupeRegistryAuditEvents(
+    events: RegistryAuditLogRecord[],
+): RegistryAuditLogRecord[] {
+    const seen = new Set<string>();
+    return events
+        .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+        .filter((event) => {
+            const signature = [
+                event.registry_id,
+                event.run_id ?? '',
+                event.event_type,
+                JSON.stringify(event.metadata.previous_state ?? null),
+                JSON.stringify(event.metadata.new_state ?? null),
+                String(event.metadata.reason ?? ''),
+            ].join('|');
+            if (seen.has(signature)) {
+                return false;
+            }
+            seen.add(signature);
+            return true;
+        });
 }
 
 function dedupeRegistryConsistencyIssues(
