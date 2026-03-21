@@ -512,7 +512,7 @@ function EmptyListState({ message, compact = false }: { message: string; compact
 
 function buildRecentInferences(events: TelemetryEventRecord[]) {
     return events
-        .filter((event) => event.event_type === 'inference')
+        .filter((event) => event.event_type === 'inference' && !isSyntheticTelemetryEvent(event))
         .slice()
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
         .slice(0, 6);
@@ -528,7 +528,6 @@ function buildRoutingOverview(topologySnapshot: TopologySnapshot | null) {
 
     for (const node of topologySnapshot?.nodes ?? []) {
         if (node.kind !== 'model') continue;
-        familyCount += 1;
         routingShiftCount += numberOrZero(node.metadata.routing_shift_count);
         fallbackCount += numberOrZero(node.metadata.fallback_count);
         ensembleCount += numberOrZero(node.metadata.ensemble_count);
@@ -549,10 +548,15 @@ function buildRoutingOverview(topologySnapshot: TopologySnapshot | null) {
             distribution.set(entry.model_id!, (distribution.get(entry.model_id!) ?? 0) + entry.request_count);
         }
 
+        const totalRequests = parsed.reduce((sum, entry) => sum + entry.request_count, 0);
+        if (totalRequests > 0) {
+            familyCount += 1;
+        }
+
         familyRows.push({
             family: node.label,
             top_model: parsed[0]?.model_id ?? null,
-            total_requests: parsed.reduce((sum, entry) => sum + entry.request_count, 0),
+            total_requests: totalRequests,
         });
     }
 
@@ -637,6 +641,13 @@ function logTone(level: 'INFO' | 'WARN' | 'ERROR') {
 function formatTimestampOrState(timestamp: string | null, streamStatus: StreamStatus) {
     if (timestamp) return new Date(timestamp).toLocaleTimeString();
     return streamStatus === 'disconnected' ? 'STREAM DISCONNECTED' : 'NO DATA';
+}
+
+function isSyntheticTelemetryEvent(event: TelemetryEventRecord) {
+    if (event.event_type === 'simulation') return true;
+    if (event.metadata.synthetic === true || event.metadata.simulated === true) return true;
+    const source = textOrNull(event.metadata.source_module) ?? textOrNull(event.metadata.source);
+    return source === 'adversarial_simulation' || source === 'telemetry_stream_generator';
 }
 
 function resolveLatencyChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {

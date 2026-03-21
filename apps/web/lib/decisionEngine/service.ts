@@ -97,6 +97,7 @@ export async function evaluateDecisionEngine(input: {
         config,
         evaluationRows,
     });
+    const candidateKeys = new Set(candidates.map((candidate) => candidate.decision_key));
 
     for (const candidate of candidates) {
         const existing = existingDecisions.find((entry) => entry.decision_key === candidate.decision_key) ?? null;
@@ -120,6 +121,16 @@ export async function evaluateDecisionEngine(input: {
             store,
             registrySnapshot,
             topologySnapshot,
+        });
+    }
+
+    for (const decision of existingDecisions) {
+        if (decision.status === 'executed') continue;
+        if (candidateKeys.has(decision.decision_key)) continue;
+
+        await updateDecisionStatus(input.client, decision, 'executed', null, {
+            resolved_reason: 'condition_cleared',
+            resolved_at: now,
         });
     }
 

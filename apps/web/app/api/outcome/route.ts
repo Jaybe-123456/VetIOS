@@ -300,9 +300,9 @@ export async function POST(req: Request) {
                     run_id: resolveTelemetryRunId(inf.model_version, telemetryRecord.run_id),
                     metrics: {
                         confidence: inf.confidence_score,
-                        prediction: predictedLabel,
-                        ground_truth: groundTruthLabel,
-                        correct: telemetryCorrect,
+                        prediction: pipelineResult.evaluation.prediction,
+                        ground_truth: pipelineResult.evaluation.ground_truth,
+                        correct: pipelineResult.evaluation.prediction_correct,
                     },
                     metadata: {
                         source_module: 'outcome_learning',
