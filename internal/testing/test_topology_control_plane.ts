@@ -4,6 +4,7 @@ import { createEvaluationEvent } from '../../apps/web/lib/evaluation/evaluationE
 import {
     buildTopologyAlertsForTest,
     calculateInferenceErrorRateForTest,
+    calculateSimulationErrorRateForTest,
     classifyTopologyControlPlaneState,
     computeTopologyDriftSignal,
     computeTopologyNetworkHealth,
@@ -379,6 +380,18 @@ async function main() {
         [],
     );
     assert.equal(thinSampleErrorRate, null, 'thin anomaly samples should not trigger topology error-rate alarms');
+
+    const thinSimulationErrorRate = calculateSimulationErrorRateForTest([
+        { failure_mode: 'adversarial_attack' },
+    ]);
+    assert.equal(thinSimulationErrorRate, null, 'single simulation failures should not trigger simulation error-rate alarms');
+
+    const sustainedSimulationErrorRate = calculateSimulationErrorRateForTest([
+        { failure_mode: 'adversarial_attack' },
+        { failure_mode: 'latency_spike' },
+        { failure_mode: null },
+    ]);
+    assert.equal(sustainedSimulationErrorRate, 0.6667);
 
     const noTelemetryState = classifyTopologyControlPlaneState({
         now: new Date().toISOString(),
