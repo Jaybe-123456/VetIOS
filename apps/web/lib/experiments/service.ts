@@ -1742,6 +1742,7 @@ function buildDashboardSummary(
     const telemetryReady = runs.filter((run) => hasCompleteMetricStream(run, metricsByRun[run.run_id] ?? [])).length;
     const registryReady = runs.filter((run) => deriveRegistryLinkState(run, null, null) === 'linked').length;
     const safetyReady = runs.filter((run) => getSafetyCoverageState(run, (metricsByRun[run.run_id] ?? []).at(-1) ?? null) !== 'none').length;
+    const fullSafetyReady = runs.filter((run) => getSafetyCoverageState(run, (metricsByRun[run.run_id] ?? []).at(-1) ?? null) === 'full').length;
 
     return {
         total_runs: totalRuns,
@@ -1751,6 +1752,7 @@ function buildDashboardSummary(
         telemetry_coverage_pct: percent(telemetryReady, totalRuns),
         registry_link_coverage_pct: percent(registryReady, totalRuns),
         safety_metric_coverage_pct: percent(safetyReady, totalRuns),
+        full_safety_metric_coverage_pct: percent(fullSafetyReady, totalRuns),
         failed_run_ids: failedRuns.map((run) => run.run_id),
         active_run_ids: activeRuns.map((run) => run.run_id),
     };

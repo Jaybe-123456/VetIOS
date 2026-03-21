@@ -996,6 +996,8 @@ async function testExperimentBootstrapSeed() {
     assert.ok(dashboard.summary.registry_link_coverage_pct > 0);
     assert.ok(dashboard.summary.safety_metric_coverage_pct > 0);
     assert.ok(dashboard.summary.safety_metric_coverage_pct <= 100);
+    assert.ok(dashboard.summary.full_safety_metric_coverage_pct >= 0);
+    assert.ok(dashboard.summary.full_safety_metric_coverage_pct <= dashboard.summary.safety_metric_coverage_pct);
     assert.equal(dashboard.selected_run_detail?.heartbeat_freshness, 'healthy');
     assert.equal(dashboard.comparison?.source, 'automatic');
     assert.ok((dashboard.comparison?.runs.length ?? 0) >= 2);

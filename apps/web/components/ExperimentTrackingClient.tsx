@@ -102,14 +102,15 @@ export function ExperimentTrackingClient({
             />
 
             <div className="mb-8 flex flex-col gap-4">
-                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
+                <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8">
                     <SummaryCard label="Total Runs" value={snapshot.summary.total_runs} />
                     <SummaryCard label="Active Runs" value={snapshot.summary.active_runs} tone={snapshot.summary.active_runs > 0 ? 'accent' : 'default'} tooltip="Runs counted as active must be in a live execution state and have a healthy heartbeat." />
                     <SummaryCard label="Failed Runs" value={snapshot.summary.failed_runs} tone={snapshot.summary.failed_runs > 0 ? 'warn' : 'default'} />
                     <SummaryCard label="Summary Only" value={snapshot.summary.summary_only_runs} tooltip="Historical runs without full telemetry remain visible, but they do not count toward telemetry completeness." />
                     <SummaryCard label="Telemetry Coverage" value={`${snapshot.summary.telemetry_coverage_pct}%`} tooltip="Percentage of runs with complete stored metric streams: epoch, step, train/val loss, val accuracy, learning rate, gradient norm, and heartbeat." />
                     <SummaryCard label="Registry Coverage" value={`${snapshot.summary.registry_link_coverage_pct}%`} tooltip="Percentage of runs linked to a registry candidate or champion record." />
-                    <SummaryCard label="Safety Coverage" value={`${snapshot.summary.safety_metric_coverage_pct}%`} tooltip="Percentage of runs with any clinical safety telemetry present. Per-run coverage still distinguishes PARTIAL from FULL." />
+                    <SummaryCard label="Safety Signals" value={`${snapshot.summary.safety_metric_coverage_pct}%`} tooltip="Percentage of runs with any clinical safety telemetry present. This means the run has at least basic safety signal coverage, not that it is clinically deployment-ready." />
+                    <SummaryCard label="Full Safety" value={`${snapshot.summary.full_safety_metric_coverage_pct}%`} tooltip="Percentage of runs with full clinical safety telemetry: macro F1, critical recall, false-negative critical rate, false reassurance, abstain accuracy, and contradiction detection." />
                 </div>
 
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
