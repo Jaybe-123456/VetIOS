@@ -25,6 +25,7 @@ export default async function ExperimentsPage() {
                 telemetry_coverage_pct: 0,
                 registry_link_coverage_pct: 0,
                 safety_metric_coverage_pct: 0,
+                full_safety_metric_coverage_pct: 0,
                 failed_run_ids: [],
                 active_run_ids: [],
             },

@@ -544,6 +544,7 @@ export interface ExperimentDashboardSummary {
     telemetry_coverage_pct: number;
     registry_link_coverage_pct: number;
     safety_metric_coverage_pct: number;
+    full_safety_metric_coverage_pct: number;
     failed_run_ids: string[];
     active_run_ids: string[];
 }
