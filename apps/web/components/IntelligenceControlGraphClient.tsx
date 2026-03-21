@@ -713,7 +713,7 @@ function SummaryTile({ icon, label, value }: { icon: ReactNode; label: string; v
                 {icon}
                 {label}
             </div>
-            <div className="mt-2 text-foreground leading-relaxed">{value}</div>
+            <div className="mt-2 break-words text-foreground leading-relaxed break-all">{value}</div>
         </div>
     );
 }
