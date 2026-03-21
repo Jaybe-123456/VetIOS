@@ -8,7 +8,7 @@ import type { TopologyWindow } from '@/lib/intelligence/types';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const STREAM_INTERVAL_MS = 1_500;
+const STREAM_INTERVAL_MS = 5_000;
 
 export async function GET(req: Request) {
     const session = await resolveSessionTenant();
@@ -23,6 +23,7 @@ export async function GET(req: Request) {
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let closed = false;
     let lastHeartbeatAtMs = 0;
+    let lastSnapshot: Awaited<ReturnType<typeof getTopologySnapshot>> | null = null;
 
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -63,6 +64,7 @@ export async function GET(req: Request) {
                         triggerSource: 'topology_stream',
                     });
                     const enrichedSnapshot = applyDecisionEngineToTopologySnapshot(snapshot, decisionEngine);
+                    lastSnapshot = enrichedSnapshot;
 
                     if (closed) return;
                     controller.enqueue(
@@ -72,6 +74,18 @@ export async function GET(req: Request) {
                     );
                 } catch (error) {
                     if (closed) return;
+                    if (lastSnapshot) {
+                        controller.enqueue(
+                            encoder.encode(
+                                serializeSseMessage(JSON.stringify({
+                                    snapshot: lastSnapshot,
+                                    degraded: true,
+                                    stream_warning: error instanceof Error ? error.message : 'Topology stream degraded',
+                                })),
+                            ),
+                        );
+                        return;
+                    }
                     controller.enqueue(
                         encoder.encode(
                             serializeSseMessage(
