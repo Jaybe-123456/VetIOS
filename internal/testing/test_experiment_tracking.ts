@@ -763,6 +763,7 @@ async function main() {
     await testRegistryPromotionBlockedReasons();
     await testRegistryControlPlaneVerificationMode();
     await testRegistrySnapshotPreventsNoOpSyncSpam();
+    await testRegistryVerificationRepairsMissingProductionAudit();
 
     console.log('Experiment tracking integration tests passed.');
 }
@@ -1323,6 +1324,45 @@ async function testRegistrySnapshotPreventsNoOpSyncSpam() {
         registeredEventSignatures.size,
         (championEntry?.latest_registry_events ?? []).filter((event) => event.event_type === 'registered').length,
     );
+}
+
+async function testRegistryVerificationRepairsMissingProductionAudit() {
+    const tenantId = makeUuid(10);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_audit_repair_live_001',
+        modelVersion: 'diag_audit_repair_live_v1',
+        datasetVersion: 'ldv_diag_audit_repair_live',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_audit_repair_live_001', 'promote_to_staging', 'qa_user');
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_audit_repair_live_001', 'set_manual_approval', 'qa_user', {
+        manualApproval: true,
+        reason: 'Champion approved for production.',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_audit_repair_live_001', 'promote_to_production', 'qa_user');
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_audit_repair_alt_002',
+        modelVersion: 'diag_audit_repair_alt_v2',
+        datasetVersion: 'ldv_diag_audit_repair_alt',
+    });
+
+    const championRegistry = await store.getModelRegistryForRun(tenantId, 'run_diag_audit_repair_live_001');
+    assert.ok(championRegistry);
+    store.registryAuditLog = store.registryAuditLog.filter((event) =>
+        !(event.registry_id === championRegistry!.registry_id && event.event_type === 'promoted'),
+    );
+
+    const verification = await verifyModelRegistryControlPlane(store, tenantId);
+    assert.equal(verification.status, 'PASS');
+
+    const repairedAuditEvents = await store.listRegistryAuditLog(tenantId, 400);
+    assert.ok(repairedAuditEvents.some((event) =>
+        event.registry_id === championRegistry!.registry_id &&
+        event.event_type === 'promoted' &&
+        event.metadata.reason === 'state_reconciled_from_registry',
+    ));
 }
 
 async function testHeartbeatStateConsistency() {
