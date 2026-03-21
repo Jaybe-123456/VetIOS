@@ -426,7 +426,7 @@ function RegistryEntryCard({
         entry.rollback_readiness.ready;
     const canArchive = !(registry.lifecycle_status === 'production' && registry.registry_role === 'champion');
     const approvalGranted = entry.promotion_requirements?.manual_approval === true;
-    const showApprovalControls = registry.lifecycle_status === 'staging';
+    const showApprovalControls = registry.lifecycle_status !== 'production' && registry.lifecycle_status !== 'archived';
 
     return (
         <div className="min-w-0 border border-grid bg-black/20 p-5">
@@ -623,7 +623,7 @@ function RegistryEntryCard({
                 {showApprovalControls ? (
                     <TerminalButton variant="secondary" disabled={isPending} onClick={approvalGranted ? onRevokeApproval : onGrantApproval}>
                         <ShieldAlert className="mr-2 h-3.5 w-3.5" />
-                        {approvalGranted ? 'Revoke Approval' : 'Grant Approval'}
+                        {approvalGranted ? 'Revoke Manual Approval' : 'Initiate Manual Approval'}
                     </TerminalButton>
                 ) : null}
                 <TerminalButton variant="secondary" disabled={!canPromote || isPending} onClick={onPromote} title={canPromote ? 'Promote this staging challenger into production.' : isLiveProduction ? 'This model is already serving production traffic.' : entry.promotion_gating.tooltip}>
@@ -798,13 +798,14 @@ function LifecycleTimeline({
                 return (
                     <div
                         key={step}
-                        className={`border px-3 py-2 font-mono text-[10px] uppercase tracking-[0.16em] ${
+                        className={`min-w-0 truncate text-center border px-2 py-2 font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.1em] xl:tracking-[0.16em] ${
                             isCurrent
                                 ? 'border-accent/40 bg-accent/10 text-accent'
                                 : isReached
                                     ? 'border-grid/50 bg-black/30 text-foreground/85'
                                     : 'border-grid/20 bg-black/10 text-muted'
                         }`}
+                        title={step}
                     >
                         {step}
                     </div>
