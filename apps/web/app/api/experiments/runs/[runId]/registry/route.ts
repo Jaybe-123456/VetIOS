@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { resolveExperimentApiActor } from '@/lib/auth/internalApi';
+import { RegistryControlPlaneError } from '@/lib/experiments/service';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
@@ -63,25 +64,44 @@ export async function POST(
     const tenantId = actor?.tenantId ?? process.env.VETIOS_DEV_TENANT_ID ?? 'dev_tenant_001';
     const { runId } = await context.params;
     const store = createSupabaseExperimentTrackingStore(getSupabaseServer());
-    const registry = await applyExperimentRegistryAction(
-        store,
-        tenantId,
-        runId,
-        body.data.action,
-        actor?.userId ?? null,
-        {
-            manualApproval: body.data.manual_approval,
-            reason: body.data.reason,
-            incidentId: body.data.incident_id ?? null,
-        },
-    );
+    try {
+        const registry = await applyExperimentRegistryAction(
+            store,
+            tenantId,
+            runId,
+            body.data.action,
+            actor?.userId ?? null,
+            {
+                manualApproval: body.data.manual_approval,
+                reason: body.data.reason,
+                incidentId: body.data.incident_id ?? null,
+            },
+        );
 
-    const response = NextResponse.json({
-        registry,
-        authenticated_user_id: actor?.userId ?? null,
-        auth_mode: actor?.authMode ?? 'dev_bypass',
-        request_id: requestId,
-    });
-    withRequestHeaders(response.headers, requestId, startTime);
-    return response;
+        const response = NextResponse.json({
+            registry,
+            authenticated_user_id: actor?.userId ?? null,
+            auth_mode: actor?.authMode ?? 'dev_bypass',
+            request_id: requestId,
+        });
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
+    } catch (error) {
+        const response = NextResponse.json(
+            error instanceof RegistryControlPlaneError
+                ? {
+                    error: error.message,
+                    code: error.code,
+                    details: error.details,
+                    request_id: requestId,
+                }
+                : {
+                    error: error instanceof Error ? error.message : 'Registry action failed.',
+                    request_id: requestId,
+                },
+            { status: error instanceof RegistryControlPlaneError ? error.httpStatus : 500 },
+        );
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
+    }
 }

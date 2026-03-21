@@ -40,6 +40,30 @@ export type ExperimentHeartbeatFreshness = 'healthy' | 'stale' | 'interrupted';
 export type ExperimentRegistryLinkState = 'linked' | 'pending' | 'unlinked';
 export type ExperimentSafetyCoverage = 'none' | 'partial' | 'full';
 export type GateStatus = 'pass' | 'fail' | 'pending';
+export type RegistryControlPlaneHealth = 'healthy' | 'degraded';
+export type RegistryControlPlaneCheckStatus = 'pass' | 'fail' | 'warning';
+export type RegistryActionBlockCode =
+    | 'invalid_artifact_metadata'
+    | 'missing_run_link'
+    | 'missing_dataset_version'
+    | 'missing_artifact_path'
+    | 'missing_feature_schema'
+    | 'missing_calibration'
+    | 'failed_calibration'
+    | 'missing_adversarial'
+    | 'failed_adversarial'
+    | 'missing_safety'
+    | 'failed_safety'
+    | 'missing_benchmark'
+    | 'failed_benchmark'
+    | 'missing_manual_approval'
+    | 'denied_manual_approval'
+    | 'registry_at_risk'
+    | 'missing_rollback_target'
+    | 'duplicate_champion'
+    | 'duplicate_production_model'
+    | 'routing_pointer_mismatch'
+    | 'audit_log_missing';
 
 export interface ExperimentRunRecord {
     id: string;
@@ -345,6 +369,58 @@ export interface RegistryDecisionPanel {
     deployment_decision: 'approved' | 'hold' | 'rejected';
     reasons: string[];
     missing_evaluations: string[];
+    blocker_codes: RegistryActionBlockCode[];
+}
+
+export interface RegistryRegistrationValidation {
+    status: 'valid' | 'blocked';
+    code: 'VALID_ARTIFACT_METADATA' | 'INVALID_ARTIFACT_METADATA';
+    reasons: string[];
+}
+
+export interface RegistryRollbackReadiness {
+    ready: boolean;
+    target_registry_id: string | null;
+    reasons: string[];
+}
+
+export interface RegistryConsistencyIssue {
+    code: RegistryActionBlockCode | 'missing_lifecycle_state' | 'orphan_registry_metadata';
+    severity: 'critical' | 'warning';
+    message: string;
+    model_family?: ModelFamily | null;
+    registry_id?: string | null;
+    run_id?: string | null;
+}
+
+export interface RegistryControlPlaneVerificationCheck {
+    key:
+        | 'registration_validation'
+        | 'promotion_gating'
+        | 'atomic_transition'
+        | 'rollback_execution'
+        | 'audit_logging'
+        | 'consistency'
+        | 'failure_simulation';
+    label: string;
+    status: RegistryControlPlaneCheckStatus;
+    summary: string;
+    failures: string[];
+    warnings: string[];
+}
+
+export interface RegistryControlPlaneVerificationResult {
+    status: 'PASS' | 'FAIL';
+    failed_checks: string[];
+    warnings: string[];
+    summary: string;
+    checks: RegistryControlPlaneVerificationCheck[];
+    simulated_failures: Array<{
+        scenario: 'missing_calibration' | 'duplicate_champions' | 'no_rollback_target' | 'broken_audit_logging';
+        detected: boolean;
+        summary: string;
+    }>;
+    verified_at: string;
 }
 
 export interface ExperimentRunDetail {
@@ -386,6 +462,7 @@ export interface ExperimentRunDetail {
         promotion_allowed: boolean;
         missing_requirements: string[];
         blockers: string[];
+        blocker_codes: RegistryActionBlockCode[];
         gates: {
             calibration: GateStatus;
             adversarial: GateStatus;
@@ -485,6 +562,9 @@ export interface ModelRegistryControlPlaneEntry {
     promotion_requirements: PromotionRequirementsRecord | null;
     decision_panel: RegistryDecisionPanel;
     promotion_gating: ExperimentRunDetail['promotion_gating'];
+    registration_validation: RegistryRegistrationValidation;
+    rollback_readiness: RegistryRollbackReadiness;
+    audit_trail_ready: boolean;
     clinical_scorecard: ClinicalMetricsRecord;
     lineage: RegistryLineageRecord;
     rollback_history: RegistryAuditLogRecord[];
@@ -506,6 +586,8 @@ export interface ModelRegistryControlPlaneSnapshot {
     families: ModelRegistryFamilyGroup[];
     routing_pointers: RegistryRoutingPointerRecord[];
     audit_history: RegistryAuditLogRecord[];
+    registry_health: RegistryControlPlaneHealth;
+    consistency_issues: RegistryConsistencyIssue[];
     refreshed_at: string;
 }
 

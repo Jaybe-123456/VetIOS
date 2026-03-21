@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { User } from '@supabase/supabase-js';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
+import { RegistryControlPlaneError } from '@/lib/experiments/service';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
@@ -119,8 +120,15 @@ export async function GET(req: Request) {
         return response;
     } catch (error) {
         return NextResponse.json(
-            { error: error instanceof Error ? error.message : 'Unknown error', request_id: requestId },
-            { status: 500 },
+            error instanceof RegistryControlPlaneError
+                ? {
+                    error: error.message,
+                    code: error.code,
+                    details: error.details,
+                    request_id: requestId,
+                }
+                : { error: error instanceof Error ? error.message : 'Unknown error', request_id: requestId },
+            { status: error instanceof RegistryControlPlaneError ? error.httpStatus : 500 },
         );
     }
 }
