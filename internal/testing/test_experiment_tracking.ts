@@ -11,11 +11,13 @@ import {
     getExperimentDashboardSnapshot,
     getModelRegistryControlPlaneSnapshot,
     getExperimentRunDetail,
+    RegistryControlPlaneError,
     logExperimentMetrics,
     recordExperimentFailure,
     upsertAdversarialEvaluation,
     upsertCalibrationEvaluation,
     updateExperimentHeartbeat,
+    verifyModelRegistryControlPlane,
 } from '../../apps/web/lib/experiments/service.ts';
 import type {
     AdversarialMetricRecord,
@@ -757,6 +759,9 @@ async function main() {
     await testExperimentBootstrapSeed();
     await testRegistryGovernanceControlPlane();
     await testLiveChampionGovernanceConsistency();
+    await testRegistryRegistrationValidationBlocksInvalidMetadata();
+    await testRegistryPromotionBlockedReasons();
+    await testRegistryControlPlaneVerificationMode();
 
     console.log('Experiment tracking integration tests passed.');
 }
@@ -775,8 +780,13 @@ async function testExperimentTrackingServiceFlow() {
         modelVersion: 'diag_live_v2',
         datasetName: 'ldv_diag_2026_03_20',
         datasetVersion: 'ldv_diag_2026_03_20',
+        featureSchemaVersion: 'clinical-case-vector-v1',
         epochsPlanned: 5,
         hyperparameters: { optimizer: 'adamw', learning_rate_init: 0.0001 },
+        configSnapshot: {
+            best_checkpoint_uri: 's3://artifacts/diag_live_v2/best.ckpt',
+            log_uri: 's3://artifacts/diag_live_v2/logs',
+        },
     });
     assert.equal(run.run_id, 'run_diag_live_001');
 
@@ -1135,6 +1145,99 @@ async function testLiveChampionGovernanceConsistency() {
     assert.ok(detail?.audit_history.some((event) => event.event_type === 'archived'));
 }
 
+async function testRegistryRegistrationValidationBlocksInvalidMetadata() {
+    const tenantId = makeUuid(6);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createExperimentRun(store, {
+        tenantId,
+        runId: 'run_diag_invalid_artifact_001',
+        taskType: 'clinical_diagnosis',
+        modality: 'tabular_clinical',
+        targetType: 'diagnosis',
+        modelArch: 'Transformer-Clinical-Governed',
+        modelVersion: 'diag_invalid_artifact_v1',
+        datasetName: 'ldv_diag_invalid',
+        datasetVersion: 'ldv_diag_invalid',
+        featureSchemaVersion: 'clinical-case-vector-v2',
+        createdBy: 'qa_user',
+    });
+
+    await assert.rejects(
+        () => applyExperimentRegistryAction(store, tenantId, 'run_diag_invalid_artifact_001', 'promote_to_staging', 'qa_user'),
+        (error: unknown) => {
+            assert.ok(error instanceof RegistryControlPlaneError);
+            assert.equal(error.code, 'INVALID_ARTIFACT_METADATA');
+            return true;
+        },
+    );
+
+    const auditEvents = await store.listAuditLog(tenantId, 50);
+    assert.ok(auditEvents.some((event) => event.event_type === 'registration_blocked'));
+}
+
+async function testRegistryPromotionBlockedReasons() {
+    const tenantId = makeUuid(7);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_gate_blocked_001',
+        modelVersion: 'diag_gate_blocked_v1',
+        datasetVersion: 'ldv_diag_gate_blocked',
+    });
+
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_gate_blocked_001', 'promote_to_staging', 'qa_user');
+
+    await assert.rejects(
+        () => applyExperimentRegistryAction(store, tenantId, 'run_diag_gate_blocked_001', 'promote_to_production', 'qa_user'),
+        (error: unknown) => {
+            assert.ok(error instanceof RegistryControlPlaneError);
+            assert.equal(error.code, 'PROMOTION_BLOCKED');
+            assert.ok(Array.isArray(error.details.reason));
+            assert.ok((error.details.reason as string[]).includes('missing_manual_approval'));
+            return true;
+        },
+    );
+}
+
+async function testRegistryControlPlaneVerificationMode() {
+    const tenantId = makeUuid(8);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_verify_stable_001',
+        modelVersion: 'diag_verify_stable_v1',
+        datasetVersion: 'ldv_diag_verify_stable',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_verify_stable_001', 'promote_to_staging', 'qa_user');
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_verify_stable_001', 'set_manual_approval', 'qa_user', {
+        manualApproval: true,
+        reason: 'Stable model approved.',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_verify_stable_001', 'promote_to_production', 'qa_user');
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_verify_candidate_002',
+        modelVersion: 'diag_verify_candidate_v2',
+        datasetVersion: 'ldv_diag_verify_candidate',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_verify_candidate_002', 'promote_to_staging', 'qa_user');
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_verify_candidate_002', 'set_manual_approval', 'qa_user', {
+        manualApproval: true,
+        reason: 'Candidate model approved.',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_verify_candidate_002', 'promote_to_production', 'qa_user');
+
+    const verification = await verifyModelRegistryControlPlane(store, tenantId);
+    assert.equal(verification.status, 'PASS');
+    assert.equal(verification.failed_checks.length, 0);
+    assert.ok(verification.simulated_failures.every((item) => item.detected));
+
+    const snapshot = await getModelRegistryControlPlaneSnapshot(store, tenantId);
+    assert.equal(snapshot.registry_health, 'healthy');
+    assert.equal(snapshot.consistency_issues.length, 0);
+}
+
 async function testHeartbeatStateConsistency() {
     const tenantId = makeUuid(3);
     const store = new InMemoryExperimentTrackingStore();
@@ -1279,6 +1382,11 @@ async function createPromotableDiagnosticRun(
         labelPolicyVersion: 'learning-label-policy-v2',
         epochsPlanned: 6,
         hyperparameters: { optimizer: 'adamw', learning_rate_init: 0.00008 },
+        configSnapshot: {
+            best_checkpoint_uri: `s3://vetios-experiments/${input.runId}/checkpoints/best.ckpt`,
+            final_checkpoint_uri: `s3://vetios-experiments/${input.runId}/checkpoints/final.ckpt`,
+            log_uri: `s3://vetios-experiments/${input.runId}/logs`,
+        },
         createdBy: 'qa_user',
     });
 

@@ -538,6 +538,8 @@ export function rankRoutingCandidatesForTest(input: {
             families: [],
             routing_pointers: [],
             audit_history: [],
+            registry_health: 'healthy',
+            consistency_issues: [],
             refreshed_at: new Date().toISOString(),
         },
         analysis: {
@@ -705,6 +707,8 @@ async function loadRoutingRegistrySnapshot(
             families: [],
             routing_pointers: [],
             audit_history: [],
+            registry_health: 'healthy',
+            consistency_issues: [],
             refreshed_at: new Date().toISOString(),
         };
     }

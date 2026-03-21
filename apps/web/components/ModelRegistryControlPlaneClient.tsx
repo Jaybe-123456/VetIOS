@@ -15,6 +15,7 @@ import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components
 import type {
     GateStatus,
     ModelFamily,
+    RegistryControlPlaneVerificationResult,
     ModelRegistryControlPlaneEntry,
     ModelRegistryControlPlaneSnapshot,
 } from '@/lib/experiments/types';
@@ -28,6 +29,8 @@ export function ModelRegistryControlPlaneClient({
 }) {
     const router = useRouter();
     const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+    const [verification, setVerification] = useState<RegistryControlPlaneVerificationResult | null>(null);
+    const [verificationBusy, setVerificationBusy] = useState(false);
     const [pendingRunId, setPendingRunId] = useState<string | null>(null);
     const [isRefreshing, startRefreshTransition] = useTransition();
 
@@ -37,6 +40,7 @@ export function ModelRegistryControlPlaneClient({
         (sum, family) => sum + family.entries.filter((entry) => entry.decision_panel.deployment_decision === 'rejected').length,
         0,
     );
+    const consistencyIssueCount = initialSnapshot.consistency_issues.length;
 
     const submitAction = (
         runId: string,
@@ -106,6 +110,39 @@ export function ModelRegistryControlPlaneClient({
         });
     };
 
+    const handleVerifyControlPlane = async () => {
+        setVerificationBusy(true);
+        setMessage(null);
+        try {
+            const response = await fetch('/api/models/registry/control-plane', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    action: 'verify_control_plane',
+                }),
+            });
+            const payload = await response.json().catch(() => ({}));
+            if (!response.ok || !payload?.verification) {
+                throw new Error(typeof payload?.error === 'string' ? payload.error : 'Registry verification failed.');
+            }
+            setVerification(payload.verification as RegistryControlPlaneVerificationResult);
+            setMessage({
+                tone: payload.verification.status === 'PASS' ? 'success' : 'error',
+                text: payload.verification.summary,
+            });
+        } catch (error) {
+            setMessage({
+                tone: 'error',
+                text: error instanceof Error ? error.message : 'Registry verification failed.',
+            });
+        } finally {
+            setVerificationBusy(false);
+        }
+    };
+
     return (
         <Container className="max-w-[96rem]">
             <PageHeader
@@ -118,12 +155,26 @@ export function ModelRegistryControlPlaneClient({
                 <SummaryCard label="Tracked Artifacts" value={totalEntries} />
                 <SummaryCard label="Active Routes" value={activeRoutes} tone="accent" />
                 <SummaryCard label="Rejected" value={blockedEntries} tone={blockedEntries > 0 ? 'warn' : 'default'} />
+                <SummaryCard
+                    label="Registry Health"
+                    value={initialSnapshot.registry_health.toUpperCase()}
+                    tone={initialSnapshot.registry_health === 'degraded' ? 'warn' : 'accent'}
+                />
+                <SummaryCard
+                    label="Consistency Issues"
+                    value={consistencyIssueCount}
+                    tone={consistencyIssueCount > 0 ? 'warn' : 'default'}
+                />
             </div>
 
             <div className="mb-8 flex flex-wrap items-center gap-3">
                 <TerminalButton variant="secondary" onClick={() => router.refresh()}>
                     <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
                     Refresh Registry
+                </TerminalButton>
+                <TerminalButton variant="secondary" onClick={() => void handleVerifyControlPlane()} disabled={verificationBusy}>
+                    <ShieldAlert className={`mr-2 h-3.5 w-3.5 ${verificationBusy ? 'animate-pulse' : ''}`} />
+                    {verificationBusy ? 'VERIFYING...' : 'Verify Control Plane'}
                 </TerminalButton>
                 <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
                     Refreshed {formatDateTime(initialSnapshot.refreshed_at)}
@@ -137,6 +188,81 @@ export function ModelRegistryControlPlaneClient({
                         : 'border-danger/40 bg-danger/10 text-danger'
                 }`}>
                     {message.text}
+                </div>
+            ) : null}
+
+            {initialSnapshot.consistency_issues.length > 0 ? (
+                <ConsoleCard title="Registry Consistency">
+                    <div className="grid gap-2 font-mono text-xs">
+                        {initialSnapshot.consistency_issues.map((issue) => (
+                            <div
+                                key={`${issue.code}:${issue.registry_id ?? 'none'}:${issue.run_id ?? 'none'}`}
+                                className={`border px-3 py-2 ${
+                                    issue.severity === 'critical'
+                                        ? 'border-danger/40 bg-danger/10 text-danger'
+                                        : 'border-yellow-500/40 bg-yellow-500/10 text-yellow-200'
+                                }`}
+                            >
+                                <div className="text-[10px] uppercase tracking-[0.16em]">{issue.code}</div>
+                                <div className="mt-1 text-foreground/85">{issue.message}</div>
+                            </div>
+                        ))}
+                    </div>
+                </ConsoleCard>
+            ) : null}
+
+            {verification ? (
+                <div className="mb-8 mt-8">
+                    <ConsoleCard title="Verification Mode">
+                        <div className="mb-4 grid gap-3 md:grid-cols-3">
+                            <SummaryCard
+                                label="Verification"
+                                value={verification.status}
+                                tone={verification.status === 'PASS' ? 'accent' : 'warn'}
+                            />
+                            <SummaryCard label="Failed Checks" value={verification.failed_checks.length} tone={verification.failed_checks.length > 0 ? 'warn' : 'default'} />
+                            <SummaryCard label="Warnings" value={verification.warnings.length} tone={verification.warnings.length > 0 ? 'warn' : 'default'} />
+                        </div>
+                        <div className="mb-4 font-mono text-xs text-foreground/85">{verification.summary}</div>
+                        <div className="grid gap-4 xl:grid-cols-2">
+                            {verification.checks.map((check) => (
+                                <div key={check.key} className="border border-grid/40 bg-black/20 p-4">
+                                    <div className="mb-2 flex items-center justify-between gap-3">
+                                        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{check.label}</div>
+                                        <Badge className={check.status === 'pass' ? 'border-accent/40 bg-accent/10 text-accent' : check.status === 'warning' ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-200' : 'border-danger/40 bg-danger/10 text-danger'}>
+                                            {check.status}
+                                        </Badge>
+                                    </div>
+                                    <div className="font-mono text-xs text-foreground/85">{check.summary}</div>
+                                    {check.failures.length > 0 ? (
+                                        <div className="mt-3 space-y-2 font-mono text-xs text-danger">
+                                            {check.failures.map((failure) => (
+                                                <div key={failure}>{failure}</div>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                    {check.warnings.length > 0 ? (
+                                        <div className="mt-3 space-y-2 font-mono text-xs text-yellow-200">
+                                            {check.warnings.map((warning) => (
+                                                <div key={warning}>{warning}</div>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            ))}
+                        </div>
+                        <div className="mt-5 border-t border-grid/30 pt-4">
+                            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Failure Simulation</div>
+                            <div className="grid gap-3 md:grid-cols-2">
+                                {verification.simulated_failures.map((item) => (
+                                    <div key={item.scenario} className={`border px-3 py-2 font-mono text-xs ${item.detected ? 'border-accent/40 bg-accent/10 text-foreground' : 'border-danger/40 bg-danger/10 text-danger'}`}>
+                                        <div className="text-[10px] uppercase tracking-[0.16em] text-muted">{item.scenario.replaceAll('_', ' ')}</div>
+                                        <div className="mt-1">{item.summary}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </ConsoleCard>
                 </div>
             ) : null}
 
@@ -251,13 +377,15 @@ function RegistryEntryCard({
 }) {
     const registry = entry.registry;
     const isLiveProduction = registry.lifecycle_status === 'production' && registry.registry_role === 'champion';
-    const canStage = registry.lifecycle_status === 'candidate' || registry.lifecycle_status === 'training';
+    const canStage = (registry.lifecycle_status === 'candidate' || registry.lifecycle_status === 'training') &&
+        entry.registration_validation.status === 'valid';
     const canPromote = registry.lifecycle_status === 'staging' &&
         registry.registry_role === 'challenger' &&
-        entry.promotion_gating.can_promote;
+        entry.promotion_gating.can_promote &&
+        entry.registration_validation.status === 'valid';
     const canRollback = registry.lifecycle_status === 'production' &&
         registry.registry_role === 'champion' &&
-        (registry.rollback_target != null || entry.last_stable_model != null);
+        entry.rollback_readiness.ready;
     const canArchive = !(registry.lifecycle_status === 'production' && registry.registry_role === 'champion');
     const approvalGranted = entry.promotion_requirements?.manual_approval === true;
     const showApprovalControls = registry.lifecycle_status === 'staging';
@@ -370,6 +498,40 @@ function RegistryEntryCard({
             </div>
 
             <div className="mt-5 grid gap-5 xl:grid-cols-[1.05fr,0.95fr]">
+                <Section title="Control Plane Readiness">
+                    <div className="grid gap-3 md:grid-cols-3">
+                        <DecisionStat
+                            label="Registration"
+                            value={entry.registration_validation.status === 'valid' ? 'VALID' : 'BLOCKED'}
+                            tone={entry.registration_validation.status === 'valid' ? 'accent' : 'warn'}
+                        />
+                        <DecisionStat
+                            label="Rollback Ready"
+                            value={entry.rollback_readiness.ready ? 'READY' : 'BLOCKED'}
+                            tone={entry.rollback_readiness.ready ? 'accent' : 'warn'}
+                        />
+                        <DecisionStat
+                            label="Audit Trail"
+                            value={entry.audit_trail_ready ? 'RECORDED' : 'MISSING'}
+                            tone={entry.audit_trail_ready ? 'accent' : 'warn'}
+                        />
+                    </div>
+                    {entry.registration_validation.reasons.length > 0 ? (
+                        <div className="mt-4 space-y-2 font-mono text-xs text-danger">
+                            {entry.registration_validation.reasons.map((reason) => (
+                                <div key={reason}>{reason}</div>
+                            ))}
+                        </div>
+                    ) : null}
+                    {!entry.rollback_readiness.ready && entry.rollback_readiness.reasons.length > 0 ? (
+                        <div className="mt-4 space-y-2 font-mono text-xs text-danger">
+                            {entry.rollback_readiness.reasons.map((reason) => (
+                                <div key={reason}>{reason}</div>
+                            ))}
+                        </div>
+                    ) : null}
+                </Section>
+
                 <Section title="Lineage">
                     <div className="grid gap-3 md:grid-cols-2">
                         <Stat label="Experiment Group" value={entry.lineage.experiment_group ?? 'n/a'} />
@@ -383,7 +545,7 @@ function RegistryEntryCard({
                     <div className="grid gap-3 md:grid-cols-2">
                         <Stat
                             label="Rollback Target"
-                            value={registry.rollback_target ?? entry.last_stable_model?.registry_id ?? 'None'}
+                            value={entry.rollback_readiness.target_registry_id ?? 'None'}
                         />
                         <Stat
                             label="Last Stable Model"

@@ -33,6 +33,8 @@ function createEmptySnapshot(): ModelRegistryControlPlaneSnapshot {
         })),
         routing_pointers: [],
         audit_history: [],
+        registry_health: 'healthy',
+        consistency_issues: [],
         refreshed_at: new Date().toISOString(),
     };
 }
