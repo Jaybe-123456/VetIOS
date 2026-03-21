@@ -1996,6 +1996,7 @@ async function backfillExperimentGovernance(
         await ensureGovernanceForRun(store, tenantId, run.run_id, run.created_by);
     }
     await ensureRegistryRollbackTargets(store, tenantId);
+    await ensureRegistryLifecycleAuditCoverage(store, tenantId);
 }
 
 async function ensureGovernanceForRun(
@@ -2826,15 +2827,20 @@ async function logRegistryAuditEvent(
         eventType: string;
         actor: string | null;
         metadata: Record<string, unknown>;
+        deterministicKey?: string | null;
+        timestamp?: string | null;
     },
 ): Promise<void> {
+    const timestamp = input.timestamp ?? new Date().toISOString();
     await store.createRegistryAuditLog({
-        event_id: createRegistryAuditEventId(input.tenantId, input.registryId, input.eventType),
+        event_id: input.deterministicKey
+            ? createAuditEventId(input.tenantId, `registry:${input.registryId}:${input.deterministicKey}`)
+            : createRegistryAuditEventId(input.tenantId, input.registryId, input.eventType),
         tenant_id: input.tenantId,
         registry_id: input.registryId,
         run_id: input.runId,
         event_type: input.eventType,
-        timestamp: new Date().toISOString(),
+        timestamp,
         actor: input.actor,
         metadata: input.metadata,
     });
@@ -3866,6 +3872,101 @@ async function ensureRegistryRollbackTargets(
                 fallback_model_version: fallback.model_version,
             }),
         });
+    }
+}
+
+async function ensureRegistryLifecycleAuditCoverage(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+): Promise<void> {
+    const [registryRecords, auditEvents, runs] = await Promise.all([
+        store.listModelRegistry(tenantId),
+        store.listRegistryAuditLog(tenantId, 400),
+        store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
+    ]);
+    const runsById = new Map(runs.map((run) => [run.run_id, run]));
+    const dedupedAuditEvents = dedupeRegistryAuditEvents(auditEvents);
+
+    for (const registry of registryRecords) {
+        const registryEvents = dedupedAuditEvents.filter((event) => event.registry_id === registry.registry_id);
+        const actor = runsById.get(registry.run_id)?.created_by ?? 'system:registry-governor';
+        const stateSnapshot = buildRegistryStateSnapshot(registry);
+
+        if (!registryEvents.some((event) => event.event_type === 'registered')) {
+            await logRegistryAuditEvent(store, {
+                tenantId,
+                registryId: registry.registry_id,
+                runId: registry.run_id,
+                eventType: 'registered',
+                actor,
+                deterministicKey: `reconcile:registered:${registry.lifecycle_status}:${registry.registry_role}`,
+                metadata: buildRegistryAuditMetadata({
+                    eventType: 'register',
+                    actor,
+                    previousState: null,
+                    newState: stateSnapshot,
+                    reason: 'state_reconciled_from_registry',
+                }),
+            });
+        }
+
+        if (registry.lifecycle_status === 'staging' && !registryEvents.some((event) => event.event_type === 'staged')) {
+            await logRegistryAuditEvent(store, {
+                tenantId,
+                registryId: registry.registry_id,
+                runId: registry.run_id,
+                eventType: 'staged',
+                actor,
+                deterministicKey: `reconcile:staged:${registry.lifecycle_status}:${registry.registry_role}`,
+                metadata: buildRegistryAuditMetadata({
+                    eventType: 'promote_to_staging',
+                    actor,
+                    previousState: null,
+                    newState: stateSnapshot,
+                    reason: 'state_reconciled_from_registry',
+                }),
+            });
+        }
+
+        if (isLiveProductionChampion(registry) && !registryEvents.some((event) => event.event_type === 'promoted' || event.event_type === 'rolled_back')) {
+            await logRegistryAuditEvent(store, {
+                tenantId,
+                registryId: registry.registry_id,
+                runId: registry.run_id,
+                eventType: 'promoted',
+                actor,
+                deterministicKey: `reconcile:promoted:${registry.lifecycle_status}:${registry.registry_role}`,
+                metadata: buildRegistryAuditMetadata({
+                    eventType: 'promote_to_production',
+                    actor,
+                    previousState: null,
+                    newState: stateSnapshot,
+                    reason: 'state_reconciled_from_registry',
+                }),
+            });
+        }
+
+        if (
+            registry.lifecycle_status === 'archived' &&
+            registry.registry_role !== 'rollback_target' &&
+            !registryEvents.some((event) => event.event_type === 'archived' || event.event_type === 'rolled_back')
+        ) {
+            await logRegistryAuditEvent(store, {
+                tenantId,
+                registryId: registry.registry_id,
+                runId: registry.run_id,
+                eventType: 'archived',
+                actor,
+                deterministicKey: `reconcile:archived:${registry.lifecycle_status}:${registry.registry_role}`,
+                metadata: buildRegistryAuditMetadata({
+                    eventType: 'archive',
+                    actor,
+                    previousState: null,
+                    newState: stateSnapshot,
+                    reason: 'state_reconciled_from_registry',
+                }),
+            });
+        }
     }
 }
 
