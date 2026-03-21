@@ -762,6 +762,7 @@ async function main() {
     await testRegistryRegistrationValidationBlocksInvalidMetadata();
     await testRegistryPromotionBlockedReasons();
     await testRegistryControlPlaneVerificationMode();
+    await testRegistrySnapshotPreventsNoOpSyncSpam();
 
     console.log('Experiment tracking integration tests passed.');
 }
@@ -1243,6 +1244,85 @@ async function testRegistryControlPlaneVerificationMode() {
     const snapshot = await getModelRegistryControlPlaneSnapshot(store, tenantId);
     assert.equal(snapshot.registry_health, 'healthy');
     assert.equal(snapshot.consistency_issues.length, 0);
+}
+
+async function testRegistrySnapshotPreventsNoOpSyncSpam() {
+    const tenantId = makeUuid(9);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_live_without_rollback_001',
+        modelVersion: 'diag_live_without_rollback_v1',
+        datasetVersion: 'ldv_diag_live_without_rollback',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_live_without_rollback_001', 'promote_to_staging', 'qa_user');
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_live_without_rollback_001', 'set_manual_approval', 'qa_user', {
+        manualApproval: true,
+        reason: 'Champion approved for production.',
+    });
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_live_without_rollback_001', 'promote_to_production', 'qa_user');
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_fallback_candidate_002',
+        modelVersion: 'diag_fallback_candidate_v2',
+        datasetVersion: 'ldv_diag_fallback_candidate',
+    });
+
+    const championBeforeBackfill = await store.getModelRegistryForRun(tenantId, 'run_diag_live_without_rollback_001');
+    assert.equal(championBeforeBackfill?.rollback_target, null);
+
+    await backfillSummaryExperimentRuns(store, tenantId);
+    const auditAfterFirstBackfill = await store.listRegistryAuditLog(tenantId, 400);
+    const registeredAfterFirstBackfill = auditAfterFirstBackfill.filter((event) => event.event_type === 'registered').length;
+
+    await backfillSummaryExperimentRuns(store, tenantId);
+    const auditAfterSecondBackfill = await store.listRegistryAuditLog(tenantId, 400);
+    const registeredAfterSecondBackfill = auditAfterSecondBackfill.filter((event) => event.event_type === 'registered').length;
+    assert.equal(registeredAfterSecondBackfill, registeredAfterFirstBackfill);
+
+    const championAfterBackfill = await store.getModelRegistryForRun(tenantId, 'run_diag_live_without_rollback_001');
+    const fallbackRegistry = await store.getModelRegistryForRun(tenantId, 'run_diag_fallback_candidate_002');
+    assert.equal(championAfterBackfill?.rollback_target, fallbackRegistry?.registry_id ?? null);
+
+    const sourceRegisteredEvent = auditAfterSecondBackfill.find((event) =>
+        event.registry_id === championAfterBackfill?.registry_id &&
+        event.event_type === 'registered',
+    );
+    assert.ok(sourceRegisteredEvent);
+
+    await store.createRegistryAuditLog({
+        event_id: `${sourceRegisteredEvent!.event_id}_dup_1`,
+        tenant_id: sourceRegisteredEvent!.tenant_id,
+        registry_id: sourceRegisteredEvent!.registry_id,
+        run_id: sourceRegisteredEvent!.run_id,
+        event_type: sourceRegisteredEvent!.event_type,
+        timestamp: new Date(Date.parse(sourceRegisteredEvent!.timestamp) + 1_000).toISOString(),
+        actor: sourceRegisteredEvent!.actor,
+        metadata: sourceRegisteredEvent!.metadata,
+    });
+
+    const snapshot = await getModelRegistryControlPlaneSnapshot(store, tenantId);
+    assert.ok(!snapshot.consistency_issues.some((issue) => issue.code === 'missing_rollback_target'));
+    assert.ok(snapshot.audit_history.some((event) => event.event_type === 'rollback_target_assigned'));
+
+    const diagnosticsFamily = snapshot.families.find((family) => family.model_family === 'diagnostics');
+    const championEntry = diagnosticsFamily?.entries.find((entry) => entry.registry.run_id === 'run_diag_live_without_rollback_001');
+    assert.equal(championEntry?.rollback_readiness.ready, true);
+    assert.equal(championEntry?.rollback_readiness.target_registry_id, fallbackRegistry?.registry_id ?? null);
+    const registeredEventSignatures = new Set(
+        (championEntry?.latest_registry_events ?? [])
+            .filter((event) => event.event_type === 'registered')
+            .map((event) => JSON.stringify([
+                event.event_type,
+                event.metadata.reason ?? null,
+                event.metadata.previous_state ?? null,
+                event.metadata.new_state ?? null,
+            ])),
+    );
+    assert.equal(
+        registeredEventSignatures.size,
+        (championEntry?.latest_registry_events ?? []).filter((event) => event.event_type === 'registered').length,
+    );
 }
 
 async function testHeartbeatStateConsistency() {

@@ -144,13 +144,13 @@ export function ModelRegistryControlPlaneClient({
     };
 
     return (
-        <Container className="max-w-[96rem]">
+        <Container className="max-w-[112rem]">
             <PageHeader
                 title="MODEL REGISTRY CONTROL PLANE"
                 description="Operate artifact lifecycle, staging readiness, production routing, rollback execution, clinical safety gates, lineage, and audit history from one governed registry."
             />
 
-            <div className="mb-8 grid gap-3 md:grid-cols-4">
+            <div className="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
                 <SummaryCard label="Families" value={initialSnapshot.families.length} />
                 <SummaryCard label="Tracked Artifacts" value={totalEntries} />
                 <SummaryCard label="Active Routes" value={activeRoutes} tone="accent" />
@@ -340,10 +340,10 @@ export function ModelRegistryControlPlaneClient({
                                     {initialSnapshot.audit_history.slice(0, 20).map((event) => (
                                         <tr key={event.event_id} className="border-b border-grid/20">
                                             <td className="p-3 text-muted">{formatDateTime(event.timestamp)}</td>
-                                            <td className="p-3">{event.registry_id}</td>
-                                            <td className="p-3">{event.event_type}</td>
-                                            <td className="p-3">{event.actor ?? 'system'}</td>
-                                            <td className="p-3">{summarizeMetadata(event.metadata)}</td>
+                                            <td className="p-3 break-all align-top">{event.registry_id}</td>
+                                            <td className="p-3 break-words align-top">{event.event_type}</td>
+                                            <td className="p-3 break-all align-top">{event.actor ?? 'system'}</td>
+                                            <td className="max-w-[30rem] p-3 align-top break-all whitespace-pre-wrap text-foreground/85">{summarizeMetadata(event.metadata)}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -391,15 +391,15 @@ function RegistryEntryCard({
     const showApprovalControls = registry.lifecycle_status === 'staging';
 
     return (
-        <div className="border border-grid bg-black/20 p-5">
+        <div className="min-w-0 border border-grid bg-black/20 p-5">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-                <div>
-                    <div className="font-mono text-lg text-foreground">
+                <div className="min-w-0 flex-1">
+                    <div className="break-words font-mono text-lg leading-tight text-foreground">
                         {registry.model_name}
                     </div>
-                    <div className="mt-1 font-mono text-xs uppercase tracking-[0.16em] text-muted">
+                    <div className="mt-1 break-all font-mono text-xs uppercase tracking-[0.16em] text-muted">{`${registry.model_version} | ${registry.registry_id}`}</div>{/* legacy separator preserved for diff stability
                         {registry.model_version} • {registry.registry_id}
-                    </div>
+                    */}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                     {entry.is_active_route ? (
@@ -454,7 +454,7 @@ function RegistryEntryCard({
                             <div className={`mb-2 font-mono text-[10px] uppercase tracking-[0.18em] ${isLiveProduction ? 'text-yellow-300' : 'text-danger'}`}>
                                 {isLiveProduction ? 'Operational Watchlist' : 'Promotion Blockers'}
                             </div>
-                            <div className="space-y-2 font-mono text-xs text-foreground/85">
+                            <div className="space-y-2 break-words font-mono text-xs text-foreground/85">
                                 {entry.promotion_gating.blockers.map((blocker) => (
                                     <div key={blocker}>{blocker}</div>
                                 ))}
@@ -476,7 +476,7 @@ function RegistryEntryCard({
                             tone={entry.decision_panel.deployment_decision === 'approved' ? 'accent' : entry.decision_panel.deployment_decision === 'hold' ? 'default' : 'warn'}
                         />
                     </div>
-                    <div className="mt-4 space-y-2 font-mono text-xs text-foreground/85">
+                    <div className="mt-4 space-y-2 break-words font-mono text-xs text-foreground/85">
                         {entry.decision_panel.reasons.length > 0 ? (
                             <div>
                                 <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">{isLiveProduction ? 'Live Deployment Notes' : 'Reasons'}</div>
@@ -507,8 +507,8 @@ function RegistryEntryCard({
                         />
                         <DecisionStat
                             label="Rollback Ready"
-                            value={entry.rollback_readiness.ready ? 'READY' : 'BLOCKED'}
-                            tone={entry.rollback_readiness.ready ? 'accent' : 'warn'}
+                            value={renderRollbackReadinessValue(entry)}
+                            tone={resolveRollbackReadinessTone(entry)}
                         />
                         <DecisionStat
                             label="Audit Trail"
@@ -517,14 +517,14 @@ function RegistryEntryCard({
                         />
                     </div>
                     {entry.registration_validation.reasons.length > 0 ? (
-                        <div className="mt-4 space-y-2 font-mono text-xs text-danger">
+                        <div className="mt-4 space-y-2 break-words font-mono text-xs text-danger">
                             {entry.registration_validation.reasons.map((reason) => (
                                 <div key={reason}>{reason}</div>
                             ))}
                         </div>
                     ) : null}
                     {!entry.rollback_readiness.ready && entry.rollback_readiness.reasons.length > 0 ? (
-                        <div className="mt-4 space-y-2 font-mono text-xs text-danger">
+                        <div className="mt-4 space-y-2 break-words font-mono text-xs text-danger">
                             {entry.rollback_readiness.reasons.map((reason) => (
                                 <div key={reason}>{reason}</div>
                             ))}
@@ -559,7 +559,7 @@ function RegistryEntryCard({
                             {entry.rollback_history.slice(0, 3).map((event) => (
                                 <div key={event.event_id} className="border border-grid/40 bg-black/20 px-3 py-2 font-mono text-xs text-foreground/85">
                                     <div className="text-muted">{formatDateTime(event.timestamp)}</div>
-                                    <div>{summarizeMetadata(event.metadata)}</div>
+                                    <div className="break-all whitespace-pre-wrap">{summarizeMetadata(event.metadata)}</div>
                                 </div>
                             ))}
                         </div>
@@ -570,10 +570,10 @@ function RegistryEntryCard({
             {registry.rollback_metadata ? (
                 <div className="mt-5 border border-danger/30 bg-danger/10 p-3 font-mono text-xs text-foreground/85">
                     <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-danger">Last Rollback Metadata</div>
-                    <div>Triggered: {formatDateTime(registry.rollback_metadata.triggered_at)}</div>
-                    <div>By: {registry.rollback_metadata.triggered_by ?? 'system'}</div>
-                    <div>Reason: {registry.rollback_metadata.reason}</div>
-                    <div>Incident: {registry.rollback_metadata.incident_id ?? 'n/a'}</div>
+                    <div className="break-words">Triggered: {formatDateTime(registry.rollback_metadata.triggered_at)}</div>
+                    <div className="break-all">By: {registry.rollback_metadata.triggered_by ?? 'system'}</div>
+                    <div className="break-words">Reason: {registry.rollback_metadata.reason}</div>
+                    <div className="break-all">Incident: {registry.rollback_metadata.incident_id ?? 'n/a'}</div>
                 </div>
             ) : null}
 
@@ -607,12 +607,12 @@ function RegistryEntryCard({
                     <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Latest Registry Events</div>
                     <div className="space-y-2">
                         {entry.latest_registry_events.slice(0, 4).map((event) => (
-                            <div key={event.event_id} className="flex items-start justify-between gap-3 border border-grid/30 bg-black/20 px-3 py-2 font-mono text-xs">
-                                <div>
+                            <div key={event.event_id} className="grid gap-2 border border-grid/30 bg-black/20 px-3 py-2 font-mono text-xs md:grid-cols-[minmax(0,1fr),auto] md:items-start">
+                                <div className="min-w-0">
                                     <div className="text-foreground/90">{event.event_type}</div>
-                                    <div className="mt-1 text-muted">{summarizeMetadata(event.metadata)}</div>
+                                    <div className="mt-1 break-all whitespace-pre-wrap text-muted">{summarizeMetadata(event.metadata)}</div>
                                 </div>
-                                <div className="text-muted">{formatDateTime(event.timestamp)}</div>
+                                <div className="break-words text-muted md:text-right">{formatDateTime(event.timestamp)}</div>
                             </div>
                         ))}
                     </div>
@@ -634,7 +634,7 @@ function SummaryCard({
     return (
         <div className="border border-grid bg-black/20 p-3 font-mono">
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
-            <div className={`mt-2 text-2xl ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
+            <div className={`mt-2 break-words text-xl leading-tight md:text-2xl ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
                 {value}
             </div>
         </div>
@@ -653,7 +653,7 @@ function FamilyStat({
     return (
         <div className="border border-grid bg-black/20 p-3">
             <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">{label}</div>
-            <div className={`mt-2 font-mono text-xs ${tone === 'accent' ? 'text-accent' : 'text-foreground/85'}`}>{value}</div>
+            <div className={`mt-2 break-words font-mono text-xs leading-relaxed ${tone === 'accent' ? 'text-accent' : 'text-foreground/85'}`}>{value}</div>
         </div>
     );
 }
@@ -704,7 +704,7 @@ function MetricTile({
     return (
         <div className={`border p-3 ${emphasis ? 'border-danger/30 bg-danger/10' : 'border-grid/30 bg-black/20'}`}>
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">{label}</div>
-            <div className={`mt-2 font-mono text-lg ${emphasis ? 'text-danger' : 'text-foreground'}`}>{value}</div>
+            <div className={`mt-2 break-words font-mono text-base leading-tight md:text-lg ${emphasis ? 'text-danger' : 'text-foreground'}`}>{value}</div>
         </div>
     );
 }
@@ -712,7 +712,7 @@ function MetricTile({
 function GateRow({ label, status }: { label: string; status: GateStatus }) {
     return (
         <div className="flex items-center justify-between gap-3 border border-grid/30 bg-black/20 px-3 py-2 font-mono text-xs">
-            <span className="text-foreground/85">{label}</span>
+            <span className="min-w-0 break-words text-foreground/85">{label}</span>
             <span className={`inline-flex items-center border px-2 py-1 text-[10px] uppercase tracking-[0.16em] ${gateBadgeClass(status)}`}>
                 {status}
             </span>
@@ -732,7 +732,7 @@ function DecisionStat({
     return (
         <div className="border border-grid/30 bg-black/20 p-3">
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">{label}</div>
-            <div className={`mt-2 font-mono text-lg ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
+            <div className={`mt-2 break-words font-mono text-base leading-tight md:text-lg ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
                 {value}
             </div>
         </div>
@@ -803,6 +803,20 @@ function renderDeploymentDecision(entry: ModelRegistryControlPlaneEntry) {
     return entry.decision_panel.deployment_decision.toUpperCase();
 }
 
+function renderRollbackReadinessValue(entry: ModelRegistryControlPlaneEntry) {
+    if (entry.registry.lifecycle_status !== 'production' || entry.registry.registry_role !== 'champion') {
+        return 'NOT REQUIRED';
+    }
+    return entry.rollback_readiness.ready ? 'READY' : 'BLOCKED';
+}
+
+function resolveRollbackReadinessTone(entry: ModelRegistryControlPlaneEntry): 'default' | 'accent' | 'warn' {
+    if (entry.registry.lifecycle_status !== 'production' || entry.registry.registry_role !== 'champion') {
+        return 'default';
+    }
+    return entry.rollback_readiness.ready ? 'accent' : 'warn';
+}
+
 function formatFamilyLabel(modelFamily: ModelFamily) {
     return modelFamily.charAt(0).toUpperCase() + modelFamily.slice(1);
 }
@@ -827,9 +841,13 @@ function summarizeMetadata(metadata: Record<string, unknown>) {
 function formatMetadataValue(value: unknown) {
     if (value == null) return 'n/a';
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-        return String(value);
+        return truncateMetadataValue(String(value));
     }
-    return JSON.stringify(value);
+    return truncateMetadataValue(JSON.stringify(value));
+}
+
+function truncateMetadataValue(value: string) {
+    return value.length > 180 ? `${value.slice(0, 177)}...` : value;
 }
 
 function formatMetric(value: number | null) {
