@@ -40,6 +40,9 @@ import {
     planModelRoute,
 } from '@/lib/routingEngine/service';
 
+export const runtime = 'nodejs';
+export const maxDuration = 60;
+
 const AI_TIMEOUT_MS = 55_000;
 
 export async function POST(req: Request) {
