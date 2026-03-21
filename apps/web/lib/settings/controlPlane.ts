@@ -170,7 +170,7 @@ export async function getControlPlaneSnapshot(input: {
             api_keys: apiKeys,
         },
         system_health: buildSystemHealth(telemetrySnapshot, topologySnapshot, telemetryEvents),
-        pipelines: buildPipelineStates(topologySnapshot.control_plane_state, topologySnapshot.alerts, topologySnapshot.diagnostics),
+        pipelines: buildPipelineStates(topologySnapshot),
         governance: {
             families: governanceFamilies,
             current_production_model: governanceFamilies
@@ -189,7 +189,7 @@ export async function getControlPlaneSnapshot(input: {
         diagnostics: buildDiagnostics(
             topologySnapshot.control_plane_state,
             topologySnapshot.summary,
-            buildPipelineStates(topologySnapshot.control_plane_state, topologySnapshot.alerts, topologySnapshot.diagnostics),
+            buildPipelineStates(topologySnapshot),
             configBundle.warnings,
         ),
         configuration: configBundle.config,
@@ -868,10 +868,10 @@ function buildSystemHealth(
 }
 
 function buildPipelineStates(
-    controlPlaneState: TopologyControlPlaneState,
-    alerts: TopologyAlert[],
-    diagnostics: Awaited<ReturnType<typeof getTopologySnapshot>>['diagnostics'],
+    topologySnapshot: Awaited<ReturnType<typeof getTopologySnapshot>>,
 ): ControlPlanePipelineState[] {
+    const { control_plane_state: controlPlaneState, alerts, diagnostics, refreshed_at } = topologySnapshot;
+
     return [
         {
             key: 'inference',
@@ -903,16 +903,14 @@ function buildPipelineStates(
             key: 'telemetry_stream',
             label: 'Telemetry Stream',
             status: diagnostics.telemetry_stream_connected ? 'ACTIVE' : 'FAILED',
-            last_successful_event: diagnostics.latest_inference_timestamp ?? diagnostics.latest_outcome_timestamp,
+            last_successful_event: diagnostics.latest_telemetry_timestamp,
             error_logs: collectAlertMessages(alerts, ['stream'], 'telemetry_observer'),
         },
         {
             key: 'topology_stream',
             label: 'Topology Stream',
             status: controlPlaneState === 'STREAM_DISCONNECTED' ? 'FAILED' : 'ACTIVE',
-            last_successful_event: diagnostics.latest_simulation_timestamp
-                ?? diagnostics.latest_evaluation_timestamp
-                ?? diagnostics.latest_inference_timestamp,
+            last_successful_event: refreshed_at,
             error_logs: collectAlertMessages(alerts, ['stream', 'heartbeat']),
         },
     ];

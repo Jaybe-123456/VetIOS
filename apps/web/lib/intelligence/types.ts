@@ -121,6 +121,7 @@ export interface TopologySnapshot {
     diagnostics: {
         telemetry_stream_connected: boolean;
         evaluation_events_table_exists: boolean;
+        latest_telemetry_timestamp: string | null;
         latest_inference_timestamp: string | null;
         latest_outcome_timestamp: string | null;
         latest_evaluation_timestamp: string | null;
