@@ -166,6 +166,7 @@ const SIMULATION_OVERRIDE_TTL_MS = 30 * 1000;
 const MIN_EVALUATION_EVENTS_FOR_DRIFT = 3;
 const MIN_EVALUATION_EVENTS_FOR_ERROR_RATE = 3;
 const MIN_INFERENCE_EVENTS_FOR_ERROR_RATE = 3;
+const MIN_SIMULATION_EVENTS_FOR_ERROR_RATE = 3;
 
 const NODE_POSITIONS: Record<NodeId, { x: number; y: number }> = {
     control_plane: { x: 560, y: 40 },
@@ -367,9 +368,8 @@ function buildNodes(input: {
     const simulationTelemetry = input.telemetryEvents.filter((event) => {
         const source = readString(event.metadata.source_module) ?? readString(event.metadata.source);
         return event.event_type === 'simulation'
-            || isSyntheticTelemetryEvent(event)
             || source === 'adversarial_simulation'
-            || source === 'telemetry_stream_generator';
+            || source === 'intelligence_topology';
     });
 
     const registryNode = createNode({
@@ -625,61 +625,65 @@ function buildNodes(input: {
     const simulationNode = createNode({
         id: 'simulation_cluster',
         kind: 'simulation',
-        state: applyOverride({
-            status: resolveNodeStatus({
-                hasData: input.simulations.length > 0 || simulationTelemetry.length > 0,
-                lastUpdated: findLatestTimestamp([
-                    ...input.simulations.map((event) => event.created_at),
-                    ...simulationTelemetry.map((event) => event.timestamp),
-                ]),
-                latency: percentile(
-                    simulationTelemetry
-                        .map((event) => event.metrics.latency_ms)
-                        .filter((value): value is number => value != null && value <= 5_000),
-                    95,
-                ),
-                errorRate: ratio(
-                    input.simulations.filter((simulation) => simulation.failure_mode != null).length,
-                    input.simulations.length,
-                ),
-                drift: maxValue(familyNodes.map((node) => node.state.drift_score)),
-                confidence: mean(
-                    simulationTelemetry
-                        .map((event) => event.metrics.confidence)
-                        .filter((value): value is number => value != null),
-                ),
-                governanceFailure: false,
-                governancePending: false,
-                now: input.until,
-            }),
-            latency: percentile(
-                simulationTelemetry
+        state: applyOverride((() => {
+            const recentSimulations = input.simulations.filter((event) => !isStale(event.created_at, input.until));
+            const recentSimulationTelemetry = simulationTelemetry.filter((event) => !isStale(event.timestamp, input.until));
+            const lastSimulationUpdate = findLatestTimestamp([
+                ...input.simulations.map((event) => event.created_at),
+                ...simulationTelemetry.map((event) => event.timestamp),
+            ]);
+            const lastRecentSimulationUpdate = findLatestTimestamp([
+                ...recentSimulations.map((event) => event.created_at),
+                ...recentSimulationTelemetry.map((event) => event.timestamp),
+            ]);
+            const simulationLatency = percentile(
+                recentSimulationTelemetry
                     .map((event) => event.metrics.latency_ms)
                     .filter((value): value is number => value != null && value <= 5_000),
                 95,
-            ),
-            throughput: roundNumber(input.simulations.length / windowMinutes, 2),
-            error_rate: ratio(
-                input.simulations.filter((simulation) => simulation.failure_mode != null).length,
-                input.simulations.length,
-            ),
-            drift_score: maxValue(familyNodes.map((node) => node.state.drift_score)),
-            confidence_avg: mean(
-                simulationTelemetry
+            );
+            const simulationConfidence = mean(
+                recentSimulationTelemetry
                     .map((event) => event.metrics.confidence)
                     .filter((value): value is number => value != null),
-            ),
-            last_updated: findLatestTimestamp([
-                ...input.simulations.map((event) => event.created_at),
-                ...simulationTelemetry.map((event) => event.timestamp),
-            ]),
-        }, input.nodeOverrides.get('simulation_cluster'), input.until),
+            );
+            const simulationErrorRate = calculateSimulationErrorRate(recentSimulations);
+            const hasRecentSimulationSignal = recentSimulations.length > 0 || recentSimulationTelemetry.length > 0;
+
+            return {
+                status: hasRecentSimulationSignal
+                    ? resolveNodeStatus({
+                        hasData: true,
+                        lastUpdated: lastRecentSimulationUpdate,
+                        latency: simulationLatency,
+                        errorRate: simulationErrorRate,
+                        drift: maxValue(familyNodes.map((node) => node.state.drift_score)),
+                        confidence: simulationConfidence,
+                        governanceFailure: false,
+                        governancePending: false,
+                        now: input.until,
+                    })
+                    : input.diagnostics.telemetry_stream_connected
+                        ? 'healthy'
+                        : 'degraded',
+                latency: simulationLatency,
+                throughput: roundNumber(recentSimulations.length / windowMinutes, 2),
+                error_rate: simulationErrorRate,
+                drift_score: hasRecentSimulationSignal ? maxValue(familyNodes.map((node) => node.state.drift_score)) : null,
+                confidence_avg: simulationConfidence,
+                last_updated: lastRecentSimulationUpdate ?? lastSimulationUpdate,
+            };
+        })(), input.nodeOverrides.get('simulation_cluster'), input.until),
         governance: null,
         metadata: {
             recent_scenarios: input.simulations.slice(0, 6).map((simulation) => simulation.simulation_type),
             recent_failure_modes: input.simulations
                 .map((simulation) => simulation.failure_mode)
                 .filter((value): value is string => value != null),
+            observability_state: input.simulations.some((event) => !isStale(event.created_at, input.until))
+                || simulationTelemetry.some((event) => !isStale(event.timestamp, input.until))
+                ? 'LIVE'
+                : 'NO_DATA',
         },
     });
 
@@ -1597,6 +1601,20 @@ function calculateInferenceErrorRate(
 }
 
 export const calculateInferenceErrorRateForTest = calculateInferenceErrorRate;
+
+function calculateSimulationErrorRate(
+    simulations: Array<{ failure_mode: string | null }>,
+) {
+    if (simulations.length < MIN_SIMULATION_EVENTS_FOR_ERROR_RATE) {
+        return null;
+    }
+    return ratio(
+        simulations.filter((simulation) => simulation.failure_mode != null).length,
+        simulations.length,
+    );
+}
+
+export const calculateSimulationErrorRateForTest = calculateSimulationErrorRate;
 
 function computeEvaluationDrift(
     evaluations: Array<{ prediction: string | null; ground_truth: string | null }>,
