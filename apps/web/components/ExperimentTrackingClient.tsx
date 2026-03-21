@@ -107,7 +107,7 @@ export function ExperimentTrackingClient({
                     <SummaryCard label="Summary Only" value={snapshot.summary.summary_only_runs} tooltip="Historical runs without full telemetry remain visible, but they do not count toward telemetry completeness." />
                     <SummaryCard label="Telemetry Coverage" value={`${snapshot.summary.telemetry_coverage_pct}%`} tooltip="Percentage of runs with complete stored metric streams: epoch, step, train/val loss, val accuracy, learning rate, gradient norm, and heartbeat." />
                     <SummaryCard label="Registry Coverage" value={`${snapshot.summary.registry_link_coverage_pct}%`} tooltip="Percentage of runs linked to a registry candidate or champion record." />
-                    <SummaryCard label="Safety Coverage" value={`${snapshot.summary.safety_metric_coverage_pct}%`} tooltip="Percentage of runs with full clinical safety metrics, not just basic macro F1 and critical recall." />
+                    <SummaryCard label="Safety Coverage" value={`${snapshot.summary.safety_metric_coverage_pct}%`} tooltip="Percentage of runs with any clinical safety telemetry present. Per-run coverage still distinguishes PARTIAL from FULL." />
                 </div>
 
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -349,7 +349,7 @@ function RunDetail({
                         <DetailStat label="Target Type" value={detail.run.target_type ?? 'Not reported'} />
                         <DetailStat label="Model Arch" value={detail.run.model_arch} />
                         <DetailStat label="Model Version" value={detail.run.model_version ?? 'Not reported'} />
-                        <DetailStat label="Status" value={`${detail.run.status}${detail.run.status_reason ? ` / ${detail.run.status_reason}` : ''}`} />
+                        <DetailStat label="Status" value={formatRunStatus(detail.run)} />
                         <DetailStat label="Progress" value={`${detail.run.progress_percent ?? 0}%`} />
                         <DetailStat label="Created By" value={detail.run.created_by ?? 'system'} />
                     </div>
@@ -366,8 +366,8 @@ function RunDetail({
                         <DetailStat label="Benchmark Gate" value={renderGateStatus(detail.promotion_requirements?.benchmark_pass)} />
                         <DetailStat label="Manual Approval" value={renderGateStatus(detail.promotion_requirements?.manual_approval)} />
                         <DetailStat label="Safety Coverage" value={detail.safety_coverage.toUpperCase()} />
-                        <DetailStat label="Promotion Eligibility" value={detail.decision_panel.promotion_eligibility ? 'YES' : 'NO'} />
-                        <DetailStat label="Deployment Decision" value={detail.deployment_decision ? detail.deployment_decision.decision.toUpperCase() : 'Pending'} />
+                        <DetailStat label="Promotion Eligibility" value={renderPromotionEligibility(detail)} />
+                        <DetailStat label="Deployment Decision" value={renderDeploymentDecision(detail)} />
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
                         <TerminalButton
@@ -971,6 +971,29 @@ function renderRegistryContext(run: ExperimentRunRecord) {
 }
 
 function renderEligibility(run: ExperimentRunRecord) {
+    const registryRole = String(run.registry_context.registry_role ?? '').trim().toLowerCase();
+    const registryStatus = String(run.registry_context.registry_status ?? run.registry_context.promotion_status ?? '').trim().toLowerCase();
+    const eligibility = String(run.registry_context.deployment_eligibility ?? 'Pending review').trim().toLowerCase();
+
+    if (registryRole === 'champion' && registryStatus === 'production') {
+        return 'LIVE / PRODUCTION';
+    }
+    if (eligibility === 'live_production') {
+        return 'LIVE / PRODUCTION';
+    }
+    if (eligibility === 'rollback_target') {
+        return 'ROLLBACK TARGET';
+    }
+    if (eligibility === 'eligible_review') {
+        return 'ELIGIBLE REVIEW';
+    }
+    if (eligibility === 'pending') {
+        return 'PENDING REVIEW';
+    }
+    if (eligibility === 'blocked') {
+        return 'BLOCKED';
+    }
+
     return String(run.registry_context.deployment_eligibility ?? 'Pending review');
 }
 
@@ -978,6 +1001,30 @@ function renderGateStatus(value: boolean | null | undefined) {
     if (value === true) return 'PASS';
     if (value === false) return 'FAIL';
     return 'PENDING';
+}
+
+function formatRunStatus(run: ExperimentRunRecord) {
+    const reason = !isActiveRun(run) && isHeartbeatDerivedReason(run.status_reason)
+        ? null
+        : run.status_reason;
+    return `${run.status}${reason ? ` / ${reason}` : ''}`;
+}
+
+function renderPromotionEligibility(detail: ExperimentRunDetail) {
+    if (detail.model_registry?.lifecycle_status === 'production' && detail.model_registry.registry_role === 'champion') {
+        return 'ALREADY LIVE';
+    }
+    if (detail.model_registry?.registry_role === 'rollback_target') {
+        return 'ROLLBACK TARGET';
+    }
+    return detail.decision_panel.promotion_eligibility ? 'YES' : 'NO';
+}
+
+function renderDeploymentDecision(detail: ExperimentRunDetail) {
+    if (detail.model_registry?.lifecycle_status === 'production' && detail.model_registry.registry_role === 'champion') {
+        return 'APPROVED';
+    }
+    return detail.deployment_decision ? detail.deployment_decision.decision.toUpperCase() : 'PENDING';
 }
 
 function renderStatusBadge(run: ExperimentRunRecord) {
@@ -1007,6 +1054,10 @@ function isActiveRun(run: ExperimentRunRecord) {
         run.status === 'training' ||
         run.status === 'validating' ||
         run.status === 'checkpointing';
+}
+
+function isHeartbeatDerivedReason(statusReason: string | null | undefined) {
+    return statusReason === 'heartbeat_stale' || statusReason === 'heartbeat_interrupted';
 }
 
 function isGovernanceReviewState(status: ExperimentRunRecord['status']) {
