@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { backfillTenantClinicalCaseLearningState } from '@/lib/clinicalCases/clinicalCaseBackfill';
 import { collectClinicalDatasetDebugSnapshot } from '@/lib/dataset/clinicalDatasetDiagnostics';
+import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import {
     AI_INFERENCE_EVENTS,
     CLINICAL_OUTCOME_EVENTS,
@@ -54,6 +55,10 @@ const DEFAULT_CONFIG: ControlPlaneConfiguration = {
     confidence_threshold: 0.65,
     alert_sensitivity: 'balanced',
     simulation_enabled: false,
+    decision_mode: 'observe',
+    safe_mode_enabled: false,
+    abstain_threshold: 0.8,
+    auto_execute_confidence_threshold: 0.9,
     updated_at: null,
     updated_by: null,
 };
@@ -124,6 +129,14 @@ export async function getControlPlaneSnapshot(input: {
         findLatestEvaluationEventId(input.client, input.tenantId),
     ]);
 
+    const decisionEngine = await evaluateDecisionEngine({
+        client: input.client,
+        tenantId: input.tenantId,
+        topologySnapshot,
+        registrySnapshot,
+        triggerSource: 'settings_control_plane',
+    });
+
     try {
         await syncControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
     } catch (error) {
@@ -180,12 +193,26 @@ export async function getControlPlaneSnapshot(input: {
             configBundle.warnings,
         ),
         configuration: configBundle.config,
+        decision_engine: {
+            mode: decisionEngine.mode,
+            safe_mode_enabled: decisionEngine.safe_mode_enabled,
+            abstain_threshold: decisionEngine.abstain_threshold,
+            auto_execute_confidence_threshold: decisionEngine.auto_execute_confidence_threshold,
+            last_evaluated_at: decisionEngine.last_evaluated_at,
+            active_decision_count: decisionEngine.active_decision_count,
+            latest_trigger: decisionEngine.latest_trigger,
+            latest_action: decisionEngine.latest_action,
+            decisions: decisionEngine.decisions,
+            audit_log: decisionEngine.audit_log,
+            summary: decisionEngine.summary,
+        },
         alerts: persistedAlerts,
         logs: buildControlPlaneLogs({
             telemetryEvents,
             actions,
             alerts: persistedAlerts,
             registryAudit: registrySnapshot.audit_history,
+            decisionEngine,
         }),
         actions,
         debug: {
@@ -229,6 +256,10 @@ export async function getControlPlaneConfigBundle(client: SupabaseClient, tenant
                 [C.confidence_threshold]: DEFAULT_CONFIG.confidence_threshold,
                 [C.alert_sensitivity]: DEFAULT_CONFIG.alert_sensitivity,
                 [C.simulation_enabled]: DEFAULT_CONFIG.simulation_enabled,
+                [C.decision_mode]: DEFAULT_CONFIG.decision_mode,
+                [C.safe_mode_enabled]: DEFAULT_CONFIG.safe_mode_enabled,
+                [C.abstain_threshold]: DEFAULT_CONFIG.abstain_threshold,
+                [C.auto_execute_confidence_threshold]: DEFAULT_CONFIG.auto_execute_confidence_threshold,
             })
             .select('*')
             .single();
@@ -256,7 +287,7 @@ export async function updateControlPlaneConfig(input: {
     client: SupabaseClient;
     tenantId: string;
     actor: string | null;
-    patch: Partial<Pick<ControlPlaneConfiguration, 'latency_threshold_ms' | 'drift_threshold' | 'confidence_threshold' | 'alert_sensitivity' | 'simulation_enabled'>>;
+    patch: Partial<Pick<ControlPlaneConfiguration, 'latency_threshold_ms' | 'drift_threshold' | 'confidence_threshold' | 'alert_sensitivity' | 'simulation_enabled' | 'decision_mode' | 'safe_mode_enabled' | 'abstain_threshold' | 'auto_execute_confidence_threshold'>>;
 }): Promise<ControlPlaneConfiguration> {
     const C = CONTROL_PLANE_CONFIGS.COLUMNS;
     const { data, error } = await input.client
@@ -268,6 +299,10 @@ export async function updateControlPlaneConfig(input: {
             [C.confidence_threshold]: input.patch.confidence_threshold,
             [C.alert_sensitivity]: input.patch.alert_sensitivity,
             [C.simulation_enabled]: input.patch.simulation_enabled,
+            [C.decision_mode]: input.patch.decision_mode,
+            [C.safe_mode_enabled]: input.patch.safe_mode_enabled,
+            [C.abstain_threshold]: input.patch.abstain_threshold,
+            [C.auto_execute_confidence_threshold]: input.patch.auto_execute_confidence_threshold,
             [C.updated_by]: input.actor,
         }), {
             onConflict: C.tenant_id,
@@ -931,6 +966,7 @@ function buildControlPlaneLogs(input: {
     actions: ControlPlaneActionRecord[];
     alerts: ControlPlaneAlertRecord[];
     registryAudit: RegistryAuditLogRecord[];
+    decisionEngine: ControlPlaneSnapshot['decision_engine'];
 }): ControlPlaneLogRecord[] {
     const telemetryLogs = input.telemetryEvents.map<ControlPlaneLogRecord>((event) => ({
         id: event.event_id,
@@ -972,8 +1008,18 @@ function buildControlPlaneLogs(input: {
         model_version: textOrNull(event.metadata.model_version),
         event_type: event.event_type,
     }));
+    const decisionLogs = input.decisionEngine.audit_log.map<ControlPlaneLogRecord>((event) => ({
+        id: event.id,
+        category: 'system',
+        level: event.result === 'failed' ? 'ERROR' : 'INFO',
+        message: `[DECISION] ${event.trigger.toUpperCase()} -> ${event.action} (${event.result.toUpperCase()})`,
+        timestamp: event.executed_at,
+        run_id: textOrNull(event.metadata.run_id),
+        model_version: textOrNull(event.metadata.model_version),
+        event_type: 'decision',
+    }));
 
-    return [...telemetryLogs, ...actionLogs, ...alertLogs, ...registryLogs]
+    return [...telemetryLogs, ...actionLogs, ...alertLogs, ...registryLogs, ...decisionLogs]
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
         .slice(0, 200);
 }
@@ -985,6 +1031,10 @@ function mapControlPlaneConfig(row: Record<string, unknown>): ControlPlaneConfig
         confidence_threshold: numberOrNull(row.confidence_threshold) ?? DEFAULT_CONFIG.confidence_threshold,
         alert_sensitivity: readAlertSensitivity(row.alert_sensitivity),
         simulation_enabled: booleanOrFalse(row.simulation_enabled),
+        decision_mode: readDecisionMode(row.decision_mode),
+        safe_mode_enabled: booleanOrFalse(row.safe_mode_enabled),
+        abstain_threshold: numberOrNull(row.abstain_threshold) ?? DEFAULT_CONFIG.abstain_threshold,
+        auto_execute_confidence_threshold: numberOrNull(row.auto_execute_confidence_threshold) ?? DEFAULT_CONFIG.auto_execute_confidence_threshold,
         updated_at: textOrNull(row.updated_at),
         updated_by: textOrNull(row.updated_by),
     };
@@ -1229,6 +1279,10 @@ function readAlertSeverity(value: unknown) {
 function readAlertSensitivity(value: unknown): ControlPlaneAlertSensitivity {
     if (value === 'low' || value === 'high') return value;
     return 'balanced';
+}
+
+function readDecisionMode(value: unknown): ControlPlaneConfiguration['decision_mode'] {
+    return value === 'assist' || value === 'autonomous' ? value : 'observe';
 }
 
 function asStringArray(value: unknown) {

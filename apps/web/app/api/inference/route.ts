@@ -37,6 +37,7 @@ import {
     resolveTelemetryRunId,
     telemetryInferenceEventId,
 } from '@/lib/telemetry/service';
+import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 
 const AI_TIMEOUT_MS = 55_000;
 
@@ -233,6 +234,15 @@ export async function POST(req: Request) {
             inferenceEventId: persistedInferenceEventId,
         });
         revalidatePath('/dataset');
+        try {
+            await evaluateDecisionEngine({
+                client: supabase,
+                tenantId,
+                triggerSource: 'inference',
+            });
+        } catch (decisionErr) {
+            console.error(`[${requestId}] Decision engine evaluation failed (non-fatal):`, decisionErr);
+        }
 
         // ── Evaluation (non-blocking) ──
         const response = NextResponse.json({

@@ -40,6 +40,7 @@ import {
     telemetryInferenceEventId,
     telemetrySimulationEventId,
 } from '@/lib/telemetry/service';
+import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 
 const AI_TIMEOUT_MS = 55_000;
 
@@ -271,6 +272,15 @@ export async function POST(req: Request) {
             simulationEventId: persistedSimulationEventId,
         });
         revalidatePath('/dataset');
+        try {
+            await evaluateDecisionEngine({
+                client: supabase,
+                tenantId,
+                triggerSource: 'simulation',
+            });
+        } catch (decisionErr) {
+            console.error(`[${requestId}] Decision engine evaluation failed (non-fatal):`, decisionErr);
+        }
 
         const parsedDiag = inferenceResult.output_payload.diagnosis as Record<string, unknown>;
         const differentialDiagnosis = parsedDiag && Array.isArray(parsedDiag.top_differentials)

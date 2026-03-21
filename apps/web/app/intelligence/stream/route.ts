@@ -1,4 +1,5 @@
 import { resolveRequestActor } from '@/lib/auth/requestActor';
+import { applyDecisionEngineToTopologySnapshot, evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { getTopologySnapshot, syncControlPlaneAlerts } from '@/lib/intelligence/topologyService';
 import type { TopologyWindow } from '@/lib/intelligence/types';
@@ -40,11 +41,18 @@ export async function GET(req: Request) {
                         window,
                     });
                     await syncControlPlaneAlerts(client, actor.tenantId, snapshot.alerts);
+                    const decisionEngine = await evaluateDecisionEngine({
+                        client,
+                        tenantId: actor.tenantId,
+                        topologySnapshot: snapshot,
+                        triggerSource: 'topology_stream',
+                    });
+                    const enrichedSnapshot = applyDecisionEngineToTopologySnapshot(snapshot, decisionEngine);
 
                     if (closed) return;
                     controller.enqueue(
                         encoder.encode(
-                            serializeSseMessage(JSON.stringify({ snapshot })),
+                            serializeSseMessage(JSON.stringify({ snapshot: enrichedSnapshot })),
                         ),
                     );
                 } catch (error) {

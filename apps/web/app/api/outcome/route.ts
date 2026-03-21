@@ -39,6 +39,7 @@ import {
     telemetryInferenceEventId,
     telemetryOutcomeEventId,
 } from '@/lib/telemetry/service';
+import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
@@ -180,7 +181,6 @@ export async function POST(req: Request) {
             outcomeEventId,
         });
         revalidatePath('/dataset');
-
         let pipelineResult: any = {};
         try {
             const { data: inferenceData } = await supabase
@@ -359,6 +359,16 @@ export async function POST(req: Request) {
             }
         } catch (pipelineErr) {
             console.warn(`[${requestId}] Learning Pipeline auto-trigger failed (non-fatal):`, pipelineErr);
+        }
+
+        try {
+            await evaluateDecisionEngine({
+                client: supabase,
+                tenantId,
+                triggerSource: 'outcome',
+            });
+        } catch (decisionErr) {
+            console.error(`[${requestId}] Decision engine evaluation failed (non-fatal):`, decisionErr);
         }
 
         const response = NextResponse.json({

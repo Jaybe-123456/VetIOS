@@ -1,9 +1,11 @@
 import type { ModelFamily, GateStatus } from '@/lib/experiments/types';
+import type { DecisionEngineMode, DecisionEngineRecord, DecisionAuditLogRecord } from '@/lib/decisionEngine/types';
 import type { TelemetryEventType, TelemetryEventRecord } from '@/lib/telemetry/types';
 import type { TopologyAlertSeverity, TopologyControlPlaneState, TopologySimulationScenario } from '@/lib/intelligence/types';
 
 export type ControlPlaneUserRole = 'admin' | 'researcher' | 'clinician' | 'developer';
 export type ControlPlaneAlertSensitivity = 'low' | 'balanced' | 'high';
+export type ControlPlaneDecisionMode = DecisionEngineMode;
 export type ControlPlanePipelineStatus = 'ACTIVE' | 'FAILED' | 'INITIALIZING';
 export type ControlPlaneApiKeyStatus = 'active' | 'revoked';
 export type ControlPlaneActionStatus = 'requested' | 'completed' | 'failed';
@@ -122,8 +124,31 @@ export interface ControlPlaneConfiguration {
     confidence_threshold: number;
     alert_sensitivity: ControlPlaneAlertSensitivity;
     simulation_enabled: boolean;
+    decision_mode: ControlPlaneDecisionMode;
+    safe_mode_enabled: boolean;
+    abstain_threshold: number;
+    auto_execute_confidence_threshold: number;
     updated_at: string | null;
     updated_by: string | null;
+}
+
+export interface ControlPlaneDecisionEngineState {
+    mode: ControlPlaneDecisionMode;
+    safe_mode_enabled: boolean;
+    abstain_threshold: number;
+    auto_execute_confidence_threshold: number;
+    last_evaluated_at: string | null;
+    active_decision_count: number;
+    latest_trigger: string | null;
+    latest_action: string | null;
+    decisions: DecisionEngineRecord[];
+    audit_log: DecisionAuditLogRecord[];
+    summary: {
+        where_failing: string;
+        root_cause: string;
+        impact: string;
+        next_action: string;
+    };
 }
 
 export interface ControlPlaneAlertRecord {
@@ -198,6 +223,7 @@ export interface ControlPlaneSnapshot {
     };
     diagnostics: ControlPlaneDiagnostics;
     configuration: ControlPlaneConfiguration;
+    decision_engine: ControlPlaneDecisionEngineState;
     alerts: ControlPlaneAlertRecord[];
     logs: ControlPlaneLogRecord[];
     actions: ControlPlaneActionRecord[];

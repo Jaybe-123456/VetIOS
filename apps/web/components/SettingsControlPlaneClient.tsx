@@ -94,6 +94,10 @@ export default function SettingsControlPlaneClient() {
         confidence_threshold: 0.65,
         alert_sensitivity: 'balanced' as ControlPlaneAlertSensitivity,
         simulation_enabled: false,
+        decision_mode: 'observe' as ControlPlaneSnapshot['configuration']['decision_mode'],
+        safe_mode_enabled: false,
+        abstain_threshold: 0.8,
+        auto_execute_confidence_threshold: 0.9,
     });
     const [newKeyLabel, setNewKeyLabel] = useState('VetIOS operator key');
     const [newKeyScopes, setNewKeyScopes] = useState('tenant.read,tenant.write');
@@ -140,6 +144,10 @@ export default function SettingsControlPlaneClient() {
             confidence_threshold: snapshot.configuration.confidence_threshold,
             alert_sensitivity: snapshot.configuration.alert_sensitivity,
             simulation_enabled: snapshot.configuration.simulation_enabled,
+            decision_mode: snapshot.configuration.decision_mode,
+            safe_mode_enabled: snapshot.configuration.safe_mode_enabled,
+            abstain_threshold: snapshot.configuration.abstain_threshold,
+            auto_execute_confidence_threshold: snapshot.configuration.auto_execute_confidence_threshold,
         });
     }, [snapshot]);
 
@@ -439,6 +447,10 @@ function renderTab(input: {
         confidence_threshold: number;
         alert_sensitivity: ControlPlaneAlertSensitivity;
         simulation_enabled: boolean;
+        decision_mode: ControlPlaneSnapshot['configuration']['decision_mode'];
+        safe_mode_enabled: boolean;
+        abstain_threshold: number;
+        auto_execute_confidence_threshold: number;
     };
     newKeyLabel: string;
     newKeyScopes: string;
@@ -457,6 +469,10 @@ function renderTab(input: {
         confidence_threshold: number;
         alert_sensitivity: ControlPlaneAlertSensitivity;
         simulation_enabled: boolean;
+        decision_mode: ControlPlaneSnapshot['configuration']['decision_mode'];
+        safe_mode_enabled: boolean;
+        abstain_threshold: number;
+        auto_execute_confidence_threshold: number;
     }>>;
     onNewKeyLabelChange: Dispatch<SetStateAction<string>>;
     onNewKeyScopesChange: Dispatch<SetStateAction<string>>;
@@ -774,6 +790,8 @@ function renderHealthTab(snapshot: ControlPlaneSnapshot) {
                         <DataRow label="Last Outcome" value={formatTimestamp(snapshot.system_health.last_outcome_timestamp)} />
                         <DataRow label="Last Evaluation" value={formatTimestamp(snapshot.system_health.last_evaluation_event_timestamp)} />
                         <DataRow label="Last Simulation" value={formatTimestamp(snapshot.system_health.last_simulation_timestamp)} />
+                        <DataRow label="Decision Mode" value={snapshot.decision_engine.mode.toUpperCase()} />
+                        <DataRow label="Safe Mode" value={snapshot.decision_engine.safe_mode_enabled ? 'ENABLED' : 'DISABLED'} />
                     </div>
                 </div>
                 <div className="pt-4 border-t border-grid mt-4 font-mono text-xs text-muted space-y-2">
@@ -781,6 +799,7 @@ function renderHealthTab(snapshot: ControlPlaneSnapshot) {
                     <div>Root cause: {snapshot.diagnostics.root_cause}</div>
                     <div>Impact: {snapshot.diagnostics.impact}</div>
                     <div>Next action: {snapshot.diagnostics.next_action}</div>
+                    <div>Decision engine: {snapshot.decision_engine.summary.next_action}</div>
                 </div>
             </ConsoleCard>
 
@@ -1211,6 +1230,18 @@ function renderConfigurationTab(
             <ConsoleCard title="Configuration Management" className="xl:col-span-2">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div>
+                        <TerminalLabel>Decision Mode</TerminalLabel>
+                        <select
+                            value={input.configDraft.decision_mode}
+                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, decision_mode: event.target.value as typeof current.decision_mode }))}
+                            className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
+                        >
+                            <option value="observe">observe</option>
+                            <option value="assist">assist</option>
+                            <option value="autonomous">autonomous</option>
+                        </select>
+                    </div>
+                    <div>
                         <TerminalLabel>Latency Threshold (ms)</TerminalLabel>
                         <TerminalInput
                             type="number"
@@ -1237,6 +1268,15 @@ function renderConfigurationTab(
                         />
                     </div>
                     <div>
+                        <TerminalLabel>Abstain Threshold</TerminalLabel>
+                        <TerminalInput
+                            type="number"
+                            step="0.01"
+                            value={input.configDraft.abstain_threshold}
+                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, abstain_threshold: Number(event.target.value) }))}
+                        />
+                    </div>
+                    <div>
                         <TerminalLabel>Alert Sensitivity</TerminalLabel>
                         <select
                             value={input.configDraft.alert_sensitivity}
@@ -1247,6 +1287,15 @@ function renderConfigurationTab(
                             <option value="balanced">balanced</option>
                             <option value="high">high</option>
                         </select>
+                    </div>
+                    <div>
+                        <TerminalLabel>Auto-Execute Confidence</TerminalLabel>
+                        <TerminalInput
+                            type="number"
+                            step="0.01"
+                            value={input.configDraft.auto_execute_confidence_threshold}
+                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, auto_execute_confidence_threshold: Number(event.target.value) }))}
+                        />
                     </div>
                 </div>
                 <div className="pt-4 flex flex-wrap gap-2">
@@ -1267,6 +1316,10 @@ function renderConfigurationTab(
                 <DataRow label="Updated At" value={formatTimestamp(input.snapshot.configuration.updated_at)} />
                 <DataRow label="Updated By" value={input.snapshot.configuration.updated_by ?? 'NO DATA'} />
                 <DataRow label="Simulation Enabled" value={input.snapshot.configuration.simulation_enabled ? 'TRUE' : 'FALSE'} />
+                <DataRow label="Decision Mode" value={input.snapshot.configuration.decision_mode.toUpperCase()} />
+                <DataRow label="Safe Mode Enabled" value={input.snapshot.configuration.safe_mode_enabled ? 'TRUE' : 'FALSE'} />
+                <DataRow label="Abstain Threshold" value={String(input.snapshot.configuration.abstain_threshold)} />
+                <DataRow label="Auto-Execute Confidence" value={String(input.snapshot.configuration.auto_execute_confidence_threshold)} />
                 {!isAdmin && (
                     <div className="pt-4 font-mono text-[11px] text-muted">
                         Admin role required for configuration changes.
