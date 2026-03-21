@@ -137,6 +137,7 @@ export default function DashboardControlPlaneClient() {
     const warningAlertCount = activeAlerts.filter((alert) => alert.severity === 'warning').length;
     const networkHealthScore = topologySnapshot?.network_health_score ?? snapshot?.system_health.network_health_score ?? null;
     const telemetryPulse = snapshot?.system_health.event_ingestion_rate ?? null;
+    const dashboardLens = snapshot?.dashboard ?? null;
     const topologySummary = topologySnapshot
         ? topologySnapshot.summary
         : snapshot
@@ -147,10 +148,10 @@ export default function DashboardControlPlaneClient() {
                 next_action: snapshot.diagnostics.next_action,
             }
             : null;
-    const routingOverview = buildRoutingOverview(topologySnapshot);
-    const recentInferences = buildRecentInferences(snapshot?.telemetry_events ?? []);
-    const recentLogs = (snapshot?.logs ?? []).slice(0, 8);
     const governanceFamilies = snapshot?.governance.families ?? [];
+    const routingOverview = buildRoutingOverview(topologySnapshot, dashboardLens?.routing ?? null, governanceFamilies);
+    const recentInferences = buildRecentInferences(snapshot?.telemetry_events ?? [], dashboardLens?.recent_inferences ?? []);
+    const recentLogs = (snapshot?.logs ?? []).slice(0, 8);
     const pipelineStates = snapshot?.pipelines ?? [];
     const loadingWithoutData = loading && !snapshot && !telemetrySnapshot && !topologySnapshot;
 
@@ -225,7 +226,10 @@ export default function DashboardControlPlaneClient() {
                     value={networkHealthScore != null ? `${networkHealthScore}%` : 'NO DATA'}
                     tone={healthTone(networkHealthScore)}
                     icon={<Gauge className="w-4 h-4" />}
-                    detail={topologySnapshot?.control_plane_state ?? snapshot?.system_health.topology_state ?? 'CONTROL_PLANE_INITIALIZING'}
+                    detail={describeControlPlaneState(
+                        topologySnapshot?.control_plane_state ?? snapshot?.system_health.topology_state ?? 'CONTROL_PLANE_INITIALIZING',
+                        snapshot,
+                    )}
                 />
                 <MetricCard
                     label="Telemetry Pulse"
@@ -267,30 +271,36 @@ export default function DashboardControlPlaneClient() {
                     <DataRow label="Safe Mode" value={snapshot?.decision_engine.safe_mode_enabled ? 'ENABLED' : snapshot ? 'DISABLED' : 'NO DATA'} />
                     <DataRow label="Simulation" value={snapshot?.configuration.simulation_enabled ? 'ENABLED' : snapshot ? 'DISABLED' : 'NO DATA'} />
                     <DataRow label="Active Decisions" value={snapshot ? String(snapshot.decision_engine.active_decision_count) : 'NO DATA'} />
-                    <DataRow label="Latest Trigger" value={snapshot?.decision_engine.latest_trigger ?? 'NO DATA'} />
-                    <DataRow label="Latest Action" value={snapshot?.decision_engine.latest_action ?? 'NO DATA'} />
+                    <DataRow label="Latest Trigger" value={snapshot?.decision_engine.latest_trigger ?? (snapshot ? 'STANDBY' : 'NO DATA')} />
+                    <DataRow label="Latest Action" value={snapshot?.decision_engine.latest_action ?? (snapshot ? 'No action yet' : 'NO DATA')} />
                     <DataRow label="Safe Execute Threshold" value={snapshot ? `${(snapshot.decision_engine.auto_execute_confidence_threshold * 100).toFixed(0)}%` : 'NO DATA'} />
                 </ConsoleCard>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6 mb-4 sm:mb-6">
                 <ConsoleCard title="Latency Envelope (p95 window input)" className="h-[260px] sm:h-[320px]" collapsible>
-                    {telemetrySnapshot && telemetrySnapshot.charts.latency.length > 0 ? (
+                    {(telemetrySnapshot && telemetrySnapshot.charts.latency.length > 0) || (dashboardLens && dashboardLens.latency_history.length > 0) ? (
                         <div className="flex-1 -mx-2 sm:-mx-4 h-full">
-                            <TelemetryChart data={telemetrySnapshot.charts.latency} color="#00ff41" />
+                            <TelemetryChart
+                                data={telemetrySnapshot?.charts.latency.length ? telemetrySnapshot.charts.latency : (dashboardLens?.latency_history ?? [])}
+                                color="#00ff41"
+                            />
                         </div>
                     ) : (
-                        <EmptyChartState message={resolveLatencyChartMessage(telemetrySnapshot, telemetryStreamStatus)} />
+                        <EmptyChartState message={resolveLatencyChartMessage(telemetrySnapshot, telemetryStreamStatus, snapshot)} />
                     )}
                 </ConsoleCard>
 
                 <ConsoleCard title="Outcome Drift Signal" className="h-[260px] sm:h-[320px]" collapsible>
-                    {telemetrySnapshot && telemetrySnapshot.charts.drift.length > 0 ? (
+                    {(telemetrySnapshot && telemetrySnapshot.charts.drift.length > 0) || (dashboardLens && dashboardLens.drift_history.length > 0) ? (
                         <div className="flex-1 -mx-2 sm:-mx-4 h-full">
-                            <TelemetryChart data={telemetrySnapshot.charts.drift} color="#ff3333" />
+                            <TelemetryChart
+                                data={telemetrySnapshot?.charts.drift.length ? telemetrySnapshot.charts.drift : (dashboardLens?.drift_history ?? [])}
+                                color="#ff3333"
+                            />
                         </div>
                     ) : (
-                        <EmptyChartState message={resolveDriftChartMessage(telemetrySnapshot, telemetryStreamStatus)} />
+                        <EmptyChartState message={resolveDriftChartMessage(telemetrySnapshot, telemetryStreamStatus, snapshot)} />
                     )}
                 </ConsoleCard>
             </div>
@@ -342,7 +352,7 @@ export default function DashboardControlPlaneClient() {
                 </ConsoleCard>
 
                 <ConsoleCard title="Routing Fabric" collapsible>
-                    <DataRow label="Top Route" value={routingOverview.topModels[0] ? `${routingOverview.topModels[0].model_id} (${routingOverview.topModels[0].request_count})` : 'NO DATA'} />
+                    <DataRow label="Top Route" value={formatTopRoute(routingOverview)} />
                     <DataRow label="Route Shifts" value={String(routingOverview.routingShiftCount)} />
                     <DataRow label="Fallbacks" value={String(routingOverview.fallbackCount)} />
                     <DataRow label="Ensembles" value={String(routingOverview.ensembleCount)} />
@@ -362,7 +372,7 @@ export default function DashboardControlPlaneClient() {
                                 ))}
                             </div>
                         ) : (
-                            <EmptyListState message="NO ROUTING DATA" compact />
+                            <EmptyListState message={resolveRoutingMessage(snapshot, routingOverview)} compact />
                         )}
                     </div>
                 </ConsoleCard>
@@ -389,7 +399,7 @@ export default function DashboardControlPlaneClient() {
                                 </div>
                             ))
                         ) : (
-                            <EmptyListState message="NO INFERENCE ACTIVITY" />
+                            <EmptyListState message={resolveInferenceMessage(snapshot)} />
                         )}
                     </ConsoleCard>
                 </div>
@@ -510,15 +520,55 @@ function EmptyListState({ message, compact = false }: { message: string; compact
     );
 }
 
-function buildRecentInferences(events: TelemetryEventRecord[]) {
-    return events
+function buildRecentInferences(
+    events: TelemetryEventRecord[],
+    fallbackInferences: ControlPlaneSnapshot['dashboard']['recent_inferences'],
+) {
+    const telemetryInferences = events
         .filter((event) => event.event_type === 'inference' && !isSyntheticTelemetryEvent(event))
         .slice()
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
         .slice(0, 6);
+
+    if (telemetryInferences.length > 0) {
+        return telemetryInferences;
+    }
+
+    return fallbackInferences.map<TelemetryEventRecord>((entry) => ({
+        event_id: entry.id,
+        tenant_id: '',
+        linked_event_id: null,
+        source_id: entry.id,
+        source_table: 'ai_inference_events',
+        event_type: 'inference',
+        timestamp: entry.timestamp,
+        model_version: entry.model_version ?? 'unknown',
+        run_id: entry.model_version ?? 'unknown',
+        metrics: {
+            latency_ms: entry.latency_ms,
+            confidence: entry.confidence,
+            prediction: entry.prediction,
+            ground_truth: null,
+            correct: null,
+        },
+        system: {
+            cpu: null,
+            gpu: null,
+            memory: null,
+        },
+        metadata: {
+            source_module: entry.source_module,
+            routing_selected_model_id: entry.route_model_id,
+        },
+        created_at: entry.timestamp,
+    }));
 }
 
-function buildRoutingOverview(topologySnapshot: TopologySnapshot | null) {
+function buildRoutingOverview(
+    topologySnapshot: TopologySnapshot | null,
+    fallbackRouting: ControlPlaneSnapshot['dashboard']['routing'] | null,
+    governanceFamilies: ControlPlaneSnapshot['governance']['families'],
+) {
     const distribution = new Map<string, number>();
     const familyRows: Array<{ family: string; top_model: string | null; total_requests: number }> = [];
     let routingShiftCount = 0;
@@ -555,15 +605,50 @@ function buildRoutingOverview(topologySnapshot: TopologySnapshot | null) {
 
         familyRows.push({
             family: node.label,
-            top_model: parsed[0]?.model_id ?? null,
+            top_model: parsed[0]?.model_id ?? textOrNull(node.metadata.active_model_version),
             total_requests: totalRequests,
         });
     }
 
-    const topModels = Array.from(distribution.entries())
+    let topModels = Array.from(distribution.entries())
         .map(([model_id, request_count]) => ({ model_id, request_count }))
         .sort((left, right) => right.request_count - left.request_count)
         .slice(0, 5);
+
+    if (topModels.length === 0 && fallbackRouting?.top_route) {
+        topModels = [{
+            model_id: fallbackRouting.top_route,
+            request_count: Math.max(
+                0,
+                ...(fallbackRouting.family_rows.map((row) => row.total_requests)),
+            ),
+        }];
+    }
+
+    if (routingShiftCount === 0 && fallbackRouting) {
+        routingShiftCount = fallbackRouting.route_shift_count;
+    }
+    if (fallbackCount === 0 && fallbackRouting) {
+        fallbackCount = fallbackRouting.fallback_count;
+    }
+    if (ensembleCount === 0 && fallbackRouting) {
+        ensembleCount = fallbackRouting.ensemble_count;
+    }
+    if (familyCount === 0 && fallbackRouting) {
+        familyCount = fallbackRouting.family_count;
+    }
+
+    if (familyRows.length === 0 && fallbackRouting) {
+        familyRows.push(...fallbackRouting.family_rows);
+    }
+
+    if (familyRows.length === 0 && governanceFamilies.length > 0) {
+        familyRows.push(...governanceFamilies.map((family) => ({
+            family: family.model_family,
+            top_model: family.current_production_model,
+            total_requests: 0,
+        })));
+    }
 
     return {
         topModels,
@@ -650,17 +735,77 @@ function isSyntheticTelemetryEvent(event: TelemetryEventRecord) {
     return source === 'adversarial_simulation' || source === 'telemetry_stream_generator';
 }
 
-function resolveLatencyChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+function resolveDriftChartMessage(
+    snapshot: TelemetrySnapshot | null,
+    streamStatus: StreamStatus,
+    controlPlaneSnapshot?: ControlPlaneSnapshot | null,
+) {
     if (streamStatus === 'disconnected' && !snapshot) return 'STREAM DISCONNECTED';
+    if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES' && controlPlaneSnapshot?.system_health.last_evaluation_event_timestamp) {
+        return `Need more linked outcomes. Last evaluation ${new Date(controlPlaneSnapshot.system_health.last_evaluation_event_timestamp).toLocaleTimeString()}`;
+    }
+    if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES') return 'INSUFFICIENT DATA';
+    if (snapshot?.metric_states.drift_score === 'NO_DATA') return 'NO DATA';
+    return 'WAITING FOR DRIFT SIGNALS';
+}
+
+function resolveLatencyChartMessage(
+    snapshot: TelemetrySnapshot | null,
+    streamStatus: StreamStatus,
+    controlPlaneSnapshot?: ControlPlaneSnapshot | null,
+) {
+    if (streamStatus === 'disconnected' && !snapshot) return 'STREAM DISCONNECTED';
+    if (snapshot?.metric_states.p95_latency === 'NO_DATA' && controlPlaneSnapshot?.system_health.last_inference_timestamp) {
+        return `Awaiting fresh latency telemetry. Last inference ${new Date(controlPlaneSnapshot.system_health.last_inference_timestamp).toLocaleTimeString()}`;
+    }
     if (snapshot?.metric_states.p95_latency === 'NO_DATA') return 'NO DATA';
     return 'WAITING FOR LATENCY SIGNALS';
 }
 
-function resolveDriftChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
-    if (streamStatus === 'disconnected' && !snapshot) return 'STREAM DISCONNECTED';
-    if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES') return 'INSUFFICIENT DATA';
-    if (snapshot?.metric_states.drift_score === 'NO_DATA') return 'NO DATA';
-    return 'WAITING FOR DRIFT SIGNALS';
+function describeControlPlaneState(
+    state: string,
+    snapshot: ControlPlaneSnapshot | null,
+) {
+    if (state === 'CONTROL_PLANE_INITIALIZING' && snapshot?.system_health.last_inference_timestamp) {
+        return 'LIVE / IDLE';
+    }
+    if (state === 'INSUFFICIENT_OUTCOMES_FOR_DRIFT') {
+        return 'LIVE / DRIFT WARMING';
+    }
+    if (state === 'WAITING_FOR_EVALUATION_EVENTS') {
+        return 'LIVE / EVALUATION PENDING';
+    }
+    return state;
+}
+
+function resolveInferenceMessage(snapshot: ControlPlaneSnapshot | null) {
+    if (snapshot?.system_health.last_inference_timestamp) {
+        return `NO LIVE INFERENCE ACTIVITY | LAST SUCCESS ${new Date(snapshot.system_health.last_inference_timestamp).toLocaleString()}`;
+    }
+    return 'NO INFERENCE ACTIVITY';
+}
+
+function resolveRoutingMessage(
+    snapshot: ControlPlaneSnapshot | null,
+    routingOverview: ReturnType<typeof buildRoutingOverview>,
+) {
+    if (routingOverview.familyRows.some((row) => row.top_model)) {
+        return 'ROUTES GOVERNED | WAITING FOR LIVE TRAFFIC';
+    }
+    if (snapshot?.governance.families.length) {
+        return 'NO ROUTING DATA YET';
+    }
+    return 'NO ROUTING DATA';
+}
+
+function formatTopRoute(routingOverview: ReturnType<typeof buildRoutingOverview>) {
+    if (routingOverview.topModels[0]) {
+        return `${routingOverview.topModels[0].model_id} (${routingOverview.topModels[0].request_count})`;
+    }
+    if (routingOverview.familyRows.some((row) => row.top_model)) {
+        return 'IDLE';
+    }
+    return 'NO DATA';
 }
 
 function formatPercent(value: number | null | undefined) {

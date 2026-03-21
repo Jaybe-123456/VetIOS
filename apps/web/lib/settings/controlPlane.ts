@@ -11,6 +11,7 @@ import {
     CONTROL_PLANE_API_KEYS,
     CONTROL_PLANE_CONFIGS,
     MODEL_EVALUATION_EVENTS,
+    MODEL_ROUTING_DECISIONS,
     TELEMETRY_EVENTS,
 } from '@/lib/db/schemaContracts';
 import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
@@ -36,6 +37,7 @@ import type {
     ControlPlaneAlertSensitivity,
     ControlPlaneApiKeyRecord,
     ControlPlaneConfiguration,
+    ControlPlaneDashboardInferenceRecord,
     ControlPlaneDiagnostics,
     ControlPlaneGovernanceEntry,
     ControlPlaneGovernanceFamily,
@@ -117,6 +119,9 @@ export async function getControlPlaneSnapshot(input: {
         actions,
         telemetryEvents,
         latestEvaluationId,
+        dashboardInferences,
+        dashboardRouting,
+        dashboardDriftHistory,
     ] = await Promise.all([
         getTelemetrySnapshot(input.client, input.tenantId),
         getTopologySnapshot(input.client, input.tenantId, { window: '24h' }),
@@ -127,6 +132,9 @@ export async function getControlPlaneSnapshot(input: {
         listControlPlaneActions(input.client, input.tenantId),
         listTelemetryEvents(input.client, input.tenantId),
         findLatestEvaluationEventId(input.client, input.tenantId),
+        listDashboardInferenceHistory(input.client, input.tenantId),
+        loadDashboardRoutingSummary(input.client, input.tenantId),
+        loadDashboardDriftHistory(input.client, input.tenantId),
     ]);
 
     const decisionEngine = await evaluateDecisionEngine({
@@ -223,6 +231,25 @@ export async function getControlPlaneSnapshot(input: {
             orphan_counts: datasetDebug.orphan_counts,
         },
         telemetry_events: telemetryEvents,
+        dashboard: {
+            workload_state: telemetrySnapshot.metrics.inference_count > 0 || dashboardInferences.length > 0 ? 'live' : 'idle',
+            recent_inferences: dashboardInferences,
+            latency_history: telemetrySnapshot.charts.latency.length > 0
+                ? telemetrySnapshot.charts.latency
+                : dashboardInferences
+                    .filter((entry) => entry.latency_ms != null)
+                    .slice()
+                    .reverse()
+                    .slice(-24)
+                    .map((entry) => ({
+                        time: formatDashboardChartTime(entry.timestamp),
+                        value: entry.latency_ms ?? 0,
+                    })),
+            drift_history: telemetrySnapshot.charts.drift.length > 0
+                ? telemetrySnapshot.charts.drift
+                : dashboardDriftHistory,
+            routing: dashboardRouting,
+        },
         refreshed_at: new Date().toISOString(),
     };
 }
@@ -462,19 +489,197 @@ export async function recordControlPlaneAction(input: {
 
 export async function listTelemetryEvents(client: SupabaseClient, tenantId: string): Promise<TelemetryEventRecord[]> {
     const C = TELEMETRY_EVENTS.COLUMNS;
-    const { data, error } = await client
+    const windowStart = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+    const latestResult = await client
         .from(TELEMETRY_EVENTS.TABLE)
         .select('*')
         .eq(C.tenant_id, tenantId)
+        .gte(C.timestamp, windowStart)
         .order(C.timestamp, { ascending: false })
         .limit(360);
 
-    if (error) {
-        if (isMissingRelationError(error, TELEMETRY_EVENTS.TABLE)) return [];
-        throw new Error(`Failed to list telemetry events: ${error.message}`);
+    if (latestResult.error) {
+        if (isMissingRelationError(latestResult.error, TELEMETRY_EVENTS.TABLE)) return [];
+        throw new Error(`Failed to list telemetry events: ${latestResult.error.message}`);
     }
 
-    return (data ?? []).map((row) => mapTelemetryEvent(row as Record<string, unknown>));
+    const workloadResult = await client
+        .from(TELEMETRY_EVENTS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .gte(C.timestamp, windowStart)
+        .in(C.event_type, ['inference', 'outcome', 'evaluation', 'simulation'])
+        .order(C.timestamp, { ascending: false })
+        .limit(160);
+
+    if (workloadResult.error && !isMissingRelationError(workloadResult.error, TELEMETRY_EVENTS.TABLE)) {
+        throw new Error(`Failed to list workload telemetry events: ${workloadResult.error.message}`);
+    }
+
+    const merged = new Map<string, Record<string, unknown>>();
+    for (const row of [...(latestResult.data ?? []), ...(workloadResult.data ?? [])]) {
+        const record = row as Record<string, unknown>;
+        const eventId = textOrNull(record.event_id);
+        if (!eventId) continue;
+        merged.set(eventId, record);
+    }
+
+    return Array.from(merged.values())
+        .map((row) => mapTelemetryEvent(row))
+        .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+}
+
+async function listDashboardInferenceHistory(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<ControlPlaneDashboardInferenceRecord[]> {
+    const C = AI_INFERENCE_EVENTS.COLUMNS;
+    const windowStart = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+    const { data, error } = await client
+        .from(AI_INFERENCE_EVENTS.TABLE)
+        .select([
+            C.id,
+            C.model_name,
+            C.model_version,
+            C.output_payload,
+            C.confidence_score,
+            C.inference_latency_ms,
+            C.source_module,
+            C.created_at,
+        ].join(','))
+        .eq(C.tenant_id, tenantId)
+        .gte(C.created_at, windowStart)
+        .order(C.created_at, { ascending: false })
+        .limit(24);
+
+    if (error) {
+        if (isMissingRelationError(error, AI_INFERENCE_EVENTS.TABLE)) return [];
+        throw new Error(`Failed to load dashboard inference history: ${error.message}`);
+    }
+
+    return (data ?? [])
+        .map((row) => asRecord(row))
+        .filter((row) => textOrNull(row[C.source_module]) !== 'adversarial_simulation')
+        .map((row) => ({
+            id: textOrNull(row[C.id]) ?? cryptoRandomId(),
+            timestamp: textOrNull(row[C.created_at]) ?? new Date().toISOString(),
+            model_name: textOrNull(row[C.model_name]),
+            model_version: textOrNull(row[C.model_version]),
+            confidence: numberOrNull(row[C.confidence_score]),
+            latency_ms: numberOrNull(row[C.inference_latency_ms]),
+            prediction: extractPredictionFromOutputPayload(asRecord(row[C.output_payload])),
+            route_model_id: textOrNull(asRecord(row[C.output_payload]).routing_selected_model_id),
+            source_module: textOrNull(row[C.source_module]),
+        }));
+}
+
+async function loadDashboardRoutingSummary(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<ControlPlaneSnapshot['dashboard']['routing']> {
+    const C = MODEL_ROUTING_DECISIONS.COLUMNS;
+    const windowStart = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+    const { data, error } = await client
+        .from(MODEL_ROUTING_DECISIONS.TABLE)
+        .select([
+            C.model_family,
+            C.selected_model_id,
+            C.route_mode,
+            C.analysis,
+            C.created_at,
+        ].join(','))
+        .eq(C.tenant_id, tenantId)
+        .gte(C.created_at, windowStart)
+        .order(C.created_at, { ascending: false })
+        .limit(240);
+
+    if (error) {
+        if (isMissingRelationError(error, MODEL_ROUTING_DECISIONS.TABLE)) {
+            return {
+                top_route: null,
+                route_shift_count: 0,
+                fallback_count: 0,
+                ensemble_count: 0,
+                family_count: 0,
+                family_rows: [],
+            };
+        }
+        throw new Error(`Failed to load dashboard routing summary: ${error.message}`);
+    }
+
+    const distribution = new Map<string, number>();
+    const familyRows = new Map<string, { top_model: string | null; total_requests: number }>();
+    let routeShiftCount = 0;
+    let fallbackCount = 0;
+    let ensembleCount = 0;
+
+    for (const row of (data ?? []).map((entry) => asRecord(entry))) {
+        const family = textOrNull(row[C.model_family]) ?? 'unknown';
+        const selectedModel = textOrNull(row[C.selected_model_id]);
+        const routeMode = textOrNull(row[C.route_mode]);
+        const analysis = asRecord(row[C.analysis]);
+
+        if (selectedModel) {
+            distribution.set(selectedModel, (distribution.get(selectedModel) ?? 0) + 1);
+        }
+        if (analysis.routing_shifted === true) routeShiftCount += 1;
+        if (Array.isArray(analysis.fallback_attempts) && analysis.fallback_attempts.length > 0) fallbackCount += 1;
+        if (routeMode === 'ensemble') ensembleCount += 1;
+
+        const current = familyRows.get(family) ?? { top_model: null, total_requests: 0 };
+        current.total_requests += 1;
+        if (!current.top_model && selectedModel) {
+            current.top_model = selectedModel;
+        }
+        familyRows.set(family, current);
+    }
+
+    const topRoute = Array.from(distribution.entries())
+        .map(([model_id, request_count]) => ({ model_id, request_count }))
+        .sort((left, right) => right.request_count - left.request_count)[0]?.model_id ?? null;
+
+    return {
+        top_route: topRoute,
+        route_shift_count: routeShiftCount,
+        fallback_count: fallbackCount,
+        ensemble_count: ensembleCount,
+        family_count: Array.from(familyRows.values()).filter((row) => row.total_requests > 0).length,
+        family_rows: Array.from(familyRows.entries()).map(([family, row]) => ({
+            family,
+            top_model: row.top_model,
+            total_requests: row.total_requests,
+        })),
+    };
+}
+
+async function loadDashboardDriftHistory(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<Array<{ time: string; value: number }>> {
+    const C = MODEL_EVALUATION_EVENTS.COLUMNS;
+    const windowStart = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+    const { data, error } = await client
+        .from(MODEL_EVALUATION_EVENTS.TABLE)
+        .select(`${C.created_at},${C.drift_score},${C.trigger_type}`)
+        .eq(C.tenant_id, tenantId)
+        .gte(C.created_at, windowStart)
+        .order(C.created_at, { ascending: false })
+        .limit(40);
+
+    if (error) {
+        if (isMissingRelationError(error, MODEL_EVALUATION_EVENTS.TABLE)) return [];
+        throw new Error(`Failed to load dashboard drift history: ${error.message}`);
+    }
+
+    return (data ?? [])
+        .map((row) => asRecord(row))
+        .filter((row) => textOrNull(row[C.trigger_type]) !== 'simulation')
+        .map((row) => ({
+            time: formatDashboardChartTime(textOrNull(row[C.created_at]) ?? new Date().toISOString()),
+            value: numberOrNull(row[C.drift_score]),
+        }))
+        .filter((row): row is { time: string; value: number } => row.value != null)
+        .reverse();
 }
 
 export async function listControlPlaneAlerts(
@@ -1345,6 +1550,25 @@ function booleanOrFalse(value: unknown) {
 
 function formatNumber(value: number | null | undefined) {
     return typeof value === 'number' ? value.toFixed(2) : 'n/a';
+}
+
+function formatDashboardChartTime(timestamp: string) {
+    const parsed = new Date(timestamp);
+    return Number.isNaN(parsed.getTime())
+        ? timestamp
+        : parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function extractPredictionFromOutputPayload(payload: Record<string, unknown>) {
+    const diagnosis = asRecord(payload.diagnosis);
+    const topDifferentials = Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials
+        : [];
+    const primary = asRecord(topDifferentials[0]);
+
+    return textOrNull(primary.name)
+        ?? textOrNull(diagnosis.primary_condition_class)
+        ?? textOrNull(payload.prediction);
 }
 
 function cryptoRandomId() {
