@@ -9,9 +9,12 @@ import {
 } from '../../apps/web/lib/intelligence/topologyService.ts';
 import type { TopologyNodeSnapshot } from '../../apps/web/lib/intelligence/types.ts';
 import {
+    buildTelemetrySnapshotForTest,
     emitTelemetryHeartbeat,
     emitTelemetryEvent,
     telemetryEvaluationEventId,
+    telemetryInferenceEventId,
+    telemetryOutcomeEventId,
     telemetrySimulationEventId,
 } from '../../apps/web/lib/telemetry/service.ts';
 
@@ -117,7 +120,7 @@ async function main() {
             },
         },
         actual_outcome: {
-            diagnosis: 'Parvovirus',
+            actual_diagnosis: 'Parvovirus',
             primary_condition_class: 'gastrointestinal',
         },
         recent_evaluations: [
@@ -143,10 +146,44 @@ async function main() {
     assert.equal(evaluation.prediction_correct, true);
     assert.equal(evaluation.ground_truth, 'Parvovirus');
 
-    await emitTelemetryEvent(client as any, {
+    const inferenceTelemetry = await emitTelemetryEvent(client as any, {
+        event_id: telemetryInferenceEventId(randomUUID()),
+        tenant_id: tenantId,
+        event_type: 'inference',
+        model_version: 'diag-v2',
+        run_id: 'run_diag_v2',
+        metrics: {
+            latency_ms: 5_400,
+            confidence: 0.85,
+            prediction: 'Parvovirus',
+        },
+        metadata: {
+            synthetic: false,
+        },
+    });
+
+    const outcomeTelemetry = await emitTelemetryEvent(client as any, {
+        event_id: telemetryOutcomeEventId(randomUUID()),
+        tenant_id: tenantId,
+        linked_event_id: inferenceTelemetry.event_id,
+        source_id: randomUUID(),
+        source_table: 'clinical_outcome_events',
+        event_type: 'outcome',
+        model_version: 'diag-v2',
+        run_id: 'run_diag_v2',
+        metrics: {
+            ground_truth: 'Parvovirus',
+            correct: true,
+        },
+        metadata: {
+            synthetic: false,
+        },
+    });
+
+    const evaluationTelemetry = await emitTelemetryEvent(client as any, {
         event_id: telemetryEvaluationEventId(evaluation.evaluation_event_id),
         tenant_id: tenantId,
-        linked_event_id: 'evt_inference_test',
+        linked_event_id: inferenceTelemetry.event_id,
         source_id: evaluation.evaluation_event_id,
         source_table: 'model_evaluation_events',
         event_type: 'evaluation',
@@ -162,6 +199,17 @@ async function main() {
             synthetic: false,
         },
     });
+
+    const snapshot = buildTelemetrySnapshotForTest([
+        inferenceTelemetry,
+        outcomeTelemetry,
+        evaluationTelemetry,
+    ]);
+    assert.equal(snapshot.metrics.p95_latency_ms, 5400, 'anomalous inference latency should still appear in p95');
+    assert.equal(snapshot.metrics.anomaly_count, 1, 'anomalous latency should still be counted separately');
+    assert.equal(snapshot.metric_states.accuracy, 'READY');
+    assert.equal(snapshot.metrics.accuracy, 1);
+    assert.equal(snapshot.metric_states.drift_score, 'INSUFFICIENT_OUTCOMES');
 
     await emitTelemetryEvent(client as any, {
         event_id: telemetrySimulationEventId(randomUUID()),
@@ -200,12 +248,14 @@ async function main() {
     });
 
     const telemetryRows = client.tables.get('telemetry_events') ?? [];
-    assert.equal(telemetryRows.length, 4, 'expected evaluation, simulation, and append-only heartbeat telemetry events');
-    assert.equal(telemetryRows[0]?.event_type, 'evaluation');
-    assert.equal(telemetryRows[1]?.event_type, 'simulation');
-    assert.equal(telemetryRows[2]?.event_type, 'system');
-    assert.equal(telemetryRows[2]?.metadata?.action, 'heartbeat');
-    assert.equal(telemetryRows[3]?.event_type, 'system');
+    assert.equal(telemetryRows.length, 6, 'expected inference, outcome, evaluation, simulation, and append-only heartbeat telemetry events');
+    assert.equal(telemetryRows[0]?.event_type, 'inference');
+    assert.equal(telemetryRows[1]?.event_type, 'outcome');
+    assert.equal(telemetryRows[2]?.event_type, 'evaluation');
+    assert.equal(telemetryRows[3]?.event_type, 'simulation');
+    assert.equal(telemetryRows[4]?.event_type, 'system');
+    assert.equal(telemetryRows[4]?.metadata?.action, 'heartbeat');
+    assert.equal(telemetryRows[5]?.event_type, 'system');
 
     const driftReady = computeTopologyDriftSignal([
         { prediction: 'Parvovirus', ground_truth: 'Parvovirus' },
