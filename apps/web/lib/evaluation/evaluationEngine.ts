@@ -401,7 +401,10 @@ function extractPredictionLabel(output?: Record<string, unknown>) {
 function extractOutcomeLabel(output?: Record<string, unknown>) {
     if (!output) return null;
     return normalizeLabel(
-        output.confirmed_diagnosis
+        output.ground_truth
+        ?? output.actual_diagnosis
+        ?? output.actualDiagnosis
+        ?? output.confirmed_diagnosis
         ?? output.final_diagnosis
         ?? output.diagnosis
         ?? output.primary_condition_class

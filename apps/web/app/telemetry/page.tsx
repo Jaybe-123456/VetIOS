@@ -117,12 +117,12 @@ export default function TelemetryObserverPage() {
 
                 {stale && (
                     <div className="p-3 border border-[#ffcc00] bg-[#ffcc00]/5 font-mono text-xs text-[#ffcc00]">
-                        HEARTBEAT WARNING: observer is stale because no telemetry event has been received in the last 30 seconds.
+                        HEARTBEAT WARNING: observer is stale because no telemetry event has been received in the last 60 seconds.
                     </div>
                 )}
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 sm:gap-4 mb-6 sm:mb-8">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-3 sm:gap-4 mb-6 sm:mb-8">
                 <MetricCard
                     label="Inferences (24h)"
                     value={formatCount(snapshot?.metrics.inference_count, disconnectedWithoutData)}
@@ -264,11 +264,13 @@ function MetricCard({
     } as const;
 
     return (
-        <ConsoleCard className={`p-3 sm:p-4 ${tones[tone].border}`}>
-            <div className="font-mono text-[9px] sm:text-[10px] text-muted uppercase mb-1 truncate">{label}</div>
-            <div className={`font-mono text-lg sm:text-2xl flex items-center gap-1.5 ${tones[tone].text}`}>
-                {value}
-                {icon}
+        <ConsoleCard className={`p-3 sm:p-4 h-full ${tones[tone].border}`}>
+            <div className="font-mono text-[9px] sm:text-[10px] text-muted uppercase mb-2 leading-snug whitespace-normal break-words min-h-[1.6rem] sm:min-h-[1.9rem]">
+                {label}
+            </div>
+            <div className={`font-mono text-base sm:text-xl xl:text-2xl flex items-start gap-1.5 leading-tight whitespace-normal break-words min-w-0 ${tones[tone].text}`}>
+                <span className="min-w-0 break-words whitespace-normal">{value}</span>
+                {icon ? <span className="shrink-0 pt-0.5">{icon}</span> : null}
             </div>
         </ConsoleCard>
     );
@@ -277,7 +279,7 @@ function MetricCard({
 function EmptyChartState({ message }: { message: string }) {
     return (
         <div className="h-full flex items-center justify-center text-muted text-[10px] sm:text-xs font-mono border border-dashed border-grid">
-            {message}
+            <span className="px-4 text-center leading-relaxed whitespace-normal break-words">{message}</span>
         </div>
     );
 }
@@ -377,6 +379,9 @@ function resolveDriftChartMessage(snapshot: TelemetrySnapshot | null, streamStat
         return 'STREAM DISCONNECTED';
     }
     if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES') {
+        if ((snapshot.metrics.outcome_count ?? 0) === 1) {
+            return 'NEED 1 MORE OUTCOME';
+        }
         return 'INSUFFICIENT DATA';
     }
     return 'NO DATA';

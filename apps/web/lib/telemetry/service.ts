@@ -312,16 +312,16 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
     const evaluationEvents = productionEvents.filter((event) => event.event_type === 'evaluation');
     const inferenceById = new Map(inferenceEvents.map((event) => [event.event_id, event]));
 
-    const validLatencyEvents = inferenceEvents.filter((event) => {
+    const latencyEvents = inferenceEvents.filter((event) => {
         const latency = numberOrNull(event.metrics.latency_ms);
-        return latency != null && latency <= LATENCY_ANOMALY_MS;
+        return latency != null;
     });
     const anomalyCount = inferenceEvents.filter((event) => {
         const latency = numberOrNull(event.metrics.latency_ms);
         return latency != null && latency > LATENCY_ANOMALY_MS;
     }).length;
 
-    const latencies = validLatencyEvents
+    const latencies = latencyEvents
         .map((event) => numberOrNull(event.metrics.latency_ms))
         .filter((value): value is number => value != null)
         .sort((left, right) => left - right);
@@ -404,7 +404,7 @@ function buildTelemetrySnapshot(events: TelemetryEventRecord[]): TelemetrySnapsh
         },
         latest_system: findLatestSystemMetrics(events),
         charts: {
-            latency: validLatencyEvents.slice(-40).map((event) => ({
+            latency: latencyEvents.slice(-40).map((event) => ({
                 time: formatChartTime(event.timestamp),
                 value: numberOrNull(event.metrics.latency_ms) ?? 0,
             })),
@@ -459,7 +459,7 @@ function mapEventToLog(event: TelemetryEventRecord): TelemetryLogEntry {
             level: anomaly ? 'WARN' : 'INFO',
             timestamp: event.timestamp,
             message: anomaly
-                ? `[WARN] INFERENCE ${event.event_id} latency=${latency?.toFixed(1) ?? 'NO DATA'}ms anomaly=true excluded_from_p95=true`
+                ? `[WARN] INFERENCE ${event.event_id} latency=${latency?.toFixed(1) ?? 'NO DATA'}ms anomaly=true`
                 : `[INFO] INFERENCE ${event.event_id} latency=${latency?.toFixed(1) ?? 'NO DATA'}ms confidence=${formatScore(numberOrNull(event.metrics.confidence), 'NO DATA')} prediction=${textOrNull(event.metrics.prediction) ?? 'NO DATA'}`,
         };
     }
@@ -552,6 +552,8 @@ function buildDriftTimeline(
 
     return timeline.slice(-40);
 }
+
+export const buildTelemetrySnapshotForTest = buildTelemetrySnapshot;
 
 function computeDriftScore(
     outcomePairs: Array<{ prediction: string; groundTruth: string }>,

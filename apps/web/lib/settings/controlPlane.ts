@@ -1265,7 +1265,10 @@ function extractPredictionLabel(output: Record<string, unknown>) {
 }
 
 function resolveOutcomeGroundTruth(outcome: Record<string, unknown>) {
-    return textOrNull(outcome.confirmed_diagnosis)
+    return textOrNull(outcome.ground_truth)
+        ?? textOrNull(outcome.actual_diagnosis)
+        ?? textOrNull(outcome.actualDiagnosis)
+        ?? textOrNull(outcome.confirmed_diagnosis)
         ?? textOrNull(outcome.final_diagnosis)
         ?? textOrNull(outcome.diagnosis)
         ?? textOrNull(outcome.primary_condition_class);

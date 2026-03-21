@@ -437,6 +437,31 @@ function deriveOutcomeLabelType(
 }
 
 function resolveOutcomeGroundTruth(payload: Record<string, unknown>): string | null {
+    const explicitGroundTruth = typeof payload.ground_truth === 'string' ? payload.ground_truth : null;
+    if (explicitGroundTruth && explicitGroundTruth.trim().length > 0) {
+        return explicitGroundTruth.trim();
+    }
+
+    const actualDiagnosis = typeof payload.actual_diagnosis === 'string' ? payload.actual_diagnosis : null;
+    if (actualDiagnosis && actualDiagnosis.trim().length > 0) {
+        return actualDiagnosis.trim();
+    }
+
+    const camelActualDiagnosis = typeof payload.actualDiagnosis === 'string' ? payload.actualDiagnosis : null;
+    if (camelActualDiagnosis && camelActualDiagnosis.trim().length > 0) {
+        return camelActualDiagnosis.trim();
+    }
+
+    const confirmedDiagnosis = typeof payload.confirmed_diagnosis === 'string' ? payload.confirmed_diagnosis : null;
+    if (confirmedDiagnosis && confirmedDiagnosis.trim().length > 0) {
+        return confirmedDiagnosis.trim();
+    }
+
+    const finalDiagnosis = typeof payload.final_diagnosis === 'string' ? payload.final_diagnosis : null;
+    if (finalDiagnosis && finalDiagnosis.trim().length > 0) {
+        return finalDiagnosis.trim();
+    }
+
     const directDiagnosis = typeof payload.diagnosis === 'string' ? payload.diagnosis : null;
     if (directDiagnosis && directDiagnosis.trim().length > 0) {
         return directDiagnosis.trim();
