@@ -58,6 +58,7 @@ export async function emitTelemetryEvent(
     const payload = {
         [C.event_id]: input.event_id,
         [C.tenant_id]: input.tenant_id,
+        [C.created_at]: eventTimestamp,
         [C.linked_event_id]: input.linked_event_id ?? null,
         [C.source_id]: input.source_id ?? null,
         [C.source_table]: textOrNull(input.source_table),
