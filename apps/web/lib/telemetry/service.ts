@@ -86,7 +86,7 @@ export async function emitTelemetryEvent(
 
     const { data, error } = await client
         .from(TELEMETRY_EVENTS.TABLE)
-        .upsert(payload, { onConflict: C.event_id })
+        .upsert(payload, { onConflict: 'event_id, created_at' })
         .select('*')
         .single();
 
