@@ -29,3 +29,6 @@ infra/supabase/.temp/
 
 # Logs
 *.log
+
+supabase_*.txt
+*_results.txt
