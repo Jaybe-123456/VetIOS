@@ -119,6 +119,8 @@ export async function getControlPlaneSnapshot(input: {
         actions,
         telemetryEvents,
         latestEvaluationId,
+        latestInferenceId,
+        latestOutcomeId,
         dashboardInferences,
         dashboardRouting,
         dashboardDriftHistory,
@@ -132,6 +134,8 @@ export async function getControlPlaneSnapshot(input: {
         listControlPlaneActions(input.client, input.tenantId),
         listTelemetryEvents(input.client, input.tenantId),
         findLatestEvaluationEventId(input.client, input.tenantId),
+        _findLatestInferenceEventId(input.client, input.tenantId),
+        _findLatestOutcomeEventId(input.client, input.tenantId),
         listDashboardInferenceHistory(input.client, input.tenantId),
         loadDashboardRoutingSummary(input.client, input.tenantId),
         loadDashboardDriftHistory(input.client, input.tenantId),
@@ -224,8 +228,8 @@ export async function getControlPlaneSnapshot(input: {
         }),
         actions,
         debug: {
-            latest_inference_event_id: extractLatestTelemetrySourceId(telemetryEvents, 'ai_inference_events'),
-            latest_outcome_event_id: extractLatestTelemetrySourceId(telemetryEvents, 'clinical_outcome_events'),
+            latest_inference_event_id: latestInferenceId ?? extractLatestTelemetrySourceId(telemetryEvents, 'ai_inference_events'),
+            latest_outcome_event_id: latestOutcomeId ?? extractLatestTelemetrySourceId(telemetryEvents, 'clinical_outcome_events'),
             latest_evaluation_event_id: latestEvaluationId,
             dataset_row_count: datasetDebug.dataset_row_count,
             orphan_counts: datasetDebug.orphan_counts,
@@ -236,12 +240,12 @@ export async function getControlPlaneSnapshot(input: {
             recent_inferences: dashboardInferences,
             latency_history: telemetrySnapshot.charts.latency.length > 0
                 ? telemetrySnapshot.charts.latency
-                : dashboardInferences
-                    .filter((entry) => entry.latency_ms != null)
+                : (dashboardInferences as ControlPlaneDashboardInferenceRecord[])
+                    .filter((entry: ControlPlaneDashboardInferenceRecord) => entry.latency_ms != null)
                     .slice()
                     .reverse()
                     .slice(-24)
-                    .map((entry) => ({
+                    .map((entry: ControlPlaneDashboardInferenceRecord) => ({
                         time: formatDashboardChartTime(entry.timestamp),
                         value: entry.latency_ms ?? 0,
                     })),
@@ -1316,6 +1320,42 @@ function mapTelemetryEvent(row: Record<string, unknown>): TelemetryEventRecord {
         metadata: asRecord(row.metadata),
         created_at: textOrNull(row.created_at) ?? new Date().toISOString(),
     };
+}
+
+async function _findLatestInferenceEventId(client: SupabaseClient, tenantId: string): Promise<string | null> {
+    const C = AI_INFERENCE_EVENTS.COLUMNS;
+    try {
+        const { data, error } = await client
+            .from(AI_INFERENCE_EVENTS.TABLE)
+            .select(C.id)
+            .eq(C.tenant_id, tenantId)
+            .order(C.created_at, { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error || !data) return null;
+        return (data as any).id || null;
+    } catch {
+        return null;
+    }
+}
+
+async function _findLatestOutcomeEventId(client: SupabaseClient, tenantId: string): Promise<string | null> {
+    const C = CLINICAL_OUTCOME_EVENTS.COLUMNS;
+    try {
+        const { data, error } = await client
+            .from(CLINICAL_OUTCOME_EVENTS.TABLE)
+            .select(C.id)
+            .eq(C.tenant_id, tenantId)
+            .order(C.created_at, { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+        if (error || !data) return null;
+        return (data as any).id || null;
+    } catch {
+        return null;
+    }
 }
 
 async function findLatestEvaluationEventId(client: SupabaseClient, tenantId: string): Promise<string | null> {
