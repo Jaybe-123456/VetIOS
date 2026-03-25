@@ -168,17 +168,27 @@ export default function DeveloperApiExplorer({
                     </span>
                     <button
                         onClick={handleExecute}
-                        disabled={loading}
+                        disabled={loading || ((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !latestInferenceEventId)}
                         className={`px-4 py-1.5 font-mono text-[10px] tracking-widest uppercase flex items-center gap-2 transition-colors border ${
-                            endpoint === '/api/simulate'
-                                ? 'border-danger text-danger hover:bg-danger hover:text-white'
-                                : 'border-accent text-accent hover:bg-accent hover:text-black'
+                            loading || ((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !latestInferenceEventId)
+                                ? 'border-grid text-muted cursor-not-allowed'
+                                : endpoint === '/api/simulate'
+                                    ? 'border-danger text-danger hover:bg-danger hover:text-white'
+                                    : 'border-accent text-accent hover:bg-accent hover:text-black'
                         }`}
                     >
                         {loading ? <Activity className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                         Execute
                     </button>
                 </div>
+                {((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !latestInferenceEventId) && (
+                    <div className="bg-danger/10 border-b border-danger/30 p-3 flex items-center gap-3">
+                        <AlertTriangle className="w-4 h-4 text-danger shrink-0" />
+                        <span className="font-mono text-[10px] text-danger uppercase tracking-tight">
+                            Critical Dependency Missing: No inference event ID found. Please run a <span className="font-bold">POST /api/inference</span> first to generate a valid target.
+                        </span>
+                    </div>
+                )}
                 <textarea
                     value={payload}
                     onChange={(event) => setPayload(event.target.value)}
