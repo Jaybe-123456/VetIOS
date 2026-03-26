@@ -167,6 +167,11 @@ const MIN_EVALUATION_EVENTS_FOR_DRIFT = 3;
 const MIN_EVALUATION_EVENTS_FOR_ERROR_RATE = 3;
 const MIN_INFERENCE_EVENTS_FOR_ERROR_RATE = 3;
 const MIN_SIMULATION_EVENTS_FOR_ERROR_RATE = 3;
+const MAX_TOPOLOGY_TELEMETRY_EVENTS = 1_000;
+const MAX_TOPOLOGY_FALLBACK_TELEMETRY_EVENTS = 400;
+const MAX_TOPOLOGY_WORKLOAD_EVENTS = 160;
+const MAX_TOPOLOGY_CLINICAL_CASES = 600;
+const MAX_TOPOLOGY_EVALUATION_EVENTS = 400;
 
 const NODE_POSITIONS: Record<NodeId, { x: number; y: number }> = {
     control_plane: { x: 560, y: 40 },
@@ -231,6 +236,7 @@ export async function getTopologySnapshot(
     input: {
         window: TopologyWindow;
         until?: string | null;
+        observerHeartbeatTimestamp?: string | null;
     },
 ): Promise<TopologySnapshot> {
     const until = resolveUntil(input.until);
@@ -264,6 +270,7 @@ export async function getTopologySnapshot(
         telemetryEvents,
         evaluations,
         latestSourceTimestamps,
+        observerHeartbeatTimestamp: input.until ? null : input.observerHeartbeatTimestamp ?? null,
         evaluationTableExists: evaluationLoad.table_exists,
         evaluationLoadError: evaluationLoad.error,
     });
@@ -1799,9 +1806,9 @@ async function loadTelemetryEvents(
         .order(C.timestamp, { ascending: false })
         .limit(limit);
 
-    let result = await loadPage(1_500);
+    let result = await loadPage(MAX_TOPOLOGY_TELEMETRY_EVENTS);
     if (result.error && isTransientTopologyLoadError(result.error.message)) {
-        result = await loadPage(600);
+        result = await loadPage(MAX_TOPOLOGY_FALLBACK_TELEMETRY_EVENTS);
     }
 
     const { data, error } = result;
@@ -1836,7 +1843,7 @@ async function loadTelemetryEvents(
             .lte(C.timestamp, until.toISOString())
             .in(C.event_type, ['inference', 'outcome', 'evaluation'])
             .order(C.timestamp, { ascending: false })
-            .limit(240);
+            .limit(MAX_TOPOLOGY_WORKLOAD_EVENTS);
 
         if (!workloadResult.error) {
             workloadRows = (workloadResult.data ?? []).map((row) => asRecord(row));
@@ -1882,7 +1889,7 @@ async function loadClinicalCases(
         .gte(C.updated_at, from.toISOString())
         .lte(C.updated_at, until.toISOString())
         .order(C.updated_at, { ascending: false })
-        .limit(1_000);
+        .limit(MAX_TOPOLOGY_CLINICAL_CASES);
 
     if (error) {
         throw new Error(`Failed to load topology clinical cases: ${error.message}`);
@@ -1957,7 +1964,7 @@ async function loadEvaluationEvents(
         .gte(C.created_at, from.toISOString())
         .lte(C.created_at, until.toISOString())
         .order(C.created_at, { ascending: false })
-        .limit(500);
+        .limit(MAX_TOPOLOGY_EVALUATION_EVENTS);
 
     if (error) {
         return {
@@ -2011,11 +2018,15 @@ function buildDiagnosticsState(input: {
         evaluation_table_exists: boolean;
         evaluation_error: string | null;
     };
+    observerHeartbeatTimestamp: string | null;
     evaluationTableExists: boolean;
     evaluationLoadError: string | null;
 }): TopologyDiagnosticsState {
-    const latestTelemetryTimestamp = findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp))
-        ?? input.latestSourceTimestamps.latest_telemetry_timestamp;
+    const latestTelemetryTimestamp = findLatestTimestamp([
+        ...input.telemetryEvents.map((event) => event.timestamp),
+        input.latestSourceTimestamps.latest_telemetry_timestamp,
+        input.observerHeartbeatTimestamp,
+    ]);
     const workloadTelemetryEvents = input.telemetryEvents.filter((event) =>
         !isHeartbeatTelemetryEvent(event) && !isSyntheticTelemetryEvent(event),
     );
@@ -2190,6 +2201,7 @@ export function classifyTopologyControlPlaneState(input: {
             evaluation_table_exists: input.evaluation_events_table_exists,
             evaluation_error: input.evaluation_load_error ?? null,
         },
+        observerHeartbeatTimestamp: null,
         evaluationTableExists: input.evaluation_events_table_exists,
         evaluationLoadError: input.evaluation_load_error ?? null,
     });
@@ -2332,10 +2344,11 @@ async function fetchLatestOperationalInferenceTimestamp(
     const C = AI_INFERENCE_EVENTS.COLUMNS;
     const { data, error } = await client
         .from(AI_INFERENCE_EVENTS.TABLE)
-        .select(`${C.created_at},${C.source_module}`)
+        .select(C.created_at)
         .eq(C.tenant_id, tenantId)
+        .or(`${C.source_module}.is.null,${C.source_module}.neq.adversarial_simulation`)
         .order(C.created_at, { ascending: false })
-        .limit(20);
+        .limit(1);
 
     if (error) {
         return {
@@ -2346,8 +2359,7 @@ async function fetchLatestOperationalInferenceTimestamp(
     }
 
     const row = (data ?? [])
-        .map((entry) => asRecord(entry))
-        .find((entry) => readString(entry[C.source_module]) !== 'adversarial_simulation');
+        .map((entry) => asRecord(entry))[0];
 
     return {
         timestamp: row ? readString(row[C.created_at]) : null,
@@ -2363,10 +2375,11 @@ async function fetchLatestOperationalEvaluationTimestamp(
     const C = MODEL_EVALUATION_EVENTS.COLUMNS;
     const { data, error } = await client
         .from(MODEL_EVALUATION_EVENTS.TABLE)
-        .select(`${C.created_at},${C.trigger_type},${C.prediction},${C.ground_truth},${C.condition_class_pred},${C.condition_class_true},${C.evaluation_payload}`)
+        .select(`${C.created_at},${C.prediction},${C.ground_truth},${C.condition_class_pred},${C.condition_class_true}`)
         .eq(C.tenant_id, tenantId)
+        .in(C.trigger_type, ['inference', 'outcome'])
         .order(C.created_at, { ascending: false })
-        .limit(50);
+        .limit(20);
 
     if (error) {
         return {
@@ -2377,11 +2390,15 @@ async function fetchLatestOperationalEvaluationTimestamp(
     }
 
     const row = (data ?? [])
-        .map((entry) => mapEvaluationEvent(asRecord(entry)))
-        .find((entry) => entry.trigger_type !== 'simulation' && hasUsableEvaluationSignal(entry));
+        .map((entry) => asRecord(entry))
+        .find((entry) => {
+            const prediction = readString(entry[C.prediction]) ?? readString(entry[C.condition_class_pred]);
+            const groundTruth = readString(entry[C.ground_truth]) ?? readString(entry[C.condition_class_true]);
+            return prediction != null && groundTruth != null;
+        });
 
     return {
-        timestamp: row?.created_at ?? null,
+        timestamp: row ? readString(row[C.created_at]) : null,
         table_exists: true,
         error: null,
     };
@@ -2552,9 +2569,10 @@ function shouldRaiseHeartbeatAlert(node: TopologyNodeSnapshot) {
         && node.id !== 'control_plane';
 }
 
-function findLatestTimestamp(values: string[]) {
-    if (values.length === 0) return null;
-    return values.slice().sort((left, right) => right.localeCompare(left))[0] ?? null;
+function findLatestTimestamp(values: Array<string | null | undefined>) {
+    const timestamps = values.filter((value): value is string => typeof value === 'string' && value.length > 0);
+    if (timestamps.length === 0) return null;
+    return timestamps.slice().sort((left, right) => right.localeCompare(left))[0] ?? null;
 }
 
 function percentile(values: number[], percentileRank: number) {

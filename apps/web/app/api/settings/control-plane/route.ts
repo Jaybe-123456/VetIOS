@@ -99,6 +99,7 @@ export async function GET(req: Request) {
     try {
         const actor = resolveRequestActor(session);
         const adminClient = getSupabaseServer();
+        const observerHeartbeatTimestamp = new Date().toISOString();
         let response: NextResponse;
 
         if (view === 'simulation_mode') {
@@ -111,6 +112,7 @@ export async function GET(req: Request) {
             const snapshot = await getDashboardControlPlaneSnapshot({
                 client: adminClient,
                 tenantId: actor.tenantId,
+                observerHeartbeatTimestamp,
             });
             response = NextResponse.json({
                 snapshot,
@@ -123,6 +125,7 @@ export async function GET(req: Request) {
                 tenantId: actor.tenantId,
                 userId: actor.userId,
                 userContext,
+                observerHeartbeatTimestamp,
             });
 
             response = NextResponse.json({
@@ -167,6 +170,7 @@ export async function POST(req: Request) {
     const actor = resolveRequestActor(session);
     const userContext = await resolveUserContext(session);
     const currentRole = resolveRole(userContext.user, userContext.auth_mode);
+    const observerHeartbeatTimestamp = new Date().toISOString();
 
     try {
         const payload = parsed.data;
@@ -236,6 +240,7 @@ export async function POST(req: Request) {
                 tenantId: actor.tenantId,
                 userId: actor.userId,
                 userContext,
+                observerHeartbeatTimestamp,
             });
             actionResult = {
                 diagnostics: snapshot.diagnostics,
@@ -314,6 +319,7 @@ export async function POST(req: Request) {
             tenantId: actor.tenantId,
             userId: actor.userId,
             userContext,
+            observerHeartbeatTimestamp,
         });
 
         const response = NextResponse.json({
