@@ -1,14 +1,8 @@
 /**
  * POST /api/simulate
  *
- * Runs an adversarial simulation through the real inference pipeline.
- *
- * Protections:
- *   - Rate limit: 10 req/min per IP
- *   - Zod schema validation
- *   - Request ID tracing
- *   - AI provider timeout (15s)
- *   - Error sanitization
+ * Runs an integrity sweep over progressively perturbed variants of a base
+ * clinical case, persists the sweep, and returns curve-ready collapse data.
  */
 
 import { NextResponse } from 'next/server';
@@ -16,13 +10,14 @@ import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
-import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
-import { logInference } from '@/lib/logging/inferenceLogger';
 import { logSimulation } from '@/lib/logging/simulationLogger';
+import {
+    logAdversarialSimulationRunSteps,
+    mapSimulationStepsToRows,
+} from '@/lib/logging/adversarialSimulationRunLogger';
 import {
     createSupabaseClinicalCaseStore,
     ensureCanonicalClinicalCase,
-    finalizeClinicalCaseAfterInference,
     finalizeClinicalCaseAfterSimulation,
 } from '@/lib/clinicalCases/clinicalCaseManager';
 import { logClinicalDatasetMutation } from '@/lib/dataset/clinicalDatasetDiagnostics';
@@ -37,12 +32,18 @@ import {
     extractSystemTelemetry,
     finishTelemetryExecutionSample,
     resolveTelemetryRunId,
-    telemetryInferenceEventId,
     telemetrySimulationEventId,
 } from '@/lib/telemetry/service';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
+import { buildSimulationSummary } from '@/lib/simulation/collapseDetector';
+import { normalizeClinicalBaseCase, sanitizeSimulationInput } from '@/lib/simulation/casePerturber';
+import { runIntegritySweep } from '@/lib/simulation/sweepEngine';
+import type { SimulationMode, SimulationStep } from '@/lib/simulation/simulationTypes';
 
-const AI_TIMEOUT_MS = 55_000;
+export const runtime = 'nodejs';
+export const maxDuration = 300;
+
+const STEP_TIMEOUT_MS = 25_000;
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 10, windowMs: 60_000 });
@@ -73,139 +74,46 @@ export async function POST(req: Request) {
             { status: 400 },
         );
     }
+
     const body = result.data;
+    const normalizedRequest = normalizeSimulationRequest(body);
+    const normalizedBaseCase = normalizeClinicalBaseCase(normalizedRequest.baseCase);
 
     try {
-        const inputSignature: Record<string, unknown> = {
-            simulation_type: body.simulation.type,
-            ...body.simulation.parameters,
-        };
-
-        const targetDisease = inputSignature.target_disease ?? inputSignature.target_rare_disease_profile ?? null;
-        delete inputSignature.target_disease;
-        delete inputSignature.target_rare_disease_profile;
-
         const executionSample = beginTelemetryExecutionSample();
-        const inferenceResult = await Promise.race([
-            runInferencePipeline({
-                model: body.inference.model,
-                rawInput: inputSignature,
-                inputMode: 'json',
-            }),
-            new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS),
-            ),
-        ]);
-
-        const executionMetrics = finishTelemetryExecutionSample(executionSample);
-        const measuredLatencyMs = executionMetrics.latencyMs;
-        const latencyMs = Math.max(1, Math.round(measuredLatencyMs));
         const supabase = getSupabaseServer();
-        const inferenceEventId = randomUUID();
-        const simulationEventId = randomUUID();
-        const modelVersion = body.inference.model_version ?? body.inference.model;
-        const telemetryRunId = resolveTelemetryRunId(modelVersion, resolveTelemetryRunCandidate(inputSignature));
-        const contradictionAnalysis = asRecord(inferenceResult.contradiction_analysis);
-
-        const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
-            ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
-            : {};
-        telemetry.model_version = modelVersion;
-        telemetry.inference_id = inferenceEventId;
-        telemetry.simulation_id = simulationEventId;
-        telemetry.run_id = telemetryRunId;
-        inferenceResult.output_payload.telemetry = telemetry;
-
-        const signatureForLog = { ...inferenceResult.normalizedInput };
-        if (Array.isArray(signatureForLog.diagnostic_images)) {
-            signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map((img: any) => ({
-                file_name: img.file_name,
-                mime_type: img.mime_type,
-                size_bytes: img.size_bytes,
-            }));
-        }
-        if (Array.isArray(signatureForLog.lab_results)) {
-            signatureForLog.lab_results = signatureForLog.lab_results.map((doc: any) => ({
-                file_name: doc.file_name,
-                mime_type: doc.mime_type,
-                size_bytes: doc.size_bytes,
-            }));
-        }
-
         const caseStore = createSupabaseClinicalCaseStore(supabase);
         const observedAt = new Date().toISOString();
+        const simulationEventId = randomUUID();
+        const telemetryRunId = resolveTelemetryRunId(
+            normalizedRequest.modelVersion,
+            resolveTelemetryRunCandidate(normalizedBaseCase),
+        );
+
         const canonicalClinicalCase = await ensureCanonicalClinicalCase(caseStore, {
             tenantId,
             userId,
             clinicId: null,
             requestedCaseId: null,
-            sourceModule: 'adversarial_simulation',
-            inputSignature: signatureForLog,
+            sourceModule: 'adversarial_simulation_sweep',
+            inputSignature: sanitizeSimulationInput(normalizedBaseCase),
             observedAt,
         });
-        const triggeredInferenceId = await logInference(supabase, {
-            id: inferenceEventId,
-            tenant_id: tenantId,
-            user_id: userId,
-            case_id: canonicalClinicalCase.id,
-            source_module: 'adversarial_simulation',
-            model_name: body.inference.model,
-            model_version: modelVersion,
-            input_signature: signatureForLog,
-            output_payload: inferenceResult.output_payload,
-            confidence_score: inferenceResult.confidence_score,
-            uncertainty_metrics: inferenceResult.uncertainty_metrics,
-            compute_profile: telemetry,
-            inference_latency_ms: latencyMs,
+
+        const sweep = await runIntegritySweep(normalizedBaseCase, {
+            model: normalizedRequest.model,
+            modelVersion: normalizedRequest.modelVersion,
+            steps: normalizedRequest.steps,
+            mode: normalizedRequest.mode,
+            timeoutMs: STEP_TIMEOUT_MS,
+            maxAdaptiveSteps: 15,
         });
-        try {
-            await emitTelemetryEvent(supabase, {
-                event_id: telemetryInferenceEventId(triggeredInferenceId),
-                tenant_id: tenantId,
-                event_type: 'inference',
-                timestamp: observedAt,
-                model_version: modelVersion,
-                run_id: telemetryRunId,
-                metrics: {
-                    latency_ms: measuredLatencyMs,
-                    confidence: inferenceResult.confidence_score,
-                    prediction: extractPredictionLabel(inferenceResult.output_payload),
-                },
-                system: extractSystemTelemetry(telemetry, executionMetrics.system),
-                metadata: {
-                    source_module: 'adversarial_simulation',
-                    request_id: requestId,
-                    inference_event_id: triggeredInferenceId,
-                    simulation_event_id: simulationEventId,
-                    case_id: canonicalClinicalCase.id,
-                    simulation_type: body.simulation.type,
-                    target_disease: targetDisease,
-                    synthetic: true,
-                    contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
-                        ? contradictionAnalysis.contradiction_reasons
-                        : [],
-                    pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
-                        ? inferenceResult.output_payload.pipeline_trace
-                        : [],
-                },
-            });
-        } catch (telemetryErr) {
-            console.error(`[${requestId}] Telemetry emission failed (non-fatal):`, telemetryErr);
-        }
-        const inferredClinicalCase = await finalizeClinicalCaseAfterInference(caseStore, canonicalClinicalCase, triggeredInferenceId, {
-            observedAt,
-            userId,
-            sourceModule: 'adversarial_simulation',
-            outputPayload: inferenceResult.output_payload,
-            confidenceScore: inferenceResult.confidence_score,
-            modelVersion: modelVersion,
-            metadataPatch: {
-                latest_inference_confidence: inferenceResult.confidence_score,
-                latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
-                latest_inference_model_version: modelVersion,
-                latest_inference_source: 'adversarial_simulation',
-            },
-        });
+
+        const executionMetrics = finishTelemetryExecutionSample(executionSample);
+        const measuredLatencyMs = executionMetrics.latencyMs;
+        const summary = buildSimulationSummary(sweep);
+        const finalStep = sweep.steps[sweep.steps.length - 1] ?? null;
+        const targetDisease = readString(asRecord(normalizedBaseCase.metadata).target_disease);
 
         const persistedSimulationEventId = await logSimulation(supabase, {
             id: simulationEventId,
@@ -213,66 +121,97 @@ export async function POST(req: Request) {
             user_id: userId,
             clinic_id: null,
             case_id: canonicalClinicalCase.id,
-            source_module: 'adversarial_simulation',
-            simulation_type: body.simulation.type,
-            simulation_parameters: body.simulation.parameters,
-            triggered_inference_id: triggeredInferenceId,
+            source_module: 'adversarial_simulation_sweep',
+            simulation_type: normalizedRequest.simulationType,
+            simulation_parameters: {
+                mode: normalizedRequest.mode,
+                steps_requested: normalizedRequest.steps,
+                model: normalizedRequest.model,
+                model_version: normalizedRequest.modelVersion,
+                base_case_summary: summarizeBaseCase(normalizedBaseCase),
+            },
+            triggered_inference_id: null,
+            failure_mode: deriveFailureMode(sweep),
             stress_metrics: {
-                ...inferenceResult.output_payload,
-                contradiction_analysis: inferenceResult.contradiction_analysis,
+                ...summary,
+                final_step: finalStep == null ? null : {
+                    m: finalStep.m,
+                    state: finalStep.integrity.state,
+                    global_phi: finalStep.integrity.global_phi,
+                    collapse_risk: finalStep.integrity.collapse_risk,
+                    precliff_detected: finalStep.integrity.precliff_detected,
+                    output: finalStep.output,
+                },
             },
             is_real_world: false,
         });
+
+        await logAdversarialSimulationRunSteps(
+            supabase,
+            mapSimulationStepsToRows(
+                persistedSimulationEventId,
+                tenantId,
+                canonicalClinicalCase.id,
+                sweep.steps,
+            ),
+        );
+
         try {
             await emitTelemetryEvent(supabase, {
                 event_id: telemetrySimulationEventId(persistedSimulationEventId),
                 tenant_id: tenantId,
-                linked_event_id: telemetryInferenceEventId(triggeredInferenceId),
                 source_id: persistedSimulationEventId,
                 source_table: 'edge_simulation_events',
                 event_type: 'simulation',
                 timestamp: observedAt,
-                model_version: modelVersion,
+                model_version: normalizedRequest.modelVersion,
                 run_id: telemetryRunId,
                 metrics: {
                     latency_ms: measuredLatencyMs,
-                    confidence: inferenceResult.confidence_score,
-                    prediction: typeof targetDisease === 'string' ? targetDisease : body.simulation.type,
+                    confidence: readNumber(finalStep?.output.confidence_score) ?? finalStep?.integrity.global_phi ?? null,
+                    prediction: finalStep == null
+                        ? normalizedRequest.simulationType
+                        : extractPredictionLabel(finalStep.output),
                 },
-                system: extractSystemTelemetry(telemetry, executionMetrics.system),
+                system: extractSystemTelemetry({}, executionMetrics.system),
                 metadata: {
-                    source_module: 'adversarial_simulation',
+                    source_module: 'adversarial_simulation_sweep',
                     request_id: requestId,
-                    inference_event_id: triggeredInferenceId,
                     simulation_event_id: persistedSimulationEventId,
                     case_id: canonicalClinicalCase.id,
-                    simulation_type: body.simulation.type,
-                    target_disease: targetDisease,
+                    mode: normalizedRequest.mode,
+                    steps_requested: normalizedRequest.steps,
+                    steps_executed: sweep.steps.length,
+                    collapse_threshold: sweep.collapse_threshold ?? null,
+                    precliff_regions: sweep.precliff_regions,
                     synthetic: true,
-                    contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
-                        ? contradictionAnalysis.contradiction_reasons
-                        : [],
-                    pipeline_stage_completion: ['simulation_logged', 'dataset_benchmark_ready'],
+                    target_disease: targetDisease,
                 },
             });
         } catch (telemetryErr) {
             console.error(`[${requestId}] Simulation telemetry emission failed (non-fatal):`, telemetryErr);
         }
-        await finalizeClinicalCaseAfterSimulation(caseStore, inferredClinicalCase, persistedSimulationEventId, {
+
+        await finalizeClinicalCaseAfterSimulation(caseStore, canonicalClinicalCase, persistedSimulationEventId, {
             observedAt,
             userId,
-            sourceModule: 'adversarial_simulation',
-            simulationType: body.simulation.type,
+            sourceModule: 'adversarial_simulation_sweep',
+            simulationType: normalizedRequest.simulationType,
             stressMetrics: {
-                ...inferenceResult.output_payload,
-                contradiction_analysis: inferenceResult.contradiction_analysis,
+                ...(finalStep?.output ?? {}),
+                integrity: finalStep?.integrity ?? null,
+                collapse_threshold: sweep.collapse_threshold ?? null,
+                precliff_regions: sweep.precliff_regions,
             },
             metadataPatch: {
-                latest_simulation_type: body.simulation.type,
+                latest_simulation_type: normalizedRequest.simulationType,
                 latest_simulation_timestamp: observedAt,
                 latest_simulation_target_disease: targetDisease,
+                latest_simulation_collapse_threshold: sweep.collapse_threshold ?? null,
+                latest_simulation_mode: normalizedRequest.mode,
             },
         });
+
         logClinicalDatasetMutation({
             source: 'api/simulate',
             mutationType: 'simulation',
@@ -280,10 +219,10 @@ export async function POST(req: Request) {
             resolvedTenantId: tenantId,
             writeTenantId: tenantId,
             caseId: canonicalClinicalCase.id,
-            inferenceEventId: triggeredInferenceId,
             simulationEventId: persistedSimulationEventId,
         });
         revalidatePath('/dataset');
+
         try {
             await evaluateDecisionEngine({
                 client: supabase,
@@ -294,41 +233,30 @@ export async function POST(req: Request) {
             console.error(`[${requestId}] Decision engine evaluation failed (non-fatal):`, decisionErr);
         }
 
-        const parsedDiag = inferenceResult.output_payload.diagnosis as Record<string, unknown>;
-        const differentialDiagnosis = parsedDiag && Array.isArray(parsedDiag.top_differentials)
-            ? parsedDiag.top_differentials
-            : [];
-        const topDiagnosis = differentialDiagnosis[0]?.name ?? null;
-        const targetMatch = targetDisease
-            ? topDiagnosis?.toLowerCase().includes(String(targetDisease).toLowerCase()) ?? false
-            : null;
-
-        const differentialSpread = (inferenceResult.output_payload.differential_spread as Record<string, unknown> | null) ?? (
-            differentialDiagnosis.length >= 2
-                ? {
-                    top_1_probability: differentialDiagnosis[0]?.probability ?? null,
-                    top_2_probability: differentialDiagnosis[1]?.probability ?? null,
-                    top_3_probability: differentialDiagnosis[2]?.probability ?? null,
-                    spread: Number(((differentialDiagnosis[0]?.probability ?? 0) - (differentialDiagnosis[1]?.probability ?? 0)).toFixed(3)),
-                }
-                : null
-        );
-
+        const targetEvaluation = buildTargetEvaluation(finalStep, targetDisease);
         const response = NextResponse.json({
             simulation_event_id: persistedSimulationEventId,
-            triggered_inference_event_id: triggeredInferenceId,
+            triggered_inference_event_id: null,
             clinical_case_id: canonicalClinicalCase.id,
-            inference_output: inferenceResult.output_payload,
-            confidence_score: inferenceResult.confidence_score,
+            inference_output: finalStep?.output ?? null,
+            confidence_score: readNumber(finalStep?.output.confidence_score) ?? null,
             inference_latency_ms: measuredLatencyMs,
-            contradiction_analysis: inferenceResult.contradiction_analysis,
-            differential_diagnosis: differentialDiagnosis,
-            differential_spread: differentialSpread,
-            target_evaluation: targetDisease ? {
-                target_disease: targetDisease,
-                top_diagnosis: topDiagnosis,
-                target_matched_top: targetMatch,
-            } : null,
+            contradiction_analysis: asNullableRecord(finalStep?.output.contradiction_analysis) ?? null,
+            differential_diagnosis: readDifferentials(finalStep?.output),
+            differential_spread: asNullableRecord(finalStep?.output.differential_spread) ?? null,
+            target_evaluation: targetEvaluation,
+            simulation: {
+                base_case: sweep.base_case,
+                collapse_threshold: sweep.collapse_threshold ?? null,
+                precliff_regions: sweep.precliff_regions,
+                steps: sweep.steps.map((step) => ({
+                    m: step.m,
+                    perturbation_vector: step.perturbation_vector,
+                    input_variant: step.input_variant,
+                    output: step.output,
+                    integrity: step.integrity,
+                })),
+            },
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);
@@ -336,9 +264,9 @@ export async function POST(req: Request) {
     } catch (err) {
         console.error(`[${requestId}] POST /api/simulate Error:`, err);
 
-        if (err instanceof Error && err.message === 'AI_TIMEOUT') {
+        if (err instanceof Error && err.message.startsWith('SIMULATION_STEP_TIMEOUT:')) {
             return NextResponse.json(
-                { error: 'AI inference timed out', request_id: requestId },
+                { error: 'Simulation step timed out', request_id: requestId },
                 { status: 504 },
             );
         }
@@ -351,19 +279,88 @@ export async function POST(req: Request) {
     }
 }
 
-function extractEmergencyLevel(outputPayload: Record<string, unknown>): string | null {
-    const riskAssessment = outputPayload.risk_assessment;
-    if (
-        typeof riskAssessment !== 'object' ||
-        riskAssessment === null ||
-        Array.isArray(riskAssessment)
-    ) {
-        return null;
-    }
+function normalizeSimulationRequest(body: {
+    base_case?: Record<string, unknown>;
+    steps?: number;
+    mode?: SimulationMode;
+    simulation?: { type: string; parameters: Record<string, unknown> };
+    inference?: { model: string; model_version?: string };
+}) {
+    const baseCase = body.base_case != null
+        ? body.base_case
+        : buildBaseCaseFromLegacySimulation(body.simulation);
+    const model = body.inference?.model ?? 'gpt-4o-mini';
+    const modelVersion = body.inference?.model_version ?? model;
 
-    return typeof (riskAssessment as Record<string, unknown>).emergency_level === 'string'
-        ? (riskAssessment as Record<string, unknown>).emergency_level as string
-        : null;
+    return {
+        baseCase,
+        steps: Math.max(5, Math.min(15, body.steps ?? 10)),
+        mode: body.mode ?? 'adaptive',
+        model,
+        modelVersion,
+        simulationType: body.simulation?.type ?? `integrity_sweep_${body.mode ?? 'adaptive'}`,
+    };
+}
+
+function buildBaseCaseFromLegacySimulation(
+    simulation: { type: string; parameters: Record<string, unknown> } | undefined,
+) {
+    const parameters = simulation?.parameters ?? {};
+    const edgeCases = readString(parameters.edge_cases);
+    const contradictions = readString(parameters.contradictions);
+    const targetDisease = readString(parameters.target_disease);
+    const symptoms = [edgeCases, contradictions]
+        .filter((value): value is string => Boolean(value))
+        .flatMap((value) => value.split(/[,+;]/))
+        .map((value) => value.trim())
+        .filter(Boolean);
+
+    return {
+        species: readString(parameters.species) ?? 'canine',
+        breed: readString(parameters.breed) ?? null,
+        symptoms,
+        metadata: {
+            raw_note: edgeCases ?? 'Adversarial simulation base case generated from legacy simulation request.',
+            history: contradictions ?? null,
+            presenting_complaint: edgeCases ?? null,
+            target_disease: targetDisease,
+            simulation_iterations: parameters.iterations ?? null,
+            legacy_simulation_type: simulation?.type ?? null,
+        },
+    };
+}
+
+function deriveFailureMode(result: Awaited<ReturnType<typeof runIntegritySweep>>) {
+    if (result.collapse_threshold != null) return 'integrity_collapse_detected';
+    if (result.precliff_regions.length > 0) return 'metastability_region_detected';
+    return null;
+}
+
+function summarizeBaseCase(baseCase: Record<string, unknown>) {
+    return {
+        species: readString(baseCase.species),
+        breed: readString(baseCase.breed),
+        symptom_count: Array.isArray(baseCase.symptoms) ? baseCase.symptoms.length : 0,
+        has_history: Boolean(readString(asRecord(baseCase.metadata).history)),
+        has_raw_note: Boolean(readString(asRecord(baseCase.metadata).raw_note)),
+    };
+}
+
+function buildTargetEvaluation(step: SimulationStep | null, targetDisease: string | null) {
+    if (!step || !targetDisease) return null;
+
+    const differentials = readDifferentials(step.output);
+    const topDiagnosis = readString(asRecord(differentials[0]).name);
+    return {
+        target_disease: targetDisease,
+        top_diagnosis: topDiagnosis,
+        target_matched_top: topDiagnosis?.toLowerCase().includes(targetDisease.toLowerCase()) ?? false,
+    };
+}
+
+function readDifferentials(output: unknown) {
+    const diagnosis = asRecord(asRecord(output).diagnosis);
+    return Array.isArray(diagnosis.top_differentials) ? diagnosis.top_differentials : [];
 }
 
 function resolveTelemetryRunCandidate(inputSignature: Record<string, unknown>): unknown {
@@ -375,4 +372,23 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function asNullableRecord(value: unknown): Record<string, unknown> | null {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function readString(value: unknown) {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
