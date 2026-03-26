@@ -58,15 +58,24 @@ export type OutcomeRequest = z.infer<typeof OutcomeRequestSchema>;
 // ── /api/simulate ────────────────────────────────────────────────────────────
 
 export const SimulateRequestSchema = z.object({
+    base_case: z.record(z.string(), z.unknown()).optional(),
+    steps: z.number().int().min(5).max(15).optional().default(10),
+    mode: z.enum(['linear', 'adaptive']).optional().default('adaptive'),
     simulation: z.object({
         type: z.string().min(1),
         parameters: z.record(z.string(), z.unknown()),
-    }),
+    }).optional(),
     inference: z.object({
         model: z.string().min(1),
         model_version: z.string().optional(),
+    }).optional().default({
+        model: 'gpt-4o-mini',
+        model_version: 'gpt-4o-mini',
     }),
-});
+}).refine(
+    (value) => value.base_case != null || value.simulation != null,
+    { message: 'Either base_case or simulation must be provided.' },
+);
 
 export type SimulateRequest = z.infer<typeof SimulateRequestSchema>;
 

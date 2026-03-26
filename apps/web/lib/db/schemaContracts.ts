@@ -254,6 +254,27 @@ export const NETWORK_INTELLIGENCE_METRICS = {
     },
 } as const;
 
+export const ADVERSARIAL_SIMULATION_RUNS = {
+    TABLE: 'adversarial_simulation_runs',
+    COLUMNS: {
+        id: 'id',
+        simulation_event_id: 'simulation_event_id',
+        tenant_id: 'tenant_id',
+        base_case_id: 'base_case_id',
+        step_index: 'step_index',
+        m: 'm',
+        perturbation_vector: 'perturbation_vector',
+        input_variant: 'input_variant',
+        output_summary: 'output_summary',
+        global_phi: 'global_phi',
+        state: 'state',
+        collapse_risk: 'collapse_risk',
+        precliff_flag: 'precliff_flag',
+        instability: 'instability',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const MODEL_EVALUATION_EVENTS = {
     TABLE: 'model_evaluation_events',
     COLUMNS: {
@@ -322,6 +343,27 @@ export const CONTROL_PLANE_ALERTS = {
         resolved: 'resolved',
         resolved_at: 'resolved_at',
         metadata: 'metadata',
+    },
+} as const;
+
+export const CLINICAL_INTEGRITY_EVENTS = {
+    TABLE: 'clinical_integrity_events',
+    COLUMNS: {
+        id: 'id',
+        inference_event_id: 'inference_event_id',
+        tenant_id: 'tenant_id',
+        perturbation_score_m: 'perturbation_score_m',
+        global_phi: 'global_phi',
+        delta_phi: 'delta_phi',
+        curvature: 'curvature',
+        variance_proxy: 'variance_proxy',
+        divergence: 'divergence',
+        critical_instability_index: 'critical_instability_index',
+        state: 'state',
+        collapse_risk: 'collapse_risk',
+        precliff_detected: 'precliff_detected',
+        details: 'details',
+        created_at: 'created_at',
     },
 } as const;
 

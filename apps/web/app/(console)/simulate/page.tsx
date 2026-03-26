@@ -4,32 +4,58 @@ import { useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow } from '@/components/ui/terminal';
 import { SimulationRunner } from '@/components/SimulationRunner';
 import { TelemetryChart } from '@/components/ui/TelemetryChart';
-import { ShieldAlert, Activity, AlertTriangle, AlertOctagon, CheckCircle2, XCircle } from 'lucide-react';
+import { Activity, AlertTriangle, CheckCircle2, ShieldAlert, TrendingDown } from 'lucide-react';
 
-// ── Types ────────────────────────────────────────────────────────────────────
+type StateClassification = 'stable' | 'fragile' | 'metastable' | 'collapsed';
 
-interface ContradictionAnalysis {
-    contradiction_score: number;
-    contradiction_reasons: string[];
-    is_plausible: boolean;
-    confidence_cap: number;
-    confidence_was_capped: boolean;
-    original_confidence: number | null;
-    abstain: boolean;
+interface PerturbationVector {
+    noise: number;
+    contradiction: number;
+    missingness: number;
+    ambiguity: number;
+    distribution_shift: number;
+}
+
+interface InstabilityMetrics {
+    delta_phi: number;
+    curvature: number;
+    variance_proxy: number;
+    divergence: number;
+    critical_instability_index: number;
+}
+
+interface CapabilityPhi {
+    name: string;
+    phi: number;
+}
+
+interface IntegrityStepResult {
+    global_phi: number;
+    state: StateClassification;
+    collapse_risk: number;
+    precliff_detected: boolean;
+    instability: InstabilityMetrics;
+    capabilities: CapabilityPhi[];
 }
 
 interface DifferentialEntry {
     name?: string;
-    condition?: string;
     probability: number;
-    key_drivers?: { feature: string; weight: number }[];
 }
 
-interface DifferentialSpread {
-    top_1_probability: number | null;
-    top_2_probability: number | null;
-    top_3_probability: number | null;
-    spread: number | null;
+interface SimulationStepResult {
+    m: number;
+    perturbation_vector: PerturbationVector;
+    input_variant: Record<string, unknown>;
+    output: Record<string, unknown>;
+    integrity: IntegrityStepResult;
+}
+
+interface SimulationPayload {
+    base_case: Record<string, unknown>;
+    collapse_threshold: number | null;
+    precliff_regions: number[];
+    steps: SimulationStepResult[];
 }
 
 interface TargetEvaluation {
@@ -40,24 +66,25 @@ interface TargetEvaluation {
 
 interface SimResult {
     simulation_event_id: string;
-    triggered_inference_event_id: string;
-    inference_output: Record<string, unknown>;
+    triggered_inference_event_id: string | null;
+    clinical_case_id: string;
+    inference_output: Record<string, unknown> | null;
     confidence_score: number | null;
     inference_latency_ms: number;
-    contradiction_analysis?: ContradictionAnalysis;
+    contradiction_analysis?: Record<string, unknown> | null;
     differential_diagnosis?: DifferentialEntry[];
-    differential_spread?: DifferentialSpread;
+    differential_spread?: Record<string, unknown> | null;
     target_evaluation?: TargetEvaluation | null;
+    simulation: SimulationPayload;
     request_id: string;
 }
 
 interface HistoryEntry {
     id: string;
-    target: string;
-    type: string;
-    confidence: number | null;
+    collapseThreshold: number | null;
+    finalState: StateClassification;
+    stepCount: number;
     latency: number;
-    contradiction_reasons_count: number;
     time: string;
 }
 
@@ -68,8 +95,6 @@ interface SimulationState {
     errorMessage?: string;
 }
 
-// ── Page ─────────────────────────────────────────────────────────────────────
-
 export default function AdversarialSimulation() {
     const [state, setState] = useState<SimulationState>({
         status: 'idle',
@@ -78,23 +103,31 @@ export default function AdversarialSimulation() {
 
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
-        setState(prev => ({ ...prev, status: 'simulating', errorMessage: undefined }));
+        setState((prev) => ({ ...prev, status: 'simulating', errorMessage: undefined }));
 
         const formData = new FormData(e.currentTarget);
+        const symptoms = String(formData.get('symptoms') ?? '')
+            .split(/[,+;\n]/)
+            .map((entry) => entry.trim())
+            .filter(Boolean);
 
         const payload = {
-            simulation: {
-                type: (formData.get('simulationType') as string) || 'adversarial_scenario',
-                parameters: {
-                    edge_cases: formData.get('edgeCases') as string,
-                    contradictions: formData.get('contradictions') as string,
-                    target_disease: formData.get('rareDiseases') as string,
-                    iterations: parseInt(formData.get('iterations') as string || '100'),
+            base_case: {
+                species: (formData.get('species') as string) || 'canine',
+                breed: (formData.get('breed') as string) || null,
+                symptoms,
+                metadata: {
+                    raw_note: (formData.get('rawNote') as string) || null,
+                    history: (formData.get('history') as string) || null,
+                    presenting_complaint: (formData.get('presentingComplaint') as string) || null,
+                    target_disease: (formData.get('targetDisease') as string) || null,
                 },
             },
+            steps: parseInt((formData.get('steps') as string) || '10', 10),
+            mode: ((formData.get('mode') as string) || 'adaptive') as 'linear' | 'adaptive',
             inference: {
                 model: (formData.get('model') as string) || 'gpt-4o-mini',
-                model_version: 'gpt-4o-mini',
+                model_version: (formData.get('model') as string) || 'gpt-4o-mini',
             },
         };
 
@@ -106,248 +139,271 @@ export default function AdversarialSimulation() {
             });
 
             const result = await res.json() as SimResult;
-
             if (!res.ok) {
-                throw new Error((result as unknown as Record<string, string>).error || 'Simulation engine failed');
+                throw new Error((result as unknown as Record<string, string>).error || 'Integrity sweep failed');
             }
 
+            const steps = result.simulation.steps;
+            const finalStep = steps[steps.length - 1];
             const newEntry: HistoryEntry = {
-                id: result.simulation_event_id?.slice(0, 12) || 'sim_unknown',
-                target: payload.simulation.parameters.target_disease || 'Mixed Vectors',
-                type: payload.simulation.type,
-                confidence: result.confidence_score,
+                id: result.simulation_event_id.slice(0, 12),
+                collapseThreshold: result.simulation.collapse_threshold,
+                finalState: finalStep?.integrity.state ?? 'stable',
+                stepCount: steps.length,
                 latency: result.inference_latency_ms,
-                contradiction_reasons_count: result.contradiction_analysis?.contradiction_reasons?.length ?? 0,
                 time: new Date().toLocaleTimeString(),
             };
 
-            setState(prev => ({
+            setState((prev) => ({
                 ...prev,
                 status: 'success',
                 result,
                 history: [newEntry, ...prev.history].slice(0, 10),
             }));
         } catch (err: unknown) {
-            const msg = err instanceof Error ? err.message : 'Unknown simulation error';
-            setState(prev => ({ ...prev, status: 'error', errorMessage: msg }));
+            const message = err instanceof Error ? err.message : 'Unknown simulation error';
+            setState((prev) => ({ ...prev, status: 'error', errorMessage: message }));
         }
     }
 
-    // Derived
-    const r = state.result;
-    const confidenceScore = r?.confidence_score;
-    const latencyMs = r?.inference_latency_ms;
-    const degradation = confidenceScore != null ? Math.max(0, 1 - confidenceScore) : null;
-    const ca = r?.contradiction_analysis;
-    const dd = r?.differential_diagnosis ?? [];
-    const ds = r?.differential_spread;
-    const te = r?.target_evaluation;
+    const result = state.result;
+    const steps = result?.simulation.steps ?? [];
+    const finalStep = steps[steps.length - 1];
+    const minPhi = steps.length === 0
+        ? null
+        : steps.reduce((min, step) => Math.min(min, step.integrity.global_phi), 1);
+    const maxCollapseRisk = steps.length === 0
+        ? null
+        : steps.reduce((max, step) => Math.max(max, step.integrity.collapse_risk), 0);
+    const phiCurve = steps.map((step) => ({
+        time: step.m.toFixed(2),
+        value: Number(step.integrity.global_phi.toFixed(3)),
+    }));
+    const collapseRiskCurve = steps.map((step) => ({
+        time: step.m.toFixed(2),
+        value: Number(step.integrity.collapse_risk.toFixed(3)),
+    }));
+    const differentialDiagnosis = result?.differential_diagnosis ?? [];
 
     return (
         <Container>
             <PageHeader
-                title="ADVERSARIAL SIMULATION ENGINE"
-                description="Stress-testing lab to expose edge cases, trigger uncertainty spikes, and measure model degradation under noise."
+                title="INTEGRITY SWEEP ENGINE"
+                description="Adversarial degradation sweeps that map capability loss, metastability, and collapse thresholds across perturbation load."
             />
 
             <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 sm:gap-8 xl:gap-12 mb-8 sm:mb-12">
                 <div className="xl:col-span-1 xl:border-r xl:border-grid xl:pr-12">
-                    <ConsoleCard title="Configure Simulation" className="border-danger/30 p-0 bg-transparent">
+                    <ConsoleCard title="Configure Sweep" className="border-danger/30 p-0 bg-transparent">
                         <SimulationRunner onSubmit={handleSubmit} isSimulating={state.status === 'simulating'} />
                     </ConsoleCard>
                 </div>
 
                 <div className="xl:col-span-2 space-y-4 sm:space-y-6">
-                    {/* ── Row 1: Degradation + Inference Metrics ── */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 lg:gap-6">
-                        <ConsoleCard title="Model Degradation Score" className="border-danger/30">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+                        <ConsoleCard title="Collapse Threshold" className="border-danger/30">
                             {state.status === 'simulating' ? (
-                                <div className="h-20 sm:h-24 flex items-center justify-center text-danger animate-pulse font-mono text-xs sm:text-sm">
-                                    <Activity className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" /> CALCULATING...
-                                </div>
-                            ) : state.status === 'success' && degradation != null ? (
-                                <div className="h-20 sm:h-24 flex flex-col justify-center">
-                                    <div className="text-3xl sm:text-4xl font-mono text-danger font-bold tracking-tighter">
-                                        {(degradation * 100).toFixed(1)}<span className="text-base sm:text-lg">%</span>
-                                    </div>
-                                    <div className="text-[10px] text-muted font-mono uppercase mt-1 flex items-center gap-1">
-                                        {degradation > 0.3 ? (
-                                            <><AlertTriangle className="w-3 h-3 text-danger" /> Critical Degradation</>
-                                        ) : degradation > 0.15 ? (
-                                            <><AlertTriangle className="w-3 h-3 text-yellow-400" /> Moderate Degradation</>
-                                        ) : (
-                                            <><CheckCircle2 className="w-3 h-3 text-accent" /> Stable Under Stress</>
-                                        )}
-                                    </div>
-                                </div>
+                                <LoadingTile label="MAPPING..." />
+                            ) : result ? (
+                                <MetricTile
+                                    value={result.simulation.collapse_threshold == null ? 'NONE' : result.simulation.collapse_threshold.toFixed(2)}
+                                    caption={result.simulation.collapse_threshold == null ? 'No collapse detected in sweep' : 'm† collapse threshold'}
+                                    danger={result.simulation.collapse_threshold != null}
+                                />
                             ) : (
-                                <div className="h-20 sm:h-24 flex items-center justify-center text-muted text-[10px] font-mono border border-dashed border-danger/20">
-                                    AWAITING SIMULATION
-                                </div>
+                                <AwaitingTile />
                             )}
                         </ConsoleCard>
 
-                        <ConsoleCard title="Inference Metrics" className="border-danger/30">
+                        <ConsoleCard title="Pre-Cliff Zones" className="border-yellow-400/30">
                             {state.status === 'simulating' ? (
-                                <div className="h-20 sm:h-24 flex items-center justify-center text-danger animate-pulse font-mono text-xs sm:text-sm">
-                                    <Activity className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" /> SCANNING...
-                                </div>
-                            ) : state.status === 'success' ? (
-                                <div className="h-20 sm:h-24 flex flex-col justify-center gap-2">
-                                    <div className="flex justify-between items-baseline">
-                                        <span className="font-mono text-[10px] text-muted uppercase">Confidence</span>
-                                        <span className="font-mono text-sm sm:text-lg text-accent">
-                                            {confidenceScore != null ? `${(confidenceScore * 100).toFixed(1)}%` : 'N/A'}
-                                            {ca?.confidence_was_capped && (
-                                                <span className="text-[9px] text-yellow-400 ml-1">
-                                                    CAPPED (was {((ca.original_confidence ?? 0) * 100).toFixed(0)}%)
-                                                </span>
-                                            )}
-                                        </span>
+                                <LoadingTile label="SCANNING..." />
+                            ) : result ? (
+                                <div className="h-24 flex flex-col justify-center gap-2">
+                                    <div className="text-3xl font-mono text-yellow-400 font-bold tracking-tighter">
+                                        {result.simulation.precliff_regions.length}
                                     </div>
-                                    <div className="flex justify-between items-baseline">
-                                        <span className="font-mono text-[10px] text-muted uppercase">Latency</span>
-                                        <span className="font-mono text-sm sm:text-lg text-foreground">
-                                            {latencyMs != null ? `${latencyMs}ms` : 'N/A'}
-                                        </span>
+                                    <div className="text-[10px] text-muted font-mono uppercase">
+                                        {result.simulation.precliff_regions.length === 0
+                                            ? 'No metastable zones detected'
+                                            : result.simulation.precliff_regions.map((value) => value.toFixed(2)).join(', ')}
                                     </div>
-                                    {ds && (
-                                        <div className="flex justify-between items-baseline">
-                                            <span className="font-mono text-[10px] text-muted uppercase">Differential Spread</span>
-                                            <span className="font-mono text-sm text-foreground">{ds.spread}</span>
-                                        </div>
-                                    )}
                                 </div>
                             ) : (
-                                <div className="h-20 sm:h-24 flex items-center justify-center text-muted text-[10px] font-mono border border-dashed border-danger/20">
-                                    AWAITING SIMULATION
+                                <AwaitingTile />
+                            )}
+                        </ConsoleCard>
+
+                        <ConsoleCard title="Final State" className="border-danger/30">
+                            {state.status === 'simulating' ? (
+                                <LoadingTile label="CLASSIFYING..." />
+                            ) : finalStep ? (
+                                <div className="h-24 flex flex-col justify-center gap-2">
+                                    <div className={`text-2xl font-mono font-bold uppercase ${stateColor(finalStep.integrity.state)}`}>
+                                        {finalStep.integrity.state}
+                                    </div>
+                                    <div className="text-[10px] text-muted font-mono uppercase">
+                                        Max collapse risk {((maxCollapseRisk ?? 0) * 100).toFixed(1)}%
+                                    </div>
                                 </div>
+                            ) : (
+                                <AwaitingTile />
                             )}
                         </ConsoleCard>
                     </div>
 
-                    {/* ── Contradiction Analysis ── */}
-                    {state.status === 'success' && ca && (
-                        <ConsoleCard title="Contradiction Analysis" className={`border-${(ca.contradiction_reasons?.length || 0) > 0 ? 'danger' : 'accent'}/30`}>
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3">
-                                <div className="font-mono">
-                                    <div className="text-[9px] text-muted uppercase">Score</div>
-                                    <div className={`text-lg font-bold ${ca.contradiction_score > 0.5 ? 'text-danger' : ca.contradiction_score > 0 ? 'text-yellow-400' : 'text-accent'}`}>
-                                        {(ca.contradiction_score * 100).toFixed(0)}%
-                                    </div>
-                                </div>
-                                <div className="font-mono">
-                                    <div className="text-[9px] text-muted uppercase">Plausible</div>
-                                    <div className={`text-lg font-bold ${ca.is_plausible ? 'text-accent' : 'text-danger'}`}>
-                                        {ca.is_plausible ? 'YES' : 'NO'}
-                                    </div>
-                                </div>
-                                <div className="font-mono">
-                                    <div className="text-[9px] text-muted uppercase">Confidence Cap</div>
-                                    <div className="text-lg font-bold text-foreground">
-                                        {ca.confidence_cap < 1.0 ? `${(ca.confidence_cap * 100).toFixed(0)}%` : 'NONE'}
-                                    </div>
-                                </div>
-                                <div className="font-mono">
-                                    <div className="text-[9px] text-muted uppercase">Was Capped</div>
-                                    <div className={`text-lg font-bold ${ca.confidence_was_capped ? 'text-yellow-400' : 'text-accent'}`}>
-                                        {ca.confidence_was_capped ? 'YES' : 'NO'}
-                                    </div>
-                                </div>
+                    <ConsoleCard title="Integrity Sweep View" className="border-danger/30">
+                        {state.status === 'simulating' ? (
+                            <div className="h-64 flex items-center justify-center text-danger animate-pulse font-mono text-sm">
+                                <Activity className="w-5 h-5 mr-2 animate-spin" /> RUNNING DEGRADATION SWEEP...
                             </div>
-                            {(ca.contradiction_reasons?.length || 0) > 0 && (
-                                <div className="border-t border-grid pt-3 space-y-1">
-                                    {ca.contradiction_reasons.map((c, i) => (
-                                        <div key={i} className="flex items-start gap-2 text-xs font-mono text-danger/80">
-                                            <XCircle className="w-3 h-3 mt-0.5 shrink-0" />
-                                            <span>{c}</span>
-                                        </div>
+                        ) : result ? (
+                            <div className="space-y-4">
+                                <div className="flex flex-wrap gap-2 font-mono text-[10px] uppercase">
+                                    <span className="border border-grid px-2 py-1 text-muted">
+                                        Steps {steps.length}
+                                    </span>
+                                    <span className="border border-grid px-2 py-1 text-accent">
+                                        Min Phi {minPhi?.toFixed(3) ?? 'N/A'}
+                                    </span>
+                                    <span className="border border-grid px-2 py-1 text-danger">
+                                        Collapse {result.simulation.collapse_threshold == null ? 'none' : result.simulation.collapse_threshold.toFixed(2)}
+                                    </span>
+                                    {result.simulation.precliff_regions.map((value) => (
+                                        <span key={value} className="border border-yellow-400/50 px-2 py-1 text-yellow-400">
+                                            Pre-cliff {value.toFixed(2)}
+                                        </span>
                                     ))}
                                 </div>
-                            )}
+
+                                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                    <div className="h-64 border border-grid/50 p-3">
+                                        <div className="text-[10px] font-mono uppercase text-muted mb-2">m vs global phi</div>
+                                        <TelemetryChart data={phiCurve} color="#00ff9d" />
+                                    </div>
+                                    <div className="h-64 border border-grid/50 p-3">
+                                        <div className="text-[10px] font-mono uppercase text-muted mb-2">m vs collapse risk</div>
+                                        <TelemetryChart data={collapseRiskCurve} color="#ff5555" />
+                                    </div>
+                                </div>
+
+                                <div className="w-full overflow-x-auto">
+                                    <table className="w-full text-left border-collapse min-w-[760px]">
+                                        <thead>
+                                            <tr className="border-b border-grid/50 font-mono text-[10px] uppercase text-muted tracking-widest">
+                                                <th className="p-2 font-normal">m</th>
+                                                <th className="p-2 font-normal">phi</th>
+                                                <th className="p-2 font-normal">state</th>
+                                                <th className="p-2 font-normal">delta_phi</th>
+                                                <th className="p-2 font-normal">CII</th>
+                                                <th className="p-2 font-normal">pre-cliff</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="font-mono text-xs sm:text-sm">
+                                            {steps.map((step) => (
+                                                <tr key={step.m} className="border-b border-grid/30">
+                                                    <td className="p-2 text-muted">{step.m.toFixed(2)}</td>
+                                                    <td className="p-2 text-accent">{step.integrity.global_phi.toFixed(3)}</td>
+                                                    <td className={`p-2 uppercase ${stateColor(step.integrity.state)}`}>{step.integrity.state}</td>
+                                                    <td className={`p-2 ${step.integrity.instability.delta_phi < -0.15 ? 'text-danger' : 'text-muted'}`}>
+                                                        {step.integrity.instability.delta_phi.toFixed(3)}
+                                                    </td>
+                                                    <td className={`${step.integrity.instability.critical_instability_index > 0.3 ? 'text-yellow-400' : 'text-muted'} p-2`}>
+                                                        {step.integrity.instability.critical_instability_index.toFixed(3)}
+                                                    </td>
+                                                    <td className={`p-2 ${step.integrity.precliff_detected ? 'text-yellow-400' : 'text-muted'}`}>
+                                                        {step.integrity.precliff_detected ? 'YES' : 'NO'}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ) : (
+                            <AwaitingTile />
+                        )}
+                    </ConsoleCard>
+
+                    {finalStep && (
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+                            <ConsoleCard title="Final Step Integrity" className="border-danger/30">
+                                <div className="grid grid-cols-2 gap-3 font-mono text-xs">
+                                    <MetricRow label="Global Phi" value={finalStep.integrity.global_phi.toFixed(3)} valueClass="text-accent" />
+                                    <MetricRow label="Collapse Risk" value={`${(finalStep.integrity.collapse_risk * 100).toFixed(1)}%`} valueClass="text-danger" />
+                                    <MetricRow label="Delta Phi" value={finalStep.integrity.instability.delta_phi.toFixed(3)} valueClass={finalStep.integrity.instability.delta_phi < -0.15 ? 'text-danger' : 'text-foreground'} />
+                                    <MetricRow label="Curvature" value={finalStep.integrity.instability.curvature.toFixed(3)} valueClass={finalStep.integrity.instability.curvature < -0.05 ? 'text-yellow-400' : 'text-foreground'} />
+                                    <MetricRow label="Variance Proxy" value={finalStep.integrity.instability.variance_proxy.toFixed(3)} valueClass="text-foreground" />
+                                    <MetricRow label="Divergence" value={finalStep.integrity.instability.divergence.toFixed(3)} valueClass={finalStep.integrity.instability.divergence > 0.2 ? 'text-danger' : 'text-foreground'} />
+                                </div>
+                            </ConsoleCard>
+
+                            <ConsoleCard title="Perturbation Vector" className="border-danger/30">
+                                <div className="grid grid-cols-2 gap-3 font-mono text-xs">
+                                    <MetricRow label="Noise" value={finalStep.perturbation_vector.noise.toFixed(3)} valueClass="text-foreground" />
+                                    <MetricRow label="Contradiction" value={finalStep.perturbation_vector.contradiction.toFixed(3)} valueClass="text-foreground" />
+                                    <MetricRow label="Missingness" value={finalStep.perturbation_vector.missingness.toFixed(3)} valueClass="text-foreground" />
+                                    <MetricRow label="Ambiguity" value={finalStep.perturbation_vector.ambiguity.toFixed(3)} valueClass="text-foreground" />
+                                    <MetricRow label="Distribution Shift" value={finalStep.perturbation_vector.distribution_shift.toFixed(3)} valueClass="text-foreground" />
+                                    <MetricRow label="Sweep m" value={finalStep.m.toFixed(2)} valueClass="text-accent" />
+                                </div>
+                            </ConsoleCard>
+                        </div>
+                    )}
+
+                    {result?.target_evaluation && (
+                        <ConsoleCard title="Target Evaluation" className="border-yellow-400/30">
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
+                                <MetricRow label="Target Disease" value={result.target_evaluation.target_disease} valueClass="text-foreground" />
+                                <MetricRow label="Top Diagnosis" value={result.target_evaluation.top_diagnosis ?? 'N/A'} valueClass="text-accent" />
+                                <MetricRow
+                                    label="Matched Top"
+                                    value={result.target_evaluation.target_matched_top ? 'YES' : 'NO'}
+                                    valueClass={result.target_evaluation.target_matched_top ? 'text-danger' : 'text-accent'}
+                                />
+                            </div>
                         </ConsoleCard>
                     )}
 
-                    {/* ── Differential Diagnosis ── */}
-                    {state.status === 'success' && dd.length > 0 && (
-                        <ConsoleCard title="Differential Diagnosis — Feature Attribution" className="border-danger/30">
-                            <div className="space-y-4">
-                                {dd.slice(0, 5).map((d, i) => (
-                                    <div key={i} className="border-b border-grid/30 pb-3 last:border-0">
+                    {differentialDiagnosis.length > 0 && (
+                        <ConsoleCard title="Final Differential Diagnosis" className="border-danger/30">
+                            <div className="space-y-3">
+                                {differentialDiagnosis.slice(0, 5).map((entry, index) => (
+                                    <div key={`${entry.name ?? 'dx'}-${index}`} className="border-b border-grid/30 pb-3 last:border-0">
                                         <div className="flex items-center justify-between mb-1">
-                                            <span className={`font-mono text-xs sm:text-sm ${i === 0 ? 'text-accent font-bold' : 'text-foreground'}`}>
-                                                {d.name || d.condition}
+                                            <span className={`font-mono text-sm ${index === 0 ? 'text-accent font-bold' : 'text-foreground'}`}>
+                                                {entry.name ?? 'Unknown'}
                                             </span>
-                                            <span className={`font-mono text-sm font-bold ${i === 0 ? 'text-accent' : 'text-muted'}`}>
-                                                {(d.probability * 100).toFixed(1)}%
+                                            <span className={`font-mono text-sm ${index === 0 ? 'text-accent' : 'text-muted'}`}>
+                                                {(entry.probability * 100).toFixed(1)}%
                                             </span>
                                         </div>
-                                        <div className="w-full h-1.5 bg-dim overflow-hidden mb-2">
+                                        <div className="w-full h-1.5 bg-dim overflow-hidden">
                                             <div
-                                                className={`h-full ${i === 0 ? 'bg-accent' : i === 1 ? 'bg-yellow-400' : 'bg-muted'}`}
-                                                style={{ width: `${d.probability * 100}%` }}
+                                                className={`${index === 0 ? 'bg-accent' : index === 1 ? 'bg-yellow-400' : 'bg-muted'} h-full`}
+                                                style={{ width: `${entry.probability * 100}%` }}
                                             />
                                         </div>
-                                        {/* Feature drivers */}
-                                        {d.key_drivers && d.key_drivers.length > 0 && (
-                                            <div className="flex flex-wrap gap-2 mt-1">
-                                                {d.key_drivers.map((driver, j) => (
-                                                    <span
-                                                        key={j}
-                                                        className="font-mono text-[9px] px-1.5 py-0.5 border border-grid/50 text-muted"
-                                                    >
-                                                        {driver.feature} <span className="text-accent">+{driver.weight.toFixed(2)}</span>
-                                                    </span>
-                                                ))}
-                                            </div>
-                                        )}
                                     </div>
                                 ))}
                             </div>
                         </ConsoleCard>
                     )}
 
-                    {/* ── Target Evaluation ── */}
-                    {state.status === 'success' && te && (
-                        <ConsoleCard title="Target Bias Evaluation (Post-Hoc)" className="border-yellow-400/30">
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
-                                <div className="border border-grid/50 p-3">
-                                    <div className="text-[9px] text-muted uppercase mb-1">Target Disease</div>
-                                    <div className="text-sm text-foreground">{te.target_disease}</div>
-                                </div>
-                                <div className="border border-grid/50 p-3">
-                                    <div className="text-[9px] text-muted uppercase mb-1">Top Prediction</div>
-                                    <div className="text-sm text-accent">{te.top_diagnosis ?? 'N/A'}</div>
-                                </div>
-                                <div className="border border-grid/50 p-3">
-                                    <div className="text-[9px] text-muted uppercase mb-1">Target Matched Top</div>
-                                    <div className={`text-sm font-bold ${te.target_matched_top ? 'text-danger' : 'text-accent'}`}>
-                                        {te.target_matched_top ? 'YES — BIAS LEAKAGE RISK' : 'NO — INDEPENDENT'}
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="text-[10px] text-muted font-mono mt-2 border-t border-grid pt-2">
-                                Target disease was stripped before inference and used only for post-hoc evaluation. If matched, the model may still be indirectly biased.
-                            </div>
-                        </ConsoleCard>
-                    )}
-
-                    {/* ── Raw inference output ── */}
-                    {state.status === 'success' && r?.inference_output && (
-                        <ConsoleCard title="Raw Inference Output" collapsible defaultCollapsed>
-                            <pre className="bg-black border border-grid p-3 font-mono text-[10px] sm:text-xs text-green-400 overflow-x-auto max-h-[200px] overflow-y-auto">
-                                {JSON.stringify(r.inference_output, null, 2)}
+                    {result?.inference_output && (
+                        <ConsoleCard title="Final Step Output" collapsible defaultCollapsed>
+                            <pre className="bg-black border border-grid p-3 font-mono text-[10px] sm:text-xs text-green-400 overflow-x-auto max-h-[260px] overflow-y-auto">
+                                {JSON.stringify(result.inference_output, null, 2)}
                             </pre>
                             <div className="flex flex-wrap gap-2 mt-2">
-                                <DataRow label="Simulation ID" value={<span className="text-accent">{r.simulation_event_id}</span>} />
-                                <DataRow label="Inference ID" value={<span className="text-muted">{r.triggered_inference_event_id}</span>} />
+                                <DataRow label="Simulation ID" value={<span className="text-accent">{result.simulation_event_id}</span>} />
+                                <DataRow label="Clinical Case" value={<span className="text-muted">{result.clinical_case_id}</span>} />
                             </div>
                         </ConsoleCard>
                     )}
                 </div>
             </div>
 
-            {/* Error Display */}
             {state.status === 'error' && (
                 <ConsoleCard title="Simulation Error" className="border-danger mb-6 sm:mb-8">
                     <div className="text-danger font-mono text-xs sm:text-sm p-4 border border-danger bg-danger/5">
@@ -356,38 +412,35 @@ export default function AdversarialSimulation() {
                 </ConsoleCard>
             )}
 
-            {/* History */}
-            <ConsoleCard title="Simulation History Log" collapsible>
+            <ConsoleCard title="Sweep History Log" collapsible>
                 {state.history.length === 0 ? (
                     <div className="text-muted font-mono text-xs text-center py-6 border border-dashed border-grid">
-                        No simulations recorded this session
+                        No integrity sweeps recorded this session
                     </div>
                 ) : (
                     <div className="w-full overflow-x-auto">
-                        <table className="w-full text-left border-collapse min-w-[600px]">
+                        <table className="w-full text-left border-collapse min-w-[700px]">
                             <thead>
                                 <tr className="border-b border-grid/50 font-mono text-[10px] uppercase text-muted tracking-widest">
                                     <th className="p-2 sm:p-3 font-normal">SIM_ID</th>
-                                    <th className="p-2 sm:p-3 font-normal">Target / Type</th>
-                                    <th className="p-2 sm:p-3 font-normal">Confidence</th>
-                                    <th className="p-2 sm:p-3 font-normal">Contradictions</th>
+                                    <th className="p-2 sm:p-3 font-normal">Collapse m†</th>
+                                    <th className="p-2 sm:p-3 font-normal">Final State</th>
+                                    <th className="p-2 sm:p-3 font-normal">Steps</th>
                                     <th className="p-2 sm:p-3 font-normal">Latency</th>
                                     <th className="p-2 sm:p-3 font-normal">Timestamp</th>
                                 </tr>
                             </thead>
                             <tbody className="font-mono text-xs sm:text-sm">
-                                {state.history.map((sim, i) => (
-                                    <tr key={i} className="border-b border-grid/30 hover:bg-white/[0.02] transition-colors">
-                                        <td className="p-2 sm:p-3 text-muted">{sim.id}</td>
-                                        <td className="p-2 sm:p-3 text-foreground">{sim.target}</td>
-                                        <td className={`p-2 sm:p-3 ${(sim.confidence ?? 0) < 0.5 ? 'text-danger' : 'text-accent'}`}>
-                                            {sim.confidence != null ? `${(sim.confidence * 100).toFixed(1)}%` : 'N/A'}
+                                {state.history.map((entry) => (
+                                    <tr key={`${entry.id}-${entry.time}`} className="border-b border-grid/30">
+                                        <td className="p-2 sm:p-3 text-muted">{entry.id}</td>
+                                        <td className="p-2 sm:p-3 text-danger">
+                                            {entry.collapseThreshold == null ? 'NONE' : entry.collapseThreshold.toFixed(2)}
                                         </td>
-                                        <td className={`p-2 sm:p-3 ${sim.contradiction_reasons_count > 0 ? 'text-yellow-400' : 'text-muted'}`}>
-                                            {sim.contradiction_reasons_count}
-                                        </td>
-                                        <td className="p-2 sm:p-3 text-muted">{sim.latency}ms</td>
-                                        <td className="p-2 sm:p-3 text-muted text-xs">{sim.time}</td>
+                                        <td className={`p-2 sm:p-3 uppercase ${stateColor(entry.finalState)}`}>{entry.finalState}</td>
+                                        <td className="p-2 sm:p-3 text-foreground">{entry.stepCount}</td>
+                                        <td className="p-2 sm:p-3 text-muted">{entry.latency}ms</td>
+                                        <td className="p-2 sm:p-3 text-muted text-xs">{entry.time}</td>
                                     </tr>
                                 ))}
                             </tbody>
@@ -397,4 +450,47 @@ export default function AdversarialSimulation() {
             </ConsoleCard>
         </Container>
     );
+}
+
+function LoadingTile({ label }: { label: string }) {
+    return (
+        <div className="h-24 flex items-center justify-center text-danger animate-pulse font-mono text-xs sm:text-sm">
+            <Activity className="w-4 h-4 sm:w-5 sm:h-5 mr-2 animate-spin" /> {label}
+        </div>
+    );
+}
+
+function AwaitingTile() {
+    return (
+        <div className="h-24 flex items-center justify-center text-muted text-[10px] font-mono border border-dashed border-danger/20">
+            AWAITING SWEEP
+        </div>
+    );
+}
+
+function MetricTile({ value, caption, danger = false }: { value: string; caption: string; danger?: boolean }) {
+    return (
+        <div className="h-24 flex flex-col justify-center">
+            <div className={`text-3xl font-mono font-bold tracking-tighter ${danger ? 'text-danger' : 'text-accent'}`}>
+                {value}
+            </div>
+            <div className="text-[10px] text-muted font-mono uppercase mt-1">{caption}</div>
+        </div>
+    );
+}
+
+function MetricRow({ label, value, valueClass }: { label: string; value: string; valueClass: string }) {
+    return (
+        <div className="border border-grid/40 p-3">
+            <div className="text-[9px] text-muted uppercase mb-1">{label}</div>
+            <div className={`text-sm font-bold ${valueClass}`}>{value}</div>
+        </div>
+    );
+}
+
+function stateColor(state: StateClassification) {
+    if (state === 'collapsed') return 'text-danger';
+    if (state === 'metastable') return 'text-yellow-400';
+    if (state === 'fragile') return 'text-orange-300';
+    return 'text-accent';
 }

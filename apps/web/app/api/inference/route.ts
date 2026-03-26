@@ -12,6 +12,10 @@ import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import {
+    fetchRecentClinicalIntegrityHistory,
+    logClinicalIntegrityEvent,
+} from '@/lib/logging/clinicalIntegrityLogger';
+import {
     createSupabaseClinicalCaseStore,
     ensureCanonicalClinicalCase,
     finalizeClinicalCaseAfterInference,
@@ -31,6 +35,7 @@ import {
     telemetryInferenceEventId,
 } from '@/lib/telemetry/service';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
+import { evaluateClinicalIntegrity } from '@/lib/integrity/clinicalIntegrityEngine';
 import {
     buildRoutingTelemetryMetadata,
     createRoutingDecisionRecord,
@@ -175,9 +180,10 @@ export async function POST(req: Request) {
             }));
         }
 
+        const recentIntegrityHistoryPromise = fetchRecentClinicalIntegrityHistory(supabase, tenantId);
         const caseStore = createSupabaseClinicalCaseStore(supabase);
         const observedAt = new Date().toISOString();
-        const canonicalClinicalCase = await ensureCanonicalClinicalCase(caseStore, {
+        const canonicalClinicalCasePromise = ensureCanonicalClinicalCase(caseStore, {
             tenantId,
             userId,
             clinicId: body.clinic_id ?? null,
@@ -186,6 +192,19 @@ export async function POST(req: Request) {
             inputSignature: signatureForLog,
             observedAt,
         });
+        const integrityEvaluation = evaluateClinicalIntegrity(
+            {
+                inputSignature: signatureForLog,
+                outputPayload: inferenceResult.output_payload,
+                confidenceScore: inferenceResult.confidence_score,
+                uncertaintyMetrics: asNullableRecord(inferenceResult.uncertainty_metrics),
+                contradictionAnalysis,
+            },
+            {
+                recentHistory: await recentIntegrityHistoryPromise,
+            },
+        );
+        const canonicalClinicalCase = await canonicalClinicalCasePromise;
         const persistedInferenceEventId = await logInference(supabase, {
             id: inferenceEventId,
             tenant_id: tenantId,
@@ -202,6 +221,32 @@ export async function POST(req: Request) {
             compute_profile: telemetry,
             inference_latency_ms: latencyMs,
         });
+
+        try {
+            await logClinicalIntegrityEvent(supabase, {
+                inference_event_id: persistedInferenceEventId,
+                tenant_id: tenantId,
+                perturbation_score_m: integrityEvaluation.integrity.perturbation.m,
+                global_phi: integrityEvaluation.integrity.global_phi,
+                delta_phi: integrityEvaluation.integrity.instability.delta_phi,
+                curvature: integrityEvaluation.integrity.instability.curvature,
+                variance_proxy: integrityEvaluation.integrity.instability.variance_proxy,
+                divergence: integrityEvaluation.integrity.instability.divergence,
+                critical_instability_index: integrityEvaluation.integrity.instability.critical_instability_index,
+                state: integrityEvaluation.integrity.state,
+                collapse_risk: integrityEvaluation.integrity.collapse_risk,
+                precliff_detected: integrityEvaluation.integrity.precliff_detected,
+                details: {
+                    perturbation: integrityEvaluation.integrity.perturbation,
+                    capabilities: integrityEvaluation.integrity.capabilities,
+                    instability: integrityEvaluation.integrity.instability,
+                    precliff_detected: integrityEvaluation.integrity.precliff_detected,
+                    safety_policy: integrityEvaluation.safetyPolicy,
+                },
+            });
+        } catch (integrityErr) {
+            console.error(`[${requestId}] Clinical integrity logging failed (non-fatal):`, integrityErr);
+        }
 
         try {
             await emitTelemetryEvent(supabase, {
@@ -325,12 +370,26 @@ export async function POST(req: Request) {
         const response = NextResponse.json({
             inference_event_id: persistedInferenceEventId,
             clinical_case_id: canonicalClinicalCase.id,
+            prediction: inferenceResult.output_payload,
             output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
             contradiction_analysis: inferenceResult.contradiction_analysis,
             differential_spread: inferenceResult.output_payload.differential_spread ?? null,
             inference_latency_ms: measuredLatencyMs,
+            integrity: {
+                perturbation_score_m: integrityEvaluation.integrity.perturbation.m,
+                global_phi: integrityEvaluation.integrity.global_phi,
+                state: integrityEvaluation.integrity.state,
+                collapse_risk: integrityEvaluation.integrity.collapse_risk,
+                precliff_detected: integrityEvaluation.integrity.precliff_detected,
+                instability: integrityEvaluation.integrity.instability,
+                capabilities: integrityEvaluation.integrity.capabilities.map((capability) => ({
+                    name: capability.name,
+                    phi: capability.phi,
+                })),
+            },
+            safety_policy: integrityEvaluation.safetyPolicy,
             evaluation: null,
             ml_risk: inferenceResult.mlRisk,
             routing: {
@@ -415,4 +474,10 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function asNullableRecord(value: unknown): Record<string, unknown> | null {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
 }
