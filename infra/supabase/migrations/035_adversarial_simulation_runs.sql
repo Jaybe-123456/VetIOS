@@ -7,8 +7,7 @@ create table if not exists public.adversarial_simulation_runs (
     id uuid primary key default gen_random_uuid(),
     simulation_event_id uuid not null
         references public.edge_simulation_events(id) on delete cascade,
-    tenant_id uuid not null
-        references public.tenants(id) on delete cascade,
+    tenant_id uuid not null,
     base_case_id uuid
         references public.clinical_cases(id) on delete set null,
     step_index integer not null check (step_index >= 0),

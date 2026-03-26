@@ -9,8 +9,7 @@ create table if not exists public.clinical_integrity_events (
     id uuid primary key default gen_random_uuid(),
     inference_event_id uuid not null
         references public.ai_inference_events(id) on delete cascade,
-    tenant_id uuid not null
-        references public.tenants(id) on delete cascade,
+    tenant_id uuid not null,
     perturbation_score_m double precision not null
         check (perturbation_score_m between 0 and 1),
     global_phi double precision not null
