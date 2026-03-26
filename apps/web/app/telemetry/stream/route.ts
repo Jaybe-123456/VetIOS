@@ -1,10 +1,8 @@
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import {
-    emitTelemetryHeartbeat,
     generateFakeEvents,
     getTelemetrySnapshot,
-    TELEMETRY_HEARTBEAT_INTERVAL_MS,
 } from '@/lib/telemetry/service';
 
 export const runtime = 'nodejs';
@@ -25,7 +23,6 @@ export async function GET(req: Request) {
     const encoder = new TextEncoder();
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let closed = false;
-    let lastHeartbeatAtMs = 0;
     let lastPayloadSignature: string | null = null;
 
     const stream = new ReadableStream<Uint8Array>({
@@ -46,22 +43,9 @@ export async function GET(req: Request) {
                         await generateFakeEvents(supabase, tenantId);
                     }
 
-                    const nowMs = Date.now();
-                    if (nowMs - lastHeartbeatAtMs >= TELEMETRY_HEARTBEAT_INTERVAL_MS) {
-                        await emitTelemetryHeartbeat(supabase, {
-                            tenantId,
-                            source: 'telemetry_stream',
-                            targetNodeId: 'telemetry_observer',
-                            metadata: {
-                                stream: 'telemetry',
-                                simulation_mode: simulationMode,
-                            },
-                        });
-                        lastHeartbeatAtMs = nowMs;
-                    }
-
                     const snapshot = await getTelemetrySnapshot(supabase, tenantId, {
                         trafficMode: simulationMode ? 'simulation' : 'production',
+                        observerHeartbeatTimestamp: new Date().toISOString(),
                     });
                     if (closed) return;
 

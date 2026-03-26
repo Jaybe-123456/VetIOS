@@ -10,7 +10,7 @@ import { safeJson } from '@/lib/http/safeJson';
 import { resolveTopologySimulationTarget, getTopologySnapshot, syncControlPlaneAlerts } from '@/lib/intelligence/topologyService';
 import { logSimulation } from '@/lib/logging/simulationLogger';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
-import { emitTelemetryEvent, emitTelemetryHeartbeat, telemetrySimulationEventId } from '@/lib/telemetry/service';
+import { emitTelemetryEvent, telemetrySimulationEventId } from '@/lib/telemetry/service';
 import type { TopologySimulationScenario, TopologyWindow } from '@/lib/intelligence/types';
 
 export const runtime = 'nodejs';
@@ -48,18 +48,10 @@ export async function GET(req: Request) {
 
     try {
         const client = getSupabaseServer();
-        await emitTelemetryHeartbeat(client, {
-            tenantId: actor.tenantId,
-            source: 'topology_api',
-            targetNodeId: 'telemetry_observer',
-            metadata: {
-                window,
-                until,
-            },
-        });
         const snapshot = await getTopologySnapshot(client, actor.tenantId, {
             window,
             until,
+            observerHeartbeatTimestamp: until ? null : new Date().toISOString(),
         });
         await syncControlPlaneAlerts(client, actor.tenantId, snapshot.alerts);
         const decisionEngine = await evaluateDecisionEngine({

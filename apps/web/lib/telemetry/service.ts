@@ -16,8 +16,24 @@ const HEARTBEAT_STALE_MS = 60 * 1000;
 export const TELEMETRY_HEARTBEAT_INTERVAL_MS = 15 * 1000;
 const LATENCY_ANOMALY_MS = 5_000;
 const MIN_OUTCOMES_FOR_DRIFT = 2;
-const MAX_EVENTS_PER_WINDOW = 5_000;
+// Bound observer reads so the control plane stays operational on the free tier.
+const MAX_EVENTS_PER_WINDOW = 1_500;
 const MAX_LOGS = 16;
+const TELEMETRY_EVENT_SELECT_COLUMNS = [
+    TELEMETRY_EVENTS.COLUMNS.event_id,
+    TELEMETRY_EVENTS.COLUMNS.tenant_id,
+    TELEMETRY_EVENTS.COLUMNS.linked_event_id,
+    TELEMETRY_EVENTS.COLUMNS.source_id,
+    TELEMETRY_EVENTS.COLUMNS.source_table,
+    TELEMETRY_EVENTS.COLUMNS.event_type,
+    TELEMETRY_EVENTS.COLUMNS.timestamp,
+    TELEMETRY_EVENTS.COLUMNS.model_version,
+    TELEMETRY_EVENTS.COLUMNS.run_id,
+    TELEMETRY_EVENTS.COLUMNS.metrics,
+    TELEMETRY_EVENTS.COLUMNS.system,
+    TELEMETRY_EVENTS.COLUMNS.metadata,
+    TELEMETRY_EVENTS.COLUMNS.created_at,
+].join(',');
 const SYNTHETIC_DIAGNOSES = [
     'Parvovirus',
     'Pancreatitis',
@@ -88,14 +104,14 @@ export async function emitTelemetryEvent(
     const { data, error } = await client
         .from(TELEMETRY_EVENTS.TABLE)
         .upsert(payload, { onConflict: 'event_id, created_at' })
-        .select('*')
+        .select(TELEMETRY_EVENT_SELECT_COLUMNS)
         .single();
 
     if (error || !data) {
         throw new Error(`Failed to emit telemetry event: ${error?.message ?? 'Unknown error'}`);
     }
 
-    return mapTelemetryEventRow(data);
+    return mapTelemetryEventRow(data as unknown as Record<string, unknown>);
 }
 
 export async function getTelemetrySnapshot(
@@ -103,6 +119,7 @@ export async function getTelemetrySnapshot(
     tenantId: string,
     options?: {
         trafficMode?: TelemetryTrafficMode;
+        observerHeartbeatTimestamp?: string | null;
     },
 ): Promise<TelemetrySnapshot> {
     const C = TELEMETRY_EVENTS.COLUMNS;
@@ -110,7 +127,7 @@ export async function getTelemetrySnapshot(
 
     const { data, error } = await client
         .from(TELEMETRY_EVENTS.TABLE)
-        .select('*')
+        .select(TELEMETRY_EVENT_SELECT_COLUMNS)
         .eq(C.tenant_id, tenantId)
         .gte(C.timestamp, windowStart)
         .order(C.timestamp, { ascending: false })
@@ -120,7 +137,7 @@ export async function getTelemetrySnapshot(
         throw new Error(`Failed to load telemetry events: ${error.message}`);
     }
 
-    const events = (data ?? [])
+    const events = ((data ?? []) as unknown as Record<string, unknown>[])
         .slice()
         .reverse()
         .map(mapTelemetryEventRow);
@@ -314,6 +331,7 @@ function buildTelemetrySnapshot(
     events: TelemetryEventRecord[],
     options?: {
         trafficMode?: TelemetryTrafficMode;
+        observerHeartbeatTimestamp?: string | null;
     },
 ): TelemetrySnapshot {
     const trafficMode = options?.trafficMode === 'simulation' ? 'simulation' : 'production';
@@ -380,8 +398,11 @@ function buildTelemetrySnapshot(
     const driftPairs = evaluationPairs.length > 0 ? evaluationPairs : outcomePairs;
 
     const lastEvent = observerEvents.at(-1) ?? events.at(-1) ?? null;
-    const lastEventTimestamp = lastEvent?.timestamp ?? null;
-    const systemState = lastEventTimestamp != null && Date.now() - new Date(lastEventTimestamp).getTime() <= HEARTBEAT_STALE_MS
+    const lastObservedTimestamp = resolveLatestTelemetryTimestamp([
+        lastEvent?.timestamp ?? null,
+        options?.observerHeartbeatTimestamp ?? null,
+    ]);
+    const systemState = lastObservedTimestamp != null && Date.now() - new Date(lastObservedTimestamp).getTime() <= HEARTBEAT_STALE_MS
         ? 'LIVE'
         : 'STALE';
 
@@ -398,7 +419,7 @@ function buildTelemetrySnapshot(
         generated_at: new Date().toISOString(),
         traffic_mode: trafficMode,
         system_state: systemState,
-        last_event_timestamp: lastEventTimestamp,
+        last_event_timestamp: lastObservedTimestamp,
         metrics: {
             inference_count: inferenceEvents.length,
             p95_latency_ms: p95Latency,
@@ -430,6 +451,21 @@ function buildTelemetrySnapshot(
             anomalyCount,
         }),
     };
+}
+
+function resolveLatestTelemetryTimestamp(candidates: Array<string | null | undefined>) {
+    let latestTimestamp: string | null = null;
+    let latestTimeMs = Number.NEGATIVE_INFINITY;
+
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        const candidateTimeMs = new Date(candidate).getTime();
+        if (!Number.isFinite(candidateTimeMs) || candidateTimeMs <= latestTimeMs) continue;
+        latestTimestamp = candidate;
+        latestTimeMs = candidateTimeMs;
+    }
+
+    return latestTimestamp;
 }
 
 function buildLogs(

@@ -35,6 +35,79 @@ import {
 } from '@/lib/learningEngine/types';
 
 const DEFAULT_QUERY_LIMIT = 2_000;
+const INFERENCE_EVENT_SELECT_COLUMNS = [
+    AI_INFERENCE_EVENTS.COLUMNS.id,
+    AI_INFERENCE_EVENTS.COLUMNS.tenant_id,
+    AI_INFERENCE_EVENTS.COLUMNS.case_id,
+    AI_INFERENCE_EVENTS.COLUMNS.user_id,
+    AI_INFERENCE_EVENTS.COLUMNS.source_module,
+    AI_INFERENCE_EVENTS.COLUMNS.model_name,
+    AI_INFERENCE_EVENTS.COLUMNS.model_version,
+    AI_INFERENCE_EVENTS.COLUMNS.input_signature,
+    AI_INFERENCE_EVENTS.COLUMNS.output_payload,
+    AI_INFERENCE_EVENTS.COLUMNS.confidence_score,
+    AI_INFERENCE_EVENTS.COLUMNS.uncertainty_metrics,
+    AI_INFERENCE_EVENTS.COLUMNS.compute_profile,
+    AI_INFERENCE_EVENTS.COLUMNS.inference_latency_ms,
+    AI_INFERENCE_EVENTS.COLUMNS.created_at,
+].join(',');
+const OUTCOME_EVENT_SELECT_COLUMNS = [
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.id,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.tenant_id,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.case_id,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.user_id,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.source_module,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.inference_event_id,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.outcome_type,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.outcome_payload,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.outcome_timestamp,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.label_type,
+    CLINICAL_OUTCOME_EVENTS.COLUMNS.created_at,
+].join(',');
+const SIMULATION_EVENT_SELECT_COLUMNS = [
+    EDGE_SIMULATION_EVENTS.COLUMNS.id,
+    EDGE_SIMULATION_EVENTS.COLUMNS.tenant_id,
+    EDGE_SIMULATION_EVENTS.COLUMNS.case_id,
+    EDGE_SIMULATION_EVENTS.COLUMNS.user_id,
+    EDGE_SIMULATION_EVENTS.COLUMNS.source_module,
+    EDGE_SIMULATION_EVENTS.COLUMNS.simulation_type,
+    EDGE_SIMULATION_EVENTS.COLUMNS.simulation_parameters,
+    EDGE_SIMULATION_EVENTS.COLUMNS.triggered_inference_id,
+    EDGE_SIMULATION_EVENTS.COLUMNS.failure_mode,
+    EDGE_SIMULATION_EVENTS.COLUMNS.stress_metrics,
+    EDGE_SIMULATION_EVENTS.COLUMNS.is_real_world,
+    EDGE_SIMULATION_EVENTS.COLUMNS.created_at,
+].join(',');
+const EVALUATION_EVENT_SELECT_COLUMNS = [
+    MODEL_EVALUATION_EVENTS.COLUMNS.id,
+    MODEL_EVALUATION_EVENTS.COLUMNS.evaluation_event_id,
+    MODEL_EVALUATION_EVENTS.COLUMNS.tenant_id,
+    MODEL_EVALUATION_EVENTS.COLUMNS.trigger_type,
+    MODEL_EVALUATION_EVENTS.COLUMNS.inference_event_id,
+    MODEL_EVALUATION_EVENTS.COLUMNS.outcome_event_id,
+    MODEL_EVALUATION_EVENTS.COLUMNS.case_id,
+    MODEL_EVALUATION_EVENTS.COLUMNS.model_name,
+    MODEL_EVALUATION_EVENTS.COLUMNS.model_version,
+    MODEL_EVALUATION_EVENTS.COLUMNS.prediction,
+    MODEL_EVALUATION_EVENTS.COLUMNS.prediction_confidence,
+    MODEL_EVALUATION_EVENTS.COLUMNS.ground_truth,
+    MODEL_EVALUATION_EVENTS.COLUMNS.prediction_correct,
+    MODEL_EVALUATION_EVENTS.COLUMNS.condition_class_pred,
+    MODEL_EVALUATION_EVENTS.COLUMNS.condition_class_true,
+    MODEL_EVALUATION_EVENTS.COLUMNS.severity_pred,
+    MODEL_EVALUATION_EVENTS.COLUMNS.severity_true,
+    MODEL_EVALUATION_EVENTS.COLUMNS.contradiction_score,
+    MODEL_EVALUATION_EVENTS.COLUMNS.adversarial_case,
+    MODEL_EVALUATION_EVENTS.COLUMNS.calibration_error,
+    MODEL_EVALUATION_EVENTS.COLUMNS.drift_score,
+    MODEL_EVALUATION_EVENTS.COLUMNS.outcome_alignment_delta,
+    MODEL_EVALUATION_EVENTS.COLUMNS.simulation_degradation,
+    MODEL_EVALUATION_EVENTS.COLUMNS.calibrated_confidence,
+    MODEL_EVALUATION_EVENTS.COLUMNS.epistemic_uncertainty,
+    MODEL_EVALUATION_EVENTS.COLUMNS.aleatoric_uncertainty,
+    MODEL_EVALUATION_EVENTS.COLUMNS.evaluation_payload,
+    MODEL_EVALUATION_EVENTS.COLUMNS.created_at,
+].join(',');
 
 export function createSupabaseLearningEngineStore(
     client: SupabaseClient,
@@ -74,7 +147,7 @@ export function createSupabaseLearningEngineStore(
         async listInferenceEvents(filters) {
             let query = client
                 .from(AI_INFERENCE_EVENTS.TABLE)
-                .select('*')
+                .select(INFERENCE_EVENT_SELECT_COLUMNS)
                 .eq(AI_INFERENCE_EVENTS.COLUMNS.tenant_id, filters.tenantId)
                 .order(AI_INFERENCE_EVENTS.COLUMNS.created_at, { ascending: false })
                 .limit(filters.limit ?? DEFAULT_QUERY_LIMIT);
@@ -86,13 +159,14 @@ export function createSupabaseLearningEngineStore(
                 throw new Error(`Failed to list learning inference events: ${error.message}`);
             }
 
-            return (data ?? []).map((row) => mapInferenceEvent(asRecord(row)));
+            return ((data ?? []) as unknown as Record<string, unknown>[])
+                .map(mapInferenceEvent);
         },
 
         async listOutcomeEvents(filters) {
             let query = client
                 .from(CLINICAL_OUTCOME_EVENTS.TABLE)
-                .select('*')
+                .select(OUTCOME_EVENT_SELECT_COLUMNS)
                 .eq(CLINICAL_OUTCOME_EVENTS.COLUMNS.tenant_id, filters.tenantId)
                 .order(CLINICAL_OUTCOME_EVENTS.COLUMNS.outcome_timestamp, { ascending: false })
                 .limit(filters.limit ?? DEFAULT_QUERY_LIMIT);
@@ -104,13 +178,14 @@ export function createSupabaseLearningEngineStore(
                 throw new Error(`Failed to list learning outcome events: ${error.message}`);
             }
 
-            return (data ?? []).map((row) => mapOutcomeEvent(asRecord(row)));
+            return ((data ?? []) as unknown as Record<string, unknown>[])
+                .map(mapOutcomeEvent);
         },
 
         async listSimulationEvents(filters) {
             let query = client
                 .from(EDGE_SIMULATION_EVENTS.TABLE)
-                .select('*')
+                .select(SIMULATION_EVENT_SELECT_COLUMNS)
                 .eq(EDGE_SIMULATION_EVENTS.COLUMNS.tenant_id, filters.tenantId)
                 .order(EDGE_SIMULATION_EVENTS.COLUMNS.created_at, { ascending: false })
                 .limit(filters.limit ?? DEFAULT_QUERY_LIMIT);
@@ -122,13 +197,14 @@ export function createSupabaseLearningEngineStore(
                 throw new Error(`Failed to list learning simulation events: ${error.message}`);
             }
 
-            return (data ?? []).map((row) => mapSimulationEvent(asRecord(row)));
+            return ((data ?? []) as unknown as Record<string, unknown>[])
+                .map(mapSimulationEvent);
         },
 
         async listEvaluationEvents(filters) {
             let query = client
                 .from(MODEL_EVALUATION_EVENTS.TABLE)
-                .select('*')
+                .select(EVALUATION_EVENT_SELECT_COLUMNS)
                 .eq(MODEL_EVALUATION_EVENTS.COLUMNS.tenant_id, filters.tenantId)
                 .order(MODEL_EVALUATION_EVENTS.COLUMNS.created_at, { ascending: false })
                 .limit(filters.limit ?? DEFAULT_QUERY_LIMIT);
@@ -140,7 +216,8 @@ export function createSupabaseLearningEngineStore(
                 throw new Error(`Failed to list learning evaluation events: ${error.message}`);
             }
 
-            return (data ?? []).map((row) => mapEvaluationEvent(asRecord(row)));
+            return ((data ?? []) as unknown as Record<string, unknown>[])
+                .map(mapEvaluationEvent);
         },
 
         async createDatasetVersion(record) {

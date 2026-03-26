@@ -96,6 +96,23 @@ const ROLE_PERMISSIONS: Record<ControlPlaneUserRole, string[]> = {
         'view_governance',
     ],
 };
+const CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS = [
+    TELEMETRY_EVENTS.COLUMNS.event_id,
+    TELEMETRY_EVENTS.COLUMNS.tenant_id,
+    TELEMETRY_EVENTS.COLUMNS.linked_event_id,
+    TELEMETRY_EVENTS.COLUMNS.source_id,
+    TELEMETRY_EVENTS.COLUMNS.source_table,
+    TELEMETRY_EVENTS.COLUMNS.event_type,
+    TELEMETRY_EVENTS.COLUMNS.timestamp,
+    TELEMETRY_EVENTS.COLUMNS.model_version,
+    TELEMETRY_EVENTS.COLUMNS.run_id,
+    TELEMETRY_EVENTS.COLUMNS.metrics,
+    TELEMETRY_EVENTS.COLUMNS.system,
+    TELEMETRY_EVENTS.COLUMNS.metadata,
+    TELEMETRY_EVENTS.COLUMNS.created_at,
+].join(',');
+const MAX_CONTROL_PLANE_TELEMETRY_EVENTS = 240;
+const MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS = 120;
 
 type ControlPlaneUserContext = {
     user: User | null;
@@ -108,6 +125,7 @@ export async function getControlPlaneSnapshot(input: {
     tenantId: string;
     userId: string | null;
     userContext: ControlPlaneUserContext;
+    observerHeartbeatTimestamp?: string | null;
 }): Promise<ControlPlaneSnapshot> {
     const experimentStore = createSupabaseExperimentTrackingStore(input.client);
 
@@ -127,8 +145,13 @@ export async function getControlPlaneSnapshot(input: {
         dashboardRouting,
         dashboardDriftHistory,
     ] = await Promise.all([
-        getTelemetrySnapshot(input.client, input.tenantId),
-        getTopologySnapshot(input.client, input.tenantId, { window: '24h' }),
+        getTelemetrySnapshot(input.client, input.tenantId, {
+            observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+        }),
+        getTopologySnapshot(input.client, input.tenantId, {
+            window: '24h',
+            observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+        }),
         getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId),
         collectClinicalDatasetDebugSnapshot(input.client, input.tenantId, input.userId),
         getControlPlaneConfigBundle(input.client, input.tenantId),
@@ -263,6 +286,7 @@ export async function getControlPlaneSnapshot(input: {
 export async function getDashboardControlPlaneSnapshot(input: {
     client: SupabaseClient;
     tenantId: string;
+    observerHeartbeatTimestamp?: string | null;
 }): Promise<ControlPlaneDashboardViewSnapshot> {
     const experimentStore = createSupabaseExperimentTrackingStore(input.client);
     const [
@@ -275,8 +299,13 @@ export async function getDashboardControlPlaneSnapshot(input: {
         dashboardDriftHistory,
         recentTelemetryTimestamps,
     ] = await Promise.all([
-        getTelemetrySnapshot(input.client, input.tenantId),
-        getTopologySnapshot(input.client, input.tenantId, { window: '24h' }),
+        getTelemetrySnapshot(input.client, input.tenantId, {
+            observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+        }),
+        getTopologySnapshot(input.client, input.tenantId, {
+            window: '24h',
+            observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+        }),
         getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId),
         getControlPlaneConfigBundle(input.client, input.tenantId),
         listDashboardInferenceHistory(input.client, input.tenantId),
@@ -609,11 +638,11 @@ export async function listTelemetryEvents(client: SupabaseClient, tenantId: stri
     const windowStart = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
     const latestResult = await client
         .from(TELEMETRY_EVENTS.TABLE)
-        .select('*')
+        .select(CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS)
         .eq(C.tenant_id, tenantId)
         .gte(C.timestamp, windowStart)
         .order(C.timestamp, { ascending: false })
-        .limit(360);
+        .limit(MAX_CONTROL_PLANE_TELEMETRY_EVENTS);
 
     if (latestResult.error) {
         if (isMissingRelationError(latestResult.error, TELEMETRY_EVENTS.TABLE)) return [];
@@ -622,20 +651,21 @@ export async function listTelemetryEvents(client: SupabaseClient, tenantId: stri
 
     const workloadResult = await client
         .from(TELEMETRY_EVENTS.TABLE)
-        .select('*')
+        .select(CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS)
         .eq(C.tenant_id, tenantId)
         .gte(C.timestamp, windowStart)
         .in(C.event_type, ['inference', 'outcome', 'evaluation', 'simulation'])
         .order(C.timestamp, { ascending: false })
-        .limit(160);
+        .limit(MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS);
 
     if (workloadResult.error && !isMissingRelationError(workloadResult.error, TELEMETRY_EVENTS.TABLE)) {
         throw new Error(`Failed to list workload telemetry events: ${workloadResult.error.message}`);
     }
 
     const merged = new Map<string, Record<string, unknown>>();
-    for (const row of [...(latestResult.data ?? []), ...(workloadResult.data ?? [])]) {
-        const record = row as Record<string, unknown>;
+    const latestRows = (latestResult.data ?? []) as unknown as Record<string, unknown>[];
+    const workloadRows = (workloadResult.data ?? []) as unknown as Record<string, unknown>[];
+    for (const record of [...latestRows, ...workloadRows]) {
         const eventId = textOrNull(record.event_id);
         if (!eventId) continue;
         merged.set(eventId, record);
