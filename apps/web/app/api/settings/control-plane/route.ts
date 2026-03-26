@@ -113,6 +113,7 @@ export async function GET(req: Request) {
                 client: adminClient,
                 tenantId: actor.tenantId,
                 observerHeartbeatTimestamp,
+                readOnly: true,
             });
             response = NextResponse.json({
                 snapshot,
@@ -126,6 +127,7 @@ export async function GET(req: Request) {
                 userId: actor.userId,
                 userContext,
                 observerHeartbeatTimestamp,
+                readOnly: true,
             });
 
             response = NextResponse.json({

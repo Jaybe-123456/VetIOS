@@ -17,7 +17,7 @@ export const TELEMETRY_HEARTBEAT_INTERVAL_MS = 15 * 1000;
 const LATENCY_ANOMALY_MS = 5_000;
 const MIN_OUTCOMES_FOR_DRIFT = 2;
 // Bound observer reads so the control plane stays operational on the free tier.
-const MAX_EVENTS_PER_WINDOW = 1_500;
+const MAX_EVENTS_PER_WINDOW = 600;
 const MAX_LOGS = 16;
 const TELEMETRY_EVENT_SELECT_COLUMNS = [
     TELEMETRY_EVENTS.COLUMNS.event_id,
@@ -141,6 +141,16 @@ export async function getTelemetrySnapshot(
         .slice()
         .reverse()
         .map(mapTelemetryEventRow);
+    return buildTelemetrySnapshot(events, options);
+}
+
+export function buildTelemetrySnapshotFromEvents(
+    events: TelemetryEventRecord[],
+    options?: {
+        trafficMode?: TelemetryTrafficMode;
+        observerHeartbeatTimestamp?: string | null;
+    },
+): TelemetrySnapshot {
     return buildTelemetrySnapshot(events, options);
 }
 

@@ -19,18 +19,18 @@ import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/ev
 import { applyExperimentRegistryAction, getModelRegistryControlPlaneSnapshot } from '@/lib/experiments/service';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
 import type { ModelRegistryControlPlaneSnapshot, RegistryAuditLogRecord } from '@/lib/experiments/types';
-import { getTopologySnapshot, resolveTopologySimulationTarget, syncControlPlaneAlerts } from '@/lib/intelligence/topologyService';
+import { getTopologySnapshot, resolveTopologySimulationTarget } from '@/lib/intelligence/topologyService';
 import type { TopologyAlert, TopologyControlPlaneState } from '@/lib/intelligence/types';
 import { logSimulation } from '@/lib/logging/simulationLogger';
 import {
+    buildTelemetrySnapshotFromEvents,
     emitTelemetryEvent,
-    getTelemetrySnapshot,
     resolveTelemetryRunId,
     telemetryEvaluationEventId,
     telemetryInferenceEventId,
     telemetrySimulationEventId,
 } from '@/lib/telemetry/service';
-import type { TelemetryEventRecord, TelemetryLogEntry } from '@/lib/telemetry/types';
+import type { TelemetryEventRecord, TelemetryLogEntry, TelemetrySnapshot } from '@/lib/telemetry/types';
 import type {
     ControlPlaneActionRecord,
     ControlPlaneActionStatus,
@@ -126,18 +126,18 @@ export async function getControlPlaneSnapshot(input: {
     userId: string | null;
     userContext: ControlPlaneUserContext;
     observerHeartbeatTimestamp?: string | null;
+    readOnly?: boolean;
 }): Promise<ControlPlaneSnapshot> {
     const experimentStore = createSupabaseExperimentTrackingStore(input.client);
 
     const [
-        telemetrySnapshot,
+        telemetryEvents,
         topologySnapshot,
         registrySnapshot,
         datasetDebug,
         configBundle,
         apiKeys,
         actions,
-        telemetryEvents,
         latestEvaluationId,
         latestInferenceId,
         latestOutcomeId,
@@ -145,9 +145,7 @@ export async function getControlPlaneSnapshot(input: {
         dashboardRouting,
         dashboardDriftHistory,
     ] = await Promise.all([
-        getTelemetrySnapshot(input.client, input.tenantId, {
-            observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
-        }),
+        listTelemetryEvents(input.client, input.tenantId),
         getTopologySnapshot(input.client, input.tenantId, {
             window: '24h',
             observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
@@ -157,7 +155,6 @@ export async function getControlPlaneSnapshot(input: {
         getControlPlaneConfigBundle(input.client, input.tenantId),
         listControlPlaneApiKeys(input.client, input.tenantId),
         listControlPlaneActions(input.client, input.tenantId),
-        listTelemetryEvents(input.client, input.tenantId),
         findLatestEvaluationEventId(input.client, input.tenantId),
         _findLatestInferenceEventId(input.client, input.tenantId),
         _findLatestOutcomeEventId(input.client, input.tenantId),
@@ -165,6 +162,9 @@ export async function getControlPlaneSnapshot(input: {
         loadDashboardRoutingSummary(input.client, input.tenantId),
         loadDashboardDriftHistory(input.client, input.tenantId),
     ]);
+    const telemetrySnapshot = buildTelemetrySnapshotFromEvents(telemetryEvents, {
+        observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+    });
 
     const decisionEngine = await evaluateDecisionEngine({
         client: input.client,
@@ -172,16 +172,11 @@ export async function getControlPlaneSnapshot(input: {
         topologySnapshot,
         registrySnapshot,
         triggerSource: 'settings_control_plane',
+        readOnly: input.readOnly === true,
     });
-
-    try {
-        await syncControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
-    } catch (error) {
-        if (!isMissingRelationError(error, CONTROL_PLANE_ALERTS.TABLE)) {
-            throw error;
-        }
-    }
-    const persistedAlerts = await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
+    const persistedAlerts = input.readOnly === true
+        ? mapTopologyAlertsToControlPlaneAlerts(topologySnapshot.alerts)
+        : await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
     const profile = buildProfile(input.userContext.user, input.userContext.auth_mode);
     const accessScope = buildAccessScope(profile.role, input.tenantId);
     const governanceFamilies = buildGovernanceFamilies(registrySnapshot);
@@ -287,21 +282,19 @@ export async function getDashboardControlPlaneSnapshot(input: {
     client: SupabaseClient;
     tenantId: string;
     observerHeartbeatTimestamp?: string | null;
+    readOnly?: boolean;
 }): Promise<ControlPlaneDashboardViewSnapshot> {
     const experimentStore = createSupabaseExperimentTrackingStore(input.client);
     const [
-        telemetrySnapshot,
+        telemetryEvents,
         topologySnapshot,
         registrySnapshot,
         configBundle,
         dashboardInferences,
         dashboardRouting,
         dashboardDriftHistory,
-        recentTelemetryTimestamps,
     ] = await Promise.all([
-        getTelemetrySnapshot(input.client, input.tenantId, {
-            observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
-        }),
+        listTelemetryEvents(input.client, input.tenantId),
         getTopologySnapshot(input.client, input.tenantId, {
             window: '24h',
             observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
@@ -311,8 +304,11 @@ export async function getDashboardControlPlaneSnapshot(input: {
         listDashboardInferenceHistory(input.client, input.tenantId),
         loadDashboardRoutingSummary(input.client, input.tenantId),
         loadDashboardDriftHistory(input.client, input.tenantId),
-        listRecentTelemetryTimestamps(input.client, input.tenantId),
     ]);
+    const telemetrySnapshot = buildTelemetrySnapshotFromEvents(telemetryEvents, {
+        observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+    });
+    const recentTelemetryTimestamps = collectRecentTelemetryTimestamps(telemetryEvents);
 
     const decisionEngine = await evaluateDecisionEngine({
         client: input.client,
@@ -320,17 +316,11 @@ export async function getDashboardControlPlaneSnapshot(input: {
         topologySnapshot,
         registrySnapshot,
         triggerSource: 'dashboard_control_plane',
+        readOnly: input.readOnly === true,
     });
-
-    try {
-        await syncControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
-    } catch (error) {
-        if (!isMissingRelationError(error, CONTROL_PLANE_ALERTS.TABLE)) {
-            throw error;
-        }
-    }
-
-    const persistedAlerts = await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
+    const persistedAlerts = input.readOnly === true
+        ? mapTopologyAlertsToControlPlaneAlerts(topologySnapshot.alerts)
+        : await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
     const pipelines = buildPipelineStates(topologySnapshot);
 
     return {
@@ -649,22 +639,34 @@ export async function listTelemetryEvents(client: SupabaseClient, tenantId: stri
         throw new Error(`Failed to list telemetry events: ${latestResult.error.message}`);
     }
 
-    const workloadResult = await client
-        .from(TELEMETRY_EVENTS.TABLE)
-        .select(CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS)
-        .eq(C.tenant_id, tenantId)
-        .gte(C.timestamp, windowStart)
-        .in(C.event_type, ['inference', 'outcome', 'evaluation', 'simulation'])
-        .order(C.timestamp, { ascending: false })
-        .limit(MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS);
-
-    if (workloadResult.error && !isMissingRelationError(workloadResult.error, TELEMETRY_EVENTS.TABLE)) {
-        throw new Error(`Failed to list workload telemetry events: ${workloadResult.error.message}`);
-    }
-
     const merged = new Map<string, Record<string, unknown>>();
     const latestRows = (latestResult.data ?? []) as unknown as Record<string, unknown>[];
-    const workloadRows = (workloadResult.data ?? []) as unknown as Record<string, unknown>[];
+    const hasOperationalRows = latestRows.some((record) => {
+        const eventType = textOrNull(record.event_type);
+        return eventType === 'inference'
+            || eventType === 'outcome'
+            || eventType === 'evaluation'
+            || eventType === 'simulation';
+    });
+    let workloadRows: Record<string, unknown>[] = [];
+
+    if (!hasOperationalRows) {
+        const workloadResult = await client
+            .from(TELEMETRY_EVENTS.TABLE)
+            .select(CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS)
+            .eq(C.tenant_id, tenantId)
+            .gte(C.timestamp, windowStart)
+            .in(C.event_type, ['inference', 'outcome', 'evaluation', 'simulation'])
+            .order(C.timestamp, { ascending: false })
+            .limit(MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS);
+
+        if (workloadResult.error && !isMissingRelationError(workloadResult.error, TELEMETRY_EVENTS.TABLE)) {
+            throw new Error(`Failed to list workload telemetry events: ${workloadResult.error.message}`);
+        }
+
+        workloadRows = (workloadResult.data ?? []) as unknown as Record<string, unknown>[];
+    }
+
     for (const record of [...latestRows, ...workloadRows]) {
         const eventId = textOrNull(record.event_id);
         if (!eventId) continue;
@@ -676,29 +678,19 @@ export async function listTelemetryEvents(client: SupabaseClient, tenantId: stri
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
 }
 
-async function listRecentTelemetryTimestamps(
-    client: SupabaseClient,
-    tenantId: string,
+function collectRecentTelemetryTimestamps(
+    events: TelemetryEventRecord[],
     windowMinutes: number = 15,
-): Promise<string[]> {
-    const C = TELEMETRY_EVENTS.COLUMNS;
-    const windowStart = new Date(Date.now() - (windowMinutes * 60 * 1000)).toISOString();
-    const { data, error } = await client
-        .from(TELEMETRY_EVENTS.TABLE)
-        .select(C.timestamp)
-        .eq(C.tenant_id, tenantId)
-        .gte(C.timestamp, windowStart)
-        .order(C.timestamp, { ascending: false })
-        .limit(240);
-
-    if (error) {
-        if (isMissingRelationError(error, TELEMETRY_EVENTS.TABLE)) return [];
-        throw new Error(`Failed to load recent telemetry timestamps: ${error.message}`);
-    }
-
-    return (data ?? [])
-        .map((row) => textOrNull((row as Record<string, unknown>)[C.timestamp]))
-        .filter((timestamp): timestamp is string => timestamp != null);
+): string[] {
+    const windowStartMs = Date.now() - (windowMinutes * 60 * 1000);
+    return events
+        .map((event) => event.timestamp)
+        .filter((timestamp) => {
+            const timeMs = new Date(timestamp).getTime();
+            return Number.isFinite(timeMs) && timeMs >= windowStartMs;
+        })
+        .sort((left, right) => right.localeCompare(left))
+        .slice(0, 240);
 }
 
 async function listDashboardInferenceHistory(
@@ -872,20 +864,24 @@ export async function listControlPlaneAlerts(
         return (data ?? []).map((row) => mapControlPlaneAlert(row as Record<string, unknown>));
     } catch (error) {
         if (isMissingRelationError(error, CONTROL_PLANE_ALERTS.TABLE)) {
-            return fallbackAlerts.map((alert) => ({
-                id: alert.id,
-                severity: alert.severity,
-                source: alert.category,
-                title: alert.title,
-                message: alert.message,
-                node_id: alert.node_id,
-                timestamp: alert.timestamp,
-                resolved: false,
-                metadata: {},
-            }));
+            return mapTopologyAlertsToControlPlaneAlerts(fallbackAlerts);
         }
         throw error;
     }
+}
+
+function mapTopologyAlertsToControlPlaneAlerts(alerts: TopologyAlert[]): ControlPlaneAlertRecord[] {
+    return alerts.map((alert) => ({
+        id: alert.id,
+        severity: alert.severity,
+        source: alert.category,
+        title: alert.title,
+        message: alert.message,
+        node_id: alert.node_id,
+        timestamp: alert.timestamp,
+        resolved: false,
+        metadata: {},
+    }));
 }
 
 export async function markControlPlaneAlertResolved(input: {
@@ -1213,7 +1209,7 @@ function buildAccessScope(role: ControlPlaneUserRole, tenantId: string) {
 }
 
 function buildSystemHealth(
-    telemetrySnapshot: Awaited<ReturnType<typeof getTelemetrySnapshot>>,
+    telemetrySnapshot: TelemetrySnapshot,
     topologySnapshot: Awaited<ReturnType<typeof getTopologySnapshot>>,
     telemetryEvents: TelemetryEventRecord[],
 ): ControlPlaneSystemHealth {
@@ -1225,7 +1221,7 @@ function buildSystemHealth(
 }
 
 function buildSystemHealthFromTimestamps(
-    telemetrySnapshot: Awaited<ReturnType<typeof getTelemetrySnapshot>>,
+    telemetrySnapshot: TelemetrySnapshot,
     topologySnapshot: Awaited<ReturnType<typeof getTopologySnapshot>>,
     telemetryTimestamps: string[],
 ): ControlPlaneSystemHealth {
