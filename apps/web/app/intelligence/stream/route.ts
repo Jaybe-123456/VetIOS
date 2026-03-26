@@ -1,7 +1,7 @@
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { applyDecisionEngineToTopologySnapshot, evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
-import { getTopologySnapshot, syncControlPlaneAlerts } from '@/lib/intelligence/topologyService';
+import { getTopologySnapshot } from '@/lib/intelligence/topologyService';
 import type { TopologyWindow } from '@/lib/intelligence/types';
 
 export const runtime = 'nodejs';
@@ -43,12 +43,12 @@ export async function GET(req: Request) {
                         window,
                         observerHeartbeatTimestamp: new Date().toISOString(),
                     });
-                    await syncControlPlaneAlerts(client, actor.tenantId, snapshot.alerts);
                     const decisionEngine = await evaluateDecisionEngine({
                         client,
                         tenantId: actor.tenantId,
                         topologySnapshot: snapshot,
                         triggerSource: 'topology_stream',
+                        readOnly: true,
                     });
                     const enrichedSnapshot = applyDecisionEngineToTopologySnapshot(snapshot, decisionEngine);
                     lastSnapshot = enrichedSnapshot;

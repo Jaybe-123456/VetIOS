@@ -7,7 +7,7 @@ import { getModelRegistryControlPlaneSnapshot } from '@/lib/experiments/service'
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
-import { resolveTopologySimulationTarget, getTopologySnapshot, syncControlPlaneAlerts } from '@/lib/intelligence/topologyService';
+import { resolveTopologySimulationTarget, getTopologySnapshot } from '@/lib/intelligence/topologyService';
 import { logSimulation } from '@/lib/logging/simulationLogger';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { emitTelemetryEvent, telemetrySimulationEventId } from '@/lib/telemetry/service';
@@ -53,12 +53,12 @@ export async function GET(req: Request) {
             until,
             observerHeartbeatTimestamp: until ? null : new Date().toISOString(),
         });
-        await syncControlPlaneAlerts(client, actor.tenantId, snapshot.alerts);
         const decisionEngine = await evaluateDecisionEngine({
             client,
             tenantId: actor.tenantId,
             topologySnapshot: snapshot,
             triggerSource: 'topology_api',
+            readOnly: true,
         });
         const enrichedSnapshot = applyDecisionEngineToTopologySnapshot(snapshot, decisionEngine);
 

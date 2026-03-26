@@ -8,7 +8,7 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const STREAM_INTERVAL_MS = 5_000;
+const STREAM_INTERVAL_MS = 10_000;
 
 export async function GET(req: Request) {
     const session = await resolveSessionTenant();

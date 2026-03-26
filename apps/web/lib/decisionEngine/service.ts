@@ -80,6 +80,7 @@ export async function evaluateDecisionEngine(input: {
     topologySnapshot?: TopologySnapshot;
     registrySnapshot?: ModelRegistryControlPlaneSnapshot;
     triggerSource?: string;
+    readOnly?: boolean;
 }): Promise<DecisionEngineSnapshot> {
     const now = new Date().toISOString();
     const store = createSupabaseExperimentTrackingStore(input.client);
@@ -98,6 +99,20 @@ export async function evaluateDecisionEngine(input: {
         config,
         evaluationRows,
     });
+
+    if (input.readOnly === true) {
+        const auditLog = await listDecisionAuditLog(input.client, input.tenantId);
+        const decisions = buildReadOnlyDecisionRecords({
+            tenantId: input.tenantId,
+            config,
+            candidates,
+            existingDecisions,
+            now,
+            triggerSource: input.triggerSource ?? null,
+        });
+        return buildDecisionEngineSnapshot(config, topologySnapshot, decisions, auditLog, now);
+    }
+
     const candidateKeys = new Set(candidates.map((candidate) => candidate.decision_key));
 
     for (const candidate of candidates) {
@@ -416,6 +431,55 @@ export function buildDecisionEngineSnapshot(
 
 function resolveLatestActiveDecision(decisions: DecisionEngineRecord[]): DecisionEngineRecord | null {
     return decisions.find((decision) => decision.status !== 'executed') ?? null;
+}
+
+function buildReadOnlyDecisionRecords(input: {
+    tenantId: string;
+    config: DecisionEngineConfiguration;
+    candidates: DecisionEngineCandidate[];
+    existingDecisions: DecisionEngineRecord[];
+    now: string;
+    triggerSource: string | null;
+}): DecisionEngineRecord[] {
+    const existingByKey = new Map(
+        input.existingDecisions.map((decision) => [decision.decision_key, decision] as const),
+    );
+
+    return input.candidates.map((candidate) => {
+        const existing = existingByKey.get(candidate.decision_key) ?? null;
+        const execution = resolveExecutionPolicy(input.config, candidate, existing);
+
+        return {
+            decision_id: existing?.decision_id ?? randomUUID(),
+            tenant_id: input.tenantId,
+            decision_key: candidate.decision_key,
+            trigger_event: candidate.trigger_event,
+            condition: candidate.condition,
+            action: candidate.actions.map((action) => action.label).join(' -> '),
+            confidence: candidate.confidence,
+            mode: input.config.mode,
+            source_node_id: candidate.source_node_id,
+            source_node_type: candidate.source_node_type,
+            model_family: candidate.model_family,
+            registry_id: candidate.registry_id,
+            run_id: candidate.run_id,
+            timestamp: input.now,
+            status: execution.shouldExecute ? 'pending' : execution.status,
+            requires_approval: candidate.requires_approval,
+            blocked_reason: execution.shouldExecute ? null : execution.reason,
+            metadata: {
+                ...(existing?.metadata ?? {}),
+                ...candidate.metadata,
+                trigger_source: input.triggerSource,
+                severity: candidate.severity,
+                actions: candidate.actions,
+                node_status: candidate.node_status,
+                ephemeral: true,
+            },
+            created_at: existing?.created_at ?? input.now,
+            updated_at: input.now,
+        };
+    });
 }
 
 async function maybeExecuteDecision(input: {
