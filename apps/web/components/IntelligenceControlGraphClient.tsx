@@ -32,7 +32,7 @@ import type {
     TopologyStreamPayload,
     TopologyWindow,
 } from '@/lib/intelligence/types';
-import type { ControlPlaneSnapshotResponse } from '@/lib/settings/types';
+import type { ControlPlaneSimulationModeResponse } from '@/lib/settings/types';
 
 type ControlMode = 'live' | 'rewind_1h' | 'rewind_24h' | 'replay';
 type StreamStatus = 'connecting' | 'live' | 'disconnected';
@@ -59,19 +59,34 @@ export default function IntelligenceControlGraphClient() {
     const [simulationMessage, setSimulationMessage] = useState<string | null>(null);
     const [simulationBusy, setSimulationBusy] = useState(false);
     const [simulationModeError, setSimulationModeError] = useState<string | null>(null);
+    const [pageVisible, setPageVisible] = useState(true);
 
     useEffect(() => {
+        const handleVisibilityChange = () => {
+            setPageVisible(document.visibilityState === 'visible');
+        };
+
+        handleVisibilityChange();
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!pageVisible) return;
         let cancelled = false;
 
         const syncSimulationMode = async () => {
             try {
-                const response = await fetch('/api/settings/control-plane', { cache: 'no-store' });
-                const payload = await response.json() as ControlPlaneSnapshotResponse | { error?: string };
-                if (!response.ok || !('snapshot' in payload)) {
+                const response = await fetch('/api/settings/control-plane?view=simulation_mode', { cache: 'no-store' });
+                const payload = await response.json() as ControlPlaneSimulationModeResponse | { error?: string };
+                if (!response.ok || !('simulation_enabled' in payload)) {
                     throw new Error('error' in payload && typeof payload.error === 'string' ? payload.error : 'Failed to load simulation mode.');
                 }
                 if (!cancelled) {
-                    setSimulationMode(payload.snapshot.configuration.simulation_enabled);
+                    setSimulationMode(payload.simulation_enabled);
                     setSimulationModeError(null);
                 }
             } catch (error) {
@@ -83,17 +98,18 @@ export default function IntelligenceControlGraphClient() {
 
         void syncSimulationMode();
         const interval = window.setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
             void syncSimulationMode();
-        }, 15000);
+        }, 60_000);
 
         return () => {
             cancelled = true;
             window.clearInterval(interval);
         };
-    }, []);
+    }, [pageVisible]);
 
     useEffect(() => {
-        if (mode !== 'live') return;
+        if (mode !== 'live' || !pageVisible) return;
 
         setStreamStatus('connecting');
         setStreamError(null);
@@ -126,7 +142,7 @@ export default function IntelligenceControlGraphClient() {
         return () => {
             source.close();
         };
-    }, [mode]);
+    }, [mode, pageVisible]);
 
     useEffect(() => {
         if (mode === 'live') {

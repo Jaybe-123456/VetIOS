@@ -9,6 +9,8 @@ import {
     backfillEvaluationEvents,
     createControlPlaneApiKey,
     emitControlPlaneSystemEvent,
+    getControlPlaneSimulationMode,
+    getDashboardControlPlaneSnapshot,
     getControlPlaneSnapshot,
     injectControlPlaneSimulation,
     markControlPlaneAlertResolved,
@@ -19,7 +21,6 @@ import {
     updateControlPlaneConfig,
     updateControlPlaneProfile,
 } from '@/lib/settings/controlPlane';
-import { emitTelemetryHeartbeat } from '@/lib/telemetry/service';
 import type {
     ControlPlaneAlertSensitivity,
     ControlPlaneSimulationScenario,
@@ -87,6 +88,8 @@ export async function GET(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
+    const url = new URL(req.url);
+    const view = resolveControlPlaneView(url.searchParams.get('view'));
 
     const session = await resolveSessionTenant();
     if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
@@ -96,26 +99,38 @@ export async function GET(req: Request) {
     try {
         const actor = resolveRequestActor(session);
         const adminClient = getSupabaseServer();
-        await emitTelemetryHeartbeat(adminClient, {
-            tenantId: actor.tenantId,
-            source: 'settings_control_plane',
-            targetNodeId: 'telemetry_observer',
-            metadata: {
-                view: 'settings',
-            },
-        });
-        const userContext = await resolveUserContext(session);
-        const snapshot = await getControlPlaneSnapshot({
-            client: adminClient,
-            tenantId: actor.tenantId,
-            userId: actor.userId,
-            userContext,
-        });
+        let response: NextResponse;
 
-        const response = NextResponse.json({
-            snapshot,
-            request_id: requestId,
-        });
+        if (view === 'simulation_mode') {
+            const simulationMode = await getControlPlaneSimulationMode(adminClient, actor.tenantId);
+            response = NextResponse.json({
+                ...simulationMode,
+                request_id: requestId,
+            });
+        } else if (view === 'dashboard') {
+            const snapshot = await getDashboardControlPlaneSnapshot({
+                client: adminClient,
+                tenantId: actor.tenantId,
+            });
+            response = NextResponse.json({
+                snapshot,
+                request_id: requestId,
+            });
+        } else {
+            const userContext = await resolveUserContext(session);
+            const snapshot = await getControlPlaneSnapshot({
+                client: adminClient,
+                tenantId: actor.tenantId,
+                userId: actor.userId,
+                userContext,
+            });
+
+            response = NextResponse.json({
+                snapshot,
+                request_id: requestId,
+            });
+        }
+
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     } catch (error) {
@@ -427,4 +442,11 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function textOrNull(value: unknown) {
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function resolveControlPlaneView(value: string | null) {
+    if (value === 'dashboard' || value === 'simulation_mode') {
+        return value;
+    }
+    return 'full';
 }

@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalButton } from '@/components/ui/terminal';
 import { TelemetryChart } from '@/components/ui/TelemetryChart';
-import type { ControlPlaneSnapshotResponse } from '@/lib/settings/types';
+import type { ControlPlaneSimulationModeResponse } from '@/lib/settings/types';
 import type {
     TelemetryLogEntry,
     TelemetryMetricState,
@@ -32,19 +32,34 @@ export default function TelemetryObserverPage() {
     const [simulationModeError, setSimulationModeError] = useState<string | null>(null);
     const [streamNonce, setStreamNonce] = useState(0);
     const [lastStreamUpdate, setLastStreamUpdate] = useState<Date | null>(null);
+    const [pageVisible, setPageVisible] = useState(true);
 
     useEffect(() => {
+        const handleVisibilityChange = () => {
+            setPageVisible(document.visibilityState === 'visible');
+        };
+
+        handleVisibilityChange();
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, []);
+
+    useEffect(() => {
+        if (!pageVisible) return;
         let cancelled = false;
 
         const syncSimulationMode = async () => {
             try {
-                const response = await fetch('/api/settings/control-plane', { cache: 'no-store' });
-                const payload = await response.json() as ControlPlaneSnapshotResponse | { error?: string };
-                if (!response.ok || !('snapshot' in payload)) {
+                const response = await fetch('/api/settings/control-plane?view=simulation_mode', { cache: 'no-store' });
+                const payload = await response.json() as ControlPlaneSimulationModeResponse | { error?: string };
+                if (!response.ok || !('simulation_enabled' in payload)) {
                     throw new Error('error' in payload && typeof payload.error === 'string' ? payload.error : 'Failed to load simulation mode.');
                 }
                 if (!cancelled) {
-                    setSimulationMode(payload.snapshot.configuration.simulation_enabled);
+                    setSimulationMode(payload.simulation_enabled);
                     setSimulationModeError(null);
                 }
             } catch (error) {
@@ -56,16 +71,18 @@ export default function TelemetryObserverPage() {
 
         void syncSimulationMode();
         const interval = window.setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
             void syncSimulationMode();
-        }, 15000);
+        }, 60_000);
 
         return () => {
             cancelled = true;
             window.clearInterval(interval);
         };
-    }, []);
+    }, [pageVisible]);
 
     useEffect(() => {
+        if (!pageVisible) return;
         setStreamStatus('connecting');
         setStreamError(null);
 
@@ -103,7 +120,7 @@ export default function TelemetryObserverPage() {
         return () => {
             source.close();
         };
-    }, [simulationMode, streamNonce]);
+    }, [pageVisible, simulationMode, streamNonce]);
 
     const hasSnapshot = snapshot !== null;
     const disconnectedWithoutData = streamStatus === 'disconnected' && !hasSnapshot;

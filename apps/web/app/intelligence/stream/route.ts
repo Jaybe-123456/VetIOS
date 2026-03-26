@@ -8,7 +8,7 @@ import type { TopologyWindow } from '@/lib/intelligence/types';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const STREAM_INTERVAL_MS = 5_000;
+const STREAM_INTERVAL_MS = 10_000;
 
 export async function GET(req: Request) {
     const session = await resolveSessionTenant();
@@ -24,6 +24,7 @@ export async function GET(req: Request) {
     let closed = false;
     let lastHeartbeatAtMs = 0;
     let lastSnapshot: Awaited<ReturnType<typeof getTopologySnapshot>> | null = null;
+    let lastPayloadSignature: string | null = null;
 
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -67,9 +68,16 @@ export async function GET(req: Request) {
                     lastSnapshot = enrichedSnapshot;
 
                     if (closed) return;
+                    const payload = { snapshot: enrichedSnapshot };
+                    const payloadSignature = buildTopologyPayloadSignature(payload);
+                    if (payloadSignature === lastPayloadSignature) {
+                        controller.enqueue(encoder.encode(': keepalive\n\n'));
+                        return;
+                    }
+                    lastPayloadSignature = payloadSignature;
                     controller.enqueue(
                         encoder.encode(
-                            serializeSseMessage(JSON.stringify({ snapshot: enrichedSnapshot })),
+                            serializeSseMessage(JSON.stringify(payload)),
                         ),
                     );
                 } catch (error) {
@@ -133,4 +141,15 @@ function resolveWindow(value: string | null): TopologyWindow {
 function serializeSseMessage(data: string, event?: string) {
     const eventPrefix = event ? `event: ${event}\n` : '';
     return `${eventPrefix}data: ${data}\n\n`;
+}
+
+function buildTopologyPayloadSignature(payload: {
+    snapshot: Awaited<ReturnType<typeof getTopologySnapshot>>;
+}) {
+    return JSON.stringify({
+        snapshot: {
+            ...payload.snapshot,
+            refreshed_at: '',
+        },
+    });
 }

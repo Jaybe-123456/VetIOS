@@ -248,6 +248,39 @@ export interface ControlPlaneDashboardSnapshot {
     };
 }
 
+export interface ControlPlaneDashboardGovernanceFamilySummary {
+    model_family: ModelFamily;
+    current_production_model: string | null;
+    staging_candidate: string | null;
+    rollback_target: string | null;
+    entry_count: number;
+    rejected_count: number;
+    pending_count: number;
+}
+
+export interface ControlPlaneDashboardViewSnapshot {
+    system_health: ControlPlaneSystemHealth;
+    pipelines: ControlPlanePipelineState[];
+    diagnostics: ControlPlaneDiagnostics;
+    configuration: Pick<ControlPlaneConfiguration, 'simulation_enabled'>;
+    decision_engine: Pick<
+        ControlPlaneDecisionEngineState,
+        'mode'
+        | 'safe_mode_enabled'
+        | 'auto_execute_confidence_threshold'
+        | 'active_decision_count'
+        | 'latest_trigger'
+        | 'latest_action'
+    >;
+    alerts: ControlPlaneAlertRecord[];
+    logs: ControlPlaneLogRecord[];
+    governance: {
+        families: ControlPlaneDashboardGovernanceFamilySummary[];
+    };
+    dashboard: ControlPlaneDashboardSnapshot;
+    refreshed_at: string;
+}
+
 export interface ControlPlaneSnapshot {
     tenant_id: string;
     profile: ControlPlaneProfile;
@@ -274,5 +307,16 @@ export interface ControlPlaneSnapshot {
 
 export interface ControlPlaneSnapshotResponse {
     snapshot: ControlPlaneSnapshot;
+    request_id: string;
+}
+
+export interface ControlPlaneDashboardSnapshotResponse {
+    snapshot: ControlPlaneDashboardViewSnapshot;
+    request_id: string;
+}
+
+export interface ControlPlaneSimulationModeResponse {
+    simulation_enabled: boolean;
+    refreshed_at: string;
     request_id: string;
 }
