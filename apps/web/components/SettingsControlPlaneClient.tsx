@@ -113,8 +113,9 @@ export default function SettingsControlPlaneClient() {
         void refreshSnapshot(true);
 
         const interval = window.setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
             void refreshSnapshot(false);
-        }, 15000);
+        }, 60_000);
 
         return () => window.clearInterval(interval);
     }, []);

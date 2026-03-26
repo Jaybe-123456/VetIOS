@@ -3,6 +3,7 @@ import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { backfillTenantClinicalCaseLearningState } from '@/lib/clinicalCases/clinicalCaseBackfill';
 import { collectClinicalDatasetDebugSnapshot } from '@/lib/dataset/clinicalDatasetDiagnostics';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
+import type { DecisionAuditLogRecord } from '@/lib/decisionEngine/types';
 import {
     AI_INFERENCE_EVENTS,
     CLINICAL_OUTCOME_EVENTS,
@@ -29,7 +30,7 @@ import {
     telemetryInferenceEventId,
     telemetrySimulationEventId,
 } from '@/lib/telemetry/service';
-import type { TelemetryEventRecord } from '@/lib/telemetry/types';
+import type { TelemetryEventRecord, TelemetryLogEntry } from '@/lib/telemetry/types';
 import type {
     ControlPlaneActionRecord,
     ControlPlaneActionStatus,
@@ -38,6 +39,7 @@ import type {
     ControlPlaneApiKeyRecord,
     ControlPlaneConfiguration,
     ControlPlaneDashboardInferenceRecord,
+    ControlPlaneDashboardViewSnapshot,
     ControlPlaneDiagnostics,
     ControlPlaneGovernanceEntry,
     ControlPlaneGovernanceFamily,
@@ -254,6 +256,117 @@ export async function getControlPlaneSnapshot(input: {
                 : dashboardDriftHistory,
             routing: dashboardRouting,
         },
+        refreshed_at: new Date().toISOString(),
+    };
+}
+
+export async function getDashboardControlPlaneSnapshot(input: {
+    client: SupabaseClient;
+    tenantId: string;
+}): Promise<ControlPlaneDashboardViewSnapshot> {
+    const experimentStore = createSupabaseExperimentTrackingStore(input.client);
+    const [
+        telemetrySnapshot,
+        topologySnapshot,
+        registrySnapshot,
+        configBundle,
+        dashboardInferences,
+        dashboardRouting,
+        dashboardDriftHistory,
+        recentTelemetryTimestamps,
+    ] = await Promise.all([
+        getTelemetrySnapshot(input.client, input.tenantId),
+        getTopologySnapshot(input.client, input.tenantId, { window: '24h' }),
+        getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId),
+        getControlPlaneConfigBundle(input.client, input.tenantId),
+        listDashboardInferenceHistory(input.client, input.tenantId),
+        loadDashboardRoutingSummary(input.client, input.tenantId),
+        loadDashboardDriftHistory(input.client, input.tenantId),
+        listRecentTelemetryTimestamps(input.client, input.tenantId),
+    ]);
+
+    const decisionEngine = await evaluateDecisionEngine({
+        client: input.client,
+        tenantId: input.tenantId,
+        topologySnapshot,
+        registrySnapshot,
+        triggerSource: 'dashboard_control_plane',
+    });
+
+    try {
+        await syncControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
+    } catch (error) {
+        if (!isMissingRelationError(error, CONTROL_PLANE_ALERTS.TABLE)) {
+            throw error;
+        }
+    }
+
+    const persistedAlerts = await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
+    const pipelines = buildPipelineStates(topologySnapshot);
+
+    return {
+        system_health: buildSystemHealthFromTimestamps(
+            telemetrySnapshot,
+            topologySnapshot,
+            recentTelemetryTimestamps,
+        ),
+        pipelines,
+        diagnostics: buildDiagnostics(
+            topologySnapshot.control_plane_state,
+            topologySnapshot.summary,
+            pipelines,
+            configBundle.warnings,
+        ),
+        configuration: {
+            simulation_enabled: configBundle.config.simulation_enabled,
+        },
+        decision_engine: {
+            mode: decisionEngine.mode,
+            safe_mode_enabled: decisionEngine.safe_mode_enabled,
+            auto_execute_confidence_threshold: decisionEngine.auto_execute_confidence_threshold,
+            active_decision_count: decisionEngine.active_decision_count,
+            latest_trigger: decisionEngine.latest_trigger,
+            latest_action: decisionEngine.latest_action,
+        },
+        alerts: persistedAlerts.slice(0, 24),
+        logs: buildDashboardLogs({
+            telemetryLogs: telemetrySnapshot.logs,
+            alerts: persistedAlerts,
+            decisionAudit: decisionEngine.audit_log,
+        }),
+        governance: {
+            families: buildDashboardGovernanceFamilies(registrySnapshot),
+        },
+        dashboard: {
+            workload_state: telemetrySnapshot.metrics.inference_count > 0 || dashboardInferences.length > 0 ? 'live' : 'idle',
+            recent_inferences: dashboardInferences,
+            latency_history: telemetrySnapshot.charts.latency.length > 0
+                ? telemetrySnapshot.charts.latency
+                : dashboardInferences
+                    .filter((entry) => entry.latency_ms != null)
+                    .slice()
+                    .reverse()
+                    .slice(-24)
+                    .map((entry) => ({
+                        time: formatDashboardChartTime(entry.timestamp),
+                        value: entry.latency_ms ?? 0,
+                    })),
+            drift_history: telemetrySnapshot.charts.drift.length > 0
+                ? telemetrySnapshot.charts.drift
+                : dashboardDriftHistory,
+            routing: dashboardRouting,
+        },
+        refreshed_at: new Date().toISOString(),
+    };
+}
+
+export async function getControlPlaneSimulationMode(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<{ simulation_enabled: boolean; refreshed_at: string }> {
+    const { config } = await getControlPlaneConfigBundle(client, tenantId);
+    return {
+        simulation_enabled: config.simulation_enabled,
         refreshed_at: new Date().toISOString(),
     };
 }
@@ -531,6 +644,31 @@ export async function listTelemetryEvents(client: SupabaseClient, tenantId: stri
     return Array.from(merged.values())
         .map((row) => mapTelemetryEvent(row))
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+}
+
+async function listRecentTelemetryTimestamps(
+    client: SupabaseClient,
+    tenantId: string,
+    windowMinutes: number = 15,
+): Promise<string[]> {
+    const C = TELEMETRY_EVENTS.COLUMNS;
+    const windowStart = new Date(Date.now() - (windowMinutes * 60 * 1000)).toISOString();
+    const { data, error } = await client
+        .from(TELEMETRY_EVENTS.TABLE)
+        .select(C.timestamp)
+        .eq(C.tenant_id, tenantId)
+        .gte(C.timestamp, windowStart)
+        .order(C.timestamp, { ascending: false })
+        .limit(240);
+
+    if (error) {
+        if (isMissingRelationError(error, TELEMETRY_EVENTS.TABLE)) return [];
+        throw new Error(`Failed to load recent telemetry timestamps: ${error.message}`);
+    }
+
+    return (data ?? [])
+        .map((row) => textOrNull((row as Record<string, unknown>)[C.timestamp]))
+        .filter((timestamp): timestamp is string => timestamp != null);
 }
 
 async function listDashboardInferenceHistory(
@@ -1049,6 +1187,18 @@ function buildSystemHealth(
     topologySnapshot: Awaited<ReturnType<typeof getTopologySnapshot>>,
     telemetryEvents: TelemetryEventRecord[],
 ): ControlPlaneSystemHealth {
+    return buildSystemHealthFromTimestamps(
+        telemetrySnapshot,
+        topologySnapshot,
+        telemetryEvents.map((event) => event.timestamp),
+    );
+}
+
+function buildSystemHealthFromTimestamps(
+    telemetrySnapshot: Awaited<ReturnType<typeof getTelemetrySnapshot>>,
+    topologySnapshot: Awaited<ReturnType<typeof getTopologySnapshot>>,
+    telemetryTimestamps: string[],
+): ControlPlaneSystemHealth {
     const warnings: string[] = [];
     if (!topologySnapshot.diagnostics.latest_inference_timestamp) warnings.push('No inference activity observed yet.');
     if (!topologySnapshot.diagnostics.latest_outcome_timestamp) warnings.push('No outcome activity observed yet.');
@@ -1063,7 +1213,7 @@ function buildSystemHealth(
     return {
         telemetry_status: topologySnapshot.diagnostics.telemetry_stream_connected ? 'connected' : 'disconnected',
         topology_state: topologySnapshot.control_plane_state,
-        event_ingestion_rate: ratePerMinute(telemetryEvents.map((event) => event.timestamp), 15),
+        event_ingestion_rate: ratePerMinute(telemetryTimestamps, 15),
         network_health_score: topologySnapshot.network_health_score,
         last_inference_timestamp: topologySnapshot.diagnostics.latest_inference_timestamp,
         last_outcome_timestamp: topologySnapshot.diagnostics.latest_outcome_timestamp,
@@ -1134,6 +1284,25 @@ function buildGovernanceFamilies(snapshot: ModelRegistryControlPlaneSnapshot): C
         active_registry_id: family.active_registry_id,
         entries: family.entries.map((entry) => mapGovernanceEntry(entry)),
     }));
+}
+
+function buildDashboardGovernanceFamilies(
+    snapshot: ModelRegistryControlPlaneSnapshot,
+): ControlPlaneDashboardViewSnapshot['governance']['families'] {
+    return snapshot.families.map((family) => {
+        const rejectedCount = family.entries.filter((entry) => entry.decision_panel.deployment_decision === 'rejected').length;
+        const pendingCount = family.entries.filter((entry) => entry.decision_panel.deployment_decision === 'hold').length;
+
+        return {
+            model_family: family.model_family,
+            current_production_model: family.active_model?.model_version ?? null,
+            staging_candidate: family.entries.find((entry) => entry.registry.lifecycle_status === 'staging')?.registry.model_version ?? null,
+            rollback_target: family.last_stable_model?.model_version ?? null,
+            entry_count: family.entries.length,
+            rejected_count: rejectedCount,
+            pending_count: pendingCount,
+        };
+    });
 }
 
 function mapGovernanceEntry(entry: ModelRegistryControlPlaneSnapshot['families'][number]['entries'][number]): ControlPlaneGovernanceEntry {
@@ -1232,6 +1401,49 @@ function buildControlPlaneLogs(input: {
     return [...telemetryLogs, ...actionLogs, ...alertLogs, ...registryLogs, ...decisionLogs]
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
         .slice(0, 200);
+}
+
+function buildDashboardLogs(input: {
+    telemetryLogs: TelemetryLogEntry[];
+    alerts: ControlPlaneAlertRecord[];
+    decisionAudit: DecisionAuditLogRecord[];
+}): ControlPlaneLogRecord[] {
+    const telemetry = input.telemetryLogs.map<ControlPlaneLogRecord>((entry) => ({
+        id: entry.id,
+        category: 'system',
+        level: entry.level,
+        message: entry.message,
+        timestamp: entry.timestamp,
+        run_id: null,
+        model_version: null,
+        event_type: 'telemetry',
+    }));
+
+    const alerts = input.alerts.map<ControlPlaneLogRecord>((alert) => ({
+        id: alert.id,
+        category: 'error',
+        level: alert.severity === 'critical' ? 'ERROR' : alert.severity === 'warning' ? 'WARN' : 'INFO',
+        message: `[ALERT] ${alert.title} ${alert.resolved ? '(RESOLVED)' : ''}`.trim(),
+        timestamp: alert.timestamp,
+        run_id: null,
+        model_version: null,
+        event_type: alert.source,
+    }));
+
+    const decisions = input.decisionAudit.map<ControlPlaneLogRecord>((event) => ({
+        id: event.id,
+        category: 'system',
+        level: event.result === 'failed' ? 'ERROR' : 'INFO',
+        message: `[DECISION] ${event.trigger.toUpperCase()} -> ${event.action} (${event.result.toUpperCase()})`,
+        timestamp: event.executed_at,
+        run_id: textOrNull(event.metadata.run_id),
+        model_version: textOrNull(event.metadata.model_version),
+        event_type: 'decision',
+    }));
+
+    return [...telemetry, ...alerts, ...decisions]
+        .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+        .slice(0, 12);
 }
 
 function mapControlPlaneConfig(row: Record<string, unknown>): ControlPlaneConfiguration {

@@ -7,12 +7,14 @@ import { ConsoleCard, Container, DataRow, PageHeader, TerminalButton } from '@/c
 import { TelemetryChart } from '@/components/ui/TelemetryChart';
 import type {
     ControlPlaneAlertRecord,
+    ControlPlaneDashboardGovernanceFamilySummary,
+    ControlPlaneDashboardInferenceRecord,
+    ControlPlaneDashboardSnapshotResponse,
+    ControlPlaneDashboardViewSnapshot,
     ControlPlanePipelineState,
-    ControlPlaneSnapshot,
-    ControlPlaneSnapshotResponse,
 } from '@/lib/settings/types';
 import type { TopologySnapshot, TopologyStreamPayload } from '@/lib/intelligence/types';
-import type { TelemetryEventRecord, TelemetrySnapshot, TelemetryStreamPayload } from '@/lib/telemetry/types';
+import type { TelemetrySnapshot, TelemetryStreamPayload } from '@/lib/telemetry/types';
 import {
     Activity,
     AlertTriangle,
@@ -29,12 +31,13 @@ import {
 type StreamStatus = 'connecting' | 'live' | 'disconnected';
 
 export default function DashboardControlPlaneClient() {
-    const [snapshot, setSnapshot] = useState<ControlPlaneSnapshot | null>(null);
+    const [snapshot, setSnapshot] = useState<ControlPlaneDashboardViewSnapshot | null>(null);
     const [telemetrySnapshot, setTelemetrySnapshot] = useState<TelemetrySnapshot | null>(null);
     const [topologySnapshot, setTopologySnapshot] = useState<TopologySnapshot | null>(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [requestError, setRequestError] = useState<string | null>(null);
+    const [pageVisible, setPageVisible] = useState(true);
     const [telemetryStreamStatus, setTelemetryStreamStatus] = useState<StreamStatus>('connecting');
     const [topologyStreamStatus, setTopologyStreamStatus] = useState<StreamStatus>('connecting');
     const [lastTelemetryUpdate, setLastTelemetryUpdate] = useState<string | null>(null);
@@ -48,8 +51,8 @@ export default function DashboardControlPlaneClient() {
         }
 
         try {
-            const res = await fetch('/api/settings/control-plane', { cache: 'no-store' });
-            const data = await res.json() as ControlPlaneSnapshotResponse | { error?: string };
+            const res = await fetch('/api/settings/control-plane?view=dashboard', { cache: 'no-store' });
+            const data = await res.json() as ControlPlaneDashboardSnapshotResponse | { error?: string };
             const errorMessage = 'error' in data ? data.error : undefined;
             if (!res.ok || !('snapshot' in data)) {
                 throw new Error(errorMessage ?? 'Failed to load dashboard control-plane snapshot.');
@@ -66,15 +69,30 @@ export default function DashboardControlPlaneClient() {
     }, []);
 
     useEffect(() => {
+        const handleVisibilityChange = () => {
+            setPageVisible(document.visibilityState === 'visible');
+        };
+
+        handleVisibilityChange();
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, []);
+
+    useEffect(() => {
         void refreshSnapshot(true);
         const interval = window.setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
             void refreshSnapshot(false);
-        }, 20_000);
+        }, 60_000);
 
         return () => window.clearInterval(interval);
     }, [refreshSnapshot]);
 
     useEffect(() => {
+        if (!pageVisible) return;
         setTelemetryStreamStatus('connecting');
 
         const source = new EventSource('/telemetry/stream');
@@ -101,9 +119,10 @@ export default function DashboardControlPlaneClient() {
         return () => {
             source.close();
         };
-    }, []);
+    }, [pageVisible]);
 
     useEffect(() => {
+        if (!pageVisible) return;
         setTopologyStreamStatus('connecting');
 
         const source = new EventSource('/intelligence/stream?window=24h');
@@ -130,7 +149,7 @@ export default function DashboardControlPlaneClient() {
         return () => {
             source.close();
         };
-    }, []);
+    }, [pageVisible]);
 
     const activeAlerts = (snapshot?.alerts ?? []).filter((alert) => !alert.resolved);
     const criticalAlertCount = activeAlerts.filter((alert) => alert.severity === 'critical').length;
@@ -150,7 +169,7 @@ export default function DashboardControlPlaneClient() {
             : null;
     const governanceFamilies = snapshot?.governance.families ?? [];
     const routingOverview = buildRoutingOverview(topologySnapshot, dashboardLens?.routing ?? null, governanceFamilies);
-    const recentInferences = buildRecentInferences(snapshot?.telemetry_events ?? [], dashboardLens?.recent_inferences ?? []);
+    const recentInferences = dashboardLens?.recent_inferences ?? [];
     const recentLogs = (snapshot?.logs ?? []).slice(0, 8);
     const pipelineStates = snapshot?.pipelines ?? [];
     const loadingWithoutData = loading && !snapshot && !telemetrySnapshot && !topologySnapshot;
@@ -333,7 +352,7 @@ export default function DashboardControlPlaneClient() {
                             <div key={family.model_family} className="py-2 border-b border-muted/30">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="font-mono text-xs uppercase text-accent">{family.model_family}</div>
-                                    <span className="font-mono text-[10px] text-muted">{family.entries.length} entries</span>
+                                    <span className="font-mono text-[10px] text-muted">{family.entry_count} entries</span>
                                 </div>
                                 <div className="mt-2 font-mono text-[11px] text-foreground">
                                     PROD {family.current_production_model ?? 'NO DATA'}
@@ -383,15 +402,15 @@ export default function DashboardControlPlaneClient() {
                     <ConsoleCard title="Recent Inferences" collapsible>
                         {recentInferences.length > 0 ? (
                             recentInferences.map((event) => (
-                                <div key={event.event_id} className="py-2 border-b border-muted/30">
+                                <div key={event.id} className="py-2 border-b border-muted/30">
                                     <div className="flex items-start justify-between gap-3">
-                                        <div className="font-mono text-xs text-foreground break-all">{event.event_id}</div>
+                                        <div className="font-mono text-xs text-foreground break-all">{event.id}</div>
                                         <StateText tone={eventTone(event)}>
                                             {formatInferenceOutcome(event)}
                                         </StateText>
                                     </div>
                                     <div className="mt-2 font-mono text-[10px] text-muted">
-                                        model={resolveRouteModel(event)} | confidence={formatPercent(event.metrics.confidence)} | latency={formatLatency(event.metrics.latency_ms)}
+                                        model={resolveRouteModel(event)} | confidence={formatPercent(event.confidence)} | latency={formatLatency(event.latency_ms)}
                                     </div>
                                     <div className="mt-1 font-mono text-[10px] text-muted">
                                         {new Date(event.timestamp).toLocaleString()}
@@ -520,54 +539,10 @@ function EmptyListState({ message, compact = false }: { message: string; compact
     );
 }
 
-function buildRecentInferences(
-    events: TelemetryEventRecord[],
-    fallbackInferences: ControlPlaneSnapshot['dashboard']['recent_inferences'],
-) {
-    const telemetryInferences = events
-        .filter((event) => event.event_type === 'inference' && !isSyntheticTelemetryEvent(event))
-        .slice()
-        .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
-        .slice(0, 6);
-
-    if (telemetryInferences.length > 0) {
-        return telemetryInferences;
-    }
-
-    return fallbackInferences.map<TelemetryEventRecord>((entry) => ({
-        event_id: entry.id,
-        tenant_id: '',
-        linked_event_id: null,
-        source_id: entry.id,
-        source_table: 'ai_inference_events',
-        event_type: 'inference',
-        timestamp: entry.timestamp,
-        model_version: entry.model_version ?? 'unknown',
-        run_id: entry.model_version ?? 'unknown',
-        metrics: {
-            latency_ms: entry.latency_ms,
-            confidence: entry.confidence,
-            prediction: entry.prediction,
-            ground_truth: null,
-            correct: null,
-        },
-        system: {
-            cpu: null,
-            gpu: null,
-            memory: null,
-        },
-        metadata: {
-            source_module: entry.source_module,
-            routing_selected_model_id: entry.route_model_id,
-        },
-        created_at: entry.timestamp,
-    }));
-}
-
 function buildRoutingOverview(
     topologySnapshot: TopologySnapshot | null,
-    fallbackRouting: ControlPlaneSnapshot['dashboard']['routing'] | null,
-    governanceFamilies: ControlPlaneSnapshot['governance']['families'],
+    fallbackRouting: ControlPlaneDashboardViewSnapshot['dashboard']['routing'] | null,
+    governanceFamilies: ControlPlaneDashboardGovernanceFamilySummary[],
 ) {
     const distribution = new Map<string, number>();
     const familyRows: Array<{ family: string; top_model: string | null; total_requests: number }> = [];
@@ -660,14 +635,12 @@ function buildRoutingOverview(
     };
 }
 
-function summarizeFamilyGovernance(family: ControlPlaneSnapshot['governance']['families'][number]) {
-    const rejected = family.entries.filter((entry) => entry.deployment_decision === 'rejected').length;
-    const pending = family.entries.filter((entry) => entry.deployment_decision === 'hold').length;
-    if (rejected > 0) {
-        return `${rejected} rejected candidate(s) blocked from live promotion.`;
+function summarizeFamilyGovernance(family: ControlPlaneDashboardGovernanceFamilySummary) {
+    if (family.rejected_count > 0) {
+        return `${family.rejected_count} rejected candidate(s) blocked from live promotion.`;
     }
-    if (pending > 0) {
-        return `${pending} gated candidate(s) waiting on approval.`;
+    if (family.pending_count > 0) {
+        return `${family.pending_count} gated candidate(s) waiting on approval.`;
     }
     return 'Active route is clear for governed deployment.';
 }
@@ -728,17 +701,10 @@ function formatTimestampOrState(timestamp: string | null, streamStatus: StreamSt
     return streamStatus === 'disconnected' ? 'STREAM DISCONNECTED' : 'NO DATA';
 }
 
-function isSyntheticTelemetryEvent(event: TelemetryEventRecord) {
-    if (event.event_type === 'simulation') return true;
-    if (event.metadata.synthetic === true || event.metadata.simulated === true) return true;
-    const source = textOrNull(event.metadata.source_module) ?? textOrNull(event.metadata.source);
-    return source === 'adversarial_simulation' || source === 'telemetry_stream_generator';
-}
-
 function resolveDriftChartMessage(
     snapshot: TelemetrySnapshot | null,
     streamStatus: StreamStatus,
-    controlPlaneSnapshot?: ControlPlaneSnapshot | null,
+    controlPlaneSnapshot?: ControlPlaneDashboardViewSnapshot | null,
 ) {
     if (streamStatus === 'disconnected' && !snapshot) return 'STREAM DISCONNECTED';
     if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES' && controlPlaneSnapshot?.system_health.last_evaluation_event_timestamp) {
@@ -752,7 +718,7 @@ function resolveDriftChartMessage(
 function resolveLatencyChartMessage(
     snapshot: TelemetrySnapshot | null,
     streamStatus: StreamStatus,
-    controlPlaneSnapshot?: ControlPlaneSnapshot | null,
+    controlPlaneSnapshot?: ControlPlaneDashboardViewSnapshot | null,
 ) {
     if (streamStatus === 'disconnected' && !snapshot) return 'STREAM DISCONNECTED';
     if (snapshot?.metric_states.p95_latency === 'NO_DATA' && controlPlaneSnapshot?.system_health.last_inference_timestamp) {
@@ -764,7 +730,7 @@ function resolveLatencyChartMessage(
 
 function describeControlPlaneState(
     state: string,
-    snapshot: ControlPlaneSnapshot | null,
+    snapshot: ControlPlaneDashboardViewSnapshot | null,
 ) {
     if (state === 'CONTROL_PLANE_INITIALIZING' && snapshot?.system_health.last_inference_timestamp) {
         return 'LIVE / IDLE';
@@ -778,7 +744,7 @@ function describeControlPlaneState(
     return state;
 }
 
-function resolveInferenceMessage(snapshot: ControlPlaneSnapshot | null) {
+function resolveInferenceMessage(snapshot: ControlPlaneDashboardViewSnapshot | null) {
     if (snapshot?.system_health.last_inference_timestamp) {
         return `NO LIVE INFERENCE ACTIVITY | LAST SUCCESS ${new Date(snapshot.system_health.last_inference_timestamp).toLocaleString()}`;
     }
@@ -786,7 +752,7 @@ function resolveInferenceMessage(snapshot: ControlPlaneSnapshot | null) {
 }
 
 function resolveRoutingMessage(
-    snapshot: ControlPlaneSnapshot | null,
+    snapshot: ControlPlaneDashboardViewSnapshot | null,
     routingOverview: ReturnType<typeof buildRoutingOverview>,
 ) {
     if (routingOverview.familyRows.some((row) => row.top_model)) {
@@ -818,20 +784,19 @@ function formatLatency(value: number | null | undefined) {
     return `${value.toFixed(1)}ms`;
 }
 
-function formatInferenceOutcome(event: TelemetryEventRecord) {
-    const confidence = formatPercent(event.metrics.confidence);
+function formatInferenceOutcome(event: ControlPlaneDashboardInferenceRecord) {
+    const confidence = formatPercent(event.confidence);
     return confidence === 'NO DATA' ? 'LIVE' : confidence;
 }
 
-function resolveRouteModel(event: TelemetryEventRecord) {
-    return textOrNull(event.metadata.routing_selected_model_id)
-        ?? textOrNull(event.metadata.routing_selected_model_name)
+function resolveRouteModel(event: ControlPlaneDashboardInferenceRecord) {
+    return event.route_model_id
         ?? event.model_version
         ?? 'NO DATA';
 }
 
-function eventTone(event: TelemetryEventRecord) {
-    const latency = typeof event.metrics.latency_ms === 'number' ? event.metrics.latency_ms : null;
+function eventTone(event: ControlPlaneDashboardInferenceRecord) {
+    const latency = typeof event.latency_ms === 'number' ? event.latency_ms : null;
     if (latency != null && latency > 2_000) return 'danger' as const;
     if (latency != null && latency > 800) return 'warning' as const;
     return 'accent' as const;

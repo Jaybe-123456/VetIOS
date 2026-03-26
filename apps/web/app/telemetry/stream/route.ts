@@ -10,7 +10,7 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const STREAM_INTERVAL_MS = 1_500;
+const STREAM_INTERVAL_MS = 5_000;
 
 export async function GET(req: Request) {
     const session = await resolveSessionTenant();
@@ -26,6 +26,7 @@ export async function GET(req: Request) {
     let intervalId: ReturnType<typeof setInterval> | null = null;
     let closed = false;
     let lastHeartbeatAtMs = 0;
+    let lastPayloadSignature: string | null = null;
 
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -64,12 +65,20 @@ export async function GET(req: Request) {
                     });
                     if (closed) return;
 
+                    const payload = {
+                        snapshot,
+                        simulation_mode: simulationMode,
+                    };
+                    const payloadSignature = buildTelemetryPayloadSignature(payload);
+                    if (payloadSignature === lastPayloadSignature) {
+                        controller.enqueue(encoder.encode(': keepalive\n\n'));
+                        return;
+                    }
+                    lastPayloadSignature = payloadSignature;
+
                     controller.enqueue(
                         encoder.encode(
-                            serializeSseMessage(JSON.stringify({
-                                snapshot,
-                                simulation_mode: simulationMode,
-                            })),
+                            serializeSseMessage(JSON.stringify(payload)),
                         ),
                     );
                 } catch (error) {
@@ -118,4 +127,17 @@ export async function GET(req: Request) {
 function serializeSseMessage(data: string, event?: string) {
     const eventPrefix = event ? `event: ${event}\n` : '';
     return `${eventPrefix}data: ${data}\n\n`;
+}
+
+function buildTelemetryPayloadSignature(payload: {
+    snapshot: Awaited<ReturnType<typeof getTelemetrySnapshot>>;
+    simulation_mode: boolean;
+}) {
+    return JSON.stringify({
+        ...payload,
+        snapshot: {
+            ...payload.snapshot,
+            generated_at: '',
+        },
+    });
 }
