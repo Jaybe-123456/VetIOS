@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import {
     TerminalLabel,
@@ -10,31 +11,31 @@ import {
     PageHeader,
 } from '@/components/ui/terminal';
 
-const EMAIL_MAGIC_LINKS_ENABLED = process.env.NEXT_PUBLIC_ENABLE_EMAIL_MAGIC_LINKS === 'true';
-
 export default function LoginPage() {
+    const router = useRouter();
     const [email, setEmail] = useState('');
-    const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+    const [password, setPassword] = useState('');
+    const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-    async function handleMagicLink(e: React.FormEvent) {
+    async function handleEmailPasswordLogin(e: React.FormEvent) {
         e.preventDefault();
-        setStatus('sending');
+        setStatus('submitting');
         setErrorMessage(null);
 
         const supabase = getSupabaseBrowser();
-        const { error } = await supabase.auth.signInWithOtp({
+        const { error } = await supabase.auth.signInWithPassword({
             email,
-            options: {
-                emailRedirectTo: `${window.location.origin}/auth/callback`,
-            },
+            password,
         });
 
         if (error) {
             setStatus('error');
             setErrorMessage(error.message);
         } else {
-            setStatus('sent');
+            setStatus('success');
+            router.push('/inference');
+            router.refresh();
         }
     }
 
@@ -59,64 +60,63 @@ export default function LoginPage() {
                 <Container className="max-w-md w-full">
                     <PageHeader
                         title="AUTHENTICATE"
-                        description="Sign in to access the VetIOS Intelligence Console."
+                        description="Sign in with email and password or continue with Google."
                     />
 
-                    {status === 'sent' ? (
+                    {status === 'success' ? (
                         <div className="p-6 border border-accent bg-accent/5 text-center space-y-4">
                             <div className="text-accent font-mono text-sm uppercase tracking-widest">
-                                Magic link sent
+                                Authentication successful
                             </div>
                             <p className="font-mono text-xs text-muted">
-                                Check your email for a sign-in link.
-                                <br />
-                                (Local dev: check Inbucket at <a href="http://127.0.0.1:54324" className="text-accent underline" target="_blank">127.0.0.1:54324</a>)
+                                Redirecting you into the VetIOS console.
                             </p>
                         </div>
                     ) : (
                         <div className="space-y-8">
-                            {EMAIL_MAGIC_LINKS_ENABLED ? (
-                                <form onSubmit={handleMagicLink} className="space-y-6">
-                                    <div>
-                                        <TerminalLabel htmlFor="email">Email Address</TerminalLabel>
-                                        <TerminalInput
-                                            id="email"
-                                            name="email"
-                                            type="email"
-                                            placeholder="vet@clinic.com"
-                                            value={email}
-                                            onChange={(e) => setEmail(e.target.value)}
-                                            required
-                                        />
-                                    </div>
-
-                                    <TerminalButton type="submit" disabled={status === 'sending'}>
-                                        {status === 'sending' ? 'SENDING LINK...' : 'SEND MAGIC LINK'}
-                                    </TerminalButton>
-
-                                    {status === 'error' && errorMessage && (
-                                        <div className="p-3 border border-danger text-danger font-mono text-xs">
-                                            ERR: {errorMessage}
-                                        </div>
-                                    )}
-                                </form>
-                            ) : (
-                                <div className="p-4 border border-warning bg-warning/5 space-y-2">
-                                    <div className="font-mono text-xs uppercase tracking-widest text-warning">
-                                        Email sign-in temporarily disabled
-                                    </div>
-                                    <p className="font-mono text-xs text-muted">
-                                        Magic-link login is paused while deliverability is being stabilized.
-                                        Use Google OAuth for access right now.
-                                    </p>
+                            <form onSubmit={handleEmailPasswordLogin} className="space-y-6">
+                                <div>
+                                    <TerminalLabel htmlFor="email">Email Address</TerminalLabel>
+                                    <TerminalInput
+                                        id="email"
+                                        name="email"
+                                        type="email"
+                                        placeholder="user@gmail.com"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        autoComplete="email"
+                                        required
+                                    />
                                 </div>
-                            )}
+
+                                <div>
+                                    <TerminalLabel htmlFor="password">Password</TerminalLabel>
+                                    <TerminalInput
+                                        id="password"
+                                        name="password"
+                                        type="password"
+                                        placeholder="Enter your password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        autoComplete="current-password"
+                                        required
+                                    />
+                                </div>
+
+                                <TerminalButton type="submit" disabled={status === 'submitting'}>
+                                    {status === 'submitting' ? 'SIGNING IN...' : 'SIGN IN WITH EMAIL'}
+                                </TerminalButton>
+
+                                {status === 'error' && errorMessage && (
+                                    <div className="p-3 border border-danger text-danger font-mono text-xs">
+                                        ERR: {errorMessage}
+                                    </div>
+                                )}
+                            </form>
 
                             <div className="flex items-center gap-4">
                                 <div className="flex-1 h-px bg-grid" />
-                                <span className="font-mono text-xs text-muted uppercase">
-                                    {EMAIL_MAGIC_LINKS_ENABLED ? 'or' : 'available now'}
-                                </span>
+                                <span className="font-mono text-xs text-muted uppercase">or</span>
                                 <div className="flex-1 h-px bg-grid" />
                             </div>
 

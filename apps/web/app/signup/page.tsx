@@ -1,7 +1,9 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
+import { validatePasswordPolicy } from '@/lib/auth/passwordPolicy';
 import {
     TerminalLabel,
     TerminalInput,
@@ -10,21 +12,36 @@ import {
     PageHeader,
 } from '@/components/ui/terminal';
 
-const EMAIL_MAGIC_LINKS_ENABLED = process.env.NEXT_PUBLIC_ENABLE_EMAIL_MAGIC_LINKS === 'true';
-
 export default function SignupPage() {
+    const router = useRouter();
     const [email, setEmail] = useState('');
-    const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+    const [password, setPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
+    const [status, setStatus] = useState<'idle' | 'submitting' | 'sent' | 'success' | 'error'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-    async function handleMagicLink(e: React.FormEvent) {
+    async function handleEmailPasswordSignup(e: React.FormEvent) {
         e.preventDefault();
-        setStatus('sending');
+        setStatus('submitting');
         setErrorMessage(null);
 
+        if (password !== confirmPassword) {
+            setStatus('error');
+            setErrorMessage('Passwords do not match.');
+            return;
+        }
+
+        const passwordValidation = validatePasswordPolicy(email, password);
+        if (!passwordValidation.valid) {
+            setStatus('error');
+            setErrorMessage(passwordValidation.issues.join(' '));
+            return;
+        }
+
         const supabase = getSupabaseBrowser();
-        const { error } = await supabase.auth.signInWithOtp({
+        const { data, error } = await supabase.auth.signUp({
             email,
+            password,
             options: {
                 emailRedirectTo: `${window.location.origin}/auth/callback`,
             },
@@ -33,6 +50,10 @@ export default function SignupPage() {
         if (error) {
             setStatus('error');
             setErrorMessage(error.message);
+        } else if (data.session) {
+            setStatus('success');
+            router.push('/inference');
+            router.refresh();
         } else {
             setStatus('sent');
         }
@@ -59,64 +80,90 @@ export default function SignupPage() {
                 <Container className="max-w-md w-full">
                     <PageHeader
                         title="CREATE ACCOUNT"
-                        description="Register to start building your intelligence layer."
+                        description="Create an account with email and password or continue with Google."
                     />
 
-                    {status === 'sent' ? (
+                    {status === 'success' ? (
                         <div className="p-6 border border-accent bg-accent/5 text-center space-y-4">
                             <div className="text-accent font-mono text-sm uppercase tracking-widest">
-                                Magic link sent
+                                Account created
                             </div>
                             <p className="font-mono text-xs text-muted">
-                                Check your email to confirm your account.
-                                <br />
-                                (Local dev: check Inbucket at <a href="http://127.0.0.1:54324" className="text-accent underline" target="_blank">127.0.0.1:54324</a>)
+                                Redirecting you into the VetIOS console.
+                            </p>
+                        </div>
+                    ) : status === 'sent' ? (
+                        <div className="p-6 border border-accent bg-accent/5 text-center space-y-4">
+                            <div className="text-accent font-mono text-sm uppercase tracking-widest">
+                                Check your email
+                            </div>
+                            <p className="font-mono text-xs text-muted">
+                                Your account was created. If email confirmation is enabled in Supabase,
+                                use the verification email before signing in.
                             </p>
                         </div>
                     ) : (
                         <div className="space-y-8">
-                            {EMAIL_MAGIC_LINKS_ENABLED ? (
-                                <form onSubmit={handleMagicLink} className="space-y-6">
-                                    <div>
-                                        <TerminalLabel htmlFor="email">Email Address</TerminalLabel>
-                                        <TerminalInput
-                                            id="email"
-                                            name="email"
-                                            type="email"
-                                            placeholder="vet@clinic.com"
-                                            value={email}
-                                            onChange={(e) => setEmail(e.target.value)}
-                                            required
-                                        />
-                                    </div>
+                            <form onSubmit={handleEmailPasswordSignup} className="space-y-6">
+                                <div>
+                                    <TerminalLabel htmlFor="email">Email Address</TerminalLabel>
+                                    <TerminalInput
+                                        id="email"
+                                        name="email"
+                                        type="email"
+                                        placeholder="user@gmail.com"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        autoComplete="email"
+                                        required
+                                    />
+                                </div>
 
-                                    <TerminalButton type="submit" disabled={status === 'sending'}>
-                                        {status === 'sending' ? 'SENDING LINK...' : 'SEND MAGIC LINK'}
-                                    </TerminalButton>
-
-                                    {status === 'error' && errorMessage && (
-                                        <div className="p-3 border border-danger text-danger font-mono text-xs">
-                                            ERR: {errorMessage}
-                                        </div>
-                                    )}
-                                </form>
-                            ) : (
-                                <div className="p-4 border border-warning bg-warning/5 space-y-2">
-                                    <div className="font-mono text-xs uppercase tracking-widest text-warning">
-                                        Email signup temporarily disabled
-                                    </div>
-                                    <p className="font-mono text-xs text-muted">
-                                        Magic-link signup is paused while deliverability is being stabilized.
-                                        Use Google OAuth to create an account right now.
+                                <div>
+                                    <TerminalLabel htmlFor="password">Password</TerminalLabel>
+                                    <TerminalInput
+                                        id="password"
+                                        name="password"
+                                        type="password"
+                                        placeholder="Create a strong password"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        autoComplete="new-password"
+                                        required
+                                    />
+                                    <p className="mt-2 font-mono text-[10px] text-muted">
+                                        Use 10+ characters with uppercase, lowercase, number, and symbol.
                                     </p>
                                 </div>
-                            )}
+
+                                <div>
+                                    <TerminalLabel htmlFor="confirmPassword">Confirm Password</TerminalLabel>
+                                    <TerminalInput
+                                        id="confirmPassword"
+                                        name="confirmPassword"
+                                        type="password"
+                                        placeholder="Repeat your password"
+                                        value={confirmPassword}
+                                        onChange={(e) => setConfirmPassword(e.target.value)}
+                                        autoComplete="new-password"
+                                        required
+                                    />
+                                </div>
+
+                                <TerminalButton type="submit" disabled={status === 'submitting'}>
+                                    {status === 'submitting' ? 'CREATING ACCOUNT...' : 'SIGN UP WITH EMAIL'}
+                                </TerminalButton>
+
+                                {status === 'error' && errorMessage && (
+                                    <div className="p-3 border border-danger text-danger font-mono text-xs">
+                                        ERR: {errorMessage}
+                                    </div>
+                                )}
+                            </form>
 
                             <div className="flex items-center gap-4">
                                 <div className="flex-1 h-px bg-grid" />
-                                <span className="font-mono text-xs text-muted uppercase">
-                                    {EMAIL_MAGIC_LINKS_ENABLED ? 'or' : 'available now'}
-                                </span>
+                                <span className="font-mono text-xs text-muted uppercase">or</span>
                                 <div className="flex-1 h-px bg-grid" />
                             </div>
 
