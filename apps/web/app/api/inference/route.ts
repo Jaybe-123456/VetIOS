@@ -48,7 +48,9 @@ import {
 export const runtime = 'nodejs';
 export const maxDuration = 60;
 
-const AI_TIMEOUT_MS = 55_000;
+const AI_TIMEOUT_MS = 50_000;
+const NON_CRITICAL_EFFECT_TIMEOUT_MS = 1_500;
+const DECISION_ENGINE_TIMEOUT_MS = 1_000;
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 10, windowMs: 60_000 });
@@ -192,6 +194,10 @@ export async function POST(req: Request) {
             inputSignature: signatureForLog,
             observedAt,
         });
+        const [recentIntegrityHistory, canonicalClinicalCase] = await Promise.all([
+            recentIntegrityHistoryPromise,
+            canonicalClinicalCasePromise,
+        ]);
         const integrityEvaluation = evaluateClinicalIntegrity(
             {
                 inputSignature: signatureForLog,
@@ -201,10 +207,9 @@ export async function POST(req: Request) {
                 contradictionAnalysis,
             },
             {
-                recentHistory: await recentIntegrityHistoryPromise,
+                recentHistory: recentIntegrityHistory,
             },
         );
-        const canonicalClinicalCase = await canonicalClinicalCasePromise;
         const persistedInferenceEventId = await logInference(supabase, {
             id: inferenceEventId,
             tenant_id: tenantId,
@@ -222,130 +227,6 @@ export async function POST(req: Request) {
             inference_latency_ms: latencyMs,
         });
 
-        try {
-            await logClinicalIntegrityEvent(supabase, {
-                inference_event_id: persistedInferenceEventId,
-                tenant_id: tenantId,
-                perturbation_score_m: integrityEvaluation.integrity.perturbation.m,
-                global_phi: integrityEvaluation.integrity.global_phi,
-                delta_phi: integrityEvaluation.integrity.instability.delta_phi,
-                curvature: integrityEvaluation.integrity.instability.curvature,
-                variance_proxy: integrityEvaluation.integrity.instability.variance_proxy,
-                divergence: integrityEvaluation.integrity.instability.divergence,
-                critical_instability_index: integrityEvaluation.integrity.instability.critical_instability_index,
-                state: integrityEvaluation.integrity.state,
-                collapse_risk: integrityEvaluation.integrity.collapse_risk,
-                precliff_detected: integrityEvaluation.integrity.precliff_detected,
-                details: {
-                    perturbation: integrityEvaluation.integrity.perturbation,
-                    capabilities: integrityEvaluation.integrity.capabilities,
-                    instability: integrityEvaluation.integrity.instability,
-                    precliff_detected: integrityEvaluation.integrity.precliff_detected,
-                    safety_policy: integrityEvaluation.safetyPolicy,
-                },
-            });
-        } catch (integrityErr) {
-            console.error(`[${requestId}] Clinical integrity logging failed (non-fatal):`, integrityErr);
-        }
-
-        try {
-            await emitTelemetryEvent(supabase, {
-                event_id: telemetryInferenceEventId(persistedInferenceEventId),
-                tenant_id: tenantId,
-                event_type: 'inference',
-                timestamp: observedAt,
-                model_version: routedModel.model_version,
-                run_id: telemetryRunId,
-                metrics: {
-                    latency_ms: measuredLatencyMs,
-                    confidence: inferenceResult.confidence_score,
-                    prediction: extractPredictionLabel(inferenceResult.output_payload),
-                },
-                system: extractSystemTelemetry(telemetry, executionMetrics.system),
-                metadata: {
-                    source_module: 'inference_console',
-                    request_id: requestId,
-                    inference_event_id: persistedInferenceEventId,
-                    clinic_id: body.clinic_id ?? null,
-                    case_id: canonicalClinicalCase.id,
-                    contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
-                        ? contradictionAnalysis.contradiction_reasons
-                        : [],
-                    persistence_rule_triggers: Array.isArray(inferenceResult.uncertainty_metrics?.persistence_rule_triggers)
-                        ? inferenceResult.uncertainty_metrics?.persistence_rule_triggers
-                        : [],
-                    pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
-                        ? inferenceResult.output_payload.pipeline_trace
-                        : [],
-                    ...routingTelemetryMetadata,
-                },
-            });
-            await emitTelemetryEvent(supabase, {
-                event_id: `evt_routing_${routingPlan.routing_decision_id}`,
-                tenant_id: tenantId,
-                linked_event_id: telemetryInferenceEventId(persistedInferenceEventId),
-                source_id: persistedInferenceEventId,
-                source_table: 'ai_inference_events',
-                event_type: 'system',
-                timestamp: observedAt,
-                model_version: routedModel.model_version,
-                run_id: telemetryRunId,
-                metrics: {
-                    latency_ms: measuredLatencyMs,
-                    confidence: inferenceResult.confidence_score,
-                    prediction: extractPredictionLabel(inferenceResult.output_payload),
-                },
-                metadata: {
-                    action: routingExecution.fallback_used
-                        ? 'routing_fallback'
-                        : routingExecution.route_mode === 'ensemble'
-                            ? 'routing_ensemble'
-                            : 'routing_decision',
-                    source_module: 'inference_console',
-                    request_id: requestId,
-                    inference_event_id: persistedInferenceEventId,
-                    case_id: canonicalClinicalCase.id,
-                    contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
-                        ? contradictionAnalysis.contradiction_reasons
-                        : [],
-                    pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
-                        ? inferenceResult.output_payload.pipeline_trace
-                        : [],
-                    ...routingTelemetryMetadata,
-                },
-            });
-        } catch (telemetryErr) {
-            console.error(`[${requestId}] Telemetry emission failed (non-fatal):`, telemetryErr);
-        }
-
-        await finalizeRoutingDecisionRecord(supabase, routingPlan, routingExecution, {
-            inferenceEventId: persistedInferenceEventId,
-            caseId: canonicalClinicalCase.id,
-            actualLatencyMs: measuredLatencyMs,
-            prediction: extractPredictionLabel(inferenceResult.output_payload),
-            predictionConfidence: inferenceResult.confidence_score,
-        });
-
-        await finalizeClinicalCaseAfterInference(
-            caseStore,
-            canonicalClinicalCase,
-            persistedInferenceEventId,
-            {
-                observedAt,
-                userId,
-                sourceModule: 'inference_console',
-                outputPayload: inferenceResult.output_payload,
-                confidenceScore: inferenceResult.confidence_score,
-                modelVersion: routedModel.model_version,
-                metadataPatch: {
-                    latest_inference_confidence: inferenceResult.confidence_score,
-                    latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
-                    latest_inference_model_version: routedModel.model_version,
-                    latest_inference_source: 'inference_console',
-                },
-            },
-        );
-
         logClinicalDatasetMutation({
             source: 'api/inference',
             mutationType: 'inference',
@@ -357,15 +238,150 @@ export async function POST(req: Request) {
         });
         revalidatePath('/dataset');
 
-        try {
-            await evaluateDecisionEngine({
-                client: supabase,
-                tenantId,
-                triggerSource: 'inference',
-            });
-        } catch (decisionErr) {
-            console.error(`[${requestId}] Decision engine evaluation failed (non-fatal):`, decisionErr);
-        }
+        await Promise.all([
+            settleNonCriticalEffect(
+                requestId,
+                'Clinical integrity logging',
+                logClinicalIntegrityEvent(supabase, {
+                    inference_event_id: persistedInferenceEventId,
+                    tenant_id: tenantId,
+                    perturbation_score_m: integrityEvaluation.integrity.perturbation.m,
+                    global_phi: integrityEvaluation.integrity.global_phi,
+                    delta_phi: integrityEvaluation.integrity.instability.delta_phi,
+                    curvature: integrityEvaluation.integrity.instability.curvature,
+                    variance_proxy: integrityEvaluation.integrity.instability.variance_proxy,
+                    divergence: integrityEvaluation.integrity.instability.divergence,
+                    critical_instability_index: integrityEvaluation.integrity.instability.critical_instability_index,
+                    state: integrityEvaluation.integrity.state,
+                    collapse_risk: integrityEvaluation.integrity.collapse_risk,
+                    precliff_detected: integrityEvaluation.integrity.precliff_detected,
+                    details: {
+                        perturbation: integrityEvaluation.integrity.perturbation,
+                        capabilities: integrityEvaluation.integrity.capabilities,
+                        instability: integrityEvaluation.integrity.instability,
+                        precliff_detected: integrityEvaluation.integrity.precliff_detected,
+                        safety_policy: integrityEvaluation.safetyPolicy,
+                    },
+                }),
+                { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+            ),
+            settleNonCriticalEffect(
+                requestId,
+                'Telemetry emission',
+                Promise.all([
+                    emitTelemetryEvent(supabase, {
+                        event_id: telemetryInferenceEventId(persistedInferenceEventId),
+                        tenant_id: tenantId,
+                        event_type: 'inference',
+                        timestamp: observedAt,
+                        model_version: routedModel.model_version,
+                        run_id: telemetryRunId,
+                        metrics: {
+                            latency_ms: measuredLatencyMs,
+                            confidence: inferenceResult.confidence_score,
+                            prediction: extractPredictionLabel(inferenceResult.output_payload),
+                        },
+                        system: extractSystemTelemetry(telemetry, executionMetrics.system),
+                        metadata: {
+                            source_module: 'inference_console',
+                            request_id: requestId,
+                            inference_event_id: persistedInferenceEventId,
+                            clinic_id: body.clinic_id ?? null,
+                            case_id: canonicalClinicalCase.id,
+                            contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
+                                ? contradictionAnalysis.contradiction_reasons
+                                : [],
+                            persistence_rule_triggers: Array.isArray(inferenceResult.uncertainty_metrics?.persistence_rule_triggers)
+                                ? inferenceResult.uncertainty_metrics?.persistence_rule_triggers
+                                : [],
+                            pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
+                                ? inferenceResult.output_payload.pipeline_trace
+                                : [],
+                            ...routingTelemetryMetadata,
+                        },
+                    }),
+                    emitTelemetryEvent(supabase, {
+                        event_id: `evt_routing_${routingPlan.routing_decision_id}`,
+                        tenant_id: tenantId,
+                        linked_event_id: telemetryInferenceEventId(persistedInferenceEventId),
+                        source_id: persistedInferenceEventId,
+                        source_table: 'ai_inference_events',
+                        event_type: 'system',
+                        timestamp: observedAt,
+                        model_version: routedModel.model_version,
+                        run_id: telemetryRunId,
+                        metrics: {
+                            latency_ms: measuredLatencyMs,
+                            confidence: inferenceResult.confidence_score,
+                            prediction: extractPredictionLabel(inferenceResult.output_payload),
+                        },
+                        metadata: {
+                            action: routingExecution.fallback_used
+                                ? 'routing_fallback'
+                                : routingExecution.route_mode === 'ensemble'
+                                    ? 'routing_ensemble'
+                                    : 'routing_decision',
+                            source_module: 'inference_console',
+                            request_id: requestId,
+                            inference_event_id: persistedInferenceEventId,
+                            case_id: canonicalClinicalCase.id,
+                            contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
+                                ? contradictionAnalysis.contradiction_reasons
+                                : [],
+                            pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
+                                ? inferenceResult.output_payload.pipeline_trace
+                                : [],
+                            ...routingTelemetryMetadata,
+                        },
+                    }),
+                ]),
+                { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+            ),
+            settleNonCriticalEffect(
+                requestId,
+                'Routing decision finalization',
+                finalizeRoutingDecisionRecord(supabase, routingPlan, routingExecution, {
+                    inferenceEventId: persistedInferenceEventId,
+                    caseId: canonicalClinicalCase.id,
+                    actualLatencyMs: measuredLatencyMs,
+                    prediction: extractPredictionLabel(inferenceResult.output_payload),
+                    predictionConfidence: inferenceResult.confidence_score,
+                }),
+            ),
+            settleNonCriticalEffect(
+                requestId,
+                'Clinical case finalization',
+                finalizeClinicalCaseAfterInference(
+                    caseStore,
+                    canonicalClinicalCase,
+                    persistedInferenceEventId,
+                    {
+                        observedAt,
+                        userId,
+                        sourceModule: 'inference_console',
+                        outputPayload: inferenceResult.output_payload,
+                        confidenceScore: inferenceResult.confidence_score,
+                        modelVersion: routedModel.model_version,
+                        metadataPatch: {
+                            latest_inference_confidence: inferenceResult.confidence_score,
+                            latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
+                            latest_inference_model_version: routedModel.model_version,
+                            latest_inference_source: 'inference_console',
+                        },
+                    },
+                ),
+            ),
+            settleNonCriticalEffect(
+                requestId,
+                'Decision engine evaluation',
+                evaluateDecisionEngine({
+                    client: supabase,
+                    tenantId,
+                    triggerSource: 'inference',
+                }),
+                { timeoutMs: DECISION_ENGINE_TIMEOUT_MS },
+            ),
+        ]);
 
         const response = NextResponse.json({
             inference_event_id: persistedInferenceEventId,
@@ -442,7 +458,7 @@ export async function POST(req: Request) {
             );
         }
 
-        const message = err instanceof Error ? err.stack || err.message : 'Unknown error';
+        const message = err instanceof Error ? err.message : 'Unknown error';
         return NextResponse.json(
             { error: message, request_id: requestId },
             { status: 500 },
@@ -480,4 +496,29 @@ function asNullableRecord(value: unknown): Record<string, unknown> | null {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : null;
+}
+
+async function settleNonCriticalEffect(
+    requestId: string,
+    label: string,
+    effect: Promise<unknown>,
+    options: {
+        timeoutMs?: number;
+    } = {},
+) {
+    try {
+        if (options.timeoutMs && options.timeoutMs > 0) {
+            await Promise.race([
+                effect,
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error(`${label} timed out after ${options.timeoutMs}ms`)), options.timeoutMs),
+                ),
+            ]);
+            return;
+        }
+
+        await effect;
+    } catch (error) {
+        console.error(`[${requestId}] ${label} failed (non-fatal):`, error);
+    }
 }

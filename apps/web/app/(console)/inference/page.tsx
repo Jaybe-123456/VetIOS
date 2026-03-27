@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel, TerminalInput, TerminalTextarea, TerminalButton } from '@/components/ui/terminal';
 import { InferenceForm } from '@/components/InferenceForm';
 import { NormalizedPreview } from '@/components/NormalizedPreview';
@@ -57,6 +58,7 @@ interface InferenceState {
 }
 
 export default function InferenceConsole() {
+    const router = useRouter();
     const [state, setState] = useState<InferenceState>({
         status: 'idle',
         eventId: null,
@@ -150,6 +152,7 @@ export default function InferenceConsole() {
                 labResults,
                 errorMessage: null,
             }));
+            setOutcomeState({ status: 'idle' });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Normalization failed.';
             setState(prev => ({ ...prev, status: 'error', errorMessage }));
@@ -165,6 +168,7 @@ export default function InferenceConsole() {
             normalizedInput: finalInput,
             errorMessage: null,
         }));
+        setOutcomeState({ status: 'idle' });
 
         try {
             const metadata = {
@@ -192,6 +196,8 @@ export default function InferenceConsole() {
             const res = await fetch('/api/inference', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                cache: 'no-store',
                 body: JSON.stringify(data)
             });
 
@@ -200,14 +206,31 @@ export default function InferenceConsole() {
             try {
                 result = JSON.parse(textResult);
             } catch {
-                throw new Error(`Server returned HTTP ${res.status} (Not JSON). Potential Vercel Timeout or Edge Error.`);
+                throw new Error(`Server returned HTTP ${res.status} without JSON. The request likely timed out or the API crashed before it could finish cleanly.`);
             }
 
-            if (!res.ok) throw new Error(result.error || `Inference computation failed (HTTP ${res.status})`);
+            if (!res.ok) {
+                if (res.status === 401) {
+                    const authMessage = typeof result.error === 'string'
+                        ? result.error
+                        : 'Session expired. Sign in again to continue.';
+                    setState(prev => ({ ...prev, status: 'error', errorMessage: authMessage }));
+                    router.push('/login?next=%2Finference');
+                    return;
+                }
 
-            await new Promise(r => setTimeout(r, 800));
+                const requestIdSuffix = typeof result.request_id === 'string' ? ` [request_id=${result.request_id}]` : '';
+                throw new Error((result.error || `Inference computation failed (HTTP ${res.status})`) + requestIdSuffix);
+            }
 
-            const output = result.output as Record<string, unknown> | undefined;
+            const inferenceEventId = typeof result.inference_event_id === 'string' && result.inference_event_id.trim().length > 0
+                ? result.inference_event_id
+                : null;
+            if (!inferenceEventId) {
+                throw new Error('Inference succeeded but no inference_event_id was returned.');
+            }
+
+            const output = (result.output ?? result.prediction) as Record<string, unknown> | undefined;
             const diagnosis = output?.diagnosis as Record<string, unknown> | undefined;
             const riskAssessment = output?.risk_assessment as Record<string, unknown> | undefined;
             
@@ -227,9 +250,9 @@ export default function InferenceConsole() {
 
             setState({
                 status: 'success',
-                eventId: result.inference_event_id || `evt_${Math.random().toString(36).substr(2, 9)}`,
+                eventId: inferenceEventId,
                 requestPayload: data.input.input_signature as Record<string, unknown>,
-                responsePayload: result.output || null,
+                responsePayload: output ?? null,
                 probabilities: mappedProbabilities.length > 0 ? mappedProbabilities : [
                     { label: 'Unknown', value: 0 }
                 ],
@@ -282,11 +305,25 @@ export default function InferenceConsole() {
             const res = await fetch('/api/outcome', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                cache: 'no-store',
                 body: JSON.stringify(data),
             });
 
             const result = await res.json();
-            if (!res.ok) throw new Error(result.error || 'Failed to attach outcome');
+            if (!res.ok) {
+                if (res.status === 401) {
+                    setOutcomeState({
+                        status: 'error',
+                        errorMessage: typeof result.error === 'string'
+                            ? result.error
+                            : 'Session expired. Sign in again to attach the outcome.',
+                    });
+                    router.push('/login?next=%2Finference');
+                    return;
+                }
+                throw new Error(result.error || 'Failed to attach outcome');
+            }
 
             setOutcomeState({
                 status: 'submitted',
