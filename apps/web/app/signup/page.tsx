@@ -10,6 +10,8 @@ import {
     PageHeader,
 } from '@/components/ui/terminal';
 
+const EMAIL_MAGIC_LINKS_ENABLED = process.env.NEXT_PUBLIC_ENABLE_EMAIL_MAGIC_LINKS === 'true';
+
 export default function SignupPage() {
     const [email, setEmail] = useState('');
     const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
@@ -73,34 +75,48 @@ export default function SignupPage() {
                         </div>
                     ) : (
                         <div className="space-y-8">
-                            <form onSubmit={handleMagicLink} className="space-y-6">
-                                <div>
-                                    <TerminalLabel htmlFor="email">Email Address</TerminalLabel>
-                                    <TerminalInput
-                                        id="email"
-                                        name="email"
-                                        type="email"
-                                        placeholder="vet@clinic.com"
-                                        value={email}
-                                        onChange={(e) => setEmail(e.target.value)}
-                                        required
-                                    />
-                                </div>
-
-                                <TerminalButton type="submit" disabled={status === 'sending'}>
-                                    {status === 'sending' ? 'SENDING LINK...' : 'SEND MAGIC LINK'}
-                                </TerminalButton>
-
-                                {status === 'error' && errorMessage && (
-                                    <div className="p-3 border border-danger text-danger font-mono text-xs">
-                                        ERR: {errorMessage}
+                            {EMAIL_MAGIC_LINKS_ENABLED ? (
+                                <form onSubmit={handleMagicLink} className="space-y-6">
+                                    <div>
+                                        <TerminalLabel htmlFor="email">Email Address</TerminalLabel>
+                                        <TerminalInput
+                                            id="email"
+                                            name="email"
+                                            type="email"
+                                            placeholder="vet@clinic.com"
+                                            value={email}
+                                            onChange={(e) => setEmail(e.target.value)}
+                                            required
+                                        />
                                     </div>
-                                )}
-                            </form>
+
+                                    <TerminalButton type="submit" disabled={status === 'sending'}>
+                                        {status === 'sending' ? 'SENDING LINK...' : 'SEND MAGIC LINK'}
+                                    </TerminalButton>
+
+                                    {status === 'error' && errorMessage && (
+                                        <div className="p-3 border border-danger text-danger font-mono text-xs">
+                                            ERR: {errorMessage}
+                                        </div>
+                                    )}
+                                </form>
+                            ) : (
+                                <div className="p-4 border border-warning bg-warning/5 space-y-2">
+                                    <div className="font-mono text-xs uppercase tracking-widest text-warning">
+                                        Email signup temporarily disabled
+                                    </div>
+                                    <p className="font-mono text-xs text-muted">
+                                        Magic-link signup is paused while deliverability is being stabilized.
+                                        Use Google OAuth to create an account right now.
+                                    </p>
+                                </div>
+                            )}
 
                             <div className="flex items-center gap-4">
                                 <div className="flex-1 h-px bg-grid" />
-                                <span className="font-mono text-xs text-muted uppercase">or</span>
+                                <span className="font-mono text-xs text-muted uppercase">
+                                    {EMAIL_MAGIC_LINKS_ENABLED ? 'or' : 'available now'}
+                                </span>
                                 <div className="flex-1 h-px bg-grid" />
                             </div>
 
