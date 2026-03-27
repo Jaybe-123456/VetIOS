@@ -15,10 +15,10 @@ export function TerminalLabel({ children, htmlFor }: { children: React.ReactNode
 
 /* ── TerminalInput ─────────────────────────────────────────────────────────── */
 
-export function TerminalInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+export function TerminalInput({ className = '', ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
     return (
         <input
-            className="w-full bg-dim border-grid p-3 sm:p-3 font-mono text-sm text-foreground focus:outline-none focus:border-accent transition-colors"
+            className={`w-full bg-dim border-grid p-3 sm:p-3 font-mono text-sm text-foreground focus:outline-none focus:border-accent transition-colors ${className}`}
             {...props}
         />
     );

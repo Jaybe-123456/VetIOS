@@ -17,6 +17,8 @@ export default function SignupPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [status, setStatus] = useState<'idle' | 'submitting' | 'sent' | 'success' | 'error'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -121,16 +123,27 @@ export default function SignupPage() {
 
                                 <div>
                                     <TerminalLabel htmlFor="password">Password</TerminalLabel>
-                                    <TerminalInput
-                                        id="password"
-                                        name="password"
-                                        type="password"
-                                        placeholder="Create a strong password"
-                                        value={password}
-                                        onChange={(e) => setPassword(e.target.value)}
-                                        autoComplete="new-password"
-                                        required
-                                    />
+                                    <div className="relative">
+                                        <TerminalInput
+                                            id="password"
+                                            name="password"
+                                            type={showPassword ? 'text' : 'password'}
+                                            placeholder="Create a strong password"
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            autoComplete="new-password"
+                                            className="pr-20"
+                                            required
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowPassword((value) => !value)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] uppercase tracking-widest text-muted hover:text-accent transition-colors"
+                                            aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                        >
+                                            {showPassword ? 'Hide' : 'Show'}
+                                        </button>
+                                    </div>
                                     <p className="mt-2 font-mono text-[10px] text-muted">
                                         Use 10+ characters with uppercase, lowercase, number, and symbol.
                                     </p>
@@ -138,16 +151,27 @@ export default function SignupPage() {
 
                                 <div>
                                     <TerminalLabel htmlFor="confirmPassword">Confirm Password</TerminalLabel>
-                                    <TerminalInput
-                                        id="confirmPassword"
-                                        name="confirmPassword"
-                                        type="password"
-                                        placeholder="Repeat your password"
-                                        value={confirmPassword}
-                                        onChange={(e) => setConfirmPassword(e.target.value)}
-                                        autoComplete="new-password"
-                                        required
-                                    />
+                                    <div className="relative">
+                                        <TerminalInput
+                                            id="confirmPassword"
+                                            name="confirmPassword"
+                                            type={showConfirmPassword ? 'text' : 'password'}
+                                            placeholder="Repeat your password"
+                                            value={confirmPassword}
+                                            onChange={(e) => setConfirmPassword(e.target.value)}
+                                            autoComplete="new-password"
+                                            className="pr-20"
+                                            required
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowConfirmPassword((value) => !value)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] uppercase tracking-widest text-muted hover:text-accent transition-colors"
+                                            aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                                        >
+                                            {showConfirmPassword ? 'Hide' : 'Show'}
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <TerminalButton type="submit" disabled={status === 'submitting'}>
