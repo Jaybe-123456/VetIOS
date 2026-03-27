@@ -16,6 +16,7 @@ import type {
     ModelFamily,
     ModelRegistryControlPlaneSnapshot,
     ModelRegistryRecord,
+    RegistryRoutingPointerRecord,
 } from '@/lib/experiments/types';
 import { extractPredictionLabel } from '@/lib/telemetry/service';
 import type {
@@ -34,6 +35,7 @@ import type {
 const PERFORMANCE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const MAX_ROUTING_DECISIONS = 400;
 const DEFAULT_CONFIDENCE_THRESHOLD = 0.65;
+const ROUTING_MODEL_FAMILY_ORDER: ModelFamily[] = ['diagnostics', 'vision', 'therapeutics'];
 
 type RegistryFamilyGroup = ModelRegistryControlPlaneSnapshot['families'][number];
 
@@ -701,17 +703,225 @@ async function loadRoutingRegistrySnapshot(
 ): Promise<ModelRegistryControlPlaneSnapshot> {
     try {
         return await getModelRegistryControlPlaneSnapshot(store, tenantId);
-    } catch {
+    } catch (error) {
+        const fallbackSnapshot = await loadMinimalRoutingRegistrySnapshot(store, tenantId, error);
+        if (fallbackSnapshot) {
+            console.warn(`[routing] Falling back to minimal registry snapshot for tenant ${tenantId}: ${extractErrorMessage(error)}`);
+            return fallbackSnapshot;
+        }
+
+        console.warn(`[routing] Registry snapshot unavailable for tenant ${tenantId}: ${extractErrorMessage(error)}`);
         return {
             tenant_id: tenantId,
             families: [],
             routing_pointers: [],
             audit_history: [],
-            registry_health: 'healthy',
+            registry_health: 'degraded',
             consistency_issues: [],
             refreshed_at: new Date().toISOString(),
         };
     }
+}
+
+async function loadMinimalRoutingRegistrySnapshot(
+    store: ReturnType<typeof createSupabaseExperimentTrackingStore>,
+    tenantId: string,
+    sourceError: unknown,
+): Promise<ModelRegistryControlPlaneSnapshot | null> {
+    let registryRecords: ModelRegistryRecord[];
+    try {
+        registryRecords = await store.listModelRegistry(tenantId);
+    } catch (registryError) {
+        console.warn(`[routing] Minimal registry fallback failed for tenant ${tenantId}: ${extractErrorMessage(registryError)}`);
+        return null;
+    }
+
+    if (registryRecords.length === 0) {
+        return {
+            tenant_id: tenantId,
+            families: [],
+            routing_pointers: [],
+            audit_history: [],
+            registry_health: 'degraded',
+            consistency_issues: [{
+                code: 'orphan_registry_metadata',
+                severity: 'warning',
+                message: `Routing control-plane degraded: ${extractErrorMessage(sourceError)}`,
+            }],
+            refreshed_at: new Date().toISOString(),
+        };
+    }
+
+    const routingPointers = await listRegistryRoutingPointersSafely(store, tenantId);
+    const auditHistory = await listRegistryAuditLogSafely(store, tenantId);
+    return buildMinimalRoutingRegistrySnapshot({
+        tenantId,
+        registryRecords,
+        routingPointers,
+        auditHistory,
+        sourceError,
+    });
+}
+
+async function listRegistryRoutingPointersSafely(
+    store: ReturnType<typeof createSupabaseExperimentTrackingStore>,
+    tenantId: string,
+): Promise<RegistryRoutingPointerRecord[]> {
+    try {
+        return await store.listRegistryRoutingPointers(tenantId);
+    } catch (error) {
+        console.warn(`[routing] Registry routing pointers unavailable for tenant ${tenantId}: ${extractErrorMessage(error)}`);
+        return [];
+    }
+}
+
+async function listRegistryAuditLogSafely(
+    store: ReturnType<typeof createSupabaseExperimentTrackingStore>,
+    tenantId: string,
+) {
+    try {
+        return await store.listRegistryAuditLog(tenantId, 50);
+    } catch (error) {
+        console.warn(`[routing] Registry audit log unavailable for tenant ${tenantId}: ${extractErrorMessage(error)}`);
+        return [];
+    }
+}
+
+function buildMinimalRoutingRegistrySnapshot(input: {
+    tenantId: string;
+    registryRecords: ModelRegistryRecord[];
+    routingPointers: RegistryRoutingPointerRecord[];
+    auditHistory: Awaited<ReturnType<typeof listRegistryAuditLogSafely>>;
+    sourceError: unknown;
+}): ModelRegistryControlPlaneSnapshot {
+    const routingByFamily = new Map(input.routingPointers.map((pointer) => [pointer.model_family, pointer]));
+    const families = ROUTING_MODEL_FAMILY_ORDER.map((modelFamily) => {
+        const familyRecords = input.registryRecords
+            .filter((record) => record.model_family === modelFamily)
+            .sort(compareMinimalRegistryRecords);
+        const activePointer = routingByFamily.get(modelFamily) ?? null;
+        const activeModel = resolveMinimalActiveRegistryModel(familyRecords, activePointer);
+
+        return {
+            model_family: modelFamily,
+            active_registry_id: activePointer?.active_registry_id ?? activeModel?.registry_id ?? null,
+            active_model: activeModel,
+            last_stable_model: familyRecords.find((record) => record.registry_role === 'rollback_target') ?? null,
+            entries: familyRecords.map((registry) => {
+                const latestRegistryEvents = input.auditHistory
+                    .filter((event) => event.registry_id === registry.registry_id)
+                    .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+                    .slice(0, 8);
+                const rollbackTarget = familyRecords.find((candidate) =>
+                    candidate.registry_role === 'rollback_target' && candidate.registry_id !== registry.registry_id,
+                ) ?? null;
+                const registrationReady = Boolean(registry.artifact_uri ?? registry.artifact_path);
+                const routeActive = activePointer?.active_registry_id != null
+                    ? activePointer.active_registry_id === registry.registry_id
+                    : activeModel?.registry_id === registry.registry_id;
+
+                return {
+                    registry,
+                    run: null,
+                    promotion_requirements: null,
+                    decision_panel: {
+                        promotion_eligibility: registry.lifecycle_status === 'production' || registry.registry_role === 'rollback_target',
+                        deployment_decision: registry.lifecycle_status === 'production' || registry.registry_role === 'rollback_target'
+                            ? 'approved' as const
+                            : 'hold' as const,
+                        reasons: ['Routing loaded from minimal model registry fallback.'],
+                        missing_evaluations: [],
+                        blocker_codes: [],
+                    },
+                    promotion_gating: {
+                        can_promote: false,
+                        promotion_allowed: registry.lifecycle_status === 'production' || registry.registry_role === 'rollback_target',
+                        missing_requirements: [],
+                        blockers: [],
+                        blocker_codes: [],
+                        gates: {
+                            calibration: 'pending' as const,
+                            adversarial: 'pending' as const,
+                            safety: 'pending' as const,
+                            benchmark: 'pending' as const,
+                            manual_approval: 'pending' as const,
+                        },
+                        tooltip: 'Routing is using a minimal registry snapshot fallback because secondary control-plane tables are unavailable.',
+                    },
+                    registration_validation: {
+                        status: registrationReady ? 'valid' as const : 'blocked' as const,
+                        code: registrationReady ? 'VALID_ARTIFACT_METADATA' as const : 'INVALID_ARTIFACT_METADATA' as const,
+                        reasons: registrationReady ? [] : ['Artifact metadata is unavailable in the minimal routing snapshot fallback.'],
+                    },
+                    rollback_readiness: {
+                        ready: registry.registry_role !== 'champion' || rollbackTarget != null,
+                        target_registry_id: rollbackTarget?.registry_id ?? registry.rollback_target ?? null,
+                        reasons: registry.registry_role !== 'champion' || rollbackTarget != null
+                            ? []
+                            : ['No rollback target is available in the minimal routing snapshot fallback.'],
+                    },
+                    audit_trail_ready: latestRegistryEvents.length > 0,
+                    clinical_scorecard: registry.clinical_metrics,
+                    lineage: registry.lineage,
+                    rollback_history: latestRegistryEvents.filter((event) => event.event_type === 'rolled_back'),
+                    latest_registry_events: latestRegistryEvents,
+                    is_active_route: routeActive,
+                    last_stable_model: rollbackTarget,
+                };
+            }),
+        };
+    });
+
+    return {
+        tenant_id: input.tenantId,
+        families,
+        routing_pointers: input.routingPointers,
+        audit_history: input.auditHistory,
+        registry_health: 'degraded',
+        consistency_issues: [{
+            code: 'orphan_registry_metadata',
+            severity: 'warning',
+            message: `Routing control-plane degraded to minimal registry snapshot: ${extractErrorMessage(input.sourceError)}`,
+        }],
+        refreshed_at: new Date().toISOString(),
+    };
+}
+
+function resolveMinimalActiveRegistryModel(
+    familyRecords: ModelRegistryRecord[],
+    activePointer: RegistryRoutingPointerRecord | null,
+) {
+    if (activePointer?.active_registry_id) {
+        const pointedRegistry = familyRecords.find((record) => record.registry_id === activePointer.active_registry_id);
+        if (pointedRegistry) return pointedRegistry;
+    }
+
+    return familyRecords.find((record) =>
+        record.lifecycle_status === 'production' && record.registry_role === 'champion',
+    ) ?? familyRecords.find((record) =>
+        record.lifecycle_status === 'production',
+    ) ?? familyRecords.find((record) =>
+        record.registry_role === 'rollback_target',
+    ) ?? familyRecords[0] ?? null;
+}
+
+function compareMinimalRegistryRecords(left: ModelRegistryRecord, right: ModelRegistryRecord) {
+    const leftRank = rankMinimalRegistryRecord(left);
+    const rightRank = rankMinimalRegistryRecord(right);
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return (right.deployed_at ?? right.updated_at).localeCompare(left.deployed_at ?? left.updated_at);
+}
+
+function rankMinimalRegistryRecord(registry: ModelRegistryRecord) {
+    if (registry.lifecycle_status === 'production' && registry.registry_role === 'champion') return 0;
+    if (registry.lifecycle_status === 'production') return 1;
+    if (registry.registry_role === 'rollback_target') return 2;
+    if (registry.registry_role === 'challenger') return 3;
+    if (registry.lifecycle_status === 'staging') return 4;
+    if (registry.registry_role === 'candidate') return 5;
+    if (registry.registry_role === 'experimental') return 6;
+    if (registry.registry_role === 'archived' || registry.lifecycle_status === 'archived') return 8;
+    return 7;
 }
 
 async function loadRoutingSystemState(
