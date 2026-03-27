@@ -938,9 +938,17 @@ export async function getExperimentRunDetail(
     store: ExperimentTrackingStore,
     tenantId: string,
     runId: string,
+    options: {
+        readOnly?: boolean;
+    } = {},
 ): Promise<ExperimentRunDetail | null> {
-    await backfillSummaryExperimentRuns(store, tenantId);
-    await ensureGovernanceForRun(store, tenantId, runId, null);
+    const readOnly = options.readOnly !== false;
+    await backfillSummaryExperimentRuns(store, tenantId, {
+        materializeGovernance: !readOnly,
+    });
+    if (!readOnly) {
+        await ensureGovernanceForRun(store, tenantId, runId, null);
+    }
 
     const run = await store.getExperimentRun(tenantId, runId);
     if (!run) return null;
@@ -1083,9 +1091,13 @@ export async function getExperimentDashboardSnapshot(
         selectedRunId?: string | null;
         compareRunIds?: string[];
         runLimit?: number;
+        readOnly?: boolean;
     } = {},
 ): Promise<ExperimentDashboardSnapshot> {
-    await backfillSummaryExperimentRuns(store, tenantId);
+    const readOnly = options.readOnly !== false;
+    await backfillSummaryExperimentRuns(store, tenantId, {
+        materializeGovernance: !readOnly,
+    });
 
     const runs = await store.listExperimentRuns(tenantId, {
         limit: options.runLimit ?? 50,
@@ -1100,7 +1112,7 @@ export async function getExperimentDashboardSnapshot(
     const metricsByRun = Object.fromEntries(runMetrics);
     const comparisonRequest = resolveDashboardComparisonRequest(runs, selectedRunId, options.compareRunIds ?? []);
     const [selectedRunDetail, comparison] = await Promise.all([
-        selectedRunId ? getExperimentRunDetail(store, tenantId, selectedRunId) : Promise.resolve(null),
+        selectedRunId ? getExperimentRunDetail(store, tenantId, selectedRunId, { readOnly }) : Promise.resolve(null),
         comparisonRequest.run_ids.length > 1
             ? getExperimentComparison(
                 store,
@@ -1126,6 +1138,9 @@ export async function getExperimentDashboardSnapshot(
 export async function getModelRegistryControlPlaneSnapshot(
     store: ExperimentTrackingStore,
     tenantId: string,
+    options: {
+        readOnly?: boolean;
+    } = {},
 ): Promise<ModelRegistryControlPlaneSnapshot> {
     const now = Date.now();
     const cached = modelRegistryControlPlaneSnapshotCache.get(tenantId);
@@ -1139,7 +1154,10 @@ export async function getModelRegistryControlPlaneSnapshot(
     }
 
     const promise = (async () => {
-        await backfillSummaryExperimentRuns(store, tenantId);
+        const readOnly = options.readOnly !== false;
+        await backfillSummaryExperimentRuns(store, tenantId, {
+            materializeGovernance: !readOnly,
+        });
 
         const [runs, registryRecords, promotionRequirements, routingPointers, registryAuditEvents] = await Promise.all([
             store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
@@ -1295,14 +1313,16 @@ export async function refreshModelRegistryControlPlaneSnapshot(
     tenantId: string,
 ): Promise<ModelRegistryControlPlaneSnapshot> {
     invalidateModelRegistryControlPlaneSnapshot(tenantId);
-    return getModelRegistryControlPlaneSnapshot(store, tenantId);
+    return getModelRegistryControlPlaneSnapshot(store, tenantId, { readOnly: false });
 }
 
 export async function verifyModelRegistryControlPlane(
     store: ExperimentTrackingStore,
     tenantId: string,
 ): Promise<RegistryControlPlaneVerificationResult> {
-    await backfillSummaryExperimentRuns(store, tenantId);
+    await backfillSummaryExperimentRuns(store, tenantId, {
+        materializeGovernance: false,
+    });
 
     const [runs, registryRecords, routingPointers, auditEvents] = await Promise.all([
         store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
@@ -1520,6 +1540,9 @@ export function getEmptyMetricStateMessage(
 export async function backfillSummaryExperimentRuns(
     store: ExperimentTrackingStore,
     tenantId: string,
+    options: {
+        materializeGovernance?: boolean;
+    } = {},
 ): Promise<void> {
     const [runs, registryEntries, datasetVersions, benchmarkReports, calibrationReports] = await Promise.all([
         store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
@@ -1733,11 +1756,13 @@ export async function backfillSummaryExperimentRuns(
         await backfillArtifactsFromRegistryPayload(store, tenantId, run.run_id, entry.artifact_payload);
     }
 
-    const currentRuns = await store.listExperimentRuns(tenantId, {
-        limit: 500,
-        includeSummaryOnly: true,
-    });
-    await backfillExperimentGovernance(store, tenantId, currentRuns);
+    if (options.materializeGovernance === true) {
+        const currentRuns = await store.listExperimentRuns(tenantId, {
+            limit: 500,
+            includeSummaryOnly: true,
+        });
+        await backfillExperimentGovernance(store, tenantId, currentRuns);
+    }
 }
 
 function buildDashboardSummary(
