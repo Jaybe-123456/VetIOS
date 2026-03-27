@@ -380,6 +380,15 @@ function buildNodes(input: {
             || source === 'intelligence_topology';
     });
 
+    const latestTelemetryUpdate = input.diagnostics.latest_telemetry_timestamp
+        ?? findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp));
+    const telemetryObserverHasSignal = input.diagnostics.telemetry_stream_connected || latestTelemetryUpdate != null;
+    const telemetryObserverObservabilityState = input.diagnostics.telemetry_stream_connected
+        ? 'LIVE'
+        : latestTelemetryUpdate != null
+            ? 'STALE'
+            : 'NO_DATA';
+
     const registryNode = createNode({
         id: 'registry_control',
         kind: 'registry',
@@ -399,8 +408,8 @@ function buildNodes(input: {
         kind: 'telemetry',
         state: applyOverride({
             status: resolveNodeStatus({
-                hasData: input.telemetryEvents.length > 0,
-                lastUpdated: findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp)),
+                hasData: telemetryObserverHasSignal,
+                lastUpdated: latestTelemetryUpdate,
                 latency: percentile(globalLatencyValues, 95),
                 errorRate: calculateInferenceErrorRate(totalInferenceEvents, totalEvaluationEvents),
                 drift: globalDrift,
@@ -414,12 +423,13 @@ function buildNodes(input: {
             error_rate: calculateInferenceErrorRate(totalInferenceEvents, totalEvaluationEvents),
             drift_score: globalDrift,
             confidence_avg: mean(globalConfidenceValues),
-            last_updated: findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp)),
+            last_updated: latestTelemetryUpdate,
         }, input.nodeOverrides.get('telemetry_observer'), input.until),
         governance: null,
         metadata: {
-            last_event_timestamp: findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp)),
-            stale: isStale(findLatestTimestamp(input.telemetryEvents.map((event) => event.timestamp)), input.until),
+            last_event_timestamp: latestTelemetryUpdate,
+            observability_state: telemetryObserverObservabilityState,
+            stale: !input.diagnostics.telemetry_stream_connected && isStale(latestTelemetryUpdate, input.until),
             total_events: input.telemetryEvents.length,
             evaluation_events: totalEvaluationEvents.length,
             drift_state: totalEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
