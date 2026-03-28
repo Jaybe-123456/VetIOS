@@ -769,6 +769,7 @@ async function main() {
     await testRegistrySnapshotCacheSeparatesReadOnlyAndMaterializedViews();
     await testRegistrySnapshotRepairsIncompleteGovernanceEvaluations();
     await testRegistrySnapshotMaterializesGovernanceForStagedTrainingRun();
+    await testGovernanceRefreshPreservesCompletedGateResults();
     await testRegistryVerificationSkipsRollbackSimulationWithoutChampion();
     await testRegistryVerificationRepairsMissingProductionAudit();
 
@@ -1713,6 +1714,40 @@ async function testRegistrySnapshotMaterializesGovernanceForStagedTrainingRun() 
     assert.notEqual(entry?.promotion_gating.gates.calibration, 'pending');
     assert.notEqual(entry?.promotion_gating.gates.adversarial, 'pending');
     assert.notEqual(entry?.promotion_gating.gates.safety, 'pending');
+}
+
+async function testGovernanceRefreshPreservesCompletedGateResults() {
+    const tenantId = makeUuid(15);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_preserve_governance_001',
+        modelVersion: 'diag_preserve_governance_v1',
+        datasetVersion: 'ldv_diag_preserve_governance',
+    });
+
+    const initialDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_preserve_governance_001', { readOnly: false });
+    assert.ok(initialDetail);
+    assert.equal(initialDetail?.calibration_metrics?.calibration_pass, true);
+    assert.equal(initialDetail?.adversarial_metrics?.adversarial_pass, true);
+    assert.equal(initialDetail?.promotion_requirements?.safety_pass, true);
+
+    await store.updateExperimentRun('run_diag_preserve_governance_001', tenantId, {
+        status: 'training',
+        status_reason: 'worker_status_lag',
+        last_heartbeat_at: new Date().toISOString(),
+    });
+
+    const refreshedDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_preserve_governance_001', { readOnly: false });
+    assert.ok(refreshedDetail);
+
+    const requirements = await store.getPromotionRequirements(tenantId, 'run_diag_preserve_governance_001');
+    const refreshedRun = await store.getExperimentRun(tenantId, 'run_diag_preserve_governance_001');
+    assert.equal(requirements?.calibration_pass, true);
+    assert.equal(requirements?.adversarial_pass, true);
+    assert.equal(requirements?.safety_pass, true);
+    assert.equal(refreshedRun?.registry_context.calibration_status, 'passed');
+    assert.equal(refreshedRun?.registry_context.adversarial_gate_status, 'passed');
 }
 
 async function testRegistryVerificationSkipsRollbackSimulationWithoutChampion() {
