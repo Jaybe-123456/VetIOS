@@ -1128,6 +1128,7 @@ async function testExperimentBootstrapSeed() {
     assert.ok(failedDetail?.failure);
     assert.equal(failedDetail?.failure?.failure_reason, 'exploded_gradient');
     assert.equal(failedDetail?.failure?.nan_detected, true);
+    assert.equal(failedDetail?.run.registry_context.deployment_eligibility, 'blocked');
 
     const completeDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_complete_v1', { readOnly: false });
     assert.ok(completeDetail?.model_registry);
