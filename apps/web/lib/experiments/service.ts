@@ -2254,7 +2254,7 @@ async function ensureGovernanceForRun(
         return;
     }
 
-    if (!isGovernanceCandidateStatus(run.status)) {
+    if (!shouldMaterializeGovernance(run, modelRegistry)) {
         const promotionRequirements = await ensurePromotionRequirements(
             store,
             run,
@@ -3933,6 +3933,19 @@ function readNumber(record: Record<string, unknown>, key: string): number | null
 
 function isGovernanceCandidateStatus(status: ExperimentRunStatus): boolean {
     return status === 'completed' || status === 'promoted' || status === 'rolled_back';
+}
+
+function shouldMaterializeGovernance(
+    run: ExperimentRunRecord,
+    modelRegistry: ModelRegistryRecord | null,
+): boolean {
+    if (isGovernanceCandidateStatus(run.status)) return true;
+    if (!modelRegistry) return false;
+    return modelRegistry.lifecycle_status === 'staging' ||
+        modelRegistry.lifecycle_status === 'production' ||
+        modelRegistry.registry_role === 'challenger' ||
+        modelRegistry.registry_role === 'champion' ||
+        modelRegistry.registry_role === 'rollback_target';
 }
 
 function validateRegistryRegistration(
