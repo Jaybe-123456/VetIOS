@@ -1,4 +1,4 @@
-import { detectContradictions } from '@/lib/ai/contradictionEngine';
+import { detectContradictions, type ContradictionResult } from '@/lib/ai/contradictionEngine';
 import { createHeuristicInferencePayload } from '@/lib/ai/diagnosticSafety';
 
 export interface InferenceInput {
@@ -10,15 +10,10 @@ export interface InferenceOutput {
     output_payload: Record<string, unknown>;
     confidence_score: number | null;
     uncertainty_metrics: Record<string, unknown> | null;
-    contradiction_analysis: {
-        contradiction_score: number;
-        contradiction_reasons: string[];
-        is_plausible: boolean;
-        confidence_cap: number;
+    contradiction_analysis: (ContradictionResult & {
         confidence_was_capped: boolean;
         original_confidence: number | null;
-        abstain: boolean;
-    } | null;
+    }) | null;
     raw_content: string;
 }
 
@@ -91,7 +86,8 @@ RULES:
 5. Generic distractors must not erase structural emergencies like GDV.
 6. If multiple high-risk abdominal emergency signals cluster, retain GDV or another acute mechanical emergency in the leading differential set.
 7. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
-8. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.${contradictionBlock}`;
+8. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.
+9. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];
@@ -239,6 +235,9 @@ RULES:
         contradiction_analysis: {
             contradiction_score: contradictionResult.contradiction_score,
             contradiction_reasons: contradictionResult.contradiction_reasons,
+            contradiction_details: contradictionResult.contradiction_details,
+            matched_rule_ids: contradictionResult.matched_rule_ids,
+            score_band: contradictionResult.score_band,
             is_plausible: contradictionResult.is_plausible,
             confidence_cap: contradictionResult.confidence_cap,
             confidence_was_capped: confidenceWouldBeCapped,
@@ -276,6 +275,9 @@ function buildFallbackInference(
         contradiction_analysis: {
             contradiction_score: contradictionResult.contradiction_score,
             contradiction_reasons: contradictionResult.contradiction_reasons,
+            contradiction_details: contradictionResult.contradiction_details,
+            matched_rule_ids: contradictionResult.matched_rule_ids,
+            score_band: contradictionResult.score_band,
             is_plausible: contradictionResult.is_plausible,
             confidence_cap: contradictionResult.confidence_cap,
             confidence_was_capped: confidenceScore != null && confidenceScore > contradictionResult.confidence_cap,

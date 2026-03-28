@@ -1,0 +1,102 @@
+{
+  "version": "contradiction-rules-v2",
+  "rules": [
+    {
+      "id": "severity_activity_mismatch",
+      "label": "Severe illness with normal activity",
+      "rule_type": "clinical_severity_mismatch",
+      "severity": "moderate",
+      "weight": 0.22,
+      "requires_all": ["normal_activity"],
+      "conflicts_any": ["collapse", "cyanosis", "shock_pattern", "severe_illness_pattern"],
+      "explanation_template": "normal activity status conflicts with collapse, cyanosis, or shock-level severity cues"
+    },
+    {
+      "id": "severity_appetite_mismatch",
+      "label": "Severe illness with normal appetite",
+      "rule_type": "clinical_severity_mismatch",
+      "severity": "moderate",
+      "weight": 0.2,
+      "requires_all": ["normal_appetite"],
+      "conflicts_any": ["collapse", "shock_pattern", "severe_illness_pattern"],
+      "explanation_template": "normal appetite is difficult to reconcile with a collapse or shock-level presentation"
+    },
+    {
+      "id": "bradycardia_dehydration_pairing",
+      "label": "Bradycardia with dehydration",
+      "rule_type": "physiologic_pairing",
+      "severity": "mild",
+      "weight": 0.18,
+      "requires_all": ["bradycardia", "dehydration"],
+      "explanation_template": "bradycardia with dehydration is an atypical pairing"
+    },
+    {
+      "id": "abdominal_distension_without_pain_behavior",
+      "label": "Abdominal distension without pain behavior",
+      "rule_type": "behavioral_mismatch",
+      "severity": "mild",
+      "weight": 0.16,
+      "requires_all": ["abdominal_distension", "pain_behavior_absent"],
+      "explanation_template": "marked abdominal distension is atypical when pain behavior is explicitly absent"
+    },
+    {
+      "id": "urinary_obstruction_with_normal_urination",
+      "label": "Urinary obstruction pattern with normal urination",
+      "rule_type": "urinary_conflict",
+      "severity": "high",
+      "weight": 0.28,
+      "requires_all": ["normal_urination"],
+      "conflicts_any": ["urinary_obstruction_pattern", "anuria", "stranguria"],
+      "explanation_template": "reported normal urination conflicts with an obstructive urinary pattern"
+    },
+    {
+      "id": "respiratory_distress_with_normal_effort",
+      "label": "Respiratory distress with normal respiratory effort",
+      "rule_type": "respiratory_conflict",
+      "severity": "high",
+      "weight": 0.24,
+      "requires_all": ["normal_respiratory_effort"],
+      "conflicts_any": ["dyspnea", "respiratory_distress", "open_mouth_breathing", "cyanosis"],
+      "explanation_template": "reported normal respiratory effort conflicts with respiratory distress cues"
+    },
+    {
+      "id": "productive_vomiting_with_unproductive_retching",
+      "label": "Productive vomiting with non-productive retching",
+      "rule_type": "symptom_conflict",
+      "severity": "mild",
+      "weight": 0.14,
+      "requires_all": ["vomiting", "retching_unproductive"],
+      "explanation_template": "structured or free-text history contains both productive vomiting and unproductive retching"
+    },
+    {
+      "id": "acute_emergency_cluster_with_chronic_duration",
+      "label": "Acute emergency cluster with chronic duration",
+      "rule_type": "temporal_conflict",
+      "severity": "moderate",
+      "weight": 0.18,
+      "requires_all": ["chronic_duration"],
+      "conflicts_any": ["shock_pattern", "mechanical_abdominal_emergency_pattern", "respiratory_failure_pattern"],
+      "explanation_template": "high-acuity emergency cues conflict with a chronic-duration history"
+    },
+    {
+      "id": "infectious_pattern_with_low_exposure_context",
+      "label": "Infectious pattern with low-contact context",
+      "rule_type": "context_conflict",
+      "severity": "mild",
+      "weight": 0.14,
+      "requires_all": ["low_contact_environment"],
+      "conflicts_any": ["infectious_respiratory_pattern"],
+      "explanation_template": "infectious respiratory pattern conflicts with isolated or low-contact exposure context"
+    },
+    {
+      "id": "explicit_afebrile_with_high_acuity_pattern",
+      "label": "Afebrile report despite high-acuity pattern",
+      "rule_type": "context_conflict",
+      "severity": "mild",
+      "weight": 0.16,
+      "requires_all": ["fever_negated"],
+      "conflicts_any": ["collapse", "dyspnea", "abdominal_distension", "cyanosis", "severe_illness_pattern"],
+      "explanation_template": "explicit afebrile history is atypical in a high-acuity systemic presentation"
+    }
+  ]
+}
