@@ -20,6 +20,10 @@ import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/ev
 import { logOutcomeCalibration } from '@/lib/evaluation/calibrationEngine';
 import { logErrorCluster } from '@/lib/learning/errorClustering';
 import { routeReinforcement } from '@/lib/learning/reinforcementRouter';
+import {
+    buildFailureCorrectionFeatureVector,
+    generateFailureCorrectionReport,
+} from '@/lib/learning/failureCorrectionEngine';
 import { logModelImprovementAudit } from '@/lib/learning/modelImprover';
 import {
     createSupabaseClinicalCaseStore,
@@ -367,6 +371,24 @@ export async function POST(req: Request) {
                             || contradictionAnalysis.is_plausible === false,
                 });
 
+                const diagnosisFeatureImportance = asNumericRecord(inf.output_payload?.diagnosis_feature_importance);
+                pipelineResult.failure_correction = generateFailureCorrectionReport({
+                    case_input: inf.input_signature,
+                    model_output: inf.output_payload,
+                    predicted_condition: predictedDiagnosis ?? null,
+                    target_condition: actualDiagnosis ?? null,
+                    predicted_condition_class: predictedClass ?? null,
+                    target_condition_class: actualClass ?? null,
+                    diagnosis_feature_importance: diagnosisFeatureImportance,
+                    contradiction_analysis: contradictionAnalysis,
+                    signal_weight_profile: asRecord(inf.output_payload?.signal_weight_profile),
+                    clinical_signal: asRecord(inf.output_payload?.clinical_signal),
+                });
+                const reinforcementFeatures = mergeNumericFeatures(
+                    diagnosisFeatureImportance,
+                    buildFailureCorrectionFeatureVector(pipelineResult.failure_correction),
+                );
+
                 pipelineResult.reinforcement = await routeReinforcement(supabase, {
                     tenant_id: tenantId,
                     inference_event_id: body.inference_event_id,
@@ -378,7 +400,7 @@ export async function POST(req: Request) {
                     predicted_severity: predictedSeverity,
                     actual_severity: actualSeverity,
                     calibration_error: pipelineResult.calibration?.calibration_error,
-                    extracted_features: (inf.output_payload?.diagnosis_feature_importance as any) || {},
+                    extracted_features: reinforcementFeatures,
                 });
 
                 pipelineResult.audit = await logModelImprovementAudit(supabase, {
@@ -391,6 +413,7 @@ export async function POST(req: Request) {
                         pipelineResult.reinforcement.severity_updates_applied > 0,
                     actual_correctness: evaluationCorrectness == null ? 0.0 : (evaluationCorrectness ? 1.0 : 0.0),
                     calibration_improvement: pipelineResult.calibration?.calibration_error ?? 0,
+                    failure_correction_report: pipelineResult.failure_correction,
                 });
             }
         } catch (pipelineErr) {
@@ -568,4 +591,24 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function asNumericRecord(value: unknown): Record<string, number> {
+    return Object.fromEntries(
+        Object.entries(asRecord(value))
+            .map(([key, raw]) => [key, readNumber(raw)])
+            .filter((entry): entry is [string, number] => entry[1] != null),
+    );
+}
+
+function mergeNumericFeatures(...sources: Array<Record<string, number>>): Record<string, number> {
+    const merged: Record<string, number> = {};
+
+    for (const source of sources) {
+        for (const [key, value] of Object.entries(source)) {
+            merged[key] = value;
+        }
+    }
+
+    return merged;
 }

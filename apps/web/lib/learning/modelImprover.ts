@@ -21,6 +21,7 @@ export interface AuditInput {
     // by boosting the target class and dampening the others based on the reinforcement delta.
     actual_correctness: number; 
     calibration_improvement: number;
+    failure_correction_report?: Record<string, unknown>;
 }
 
 export async function logModelImprovementAudit(
@@ -36,6 +37,9 @@ export async function logModelImprovementAudit(
 
     const postUpdatePrediction = { ...input.pre_update_prediction };
     (postUpdatePrediction as any)._audit_note = "Simulated post-update weights";
+    if (input.failure_correction_report) {
+        (postUpdatePrediction as any)._failure_correction_report = input.failure_correction_report;
+    }
 
     const C = MODEL_IMPROVEMENT_AUDITS.COLUMNS;
 
