@@ -1555,6 +1555,7 @@ export async function backfillSummaryExperimentRuns(
     const runsByModelVersion = new Map<string, ExperimentRunRecord>();
     const existingBenchmarkKeys = new Set<string>();
     const existingLinkRunIds = new Set<string>();
+    const existingMetricRunIds = new Set<string>();
 
     for (const run of runs) {
         if (run.model_version) {
@@ -1563,14 +1564,16 @@ export async function backfillSummaryExperimentRuns(
     }
 
     for (const run of runs) {
-        const [benchmarks, link] = await Promise.all([
+        const [benchmarks, link, metrics] = await Promise.all([
             store.listExperimentBenchmarks(tenantId, run.run_id),
             store.getExperimentRegistryLink(tenantId, run.run_id),
+            store.listExperimentMetrics(tenantId, run.run_id, 5),
         ]);
         benchmarks.forEach((benchmark) => {
             existingBenchmarkKeys.add(`${run.run_id}:${benchmark.benchmark_family}`);
         });
         if (link) existingLinkRunIds.add(run.run_id);
+        if (metrics.length > 0) existingMetricRunIds.add(run.run_id);
     }
 
     const datasetSummaryByVersion = new Map<string, Array<{ dataset_kind: string; row_count: number; summary: Record<string, unknown> }>>();
@@ -1754,6 +1757,18 @@ export async function backfillSummaryExperimentRuns(
         }
 
         await backfillArtifactsFromRegistryPayload(store, tenantId, run.run_id, entry.artifact_payload);
+
+        if (!existingMetricRunIds.has(run.run_id)) {
+            const backfilledMetric = buildBackfilledMetricInput(
+                entry,
+                calibrationByRegistryId.get(entry.id) ?? null,
+                benchmarkByRegistryId.get(entry.id) ?? [],
+            );
+            if (backfilledMetric) {
+                await appendBackfilledMetricTelemetry(store, tenantId, run, backfilledMetric);
+                existingMetricRunIds.add(run.run_id);
+            }
+        }
     }
 
     if (options.materializeGovernance === true) {
@@ -1765,6 +1780,129 @@ export async function backfillSummaryExperimentRuns(
     }
 }
 
+async function appendBackfilledMetricTelemetry(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+    run: ExperimentRunRecord,
+    metric: ExperimentMetricInput,
+): Promise<void> {
+    const created = await store.createExperimentMetrics([{
+        tenant_id: tenantId,
+        run_id: run.run_id,
+        epoch: numberOrNull(metric.epoch),
+        global_step: numberOrNull(metric.global_step),
+        train_loss: numberOrNull(metric.train_loss),
+        val_loss: numberOrNull(metric.val_loss),
+        train_accuracy: numberOrNull(metric.train_accuracy),
+        val_accuracy: numberOrNull(metric.val_accuracy),
+        learning_rate: numberOrNull(metric.learning_rate),
+        gradient_norm: numberOrNull(metric.gradient_norm),
+        macro_f1: numberOrNull(metric.macro_f1),
+        recall_critical: numberOrNull(metric.recall_critical),
+        calibration_error: numberOrNull(metric.calibration_error),
+        adversarial_score: numberOrNull(metric.adversarial_score),
+        false_negative_critical_rate: numberOrNull(metric.false_negative_critical_rate),
+        dangerous_false_reassurance_rate: numberOrNull(metric.dangerous_false_reassurance_rate),
+        abstain_accuracy: numberOrNull(metric.abstain_accuracy),
+        contradiction_detection_rate: numberOrNull(metric.contradiction_detection_rate),
+        wall_clock_time_seconds: numberOrNull(metric.wall_clock_time_seconds),
+        steps_per_second: numberOrNull(metric.steps_per_second),
+        gpu_utilization: numberOrNull(metric.gpu_utilization),
+        cpu_utilization: numberOrNull(metric.cpu_utilization),
+        memory_utilization: numberOrNull(metric.memory_utilization),
+        metric_timestamp: metric.metric_timestamp ?? run.ended_at ?? run.updated_at,
+    }]);
+
+    const latest = created[created.length - 1] ?? null;
+    const primaryMetric = pickPrimaryMetric(run.task_type, latest);
+
+    await store.updateExperimentRun(run.run_id, tenantId, {
+        metric_primary_name: primaryMetric?.name ?? run.metric_primary_name,
+        metric_primary_value: primaryMetric?.value ?? run.metric_primary_value,
+        epochs_completed: latest?.epoch ?? run.epochs_completed,
+        last_heartbeat_at: latest?.metric_timestamp ?? run.last_heartbeat_at,
+        safety_metrics: mergeSafetyTelemetry(run.safety_metrics, latest),
+        resource_usage: mergeResourceUsage(run.resource_usage, latest),
+        summary_only: true,
+    });
+}
+
+function buildBackfilledMetricInput(
+    entry: Awaited<ReturnType<ExperimentTrackingStore['listModelRegistryEntries']>>[number],
+    calibration: { status: string; report: Record<string, unknown> } | null,
+    benchmarks: Array<{
+        benchmark_family: string;
+        task_type: string;
+        summary_score: number | null;
+        pass_status: string;
+        report_payload: Record<string, unknown>;
+    }>,
+): ExperimentMetricInput | null {
+    const trainingSummary = asRecord(entry.artifact_payload.training_summary);
+    const diagnosisBenchmark = benchmarks.find((benchmark) =>
+        benchmark.task_type === 'diagnosis' ||
+        benchmark.benchmark_family === 'clean_labeled_diagnosis',
+    ) ?? null;
+    const severityBenchmark = benchmarks.find((benchmark) =>
+        benchmark.task_type === 'severity' ||
+        benchmark.benchmark_family === 'clean_severity_cases',
+    ) ?? null;
+
+    const metric: ExperimentMetricInput = {
+        epoch: readNumber(trainingSummary, 'epochs_completed') ??
+            readNumber(trainingSummary, 'epochs') ??
+            1,
+        global_step: readNumber(trainingSummary, 'row_count') ??
+            readBenchmarkMetric(diagnosisBenchmark?.report_payload ?? null, 'support') ??
+            readBenchmarkMetric(severityBenchmark?.report_payload ?? null, 'support') ??
+            1,
+        val_accuracy: entry.task_type === 'severity'
+            ? readBenchmarkMetric(severityBenchmark?.report_payload ?? null, 'emergency_accuracy')
+            : numberOrNull(entry.benchmark_scorecard.diagnosis_accuracy) ??
+                readBenchmarkMetric(diagnosisBenchmark?.report_payload ?? null, 'accuracy'),
+        macro_f1: entry.task_type === 'severity'
+            ? null
+            : numberOrNull(entry.benchmark_scorecard.diagnosis_macro_f1) ??
+                readBenchmarkMetric(diagnosisBenchmark?.report_payload ?? null, 'macro_f1'),
+        recall_critical: numberOrNull(entry.benchmark_scorecard.severity_critical_recall) ??
+            readBenchmarkMetric(severityBenchmark?.report_payload ?? null, 'critical_recall'),
+        calibration_error: calibration
+            ? numberOrNull(calibration.report.expected_calibration_error)
+            : numberOrNull(entry.benchmark_scorecard.calibration_ece),
+        false_negative_critical_rate: numberOrNull(entry.benchmark_scorecard.severity_false_negative_rate) ??
+            readBenchmarkMetric(severityBenchmark?.report_payload ?? null, 'emergency_false_negative_rate'),
+        metric_timestamp: entry.updated_at,
+    };
+
+    return hasAnyTelemetryValues(metric) ? metric : null;
+}
+
+function readBenchmarkMetric(
+    payload: Record<string, unknown> | null,
+    metricName: string,
+): number | null {
+    if (!payload) return null;
+    const metrics = asRecord(payload.metrics);
+    return numberOrNull(metrics[metricName]) ?? numberOrNull(payload[metricName]);
+}
+
+function hasAnyTelemetryValues(metric: ExperimentMetricInput): boolean {
+    return metric.train_loss != null ||
+        metric.val_loss != null ||
+        metric.train_accuracy != null ||
+        metric.val_accuracy != null ||
+        metric.learning_rate != null ||
+        metric.gradient_norm != null ||
+        metric.macro_f1 != null ||
+        metric.recall_critical != null ||
+        metric.calibration_error != null ||
+        metric.adversarial_score != null ||
+        metric.false_negative_critical_rate != null ||
+        metric.dangerous_false_reassurance_rate != null ||
+        metric.abstain_accuracy != null ||
+        metric.contradiction_detection_rate != null;
+}
+
 function buildDashboardSummary(
     runs: ExperimentRunRecord[],
     metricsByRun: Record<string, ExperimentMetricRecord[]>,
@@ -1773,7 +1911,7 @@ function buildDashboardSummary(
     const activeRuns = runs.filter((run) => isHealthyActiveRun(run));
     const failedRuns = runs.filter((run) => run.status === 'failed');
     const summaryOnlyRuns = runs.filter((run) => run.summary_only);
-    const telemetryReady = runs.filter((run) => hasCompleteMetricStream(run, metricsByRun[run.run_id] ?? [])).length;
+    const telemetryReady = runs.filter((run) => hasTelemetrySignal(run, metricsByRun[run.run_id] ?? [])).length;
     const registryReady = runs.filter((run) => deriveRegistryLinkState(run, null, null) === 'linked').length;
     const safetyReady = runs.filter((run) => getSafetyCoverageState(run, (metricsByRun[run.run_id] ?? []).at(-1) ?? null) !== 'none').length;
     const fullSafetyReady = runs.filter((run) => getSafetyCoverageState(run, (metricsByRun[run.run_id] ?? []).at(-1) ?? null) === 'full').length;
@@ -2979,7 +3117,7 @@ function hasBasicSafetyMetrics(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
 ): boolean {
-    return (latestMetric?.macro_f1 ?? numberOrNull(run.safety_metrics.macro_f1)) != null &&
+    return getPrimarySafetySignal(run, latestMetric) != null &&
         (latestMetric?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical)) != null;
 }
 
@@ -3009,6 +3147,28 @@ function hasCompleteMetricStream(
 ): boolean {
     if (run.summary_only || metrics.length === 0) return false;
     return getMissingTelemetryFields(run, metrics).length === 0;
+}
+
+function hasTelemetrySignal(
+    _run: ExperimentRunRecord,
+    metrics: ExperimentMetricRecord[],
+): boolean {
+    const latest = metrics[metrics.length - 1] ?? null;
+    if (!latest) return false;
+    return latest.train_loss != null ||
+        latest.val_loss != null ||
+        latest.train_accuracy != null ||
+        latest.val_accuracy != null ||
+        latest.learning_rate != null ||
+        latest.gradient_norm != null ||
+        latest.macro_f1 != null ||
+        latest.recall_critical != null ||
+        latest.calibration_error != null ||
+        latest.adversarial_score != null ||
+        latest.false_negative_critical_rate != null ||
+        latest.dangerous_false_reassurance_rate != null ||
+        latest.abstain_accuracy != null ||
+        latest.contradiction_detection_rate != null;
 }
 
 function isHealthyActiveRun(run: ExperimentRunRecord): boolean {
@@ -3086,6 +3246,20 @@ function evaluatePromotionReadiness(
             ? 'All governance requirements satisfied.'
             : blockers.join(' '),
     };
+}
+
+function getPrimarySafetySignal(
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+): number | null {
+    if (run.task_type === 'severity_prediction') {
+        return latestMetric?.val_accuracy ??
+            numberOrNull(run.safety_metrics.val_accuracy) ??
+            run.metric_primary_value;
+    }
+    return latestMetric?.macro_f1 ??
+        numberOrNull(run.safety_metrics.macro_f1) ??
+        run.metric_primary_value;
 }
 
 function resolveGateStatus(value: boolean | null | undefined): GateStatus {
