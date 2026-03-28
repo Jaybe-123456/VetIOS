@@ -2733,17 +2733,7 @@ async function syncRegistryLinkForRun(
     const registryRole = deriveRegistryRole(modelRegistry, current, registryLinkState);
     const benchmarkStatus = resolveGateStatus(promotionRequirements?.benchmark_pass);
     const manualApprovalStatus = resolveGateStatus(promotionRequirements?.manual_approval);
-    const deploymentEligibility = isLiveProductionChampion(modelRegistry)
-        ? 'live_production'
-        : modelRegistry?.registry_role === 'rollback_target'
-            ? 'rollback_target'
-            : deploymentDecision == null
-                ? current?.deployment_eligibility ?? 'pending'
-                : deploymentDecision.decision === 'approved'
-                    ? 'eligible_review'
-                    : deploymentDecision.decision === 'pending'
-                        ? 'pending'
-                        : 'blocked';
+    const deploymentEligibility = deriveDeploymentEligibilityStatus(run, modelRegistry, deploymentDecision, current);
 
     await store.upsertExperimentRegistryLink({
         tenant_id: run.tenant_id,
@@ -2785,6 +2775,25 @@ async function syncRegistryLinkForRun(
             rollback_target: modelRegistry?.rollback_target ?? run.registry_context.rollback_target ?? null,
         },
     });
+}
+
+function deriveDeploymentEligibilityStatus(
+    run: ExperimentRunRecord,
+    modelRegistry: ModelRegistryRecord | null,
+    deploymentDecision: DeploymentDecisionRecord | null,
+    current: ExperimentRegistryLinkRecord | null,
+): string {
+    if (isLiveProductionChampion(modelRegistry)) return 'live_production';
+    if (modelRegistry?.registry_role === 'rollback_target') return 'rollback_target';
+    if (run.status === 'failed' || run.status === 'aborted' || run.status === 'interrupted' || run.status === 'stalled') {
+        return 'blocked';
+    }
+    if (deploymentDecision == null) {
+        return current?.deployment_eligibility ?? 'pending';
+    }
+    if (deploymentDecision.decision === 'approved') return 'eligible_review';
+    if (deploymentDecision.decision === 'pending') return 'pending';
+    return 'blocked';
 }
 
 function computeCalibrationMetrics(

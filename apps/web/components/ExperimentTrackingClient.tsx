@@ -514,7 +514,7 @@ function RunDetail({
                         <DetailStat label="Label Policy" value={detail.run.label_policy_version ?? 'Not reported'} />
                         <DetailStat label="Epochs" value={renderEpochs(detail.run)} />
                         <DetailStat label="Primary Metric" value={renderPrimaryMetric(detail.run)} />
-                        <DetailStat label="Heartbeat Freshness" value={detail.heartbeat_freshness.toUpperCase()} />
+                        <DetailStat label="Heartbeat Freshness" value={renderDetailHeartbeatFreshness(detail)} />
                         <DetailStat label="Best Checkpoint URI" value={detail.artifact_uris.best_checkpoint_uri ?? 'Not recorded'} />
                         <DetailStat label="Checkpoint URI" value={detail.artifact_uris.checkpoint_uri ?? 'Not recorded'} />
                         <DetailStat label="Log URI" value={detail.artifact_uris.log_uri ?? 'Not recorded'} />
@@ -1184,22 +1184,32 @@ function renderPrimaryMetric(run: ExperimentRunRecord) {
 }
 
 function renderHeartbeatCell(run: ExperimentRunRecord) {
-    const freshness = classifyHeartbeat(run);
+    const heartbeatLabel = renderHeartbeatStateLabel(run);
     return (
         <div className="flex flex-col gap-1">
-            <span>{freshness.toUpperCase()}</span>
+            <span>{heartbeatLabel}</span>
             <span className="text-muted">{formatHeartbeat(run.last_heartbeat_at)}</span>
         </div>
     );
 }
 
 function renderRegistryContext(run: ExperimentRunRecord) {
-    const linkState = String(run.registry_context.registry_link_state ?? (run.registry_id ? 'linked' : isGovernanceReviewState(run.status) ? 'pending' : 'unlinked')).trim();
+    const fallbackLinkState = run.registry_id
+        ? 'linked'
+        : run.status === 'failed' || run.status === 'aborted'
+            ? 'unlinked'
+            : isGovernanceReviewState(run.status)
+                ? 'pending'
+                : 'unlinked';
+    const linkState = String(run.registry_context.registry_link_state ?? fallbackLinkState).trim();
     const role = String(run.registry_context.registry_role ?? run.registry_context.champion_or_challenger ?? '').trim();
     return [linkState, role].filter(Boolean).join(' / ');
 }
 
 function renderEligibility(run: ExperimentRunRecord) {
+    if (run.status === 'failed' || run.status === 'aborted' || run.status === 'interrupted' || run.status === 'stalled') {
+        return 'BLOCKED';
+    }
     const registryRole = String(run.registry_context.registry_role ?? '').trim().toLowerCase();
     const registryStatus = String(run.registry_context.registry_status ?? run.registry_context.promotion_status ?? '').trim().toLowerCase();
     const eligibility = String(run.registry_context.deployment_eligibility ?? 'Pending review').trim().toLowerCase();
@@ -1237,6 +1247,23 @@ function formatRunStatus(run: ExperimentRunRecord) {
         ? null
         : run.status_reason;
     return `${run.status}${reason ? ` / ${reason}` : ''}`;
+}
+
+function renderHeartbeatStateLabel(run: ExperimentRunRecord) {
+    if (run.status === 'completed' || run.status === 'promoted' || run.status === 'rolled_back') {
+        return 'FINALIZED';
+    }
+    if (run.status === 'failed' || run.status === 'aborted') {
+        return 'STOPPED';
+    }
+    return classifyHeartbeat(run).toUpperCase();
+}
+
+function renderDetailHeartbeatFreshness(detail: ExperimentRunDetail) {
+    if (!isActiveRun(detail.run)) {
+        return renderHeartbeatStateLabel(detail.run);
+    }
+    return detail.heartbeat_freshness.toUpperCase();
 }
 
 function renderPromotionEligibility(detail: ExperimentRunDetail) {
