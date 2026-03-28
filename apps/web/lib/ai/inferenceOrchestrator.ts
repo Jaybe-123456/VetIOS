@@ -2,6 +2,7 @@ import { normalizeInferenceInput } from '@/lib/input/inputNormalizer';
 import type { InputMode } from '@/lib/input/inputNormalizer';
 import { attachAntigravitySignal, buildAntigravityClinicalSignal } from '@/lib/ai/antigravitySignal';
 import { extractClinicalSignals } from '@/lib/ai/clinicalSignals';
+import { attachSignalWeightProfile, buildSignalWeightProfile } from '@/lib/clinicalSignal/signalWeightEngine';
 import { runInference } from '@/lib/ai/provider';
 import { applyDiagnosticSafetyLayer, buildSeverityFeatureImportance } from '@/lib/ai/diagnosticSafety';
 import { evaluateEmergencyRules } from '@/lib/ai/emergencyRules';
@@ -28,6 +29,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     pipelineTrace.push({ stage: 'input_normalization', status: 'completed' });
     const antigravitySignal = buildAntigravityClinicalSignal(normalizedSig);
     pipelineTrace.push({ stage: 'clinical_signal_enrichment', status: 'completed' });
+    normalizedSig = attachSignalWeightProfile(normalizedSig);
+    pipelineTrace.push({ stage: 'signal_weighting', status: 'completed' });
 
     const inferenceResult = await runInference({
         model,
@@ -37,6 +40,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
 
     const payload = inferenceResult.output_payload;
     const contradiction = inferenceResult.contradiction_analysis;
+    normalizedSig = attachSignalWeightProfile(normalizedSig, { contradiction });
+    const signalWeightProfile = buildSignalWeightProfile(normalizedSig, { contradiction });
 
     if (!payload.diagnosis || typeof payload.diagnosis !== 'object') {
         payload.diagnosis = {
@@ -93,7 +98,7 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     payload.severity_feature_importance =
         payload.severity_feature_importance && typeof payload.severity_feature_importance === 'object'
             ? payload.severity_feature_importance
-            : buildSeverityFeatureImportance(extractClinicalSignals(normalizedSig));
+            : buildSeverityFeatureImportance(extractClinicalSignals(normalizedSig), signalWeightProfile);
     payload.uncertainty_notes = safetyLayer.uncertainty_notes;
     payload.contradiction_score = contradiction?.contradiction_score ?? 0;
     payload.contradiction_reasons = contradiction?.contradiction_reasons ?? [];
@@ -107,6 +112,9 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     payload.contradiction_analysis = {
         contradiction_score: contradiction?.contradiction_score ?? 0,
         contradiction_reasons: contradiction?.contradiction_reasons ?? [],
+        contradiction_details: contradiction?.contradiction_details ?? [],
+        matched_rule_ids: contradiction?.matched_rule_ids ?? [],
+        score_band: contradiction?.score_band ?? 'none',
         is_plausible: contradiction?.is_plausible ?? true,
         confidence_cap: safetyLayer.confidence_cap,
         confidence_was_capped: safetyLayer.was_capped,
@@ -115,6 +123,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     };
     payload.clinical_signal = antigravitySignal;
     payload.signal_quality_score = antigravitySignal.signal_quality_score;
+    payload.signal_weight_profile = signalWeightProfile;
+    payload.priority_signals = signalWeightProfile.weighted_signals.slice(0, 6);
     const finalDiagnosis = payload.diagnosis as Record<string, unknown>;
     finalDiagnosis.primary_condition_class = resolveConditionClass(finalDiagnosis);
     risk.severity_score = resolveSeverityScore(risk);
@@ -137,6 +147,11 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
         persistence_rule_triggers: safetyLayer.telemetry.persistence_rule_triggers ?? [],
         pipeline_stages: payload.pipeline_trace,
         signal_quality_score: antigravitySignal.signal_quality_score,
+        signal_weight_profile: {
+            applied_overrides: signalWeightProfile.applied_overrides,
+            emergency_overrides: signalWeightProfile.emergency_overrides,
+            category_totals: signalWeightProfile.category_totals,
+        },
     };
 
     return {

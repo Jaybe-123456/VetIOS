@@ -14,6 +14,12 @@
 
 import { safeParseJson } from './jsonRepair';
 import { attachAntigravitySignal } from '../ai/antigravitySignal';
+import { attachSignalWeightProfile } from '@/lib/clinicalSignal/signalWeightEngine';
+import {
+    OBSERVATION_VOCABULARY_CATEGORIES,
+    extractClinicalTermsFromText,
+    getClinicalTermDisplayLabel,
+} from '@/lib/clinicalSignal/clinicalVocabulary';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -269,6 +275,16 @@ function extractSymptomsFromText(raw: string): string[] {
         }
     }
 
+    const extracted = extractClinicalTermsFromText(raw, {
+        categories: [...OBSERVATION_VOCABULARY_CATEGORIES],
+    });
+    for (const term of extracted) {
+        const label = getClinicalTermDisplayLabel(term);
+        if (!found.some((entry) => entry.toLowerCase() === label.toLowerCase())) {
+            found.push(label);
+        }
+    }
+
     // Also match known symptoms from the dictionary
     for (const symptom of COMMON_SYMPTOMS) {
         if (lower.includes(symptom) && !found.some(f => f.toLowerCase() === symptom)) {
@@ -304,12 +320,13 @@ function fallback(raw: string): NormalizedInput {
 }
 
 function enrichNormalizedInput(input: NormalizedInput): NormalizedInput {
-    const enriched = attachAntigravitySignal({
+    const antigravityEnriched = attachAntigravitySignal({
         species: input.species,
         breed: input.breed,
         symptoms: input.symptoms,
         metadata: input.metadata ?? {},
     });
+    const enriched = attachSignalWeightProfile(antigravityEnriched);
     const metadata = enriched.metadata && typeof enriched.metadata === 'object'
         ? enriched.metadata as Record<string, unknown>
         : {};

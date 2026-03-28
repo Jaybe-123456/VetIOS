@@ -69,12 +69,12 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
     unproductive_retching: {
         label: 'unproductive retching',
         tier: 1,
-        terms: ['unproductive retching', 'dry heaving', 'retching', 'trying to vomit', 'nonproductive retching'],
+        terms: ['unproductive retching', 'non-productive retching', 'dry heaving', 'retching', 'trying to vomit', 'tried to vomit', 'nonproductive retching'],
     },
     abdominal_distension: {
         label: 'abdominal distension',
         tier: 1,
-        terms: ['abdominal distension', 'distended abdomen', 'bloated', 'bloat', 'swollen abdomen', 'distended belly'],
+        terms: ['abdominal distension', 'distended abdomen', 'bloated', 'bloat', 'swollen abdomen', 'distended belly', 'stomach looks big', 'belly looks big', 'belly swollen'],
         structured_fields: ['abdominal_distension'],
     },
     collapse: {
@@ -105,7 +105,7 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
     dyspnea: {
         label: 'dyspnea',
         tier: 2,
-        terms: ['dyspnea', 'difficulty breathing', 'respiratory distress', 'labored breathing', 'shortness of breath'],
+        terms: ['dyspnea', 'difficulty breathing', 'respiratory distress', 'labored breathing', 'shortness of breath', 'breathing hard', 'trouble breathing', 'struggling to breathe'],
     },
     tachycardia: {
         label: 'tachycardia',
@@ -120,7 +120,7 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
     productive_vomiting: {
         label: 'productive vomiting',
         tier: 2,
-        terms: ['productive vomiting', 'vomiting', 'vomited', 'emesis'],
+        terms: ['productive vomiting', 'vomiting', 'vomited', 'emesis', 'throwing up'],
         structured_fields: ['productive_vomiting'],
     },
     diarrhea: {
@@ -141,7 +141,7 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
     anorexia: {
         label: 'anorexia',
         tier: 3,
-        terms: ['anorexia', 'inappetence', 'loss of appetite', 'not eating', 'poor appetite'],
+        terms: ['anorexia', 'inappetence', 'loss of appetite', 'not eating', 'poor appetite', 'won\'t eat', 'refusing food', 'hasn\'t eaten'],
     },
     weakness: {
         label: 'weakness',
@@ -166,7 +166,7 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
     ocular_discharge: {
         label: 'ocular discharge',
         tier: 2,
-        terms: ['ocular discharge', 'eye discharge', 'watery eyes', 'conjunctival discharge'],
+        terms: ['ocular discharge', 'eye discharge', 'watery eyes', 'eyes watery', 'conjunctival discharge'],
     },
     pneumonia: {
         label: 'pneumonia',

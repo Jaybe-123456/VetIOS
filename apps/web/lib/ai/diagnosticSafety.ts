@@ -7,6 +7,11 @@ import {
 } from '@/lib/ai/clinicalSignals';
 import { evaluateEmergencyRules, type EmergencyRuleResult } from '@/lib/ai/emergencyRules';
 import type { ContradictionResult } from '@/lib/ai/contradictionEngine';
+import {
+    buildSignalWeightProfile,
+    profileToFeatureImportance,
+    type SignalWeightProfile,
+} from '@/lib/clinicalSignal/signalWeightEngine';
 
 type ConditionClass =
     | 'Mechanical'
@@ -353,6 +358,7 @@ export function applyDiagnosticSafetyLayer(params: {
 }): SafetyLayerResult {
     const signals = extractClinicalSignals(params.inputSignature);
     const contradictionScore = params.contradiction?.contradiction_score ?? 0;
+    const signalWeightProfile = buildSignalWeightProfile(params.inputSignature, { contradiction: params.contradiction });
     const heuristicScores = scoreCandidates(signals);
     const existingDifferentials = normalizeExistingDifferentials(params.diagnosis.top_differentials);
     const mergedDifferentials = mergeDifferentials({
@@ -400,7 +406,7 @@ export function applyDiagnosticSafetyLayer(params: {
             ? 'Contradictory clinical context exceeds safe diagnosis-confidence threshold while emergency severity remains high'
             : 'Differential remains too broad for a safe high-confidence diagnosis; clinician review is recommended';
 
-    const diagnosisFeatureImportance = buildDiagnosisFeatureImportance(signals, heuristicScores);
+    const diagnosisFeatureImportance = buildDiagnosisFeatureImportance(signals, heuristicScores, signalWeightProfile);
     const uncertaintyNotes = buildUncertaintyNotes({
         contradiction: params.contradiction,
         contradictionScore,
@@ -441,6 +447,7 @@ export function applyDiagnosticSafetyLayer(params: {
             contradiction_triggers: params.contradiction?.contradiction_reasons ?? [],
             persistence_rule_triggers: params.emergencyEval.emergency_rule_reasons.filter((reason) => reason.toLowerCase().includes('persistence')),
             differential_widened: contradictionScore >= 0.4,
+            signal_weight_applied_overrides: signalWeightProfile.applied_overrides,
         },
     };
 }
@@ -470,6 +477,7 @@ export function createHeuristicInferencePayload(params: {
     });
 
     const signals = extractClinicalSignals(params.inputSignature);
+    const signalWeightProfile = buildSignalWeightProfile(params.inputSignature, { contradiction: params.contradiction });
     const baseSeverity = inferFallbackSeverity(signals);
 
     return {
@@ -479,12 +487,15 @@ export function createHeuristicInferencePayload(params: {
             emergency_level: baseSeverity.level,
         },
         diagnosis_feature_importance: safetyLayer.diagnosis_feature_importance,
-        severity_feature_importance: buildSeverityFeatureImportance(signals),
+        severity_feature_importance: buildSeverityFeatureImportance(signals, signalWeightProfile),
         uncertainty_notes: safetyLayer.uncertainty_notes,
     };
 }
 
-export function buildSeverityFeatureImportance(signals: ClinicalSignals): Record<string, number> {
+export function buildSeverityFeatureImportance(
+    signals: ClinicalSignals,
+    signalWeightProfile?: SignalWeightProfile | null,
+): Record<string, number> {
     const features: Record<string, number> = {};
     const keys: SignalKey[] = ['collapse', 'dyspnea', 'tachycardia', 'pale_mucous_membranes', 'seizures', 'abdominal_distension'];
     for (const key of keys) {
@@ -493,6 +504,20 @@ export function buildSeverityFeatureImportance(signals: ClinicalSignals): Record
             features[getFeatureLabel(key)] = Number((FEATURE_TIER_MULTIPLIER[evidence.tier] * evidence.strength).toFixed(2));
         }
     }
+
+    if (signalWeightProfile) {
+        Object.assign(
+            features,
+            {
+                ...features,
+                ...profileToFeatureImportance(signalWeightProfile, {
+                    includeCategories: ['red_flag', 'primary_signal'],
+                    topN: 6,
+                }),
+            },
+        );
+    }
+
     return features;
 }
 
@@ -769,6 +794,7 @@ function enforceDominantClusterConsistency(
 function buildDiagnosisFeatureImportance(
     signals: ClinicalSignals,
     heuristicScores: CandidateScore[],
+    signalWeightProfile: SignalWeightProfile,
 ): Record<string, number> {
     const importance: Record<string, number> = {};
     const leadingCandidates = heuristicScores
@@ -788,6 +814,14 @@ function buildDiagnosisFeatureImportance(
             importance[label] ?? 0,
             Number((FEATURE_TIER_MULTIPLIER[evidence.tier] * evidence.strength).toFixed(2)),
         );
+    }
+
+    const weightedImportance = profileToFeatureImportance(signalWeightProfile, {
+        includeCategories: ['red_flag', 'primary_signal', 'contextual_signal'],
+        topN: 8,
+    });
+    for (const [label, weight] of Object.entries(weightedImportance)) {
+        importance[label] = Math.max(importance[label] ?? 0, weight);
     }
 
     return importance;

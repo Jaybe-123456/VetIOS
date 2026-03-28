@@ -1,4 +1,9 @@
 import { normalizeSymptomSet } from '@/lib/clinicalCases/symptomOntology';
+import {
+    OBSERVATION_VOCABULARY_CATEGORIES,
+    extractClinicalTermsFromText,
+    getClinicalTermDisplayLabel,
+} from '@/lib/clinicalSignal/clinicalVocabulary';
 import { detectContradictions } from './contradictionEngine';
 import { extractClinicalSignals, parseDurationDays, type SignalKey } from './clinicalSignals';
 
@@ -414,13 +419,19 @@ function deriveSymptomVector(input: Record<string, unknown>, signals: ReturnType
     const normalizedSymptoms = normalizeSymptomSet(input.symptoms);
 
     for (const key of normalizedSymptoms.normalizedKeys) {
-        vector.add(SYMPTOM_LABEL_MAP[key] ?? key.replace(/_/g, ' '));
+        vector.add(SYMPTOM_LABEL_MAP[key] ?? getClinicalTermDisplayLabel(key));
     }
 
     for (const [key, evidence] of Object.entries(signals.evidence) as Array<[SignalKey, (typeof signals.evidence)[SignalKey]]>) {
         if (evidence.present) {
             vector.add(SIGNAL_TERM_MAP[key]);
         }
+    }
+
+    for (const term of extractClinicalTermsFromText(narrativeText, {
+        categories: [...OBSERVATION_VOCABULARY_CATEGORIES],
+    })) {
+        vector.add(getClinicalTermDisplayLabel(term));
     }
 
     for (const rule of PLAIN_TEXT_SYMPTOM_RULES) {
