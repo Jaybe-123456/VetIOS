@@ -1595,12 +1595,19 @@ export async function backfillSummaryExperimentRuns(
         datasetSummaryByVersion.set(datasetVersion.dataset_version, bucket);
     }
 
-    const calibrationByRegistryId = new Map<string, { status: string; report: Record<string, unknown> }>();
+    const calibrationByRegistryId = new Map<string, {
+        status: string;
+        report: Record<string, unknown>;
+        eceScore: number | null;
+        brierScore: number | null;
+    }>();
     for (const report of calibrationReports) {
         if (!report.model_registry_id) continue;
         calibrationByRegistryId.set(report.model_registry_id, {
             status: readCalibrationStatus(report.report_payload),
             report: report.report_payload,
+            eceScore: report.ece_score,
+            brierScore: report.brier_score,
         });
     }
 
@@ -1646,7 +1653,12 @@ export async function backfillSummaryExperimentRuns(
             ?? asString(asRecord(entry.artifact_payload.training_summary).parameter_scale)
             ?? null;
         const hyperparameters = asRecord(entry.artifact_payload.hyperparameters);
-        const safetyMetrics = buildSafetyMetrics(entry.benchmark_scorecard, calibrationByRegistryId.get(entry.id)?.report ?? null);
+        const calibration = calibrationByRegistryId.get(entry.id) ?? null;
+        const safetyMetrics = buildSafetyMetrics(
+            entry.benchmark_scorecard,
+            calibration,
+            benchmarkByRegistryId.get(entry.id) ?? [],
+        );
 
         if (!run) {
             run = await store.createExperimentRun({
@@ -1711,7 +1723,7 @@ export async function backfillSummaryExperimentRuns(
                 },
                 dataset_lineage: Object.keys(run.dataset_lineage).length > 0 ? run.dataset_lineage : datasetLineage,
                 hyperparameters: Object.keys(run.hyperparameters).length > 0 ? run.hyperparameters : hyperparameters,
-                safety_metrics: Object.keys(run.safety_metrics).length > 0 ? run.safety_metrics : safetyMetrics,
+                safety_metrics: mergeMissingRecordFields(run.safety_metrics, safetyMetrics),
                 resource_usage: Object.keys(run.resource_usage).length > 0 ? run.resource_usage : (entry.resource_profile ?? {}),
             });
         }
@@ -1837,7 +1849,12 @@ async function appendBackfilledMetricTelemetry(
 
 function buildBackfilledMetricInput(
     entry: Awaited<ReturnType<ExperimentTrackingStore['listModelRegistryEntries']>>[number],
-    calibration: { status: string; report: Record<string, unknown> } | null,
+    calibration: {
+        status: string;
+        report: Record<string, unknown>;
+        eceScore: number | null;
+        brierScore: number | null;
+    } | null,
     benchmarks: Array<{
         benchmark_family: string;
         task_type: string;
@@ -1855,6 +1872,11 @@ function buildBackfilledMetricInput(
         benchmark.task_type === 'severity' ||
         benchmark.benchmark_family === 'clean_severity_cases',
     ) ?? null;
+    const safetyBenchmark = benchmarks.find((benchmark) =>
+        benchmark.benchmark_family.toLowerCase().includes('adversarial') ||
+        benchmark.benchmark_family.toLowerCase().includes('safety') ||
+        benchmark.benchmark_family.toLowerCase().includes('severity'),
+    ) ?? severityBenchmark;
 
     const metric: ExperimentMetricInput = {
         epoch: readNumber(trainingSummary, 'epochs_completed') ??
@@ -1875,10 +1897,18 @@ function buildBackfilledMetricInput(
         recall_critical: numberOrNull(entry.benchmark_scorecard.severity_critical_recall) ??
             readBenchmarkMetric(severityBenchmark?.report_payload ?? null, 'critical_recall'),
         calibration_error: calibration
-            ? numberOrNull(calibration.report.expected_calibration_error)
+            ? numberOrNull(calibration.report.expected_calibration_error) ?? calibration.eceScore
             : numberOrNull(entry.benchmark_scorecard.calibration_ece),
         false_negative_critical_rate: numberOrNull(entry.benchmark_scorecard.severity_false_negative_rate) ??
-            readBenchmarkMetric(severityBenchmark?.report_payload ?? null, 'emergency_false_negative_rate'),
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'emergency_false_negative_rate'),
+        dangerous_false_reassurance_rate: numberOrNull(entry.benchmark_scorecard.dangerous_false_reassurance_rate) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'false_reassurance_rate'),
+        abstain_accuracy: numberOrNull(entry.benchmark_scorecard.abstain_accuracy) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'abstain_accuracy'),
+        contradiction_detection_rate: numberOrNull(entry.benchmark_scorecard.contradiction_detection_rate) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'contradiction_detection_rate'),
+        adversarial_score: numberOrNull(entry.benchmark_scorecard.adversarial_score) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'degradation_score'),
         metric_timestamp: entry.updated_at,
     };
 
@@ -2450,7 +2480,7 @@ async function ensureCalibrationMetrics(
     actor: string | null,
 ): Promise<CalibrationMetricRecord> {
     const existing = await store.getCalibrationMetrics(run.tenant_id, run.run_id);
-    if (existing && existing.confidence_histogram.length > 0) return existing;
+    if (existing && isCalibrationMetricsComplete(existing)) return existing;
 
     const computed = computeCalibrationMetrics(run, metrics);
     const record = await store.upsertCalibrationMetrics({
@@ -2489,7 +2519,7 @@ async function ensureAdversarialMetrics(
     actor: string | null,
 ): Promise<AdversarialMetricRecord> {
     const existing = await store.getAdversarialMetrics(run.tenant_id, run.run_id);
-    if (existing && existing.dangerous_false_reassurance_rate != null) return existing;
+    if (existing && isAdversarialMetricsComplete(existing)) return existing;
 
     const computed = computeAdversarialMetrics(run, metrics, benchmarks);
     const record = await store.upsertAdversarialMetrics({
@@ -3640,21 +3670,80 @@ function buildDatasetLineage(
 
 function buildSafetyMetrics(
     benchmarkScorecard: Record<string, unknown>,
-    calibrationReport: Record<string, unknown> | null,
+    calibrationReport: {
+        status: string;
+        report: Record<string, unknown>;
+        eceScore: number | null;
+        brierScore: number | null;
+    } | null,
+    benchmarks: Array<{
+        benchmark_family: string;
+        task_type: string;
+        summary_score: number | null;
+        pass_status: string;
+        report_payload: Record<string, unknown>;
+    }>,
 ): Record<string, unknown> {
+    const safetyBenchmark = benchmarks.find((benchmark) =>
+        benchmark.benchmark_family.toLowerCase().includes('adversarial') ||
+        benchmark.benchmark_family.toLowerCase().includes('safety') ||
+        benchmark.benchmark_family.toLowerCase().includes('severity'),
+    ) ?? null;
+    const diagnosisBenchmark = benchmarks.find((benchmark) =>
+        benchmark.task_type === 'diagnosis' ||
+        benchmark.benchmark_family === 'clean_labeled_diagnosis',
+    ) ?? null;
+
     return {
-        macro_f1: numberOrNull(benchmarkScorecard.diagnosis_macro_f1),
+        macro_f1: numberOrNull(benchmarkScorecard.diagnosis_macro_f1) ??
+            readBenchmarkMetric(diagnosisBenchmark?.report_payload ?? null, 'macro_f1'),
         top_3_accuracy: numberOrNull(benchmarkScorecard.diagnosis_top_3_accuracy),
-        recall_critical: numberOrNull(benchmarkScorecard.severity_critical_recall),
-        false_negative_critical_rate: numberOrNull(benchmarkScorecard.severity_false_negative_rate),
-        dangerous_false_reassurance_rate: numberOrNull(benchmarkScorecard.dangerous_false_reassurance_rate),
-        abstain_accuracy: numberOrNull(benchmarkScorecard.abstain_accuracy),
-        contradiction_detection_rate: numberOrNull(benchmarkScorecard.contradiction_detection_rate),
+        recall_critical: numberOrNull(benchmarkScorecard.severity_critical_recall) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'critical_recall'),
+        false_negative_critical_rate: numberOrNull(benchmarkScorecard.severity_false_negative_rate) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'emergency_false_negative_rate'),
+        dangerous_false_reassurance_rate: numberOrNull(benchmarkScorecard.dangerous_false_reassurance_rate) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'false_reassurance_rate'),
+        abstain_accuracy: numberOrNull(benchmarkScorecard.abstain_accuracy) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'abstain_accuracy'),
+        contradiction_detection_rate: numberOrNull(benchmarkScorecard.contradiction_detection_rate) ??
+            readBenchmarkMetric(safetyBenchmark?.report_payload ?? null, 'contradiction_detection_rate'),
         calibration_ece: numberOrNull(benchmarkScorecard.calibration_ece)
-            ?? numberOrNull(calibrationReport?.expected_calibration_error),
+            ?? numberOrNull(calibrationReport?.report.expected_calibration_error)
+            ?? calibrationReport?.eceScore,
         calibration_brier: numberOrNull(benchmarkScorecard.calibration_brier)
-            ?? numberOrNull(calibrationReport?.brier_score),
+            ?? numberOrNull(calibrationReport?.report.brier_score)
+            ?? calibrationReport?.brierScore,
     };
+}
+
+function isCalibrationMetricsComplete(record: CalibrationMetricRecord): boolean {
+    return record.ece != null &&
+        record.brier_score != null &&
+        record.reliability_bins.length > 0 &&
+        record.confidence_histogram.length > 0 &&
+        record.calibration_pass != null;
+}
+
+function isAdversarialMetricsComplete(record: AdversarialMetricRecord): boolean {
+    return record.degradation_score != null &&
+        record.contradiction_robustness != null &&
+        record.critical_case_recall != null &&
+        record.dangerous_false_reassurance_rate != null &&
+        record.adversarial_pass != null;
+}
+
+function mergeMissingRecordFields(
+    current: Record<string, unknown>,
+    fallback: Record<string, unknown>,
+): Record<string, unknown> {
+    const merged = { ...current };
+    for (const [key, value] of Object.entries(fallback)) {
+        if (merged[key] == null && value != null) {
+            merged[key] = value;
+        }
+    }
+    return merged;
 }
 
 async function backfillArtifactsFromRegistryPayload(
@@ -4466,7 +4555,7 @@ function simulateDuplicateChampionDetection(
 function simulateNoRollbackTargetDetection(
     registryRecords: ModelRegistryRecord[],
 ): RegistryControlPlaneVerificationResult['simulated_failures'][number] {
-    const base = registryRecords.find((registry) => registry.lifecycle_status === 'production' && registry.registry_role === 'champion') ?? registryRecords[0] ?? null;
+    const base = registryRecords.find((registry) => registry.lifecycle_status === 'production' && registry.registry_role === 'champion') ?? null;
     if (!base) {
         return {
             scenario: 'no_rollback_target',
