@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
 import {
@@ -14,6 +14,7 @@ import {
 
 export default function LoginPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
@@ -21,6 +22,8 @@ export default function LoginPage() {
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const isGoogleEmail = isGoogleMailAddress(email);
     const showGooglePasswordWarning = isGoogleEmail && password.trim().length > 0;
+    const showResetSuccess = searchParams.get('reset') === 'success';
+    const authError = searchParams.get('error');
 
     async function handleEmailPasswordLogin(e: React.FormEvent) {
         e.preventDefault();
@@ -36,11 +39,12 @@ export default function LoginPage() {
         if (error) {
             setStatus('error');
             setErrorMessage(error.message);
-        } else {
-            setStatus('success');
-            router.push('/inference');
-            router.refresh();
+            return;
         }
+
+        setStatus('success');
+        router.push('/inference');
+        router.refresh();
     }
 
     async function handleGoogleOAuth() {
@@ -87,6 +91,18 @@ export default function LoginPage() {
                                     The password form below is only for a separate VetIOS password created for this email.
                                 </p>
                             </div>
+
+                            {showResetSuccess && (
+                                <div className="p-3 border border-accent text-accent font-mono text-xs">
+                                    Password reset complete. Sign in with your new VetIOS password.
+                                </div>
+                            )}
+
+                            {authError === 'auth_failed' && (
+                                <div className="p-3 border border-danger text-danger font-mono text-xs">
+                                    ERR: The authentication link could not be verified. Request a fresh sign-in or password reset email.
+                                </div>
+                            )}
 
                             <button
                                 type="button"
@@ -165,18 +181,21 @@ export default function LoginPage() {
                                     {status === 'submitting' ? 'SIGNING IN...' : 'SIGN IN WITH VETIOS PASSWORD'}
                                 </TerminalButton>
 
+                                <div className="flex items-center justify-between gap-3 font-mono text-[10px] uppercase tracking-widest text-muted">
+                                    <a href="/forgot-password" className="hover:text-accent transition-colors">
+                                        Forgot password?
+                                    </a>
+                                    <a href="/signup" className="hover:text-accent transition-colors">
+                                        Create account
+                                    </a>
+                                </div>
+
                                 {status === 'error' && errorMessage && (
                                     <div className="p-3 border border-danger text-danger font-mono text-xs">
                                         ERR: {errorMessage}
                                     </div>
                                 )}
                             </form>
-
-                            <div className="text-center">
-                                <a href="/signup" className="font-mono text-xs text-muted hover:text-accent transition-colors">
-                                    First time? Create an account →
-                                </a>
-                            </div>
                         </div>
                     )}
                 </Container>
