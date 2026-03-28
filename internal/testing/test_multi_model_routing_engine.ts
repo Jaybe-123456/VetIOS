@@ -167,10 +167,12 @@ async function main() {
         requestedModelName: 'gpt-4o-mini',
         requestedModelVersion: 'requested_v1',
     });
-    assert.equal(
-        unapprovedCandidates.every((candidate) => candidate.blocked_reason != null),
-        true,
-        'requested/default profiles should be blocked until explicitly approved or registry-backed',
+    const requestedCandidate = unapprovedCandidates.find((candidate) => candidate.profile.metadata.source === 'requested_model');
+    const bootstrapDefaults = unapprovedCandidates.filter((candidate) => candidate.profile.metadata.source === 'routing_defaults');
+    assert.ok(requestedCandidate?.blocked_reason != null, 'ad hoc requested models should remain blocked without explicit approval');
+    assert.ok(
+        bootstrapDefaults.length > 0 && bootstrapDefaults.every((candidate) => candidate.blocked_reason == null),
+        'router-owned default profiles should be available as bootstrap-approved candidates',
     );
 
     const simpleCandidates = rankRoutingCandidatesForTest({
@@ -232,8 +234,8 @@ async function main() {
         candidates: unapprovedCandidates,
         systemState: makeSystemState(),
     });
-    assert.equal(blockedPlan.selected_models.length, 0);
-    assert.equal(blockedPlan.fallback_model, null);
+    assert.ok(blockedPlan.selected_models.length > 0);
+    assert.notEqual(blockedPlan.selected_models[0]?.model_id, requestedCandidate?.profile.model_id);
 
     const fastProfile = explicitlyApprovedProfiles.find((profile) => profile.model_type === 'fast');
     const robustProfile = explicitlyApprovedProfiles.find((profile) => profile.model_type === 'adversarial_resistant');

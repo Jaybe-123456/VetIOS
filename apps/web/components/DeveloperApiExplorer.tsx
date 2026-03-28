@@ -20,7 +20,7 @@ export default function DeveloperApiExplorer({
 }) {
     const defaultPayloads = useMemo<Record<ExplorerEndpoint, string>>(() => ({
         '/api/inference': JSON.stringify({
-            model: { name: 'gpt-4-turbo', version: '1.0.0' },
+            model: { name: 'gpt-4o-mini', version: '1.0.0' },
             input: {
                 input_signature: {
                     species: 'Canis lupus familiaris',
@@ -52,7 +52,7 @@ export default function DeveloperApiExplorer({
                 },
             },
             inference: {
-                model: 'gpt-4-turbo',
+                model: 'gpt-4o-mini',
                 model_version: '1.0.0',
             },
         }, null, 2),
