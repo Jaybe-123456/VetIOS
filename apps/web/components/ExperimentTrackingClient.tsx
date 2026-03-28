@@ -30,6 +30,9 @@ export function ExperimentTrackingClient({
     const [taskFilter, setTaskFilter] = useState('all');
     const [includeSummaryOnly, setIncludeSummaryOnly] = useState(true);
     const [isRefreshing, startRefreshTransition] = useTransition();
+    const [isBootstrapping, startBootstrapTransition] = useTransition();
+    const [bootstrapMessage, setBootstrapMessage] = useState<string | null>(null);
+    const [bootstrapError, setBootstrapError] = useState<string | null>(null);
     const deferredQuery = useDeferredValue(query.trim().toLowerCase());
 
     useEffect(() => {
@@ -77,6 +80,18 @@ export function ExperimentTrackingClient({
         });
     };
 
+    const handleBootstrap = () => {
+        startBootstrapTransition(() => {
+            void seedBootstrapSnapshot({
+                setSnapshot,
+                setSelectedRunId,
+                setCompareRunIds,
+                setMessage: setBootstrapMessage,
+                setError: setBootstrapError,
+            });
+        });
+    };
+
     const handleSelectRun = (runId: string) => {
         setSelectedRunId(runId);
         startRefreshTransition(() => {
@@ -112,6 +127,39 @@ export function ExperimentTrackingClient({
                     <SummaryCard label="Safety Signals" value={`${snapshot.summary.safety_metric_coverage_pct}%`} tooltip="Percentage of runs with any clinical safety telemetry present. This means the run has at least basic safety signal coverage, not that it is clinically deployment-ready." />
                     <SummaryCard label="Full Safety" value={`${snapshot.summary.full_safety_metric_coverage_pct}%`} tooltip="Percentage of runs with full clinical safety telemetry: macro F1, critical recall, false-negative critical rate, false reassurance, abstain accuracy, and contradiction detection." />
                 </div>
+
+                {snapshot.summary.total_runs === 0 && (
+                    <ConsoleCard title="Initialization Required">
+                        <div className="space-y-4 font-mono text-xs text-muted">
+                            <p>
+                                No experiment runs exist for this tenant yet. This screen only fills after a learning cycle materializes telemetry into <span className="text-foreground">experiment_runs</span>, or after you explicitly seed bootstrap smoke runs.
+                            </p>
+                            <p>
+                                If you want real data, trigger a learning cycle. If you only want to validate the experiment UI, seed the bootstrap runs below.
+                            </p>
+                            {bootstrapMessage && (
+                                <div className="border border-accent/40 bg-accent/10 px-3 py-2 text-accent">
+                                    {bootstrapMessage}
+                                </div>
+                            )}
+                            {bootstrapError && (
+                                <div className="border border-danger/40 bg-danger/10 px-3 py-2 text-danger">
+                                    {bootstrapError}
+                                </div>
+                            )}
+                            <div className="flex flex-wrap gap-3">
+                                <TerminalButton variant="secondary" onClick={handleBootstrap} disabled={isBootstrapping}>
+                                    <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isBootstrapping ? 'animate-spin' : ''}`} />
+                                    Seed Bootstrap Runs
+                                </TerminalButton>
+                                <TerminalButton variant="secondary" onClick={handleRefresh} disabled={isRefreshing}>
+                                    <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                                    Refresh Snapshot
+                                </TerminalButton>
+                            </div>
+                        </div>
+                    </ConsoleCard>
+                )}
 
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                     <div className="flex flex-1 items-center gap-2 border border-grid bg-black/20 px-3 py-2">
@@ -992,6 +1040,50 @@ async function refreshSnapshot(
     const payload = await response.json();
     if (payload?.snapshot) {
         setSnapshot(payload.snapshot);
+    }
+}
+
+async function seedBootstrapSnapshot(input: {
+    setSnapshot: (snapshot: ExperimentDashboardSnapshot) => void;
+    setSelectedRunId: (runId: string | null) => void;
+    setCompareRunIds: (runIds: string[]) => void;
+    setMessage: (value: string | null) => void;
+    setError: (value: string | null) => void;
+}) {
+    input.setMessage(null);
+    input.setError(null);
+
+    try {
+        const response = await fetch('/api/experiments/bootstrap', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({}),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(typeof payload?.error === 'string' ? payload.error : 'Failed to seed bootstrap runs.');
+        }
+        if (payload?.snapshot) {
+            input.setSnapshot(payload.snapshot);
+            input.setSelectedRunId(payload.snapshot.selected_run_id ?? null);
+            input.setCompareRunIds([]);
+        }
+
+        const seededCount = typeof payload?.summary?.total_runs === 'number'
+            ? payload.summary.total_runs
+            : typeof payload?.summary?.seeded_run_ids?.length === 'number'
+                ? payload.summary.seeded_run_ids.length
+                : null;
+        input.setMessage(
+            seededCount != null
+                ? `Bootstrap experiment tracking initialized with ${seededCount} run${seededCount === 1 ? '' : 's'}.`
+                : 'Bootstrap experiment tracking initialized.',
+        );
+    } catch (error) {
+        input.setError(error instanceof Error ? error.message : 'Failed to seed bootstrap runs.');
     }
 }
 
