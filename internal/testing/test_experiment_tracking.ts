@@ -12,6 +12,7 @@ import {
     getExperimentDashboardSnapshot,
     getModelRegistryControlPlaneSnapshot,
     getExperimentRunDetail,
+    refreshModelRegistryControlPlaneSnapshot,
     RegistryControlPlaneError,
     logExperimentMetrics,
     recordExperimentFailure,
@@ -766,6 +767,8 @@ async function main() {
     await testRegistryControlPlaneVerificationMode();
     await testRegistrySnapshotPreventsNoOpSyncSpam();
     await testRegistrySnapshotCacheSeparatesReadOnlyAndMaterializedViews();
+    await testRegistrySnapshotRepairsIncompleteGovernanceEvaluations();
+    await testRegistryVerificationSkipsRollbackSimulationWithoutChampion();
     await testRegistryVerificationRepairsMissingProductionAudit();
 
     console.log('Experiment tracking integration tests passed.');
@@ -1583,6 +1586,117 @@ async function testRegistrySnapshotCacheSeparatesReadOnlyAndMaterializedViews() 
     assert.equal(materializedEntry?.promotion_gating.gates.calibration, 'pass');
     assert.equal(materializedEntry?.promotion_gating.gates.adversarial, 'pass');
     assert.equal(materializedEntry?.promotion_gating.gates.benchmark, 'pass');
+}
+
+async function testRegistrySnapshotRepairsIncompleteGovernanceEvaluations() {
+    const tenantId = makeUuid(12);
+    const store = buildStore(tenantId);
+
+    store.learningBenchmarks.push({
+        id: `${tenantId}_benchmark_safety`,
+        model_registry_id: `${tenantId}_registry_diag`,
+        benchmark_family: 'clinical_safety_gate',
+        task_type: 'severity',
+        summary_score: 0.91,
+        pass_status: 'pass',
+        report_payload: {
+            critical_recall: 0.93,
+            emergency_false_negative_rate: 0.04,
+            false_reassurance_rate: 0.03,
+            abstain_accuracy: 0.87,
+            contradiction_detection_rate: 0.9,
+            degradation_score: 0.1,
+        },
+        created_at: '2026-03-20T08:23:00.000Z',
+    });
+
+    await refreshModelRegistryControlPlaneSnapshot(store, tenantId);
+
+    const runId = createBackfillRunId('diag_registry_v1');
+    const registry = await store.getModelRegistryForRun(tenantId, runId);
+    assert.ok(registry);
+
+    await store.updateExperimentRun(runId, tenantId, {
+        safety_metrics: {
+            macro_f1: 0.82,
+            recall_critical: 0.93,
+        },
+    });
+
+    const calibration = await store.getCalibrationMetrics(tenantId, runId);
+    assert.ok(calibration);
+    await store.upsertCalibrationMetrics({
+        id: calibration?.id,
+        tenant_id: tenantId,
+        run_id: runId,
+        ece: calibration?.ece ?? 0.04,
+        brier_score: calibration?.brier_score ?? 0.08,
+        reliability_bins: calibration?.reliability_bins.length
+            ? calibration.reliability_bins
+            : [{ confidence: 0.82, accuracy: 0.8, count: 12 }],
+        confidence_histogram: calibration?.confidence_histogram.length
+            ? calibration.confidence_histogram
+            : [{ confidence: 0.82, count: 12 }],
+        calibration_pass: null,
+        calibration_notes: calibration?.calibration_notes ?? 'legacy partial record',
+    });
+
+    const adversarial = await store.getAdversarialMetrics(tenantId, runId);
+    assert.ok(adversarial);
+    await store.upsertAdversarialMetrics({
+        id: adversarial?.id,
+        tenant_id: tenantId,
+        run_id: runId,
+        degradation_score: adversarial?.degradation_score ?? 0.1,
+        contradiction_robustness: adversarial?.contradiction_robustness ?? 0.9,
+        critical_case_recall: adversarial?.critical_case_recall ?? 0.93,
+        false_reassurance_rate: adversarial?.false_reassurance_rate ?? 0.03,
+        dangerous_false_reassurance_rate: adversarial?.dangerous_false_reassurance_rate ?? 0.03,
+        adversarial_pass: null,
+    });
+
+    const requirements = await store.getPromotionRequirements(tenantId, runId);
+    assert.ok(requirements);
+    await store.upsertPromotionRequirements({
+        id: requirements?.id,
+        tenant_id: tenantId,
+        registry_id: registry!.registry_id,
+        run_id: runId,
+        calibration_pass: null,
+        adversarial_pass: null,
+        safety_pass: null,
+        benchmark_pass: true,
+        manual_approval: true,
+    });
+
+    const repairedSnapshot = await refreshModelRegistryControlPlaneSnapshot(store, tenantId);
+    const repairedEntry = repairedSnapshot.families
+        .flatMap((family) => family.entries)
+        .find((entry) => entry.registry.run_id === runId);
+    assert.ok(repairedEntry);
+    assert.equal(repairedEntry?.promotion_gating.gates.calibration, 'pass');
+    assert.equal(repairedEntry?.promotion_gating.gates.adversarial, 'pass');
+    assert.equal(repairedEntry?.promotion_gating.gates.safety, 'pass');
+
+    const repairedCalibration = await store.getCalibrationMetrics(tenantId, runId);
+    const repairedAdversarial = await store.getAdversarialMetrics(tenantId, runId);
+    const repairedRequirements = await store.getPromotionRequirements(tenantId, runId);
+    assert.equal(repairedCalibration?.calibration_pass, true);
+    assert.equal(repairedAdversarial?.adversarial_pass, true);
+    assert.equal(repairedRequirements?.safety_pass, true);
+}
+
+async function testRegistryVerificationSkipsRollbackSimulationWithoutChampion() {
+    const tenantId = makeUuid(13);
+    const store = buildStore(tenantId);
+
+    await refreshModelRegistryControlPlaneSnapshot(store, tenantId);
+
+    const verification = await verifyModelRegistryControlPlane(store, tenantId);
+    const rollbackSimulation = verification.simulated_failures.find((item) => item.scenario === 'no_rollback_target');
+    assert.ok(rollbackSimulation);
+    assert.equal(rollbackSimulation?.detected, true);
+    assert.match(rollbackSimulation?.summary ?? '', /skipped safely/i);
 }
 
 async function testRegistryVerificationRepairsMissingProductionAudit() {
