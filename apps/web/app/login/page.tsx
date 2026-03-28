@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
 import {
@@ -14,16 +14,21 @@ import {
 
 export default function LoginPage() {
     const router = useRouter();
-    const searchParams = useSearchParams();
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [showResetSuccess, setShowResetSuccess] = useState(false);
+    const [authError, setAuthError] = useState<string | null>(null);
     const isGoogleEmail = isGoogleMailAddress(email);
     const showGooglePasswordWarning = isGoogleEmail && password.trim().length > 0;
-    const showResetSuccess = searchParams.get('reset') === 'success';
-    const authError = searchParams.get('error');
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        setShowResetSuccess(params.get('reset') === 'success');
+        setAuthError(params.get('error'));
+    }, []);
 
     async function handleEmailPasswordLogin(e: React.FormEvent) {
         e.preventDefault();
