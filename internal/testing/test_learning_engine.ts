@@ -230,6 +230,16 @@ async function main() {
     assert.equal(datasetBundle.calibration_eval_set.length, 4);
     assert.equal(datasetBundle.adversarial_benchmark_set.length, 1);
     assert.equal(datasetBundle.quarantine_set.length, 1);
+    assert.equal(datasetBundle.feature_schema_version, DEFAULT_FEATURE_SCHEMA_VERSION);
+
+    const gdvFeatureVector = datasetBundle.diagnosis_training_set.find((row) => row.case_id === makeUuid(10))?.feature_vector;
+    assert.ok(gdvFeatureVector, 'Expected GDV feature vector to be present');
+    assert.equal(gdvFeatureVector?.dense_features.case_cluster, 'GDV');
+    assert.equal(gdvFeatureVector?.dense_features.primary_condition_class, 'Mechanical');
+    assert.ok(typeof gdvFeatureVector?.dense_features.signal_quality_score === 'number');
+    assert.equal(gdvFeatureVector?.symptom_flags.temporal_acute, true);
+    assert.equal(gdvFeatureVector?.symptom_flags.exposure_recent_meal, true);
+    assert.equal(gdvFeatureVector?.symptom_flags.urgency_abdominal_distension, true);
 
     const inferredOnlyLabel = resolveDiagnosisLabel(store.clinicalCases.find((row) => row.case_id === makeUuid(14))!);
     assert.equal(inferredOnlyLabel.trusted, false);
@@ -355,6 +365,24 @@ function buildFixtureStore(tenantId: string): InMemoryLearningEngineStore {
             symptom_text_raw: 'unproductive retching, abdominal distension, collapse',
             symptom_keys: ['retching_unproductive', 'abdominal_distension', 'collapse', 'tachycardia'],
             symptom_vector_normalized: { retching_unproductive: true, abdominal_distension: true, collapse: true, tachycardia: true },
+            patient_metadata: {
+                age_years: 8,
+                sex: 'male',
+                environment: 'household',
+                antigravity_signal: makeAntigravitySignalFixture({
+                    breedString: 'Great Dane',
+                    symptomVector: ['non-productive retching', 'abdominal distension', 'collapse', 'tachycardia'],
+                    age: '8 years',
+                    sexReproductiveStatus: 'male',
+                    temporalPattern: ['acute', 'acute_worsening', 'lt_24h'],
+                    exposureRisks: ['recent_meal'],
+                    breedRisk: ['deep_chested_gastric_dilatation_volvulus_predisposition'],
+                    systemicInvolvement: ['gastrointestinal', 'cardiovascular_possible'],
+                    urgencySignals: ['collapse', 'abdominal distension'],
+                    signalQualityScore: 0.94,
+                    environment: 'household',
+                }),
+            },
             confirmed_diagnosis: 'Gastric Dilatation-Volvulus',
             case_cluster: 'GDV',
             latest_inference_event_id: makeUuid(101),
@@ -367,6 +395,22 @@ function buildFixtureStore(tenantId: string): InMemoryLearningEngineStore {
             symptom_text_raw: 'ocular discharge, nasal discharge, myoclonus, fever',
             symptom_keys: ['ocular_discharge', 'nasal_discharge', 'myoclonus', 'fever'],
             symptom_vector_normalized: { ocular_discharge: true, nasal_discharge: true, myoclonus: true, fever: true },
+            patient_metadata: {
+                age_years: 1,
+                sex: 'female',
+                environment: 'shelter',
+                antigravity_signal: makeAntigravitySignalFixture({
+                    symptomVector: ['ocular discharge', 'nasal discharge', 'myoclonus', 'fever'],
+                    age: '1 years',
+                    sexReproductiveStatus: 'female spayed',
+                    temporalPattern: ['acute', 'worsening', '1_7d'],
+                    exposureRisks: ['communal_animal_exposure'],
+                    systemicInvolvement: ['respiratory', 'neurologic', 'systemic_inflammatory'],
+                    urgencySignals: ['none_reported'],
+                    signalQualityScore: 0.86,
+                    environment: 'shelter',
+                }),
+            },
             confirmed_diagnosis: 'Canine Distemper',
             case_cluster: 'Distemper',
             latest_inference_event_id: makeUuid(102),
@@ -380,6 +424,23 @@ function buildFixtureStore(tenantId: string): InMemoryLearningEngineStore {
             symptom_text_raw: 'bloody diarrhea, vomiting, lethargy',
             symptom_keys: ['hemorrhagic_diarrhea', 'vomiting', 'lethargy'],
             symptom_vector_normalized: { hemorrhagic_diarrhea: true, vomiting: true, lethargy: true },
+            patient_metadata: {
+                age_years: 0.6,
+                sex: 'male',
+                environment: 'household',
+                antigravity_signal: makeAntigravitySignalFixture({
+                    breedString: 'Labrador Retriever',
+                    symptomVector: ['hemorrhagic diarrhea', 'vomiting', 'lethargy'],
+                    age: '7 months',
+                    sexReproductiveStatus: 'male intact',
+                    temporalPattern: ['acute', 'worsening', '1_7d'],
+                    exposureRisks: ['communal_animal_exposure'],
+                    systemicInvolvement: ['gastrointestinal', 'systemic_inflammatory'],
+                    urgencySignals: ['none_reported'],
+                    signalQualityScore: 0.83,
+                    environment: 'household',
+                }),
+            },
             confirmed_diagnosis: 'Canine Parvovirus',
             case_cluster: 'Parvovirus',
             latest_inference_event_id: makeUuid(103),
@@ -393,6 +454,23 @@ function buildFixtureStore(tenantId: string): InMemoryLearningEngineStore {
             symptom_text_raw: 'vomiting, abdominal pain, fever',
             symptom_keys: ['vomiting', 'abdominal_pain', 'fever'],
             symptom_vector_normalized: { vomiting: true, abdominal_pain: true, fever: true },
+            patient_metadata: {
+                age_years: 6,
+                sex: 'female',
+                environment: 'household',
+                antigravity_signal: makeAntigravitySignalFixture({
+                    breedString: 'Bulldog',
+                    symptomVector: ['vomiting', 'abdominal pain', 'fever'],
+                    age: '6 years',
+                    sexReproductiveStatus: 'female spayed',
+                    temporalPattern: ['acute', 'stable', '1_7d'],
+                    exposureRisks: ['dietary_indiscretion_possible'],
+                    systemicInvolvement: ['gastrointestinal', 'systemic_inflammatory'],
+                    urgencySignals: ['none_reported'],
+                    signalQualityScore: 0.78,
+                    environment: 'household',
+                }),
+            },
             confirmed_diagnosis: 'Pancreatitis',
             contradiction_score: 0.12,
             contradiction_flags: ['temperature metadata mismatch'],
@@ -408,6 +486,25 @@ function buildFixtureStore(tenantId: string): InMemoryLearningEngineStore {
             symptom_text_raw: 'unproductive retching, abdominal distension, dyspnea, pale gums',
             symptom_keys: ['retching_unproductive', 'abdominal_distension', 'dyspnea', 'pale_mucous_membranes'],
             symptom_vector_normalized: { retching_unproductive: true, abdominal_distension: true, dyspnea: true, pale_mucous_membranes: true },
+            patient_metadata: {
+                age_years: 7,
+                sex: 'male',
+                environment: 'household',
+                antigravity_signal: makeAntigravitySignalFixture({
+                    breedString: 'Great Dane',
+                    symptomVector: ['non-productive retching', 'abdominal distension', 'dyspnea', 'pale mucous membranes'],
+                    age: '7 years',
+                    sexReproductiveStatus: 'male',
+                    temporalPattern: ['acute', 'acute_worsening', 'lt_24h'],
+                    exposureRisks: ['recent_meal'],
+                    breedRisk: ['deep_chested_gastric_dilatation_volvulus_predisposition'],
+                    systemicInvolvement: ['gastrointestinal', 'cardiovascular_possible', 'respiratory'],
+                    urgencySignals: ['abdominal distension', 'dyspnea', 'pale mucous membranes'],
+                    signalQualityScore: 0.89,
+                    environment: 'household',
+                    contradictionFlags: ['abdominal distension conflict', 'appetite severity mismatch'],
+                }),
+            },
             confirmed_diagnosis: null,
             contradiction_score: 0.69,
             contradiction_flags: ['abdominal distension conflict', 'appetite severity mismatch'],
@@ -632,6 +729,56 @@ function makeEvaluationEvent(
         evaluation_payload: {},
         created_at: new Date().toISOString(),
         ...overrides,
+    };
+}
+
+function makeAntigravitySignalFixture(input: {
+    breedString?: string;
+    symptomVector: string[];
+    age: string;
+    sexReproductiveStatus: string;
+    temporalPattern: string[];
+    exposureRisks: string[];
+    breedRisk?: string[];
+    systemicInvolvement: string[];
+    urgencySignals: string[];
+    signalQualityScore: number;
+    environment: string;
+    contradictionFlags?: string[];
+}): Record<string, unknown> {
+    return {
+        species_constraint: 'Canis lupus familiaris',
+        breed_string: input.breedString ?? 'Mixed',
+        symptom_vector: input.symptomVector,
+        patient_history: {
+            species_label: 'Dog',
+            age: input.age,
+            sex_reproductive_status: input.sexReproductiveStatus,
+            duration: {
+                value: input.temporalPattern.includes('lt_24h') ? 6 : 3,
+                unit: input.temporalPattern.includes('lt_24h') ? 'hours' : 'days',
+                normalized_days: input.temporalPattern.includes('lt_24h') ? 0.25 : 3,
+                bucket: input.temporalPattern.includes('lt_24h') ? 'lt_24h' : '1_7d',
+            },
+            onset: input.temporalPattern.find((entry) => entry === 'acute' || entry === 'gradual' || entry === 'chronic') ?? 'acute',
+            progression: input.temporalPattern.find((entry) => entry === 'worsening' || entry === 'stable' || entry === 'fluctuating') ?? 'worsening',
+            environment: input.environment,
+            exposures: input.exposureRisks,
+            key_context: [...input.systemicInvolvement, ...input.urgencySignals],
+        },
+        patient_history_summary: 'fixture',
+        derived_signals: {
+            temporal_pattern: input.temporalPattern,
+            exposure_risks: input.exposureRisks,
+            breed_risk: input.breedRisk ?? ['none_identified'],
+            systemic_involvement: input.systemicInvolvement,
+            urgency_signals: input.urgencySignals,
+            reproductive_relevance: ['not_reported'],
+        },
+        contradiction_flags: input.contradictionFlags ?? ['none'],
+        missing_fields: [],
+        signal_quality_score: input.signalQualityScore,
+        signal_text: 'fixture',
     };
 }
 

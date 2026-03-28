@@ -641,5 +641,5 @@ export const DEFAULT_LABEL_TRUST: LabelTrustConfig = {
     lab_confirmed: 1,
 };
 
-export const DEFAULT_FEATURE_SCHEMA_VERSION = 'clinical-case-vector-v1';
+export const DEFAULT_FEATURE_SCHEMA_VERSION = 'clinical-case-vector-v2';
 export const DEFAULT_LABEL_POLICY_VERSION = 'learning-label-policy-v1';
