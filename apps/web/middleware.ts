@@ -8,7 +8,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server';
 
-const PUBLIC_ROUTES = ['/login', '/signup', '/auth/callback'];
+const PUBLIC_ROUTES = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth/callback'];
 
 function hasSupabaseAuthCookie(request: NextRequest): boolean {
     return request.cookies.getAll().some(({ name }) =>
