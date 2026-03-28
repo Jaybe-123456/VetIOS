@@ -1,5 +1,5 @@
 {
-  "version": "signal-weights-v1",
+  "version": "signal-weights-v2",
   "default_category_weights": {
     "systemic_symptom": 0.34,
     "gastrointestinal_symptom": 0.42,
@@ -48,6 +48,24 @@
     {"canonical_term":"dehydration","category":"primary_signal","base_weight":0.57,"emergency_override":false,"rationale":"Perfusion/volume modifier."},
     {"canonical_term":"abdominal_pain","category":"primary_signal","base_weight":0.73,"emergency_override":false,"rationale":"Strong abdominal disease signal."},
     {"canonical_term":"pleural_effusion","category":"red_flag","base_weight":0.9,"emergency_override":true,"rationale":"Critical respiratory structural finding."},
+    {"canonical_term":"polyuria","category":"contextual_signal","base_weight":0.42,"emergency_override":false,"rationale":"Shared endocrine/urinary signal that should not dominate without defining laboratory support."},
+    {"canonical_term":"polydipsia","category":"contextual_signal","base_weight":0.42,"emergency_override":false,"rationale":"Shared endocrine signal that needs disease-defining anchors."},
+    {"canonical_term":"polyphagia","category":"weak_signal","base_weight":0.24,"emergency_override":false,"rationale":"Low-specificity appetite change without corroborating endocrine features."},
+    {"canonical_term":"panting","category":"primary_signal","base_weight":0.46,"emergency_override":false,"rationale":"Chronic endocrine body-pattern clue when paired with compatible laboratory findings."},
+    {"canonical_term":"alopecia","category":"primary_signal","base_weight":0.52,"emergency_override":false,"rationale":"Dermatologic endocrine pattern anchor."},
+    {"canonical_term":"pot_bellied_appearance","category":"primary_signal","base_weight":0.68,"emergency_override":false,"rationale":"Strong chronic endocrine body-pattern signal distinct from acute abdominal bloat."},
+    {"canonical_term":"marked_alp_elevation","category":"primary_signal","base_weight":0.84,"emergency_override":false,"rationale":"High-value biochemical discriminator supporting hyperadrenocorticism."},
+    {"canonical_term":"hypercholesterolemia","category":"primary_signal","base_weight":0.64,"emergency_override":false,"rationale":"Supportive endocrine chemistry pattern signal."},
+    {"canonical_term":"supportive_acth_stimulation_test","category":"primary_signal","base_weight":0.92,"emergency_override":false,"rationale":"High-specificity endocrine test support for hyperadrenocorticism."},
+    {"canonical_term":"dilute_urine","category":"primary_signal","base_weight":0.58,"emergency_override":false,"rationale":"Urinary endocrine discriminator that gains value when glucosuria is absent."},
+    {"canonical_term":"significant_hyperglycemia","category":"primary_signal","base_weight":0.82,"emergency_override":false,"rationale":"Strong diabetes discriminator when persistent or marked."},
+    {"canonical_term":"mild_hyperglycemia","category":"contradiction_modifier","base_weight":0.28,"emergency_override":false,"rationale":"Mild hyperglycemia alone is insufficient to dominate endocrine ranking."},
+    {"canonical_term":"glucosuria","category":"primary_signal","base_weight":0.86,"emergency_override":false,"rationale":"Major diabetes discriminator that should outrank shared PU/PD symptoms."},
+    {"canonical_term":"glucosuria_absent","category":"contradiction_modifier","base_weight":0.34,"emergency_override":false,"rationale":"Explicit absence of glucosuria should penalize diabetes-first interpretation."},
+    {"canonical_term":"ketonuria","category":"primary_signal","base_weight":0.88,"emergency_override":false,"rationale":"High-value diabetic metabolic decompensation signal."},
+    {"canonical_term":"weight_loss","category":"primary_signal","base_weight":0.49,"emergency_override":false,"rationale":"Supports catabolic endocrine disease when combined with hyperglycemia/glucosuria."},
+    {"canonical_term":"diabetic_metabolic_profile","category":"primary_signal","base_weight":0.78,"emergency_override":false,"rationale":"Pattern-level diabetes laboratory anchor."},
+    {"canonical_term":"gradual_onset","category":"contextual_signal","base_weight":0.36,"emergency_override":false,"rationale":"Gradual progression supports chronic endocrine reasoning over acute metabolic defaulting."},
     {"canonical_term":"recent_meal","category":"contextual_signal","base_weight":0.38,"emergency_override":false,"rationale":"Temporal contextual modifier."},
     {"canonical_term":"kennel_exposure","category":"contextual_signal","base_weight":0.44,"emergency_override":false,"rationale":"Communal infectious exposure modifier."},
     {"canonical_term":"shelter_exposure","category":"contextual_signal","base_weight":0.43,"emergency_override":false,"rationale":"Communal infectious exposure modifier."},
@@ -163,6 +181,50 @@
       "category_override": "contextual_signal",
       "emergency_override": false,
       "rationale": "Reproductive timing materially changes interpretation."
+    },
+    {
+      "id": "hyperadrenocorticism_body_pattern_cluster",
+      "label": "Hyperadrenocorticism body-pattern cluster",
+      "when_all": ["marked_alp_elevation"],
+      "when_any": ["pot_bellied_appearance", "panting", "alopecia", "hypercholesterolemia", "gradual_onset", "chronic_duration"],
+      "apply_to": ["marked_alp_elevation", "pot_bellied_appearance", "panting", "alopecia", "hypercholesterolemia", "gradual_onset"],
+      "weight_delta": 0.14,
+      "category_override": "primary_signal",
+      "emergency_override": false,
+      "rationale": "Marked ALP elevation plus chronic endocrine body-pattern cues should outrank shared PU/PD noise."
+    },
+    {
+      "id": "supportive_acth_cluster",
+      "label": "Supportive ACTH test cluster",
+      "when_all": ["supportive_acth_stimulation_test"],
+      "when_any": ["marked_alp_elevation", "pot_bellied_appearance", "panting", "alopecia"],
+      "apply_to": ["supportive_acth_stimulation_test", "marked_alp_elevation", "pot_bellied_appearance", "panting", "alopecia"],
+      "weight_delta": 0.16,
+      "category_override": "primary_signal",
+      "emergency_override": false,
+      "rationale": "Supportive ACTH testing should materially elevate hyperadrenocorticism-specific evidence."
+    },
+    {
+      "id": "diabetes_mellitus_anchor_cluster",
+      "label": "Diabetes mellitus anchor cluster",
+      "when_all": ["significant_hyperglycemia", "glucosuria"],
+      "when_any": ["ketonuria", "weight_loss", "diabetic_metabolic_profile"],
+      "apply_to": ["significant_hyperglycemia", "glucosuria", "ketonuria", "weight_loss", "diabetic_metabolic_profile"],
+      "weight_delta": 0.15,
+      "category_override": "primary_signal",
+      "emergency_override": false,
+      "rationale": "Diabetes should dominate only when glycemic and urinary anchors cluster together."
+    },
+    {
+      "id": "non_glucosuric_endocrine_context",
+      "label": "Non-glucosuric endocrine context",
+      "when_all": ["dilute_urine", "glucosuria_absent"],
+      "when_any": ["marked_alp_elevation", "pot_bellied_appearance", "panting", "alopecia"],
+      "apply_to": ["dilute_urine", "glucosuria_absent", "marked_alp_elevation", "pot_bellied_appearance"],
+      "weight_delta": 0.1,
+      "category_override": "primary_signal",
+      "emergency_override": false,
+      "rationale": "Dilute urine without glucosuria should favor non-diabetic endocrine interpretation."
     }
   ]
 }

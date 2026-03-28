@@ -1,5 +1,5 @@
 {
-  "version": "contradiction-rules-v2",
+  "version": "contradiction-rules-v3",
   "rules": [
     {
       "id": "severity_activity_mismatch",
@@ -97,6 +97,16 @@
       "requires_all": ["fever_negated"],
       "conflicts_any": ["collapse", "dyspnea", "abdominal_distension", "cyanosis", "severe_illness_pattern"],
       "explanation_template": "explicit afebrile history is atypical in a high-acuity systemic presentation"
+    },
+    {
+      "id": "mild_hyperglycemia_without_glucosuria",
+      "label": "Mild hyperglycemia without glucosuria",
+      "rule_type": "differential_exclusion",
+      "severity": "mild",
+      "weight": 0.12,
+      "requires_all": ["mild_hyperglycemia", "glucosuria_absent"],
+      "conflicts_any": ["polyuria", "polydipsia", "polyphagia"],
+      "explanation_template": "mild hyperglycemia without glucosuria weakens a diabetes-first interpretation despite shared PU/PD/polyphagia"
     }
   ]
 }

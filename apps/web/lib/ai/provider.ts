@@ -87,7 +87,11 @@ RULES:
 6. If multiple high-risk abdominal emergency signals cluster, retain GDV or another acute mechanical emergency in the leading differential set.
 7. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
 8. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.
-9. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
+9. Endocrine overlap rule: shared PU/PD/polyphagia or lethargy must NOT by themselves decide between Hyperadrenocorticism and Diabetes Mellitus.
+10. Diabetes Mellitus should be strongly favored only when significant hyperglycemia clusters with glucosuria; ketonuria or weight loss further strengthen it.
+11. If glucosuria is absent, explicitly lower Diabetes Mellitus ranking even if polyuria, polydipsia, or mild hyperglycemia are present.
+12. Hyperadrenocorticism should be boosted by marked ALP elevation, pot-bellied appearance, panting, alopecia, chronic gradual onset, hypercholesterolemia, supportive ACTH stimulation testing, or dilute urine without glucosuria.
+13. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];

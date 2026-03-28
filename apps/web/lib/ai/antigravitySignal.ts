@@ -109,6 +109,23 @@ const SIGNAL_TERM_MAP: Record<SignalKey, string> = {
     lethargy: 'lethargy',
     anorexia: 'anorexia',
     weakness: 'weakness',
+    polyuria: 'polyuria',
+    polydipsia: 'polydipsia',
+    polyphagia: 'polyphagia',
+    panting: 'panting',
+    alopecia: 'alopecia',
+    weight_loss: 'weight loss',
+    pot_bellied_appearance: 'pot-bellied appearance',
+    marked_alp_elevation: 'marked ALP elevation',
+    hypercholesterolemia: 'hypercholesterolemia',
+    supportive_acth_stimulation_test: 'supportive ACTH stimulation test',
+    dilute_urine: 'dilute urine',
+    glucosuria: 'glucosuria',
+    glucosuria_absent: 'glucosuria absent',
+    ketonuria: 'ketonuria',
+    significant_hyperglycemia: 'significant hyperglycemia',
+    mild_hyperglycemia: 'mild hyperglycemia',
+    diabetic_metabolic_profile: 'diabetic metabolic profile',
     hypersalivation: 'hypersalivation',
     seizures: 'seizures',
     nasal_discharge: 'nasal discharge',
@@ -158,6 +175,23 @@ const SYSTEMIC_SIGNAL_KEYS: Array<{
         label: 'cardiovascular_possible',
         keys: ['collapse', 'tachycardia', 'pale_mucous_membranes', 'cyanosis'],
         required: 1,
+    },
+    {
+        label: 'metabolic_endocrine',
+        keys: [
+            'polyuria',
+            'polydipsia',
+            'polyphagia',
+            'panting',
+            'alopecia',
+            'weight_loss',
+            'marked_alp_elevation',
+            'supportive_acth_stimulation_test',
+            'glucosuria',
+            'ketonuria',
+            'significant_hyperglycemia',
+        ],
+        required: 2,
     },
     {
         label: 'neurologic',
@@ -898,11 +932,12 @@ function coerceStringArray(value: unknown): string[] {
     return [];
 }
 
-function dedupeStrings(values: string[]): string[] {
+function dedupeStrings(values: unknown[]): string[] {
     const seen = new Set<string>();
     const output: string[] = [];
 
     for (const value of values) {
+        if (typeof value !== 'string') continue;
         const normalized = value.replace(/\s+/g, ' ').trim();
         if (!normalized) continue;
         const key = normalized.toLowerCase();

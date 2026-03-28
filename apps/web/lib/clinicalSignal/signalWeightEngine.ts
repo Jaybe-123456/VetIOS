@@ -113,6 +113,11 @@ export function buildSignalWeightProfile(
         addSource(sourcesByTerm, term, 'free_text');
     }
 
+    for (const term of deriveStructuredTerms(input, narrative)) {
+        terms.add(term);
+        addSource(sourcesByTerm, term, 'structured_field');
+    }
+
     for (const term of deriveTermsFromAntigravitySignal(antigravitySignal)) {
         terms.add(term);
         addSource(sourcesByTerm, term, 'antigravity_derived');
@@ -350,13 +355,141 @@ function collectNarrativeText(input: Record<string, unknown>): string {
         coerceString(input.notes),
         coerceString(input.presentation),
         coerceString(input.chief_complaint),
+        coerceString(input.lab_summary),
+        coerceString(input.chemistry_summary),
+        coerceString(input.bloodwork_summary),
+        coerceString(input.urinalysis_summary),
+        coerceString(input.endocrine_summary),
+        coerceString(input.acth_stimulation_result),
         coerceString(metadata.raw_note),
         coerceString(metadata.history),
         coerceString(metadata.presentation),
         coerceString(metadata.chief_complaint),
+        coerceString(metadata.lab_summary),
+        coerceString(metadata.chemistry_summary),
+        coerceString(metadata.bloodwork_summary),
+        coerceString(metadata.urinalysis_summary),
+        coerceString(metadata.endocrine_summary),
+        coerceString(metadata.acth_stimulation_result),
+        ...extractLabResultText(input.lab_results),
+        ...extractLabResultText(metadata.lab_results),
     ]
         .filter((value): value is string => Boolean(value))
         .join(' ');
+}
+
+function deriveStructuredTerms(input: Record<string, unknown>, narrative: string): string[] {
+    const terms = new Set<string>();
+
+    const booleanTerms: Array<[string, string[]]> = [
+        ['panting', ['panting']],
+        ['alopecia', ['alopecia']],
+        ['polyuria', ['polyuria']],
+        ['polydipsia', ['polydipsia']],
+        ['polyphagia', ['polyphagia']],
+        ['weight_loss', ['weight_loss']],
+        ['pot_bellied_appearance', ['pot_bellied_appearance']],
+        ['marked_alp_elevation', ['marked_alp_elevation']],
+        ['hypercholesterolemia', ['hypercholesterolemia']],
+        ['supportive_acth_stimulation_test', ['supportive_acth_stimulation_test', 'acth_stimulation_supportive']],
+        ['dilute_urine', ['dilute_urine']],
+        ['glucosuria', ['glucosuria']],
+        ['ketonuria', ['ketonuria']],
+        ['significant_hyperglycemia', ['significant_hyperglycemia']],
+        ['mild_hyperglycemia', ['mild_hyperglycemia']],
+        ['diabetic_metabolic_profile', ['diabetic_metabolic_profile']],
+    ];
+
+    for (const [term, fields] of booleanTerms) {
+        if (fields.some((field) => readBooleanField(input, field) === true)) {
+            terms.add(term);
+        }
+    }
+
+    if (readBooleanField(input, 'glucosuria') === false) {
+        terms.add('glucosuria_absent');
+    }
+
+    const alpMultiplier = firstNumber(
+        readNumberField(input, 'alp_multiple_upper_limit'),
+        readNumberField(input, 'alkaline_phosphatase_multiple_upper_limit'),
+    );
+    if (alpMultiplier != null && alpMultiplier >= 3) {
+        terms.add('marked_alp_elevation');
+    }
+
+    const alpValue = firstNumber(
+        readNumberField(input, 'alp_u_l'),
+        readNumberField(input, 'alkaline_phosphatase_u_l'),
+        extractLabNumber(narrative, /(?:alp|alkaline phosphatase)\s*(?:[:=]|\bis\b)?\s*(\d+(?:\.\d+)?)/i),
+    );
+    if (alpValue != null && alpValue >= 350) {
+        terms.add('marked_alp_elevation');
+    }
+
+    const cholesterolValue = firstNumber(
+        readNumberField(input, 'cholesterol_mg_dl'),
+        readNumberField(input, 'serum_cholesterol_mg_dl'),
+        extractLabNumber(narrative, /(?:cholesterol|chol)\s*(?:[:=]|\bis\b)?\s*(\d+(?:\.\d+)?)/i),
+    );
+    if (cholesterolValue != null && cholesterolValue >= 320) {
+        terms.add('hypercholesterolemia');
+    }
+
+    const glucoseValue = firstNumber(
+        readNumberField(input, 'blood_glucose_mg_dl'),
+        readNumberField(input, 'serum_glucose_mg_dl'),
+        readNumberField(input, 'glucose_mg_dl'),
+        extractLabNumber(narrative, /(?:blood glucose|serum glucose|glucose)\s*(?:[:=]|\bis\b)?\s*(\d+(?:\.\d+)?)/i),
+    );
+    if (glucoseValue != null) {
+        if (glucoseValue >= 250) {
+            terms.add('significant_hyperglycemia');
+        } else if (glucoseValue >= 130) {
+            terms.add('mild_hyperglycemia');
+        }
+    }
+
+    const urineSpecificGravity = firstNumber(
+        readNumberField(input, 'urine_specific_gravity'),
+        readNumberField(input, 'urine_specific_gravity_value'),
+        extractLabNumber(narrative, /(?:urine specific gravity|specific gravity|usg)\s*(?:[:=]|\bis\b)?\s*(1\.\d{3})/i),
+    );
+    if (urineSpecificGravity != null && urineSpecificGravity <= 1.015) {
+        terms.add('dilute_urine');
+    }
+
+    return [...terms];
+}
+
+function extractLabResultText(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+
+    const fragments: string[] = [];
+    for (const entry of value) {
+        if (!entry || typeof entry !== 'object') continue;
+        const record = entry as Record<string, unknown>;
+
+        for (const key of ['text', 'content_text', 'summary', 'raw_text']) {
+            const direct = coerceString(record[key]);
+            if (direct) fragments.push(direct);
+        }
+
+        const encoded = typeof record.content_base64 === 'string' ? record.content_base64 : null;
+        const mimeType = typeof record.mime_type === 'string' ? record.mime_type.toLowerCase() : '';
+        if (!encoded || (mimeType && !mimeType.startsWith('text/') && !mimeType.includes('json'))) {
+            continue;
+        }
+
+        try {
+            const decoded = Buffer.from(encoded, 'base64').toString('utf8').trim();
+            if (decoded) fragments.push(decoded);
+        } catch {
+            // Ignore undecodable lab attachments.
+        }
+    }
+
+    return fragments;
 }
 
 function addSource(map: Map<string, Set<string>>, term: string, source: string) {
@@ -380,6 +513,22 @@ function readNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function readBooleanField(input: Record<string, unknown>, field: string): boolean | null {
+    const direct = input[field];
+    if (typeof direct === 'boolean') return direct;
+    const metadata = getMetadata(input);
+    const nested = metadata[field];
+    return typeof nested === 'boolean' ? nested : null;
+}
+
+function readNumberField(input: Record<string, unknown>, field: string): number | null {
+    const direct = input[field];
+    if (typeof direct === 'number' && Number.isFinite(direct)) return direct;
+    const metadata = getMetadata(input);
+    const nested = metadata[field];
+    return typeof nested === 'number' && Number.isFinite(nested) ? nested : null;
+}
+
 function coerceString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
@@ -391,6 +540,17 @@ function coerceStringArray(value: unknown): string[] {
 
 function dedupeStrings(values: string[]): string[] {
     return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function extractLabNumber(value: string, pattern: RegExp): number | null {
+    const match = value.match(pattern);
+    if (!match) return null;
+    const parsed = Number.parseFloat(match[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstNumber(...values: Array<number | null>): number | null {
+    return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value)) ?? null;
 }
 
 function clamp(value: number, min: number, max: number): number {

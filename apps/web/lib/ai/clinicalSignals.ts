@@ -18,6 +18,23 @@ export type SignalKey =
     | 'lethargy'
     | 'anorexia'
     | 'weakness'
+    | 'polyuria'
+    | 'polydipsia'
+    | 'polyphagia'
+    | 'panting'
+    | 'alopecia'
+    | 'weight_loss'
+    | 'pot_bellied_appearance'
+    | 'marked_alp_elevation'
+    | 'hypercholesterolemia'
+    | 'supportive_acth_stimulation_test'
+    | 'dilute_urine'
+    | 'glucosuria'
+    | 'glucosuria_absent'
+    | 'ketonuria'
+    | 'significant_hyperglycemia'
+    | 'mild_hyperglycemia'
+    | 'diabetic_metabolic_profile'
     | 'hypersalivation'
     | 'seizures'
     | 'nasal_discharge'
@@ -50,12 +67,19 @@ export interface ClinicalSignals {
     has_small_breed_tracheal_collapse_risk: boolean;
     has_exposure_risk: boolean;
     has_isolated_environment: boolean;
+    has_chronic_duration: boolean;
+    has_gradual_onset: boolean;
+    has_explicit_glucosuria_absence: boolean;
     gdv_cluster_count: number;
     gdv_pattern_strength: number;
     shock_pattern_strength: number;
     distemper_pattern_strength: number;
     upper_airway_pattern_strength: number;
     respiratory_infection_pattern_strength: number;
+    endocrine_shared_pattern_strength: number;
+    endocrine_body_pattern_strength: number;
+    hyperadrenocorticism_pattern_strength: number;
+    diabetes_mellitus_pattern_strength: number;
 }
 
 interface SignalDefinition {
@@ -147,6 +171,108 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
         label: 'weakness',
         tier: 3,
         terms: ['weakness', 'weak', 'unable to stand'],
+    },
+    polyuria: {
+        label: 'polyuria',
+        tier: 3,
+        terms: ['polyuria', 'urinating a lot', 'peeing more', 'increased urination', 'large urine volumes'],
+        structured_fields: ['polyuria'],
+    },
+    polydipsia: {
+        label: 'polydipsia',
+        tier: 3,
+        terms: ['polydipsia', 'drinking a lot', 'drinking more water', 'very thirsty', 'increased thirst', 'excessive thirst'],
+        structured_fields: ['polydipsia'],
+    },
+    polyphagia: {
+        label: 'polyphagia',
+        tier: 3,
+        terms: ['polyphagia', 'always hungry', 'eating a lot', 'increased appetite', 'ravenous'],
+        structured_fields: ['polyphagia'],
+    },
+    panting: {
+        label: 'panting',
+        tier: 2,
+        terms: ['panting', 'excessive panting', 'pants a lot', 'pants excessively'],
+        structured_fields: ['panting'],
+    },
+    alopecia: {
+        label: 'alopecia',
+        tier: 2,
+        terms: ['alopecia', 'hair loss', 'hair thinning', 'thinning hair', 'coat thinning'],
+        structured_fields: ['alopecia'],
+    },
+    weight_loss: {
+        label: 'weight loss',
+        tier: 2,
+        terms: ['weight loss', 'losing weight', 'lost weight', 'getting skinny', 'thin'],
+        structured_fields: ['weight_loss'],
+    },
+    pot_bellied_appearance: {
+        label: 'pot-bellied appearance',
+        tier: 2,
+        terms: ['pot-bellied appearance', 'pot bellied', 'pot-bellied', 'potbelly', 'pendulous abdomen'],
+        structured_fields: ['pot_bellied_appearance'],
+    },
+    marked_alp_elevation: {
+        label: 'marked ALP elevation',
+        tier: 1,
+        terms: ['marked elevated alp', 'markedly elevated alp', 'alp markedly elevated', 'alkaline phosphatase markedly elevated', 'marked alkaline phosphatase elevation'],
+        structured_fields: ['marked_alp_elevation'],
+    },
+    hypercholesterolemia: {
+        label: 'hypercholesterolemia',
+        tier: 2,
+        terms: ['hypercholesterolemia', 'high cholesterol', 'cholesterol elevated'],
+        structured_fields: ['hypercholesterolemia'],
+    },
+    supportive_acth_stimulation_test: {
+        label: 'supportive ACTH stimulation test',
+        tier: 1,
+        terms: ['supportive acth stimulation test', 'acth stimulation supportive', 'positive acth stimulation test', 'acth stimulation consistent with hyperadrenocorticism'],
+        structured_fields: ['supportive_acth_stimulation_test'],
+    },
+    dilute_urine: {
+        label: 'dilute urine',
+        tier: 2,
+        terms: ['dilute urine', 'urine is dilute', 'low urine specific gravity', 'specific gravity low', 'usg low'],
+        structured_fields: ['dilute_urine'],
+    },
+    glucosuria: {
+        label: 'glucosuria',
+        tier: 1,
+        terms: ['glucosuria', 'glucose in urine', 'urine glucose positive', 'glucose positive urine'],
+        structured_fields: ['glucosuria'],
+    },
+    glucosuria_absent: {
+        label: 'glucosuria absent',
+        tier: 2,
+        terms: ['no glucosuria', 'without glucosuria', 'glucosuria absent', 'urine glucose negative', 'glucose negative urine'],
+        structured_fields: ['glucosuria_absent', 'glucosuria_negative'],
+    },
+    ketonuria: {
+        label: 'ketonuria',
+        tier: 1,
+        terms: ['ketonuria', 'ketones in urine', 'urine ketones', 'urine ketone positive'],
+        structured_fields: ['ketonuria'],
+    },
+    significant_hyperglycemia: {
+        label: 'significant hyperglycemia',
+        tier: 1,
+        terms: ['significant hyperglycemia', 'persistent significant hyperglycemia', 'marked hyperglycemia', 'persistent hyperglycemia', 'glucose markedly elevated'],
+        structured_fields: ['significant_hyperglycemia'],
+    },
+    mild_hyperglycemia: {
+        label: 'mild hyperglycemia',
+        tier: 3,
+        terms: ['mild hyperglycemia', 'mildly elevated glucose', 'slight hyperglycemia', 'borderline hyperglycemia'],
+        structured_fields: ['mild_hyperglycemia'],
+    },
+    diabetic_metabolic_profile: {
+        label: 'diabetic metabolic profile',
+        tier: 1,
+        terms: ['compatible diabetic metabolic profile', 'diabetic metabolic profile', 'metabolic profile consistent with diabetes'],
+        structured_fields: ['diabetic_metabolic_profile'],
     },
     hypersalivation: {
         label: 'hypersalivation',
@@ -282,6 +408,8 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
         };
     }
 
+    applyStructuredEndocrineEvidence(input, allText, evidence);
+
     const gdvClusterCount = countPresent(evidence, [
         'unproductive_retching',
         'abdominal_distension',
@@ -327,6 +455,49 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
         'fever',
         'lethargy',
     ]);
+    const hasChronicDuration = Boolean(
+        (durationDays != null && durationDays >= 21)
+        || textIncludesAny(allText, ['chronic', 'long-standing', 'for months', 'ongoing for weeks', 'ongoing for months'])
+    );
+    const hasGradualOnset = Boolean(
+        textIncludesAny(allText, ['gradual onset', 'came on gradually', 'gradually progressive', 'slowly progressive', 'slowly worsening'])
+        || (hasChronicDuration && !textIncludesAny(allText, ['started suddenly', 'came on suddenly', 'acute onset', 'abrupt onset']))
+    );
+    const hasExplicitGlucosuriaAbsence = evidence.glucosuria_absent.present || evidence.glucosuria.negated_terms.length > 0;
+    const endocrineSharedPatternStrength = weightedPresence(evidence, [
+        'polyuria',
+        'polydipsia',
+        'polyphagia',
+        'lethargy',
+    ]);
+    const endocrineBodyPatternStrength = weightedPresence(evidence, [
+        'pot_bellied_appearance',
+        'panting',
+        'alopecia',
+        'marked_alp_elevation',
+        'hypercholesterolemia',
+    ]);
+    const hyperadrenocorticismPatternStrength = endocrineBodyPatternStrength
+        + (evidence.supportive_acth_stimulation_test.present ? 0.38 : 0)
+        + (evidence.dilute_urine.present ? 0.16 : 0)
+        + (hasExplicitGlucosuriaAbsence ? 0.14 : 0)
+        + (hasChronicDuration ? 0.12 : 0)
+        + (hasGradualOnset ? 0.08 : 0)
+        + (evidence.abdominal_distension.present && hasChronicDuration ? 0.06 : 0)
+        + (evidence.polyuria.present ? 0.06 : 0)
+        + (evidence.polydipsia.present ? 0.06 : 0)
+        + (evidence.polyphagia.present ? 0.04 : 0);
+    const diabetesMellitusPatternStrength = weightedPresence(evidence, [
+        'significant_hyperglycemia',
+        'glucosuria',
+        'ketonuria',
+        'weight_loss',
+        'diabetic_metabolic_profile',
+    ])
+        + (evidence.polyuria.present ? 0.06 : 0)
+        + (evidence.polydipsia.present ? 0.06 : 0)
+        + (evidence.polyphagia.present ? 0.05 : 0)
+        + (evidence.lethargy.present ? 0.03 : 0);
     const hasSmallBreedTrachealCollapseRisk = Boolean(
         (breed != null && SMALL_BREED_AIRWAY_BREEDS.some((candidate) => breed.includes(candidate)))
         || (weightKg != null && weightKg <= 12)
@@ -363,12 +534,19 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
         has_small_breed_tracheal_collapse_risk: hasSmallBreedTrachealCollapseRisk,
         has_exposure_risk: hasExposureRisk,
         has_isolated_environment: hasIsolatedEnvironment,
+        has_chronic_duration: hasChronicDuration,
+        has_gradual_onset: hasGradualOnset,
+        has_explicit_glucosuria_absence: hasExplicitGlucosuriaAbsence,
         gdv_cluster_count: gdvClusterCount,
         gdv_pattern_strength: gdvPatternStrength,
         shock_pattern_strength: shockPatternStrength,
         distemper_pattern_strength: distemperPatternStrength,
         upper_airway_pattern_strength: upperAirwayPatternStrength,
         respiratory_infection_pattern_strength: respiratoryInfectionPatternStrength,
+        endocrine_shared_pattern_strength: endocrineSharedPatternStrength,
+        endocrine_body_pattern_strength: endocrineBodyPatternStrength,
+        hyperadrenocorticism_pattern_strength: hyperadrenocorticismPatternStrength,
+        diabetes_mellitus_pattern_strength: diabetesMellitusPatternStrength,
     };
 }
 
@@ -493,7 +671,21 @@ function extractSymptomVector(input: Record<string, unknown>): string[] {
 
 function extractFreeTextFragments(input: Record<string, unknown>): string[] {
     const fragments: string[] = [];
-    const fields = ['edge_cases', 'contradictions', 'chief_complaint', 'history', 'raw_note', 'notes', 'presentation'];
+    const fields = [
+        'edge_cases',
+        'contradictions',
+        'chief_complaint',
+        'history',
+        'raw_note',
+        'notes',
+        'presentation',
+        'lab_summary',
+        'chemistry_summary',
+        'bloodwork_summary',
+        'urinalysis_summary',
+        'endocrine_summary',
+        'acth_stimulation_result',
+    ];
 
     for (const field of fields) {
         if (typeof input[field] === 'string' && input[field].trim().length > 0) {
@@ -508,7 +700,182 @@ function extractFreeTextFragments(input: Record<string, unknown>): string[] {
         }
     }
 
+    for (const docText of extractLabResultText(input.lab_results)) {
+        fragments.push(docText.toLowerCase().trim());
+    }
+    for (const docText of extractLabResultText(metadata.lab_results)) {
+        fragments.push(docText.toLowerCase().trim());
+    }
+
     return [...new Set(fragments)];
+}
+
+function extractLabResultText(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+
+    const fragments: string[] = [];
+    for (const entry of value) {
+        if (!entry || typeof entry !== 'object') continue;
+        const record = entry as Record<string, unknown>;
+
+        for (const key of ['text', 'content_text', 'summary', 'raw_text']) {
+            const direct = typeof record[key] === 'string' ? record[key].trim() : '';
+            if (direct) fragments.push(direct);
+        }
+
+        const encoded = typeof record.content_base64 === 'string' ? record.content_base64 : null;
+        const mimeType = typeof record.mime_type === 'string' ? record.mime_type.toLowerCase() : '';
+        if (!encoded || (mimeType && !mimeType.startsWith('text/') && !mimeType.includes('json'))) {
+            continue;
+        }
+
+        try {
+            const decoded = Buffer.from(encoded, 'base64').toString('utf8').trim();
+            if (decoded) fragments.push(decoded);
+        } catch {
+            // Ignore undecodable lab attachments.
+        }
+    }
+
+    return fragments;
+}
+
+function applyStructuredEndocrineEvidence(
+    input: Record<string, unknown>,
+    allText: string,
+    evidence: Record<SignalKey, SignalEvidence>,
+) {
+    const structuredBooleanSignals: Array<[SignalKey, string[]]> = [
+        ['panting', ['panting']],
+        ['alopecia', ['alopecia']],
+        ['polyuria', ['polyuria']],
+        ['polydipsia', ['polydipsia']],
+        ['polyphagia', ['polyphagia']],
+        ['weight_loss', ['weight_loss']],
+        ['pot_bellied_appearance', ['pot_bellied_appearance']],
+        ['hypercholesterolemia', ['hypercholesterolemia']],
+        ['supportive_acth_stimulation_test', ['supportive_acth_stimulation_test', 'acth_stimulation_supportive']],
+        ['dilute_urine', ['dilute_urine']],
+        ['glucosuria', ['glucosuria']],
+        ['ketonuria', ['ketonuria']],
+        ['diabetic_metabolic_profile', ['diabetic_metabolic_profile']],
+    ];
+
+    for (const [signalKey, fields] of structuredBooleanSignals) {
+        for (const field of fields) {
+            const value = readBooleanField(input, field);
+            if (value === true) {
+                markSignalPresent(evidence, signalKey, field);
+                break;
+            }
+            if (value === false) {
+                markSignalNegated(evidence, signalKey, field);
+            }
+        }
+    }
+
+    const glucosuriaField = readBooleanField(input, 'glucosuria');
+    if (glucosuriaField === false) {
+        markSignalPresent(evidence, 'glucosuria_absent', 'glucosuria false');
+        markSignalNegated(evidence, 'glucosuria', 'glucosuria false');
+    }
+
+    for (const field of ['marked_alp_elevation', 'significant_hyperglycemia', 'mild_hyperglycemia']) {
+        const direct = readBooleanField(input, field);
+        if (direct === true) {
+            markSignalPresent(evidence, field as SignalKey, field);
+        } else if (direct === false) {
+            markSignalNegated(evidence, field as SignalKey, field);
+        }
+    }
+
+    const alpMultiplier = firstNumber(
+        readNumberField(input, 'alp_multiple_upper_limit'),
+        readNumberField(input, 'alkaline_phosphatase_multiple_upper_limit'),
+    );
+    if (alpMultiplier != null && alpMultiplier >= 3) {
+        markSignalPresent(evidence, 'marked_alp_elevation', `alp ${alpMultiplier}x upper limit`);
+    }
+
+    const alpValue = firstNumber(
+        readNumberField(input, 'alp_u_l'),
+        readNumberField(input, 'alkaline_phosphatase_u_l'),
+        extractLabNumber(allText, /(?:alp|alkaline phosphatase)\s*(?:[:=]|\bis\b)?\s*(\d+(?:\.\d+)?)/i),
+    );
+    if (alpValue != null && alpValue >= 350) {
+        markSignalPresent(evidence, 'marked_alp_elevation', `alp ${alpValue}`);
+    }
+
+    const cholesterolValue = firstNumber(
+        readNumberField(input, 'cholesterol_mg_dl'),
+        readNumberField(input, 'serum_cholesterol_mg_dl'),
+        extractLabNumber(allText, /(?:cholesterol|chol)\s*(?:[:=]|\bis\b)?\s*(\d+(?:\.\d+)?)/i),
+    );
+    if (cholesterolValue != null && cholesterolValue >= 320) {
+        markSignalPresent(evidence, 'hypercholesterolemia', `cholesterol ${cholesterolValue}`);
+    }
+
+    const glucoseValue = firstNumber(
+        readNumberField(input, 'blood_glucose_mg_dl'),
+        readNumberField(input, 'serum_glucose_mg_dl'),
+        readNumberField(input, 'glucose_mg_dl'),
+        extractLabNumber(allText, /(?:blood glucose|serum glucose|glucose)\s*(?:[:=]|\bis\b)?\s*(\d+(?:\.\d+)?)/i),
+    );
+    if (glucoseValue != null) {
+        if (glucoseValue >= 250) {
+            markSignalPresent(evidence, 'significant_hyperglycemia', `glucose ${glucoseValue}`);
+        } else if (glucoseValue >= 130) {
+            markSignalPresent(evidence, 'mild_hyperglycemia', `glucose ${glucoseValue}`);
+        }
+    }
+
+    const urineSpecificGravity = firstNumber(
+        readNumberField(input, 'urine_specific_gravity'),
+        readNumberField(input, 'urine_specific_gravity_value'),
+        extractLabNumber(allText, /(?:urine specific gravity|specific gravity|usg)\s*(?:[:=]|\bis\b)?\s*(1\.\d{3})/i),
+    );
+    if (urineSpecificGravity != null && urineSpecificGravity <= 1.015) {
+        markSignalPresent(evidence, 'dilute_urine', `usg ${urineSpecificGravity.toFixed(3)}`);
+    }
+}
+
+function markSignalPresent(
+    evidence: Record<SignalKey, SignalEvidence>,
+    signalKey: SignalKey,
+    matchedTerm: string,
+    source: EvidenceSource = 'structured_field',
+) {
+    const current = evidence[signalKey];
+    evidence[signalKey] = {
+        ...current,
+        present: true,
+        strength: Math.max(current.strength, source === 'structured_field' ? 0.7 : 1),
+        matched_terms: dedupeStringList([...current.matched_terms, matchedTerm]),
+        sources: dedupeSourceList([...current.sources, source]),
+    };
+}
+
+function markSignalNegated(
+    evidence: Record<SignalKey, SignalEvidence>,
+    signalKey: SignalKey,
+    negatedTerm: string,
+) {
+    const current = evidence[signalKey];
+    evidence[signalKey] = {
+        ...current,
+        negated_terms: dedupeStringList([...current.negated_terms, negatedTerm]),
+    };
+}
+
+function extractLabNumber(value: string, pattern: RegExp): number | null {
+    const match = value.match(pattern);
+    if (!match) return null;
+    const parsed = Number.parseFloat(match[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
+function firstNumber(...values: Array<number | null>): number | null {
+    return values.find((value): value is number => typeof value === 'number' && Number.isFinite(value)) ?? null;
 }
 
 function splitTextList(value: string): string[] {
@@ -601,6 +968,14 @@ function isNegatedMention(fragment: string, term: string, signal: SignalKey): bo
 
 function escapeRegExp(value: string): string {
     return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function dedupeStringList(values: string[]): string[] {
+    return [...new Set(values.filter(Boolean))];
+}
+
+function dedupeSourceList(values: EvidenceSource[]): EvidenceSource[] {
+    return [...new Set(values)];
 }
 
 function countPresent(evidence: Record<SignalKey, SignalEvidence>, keys: SignalKey[]): number {
