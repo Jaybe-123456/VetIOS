@@ -765,6 +765,7 @@ async function main() {
     await testRegistryPromotionBlockedReasons();
     await testRegistryControlPlaneVerificationMode();
     await testRegistrySnapshotPreventsNoOpSyncSpam();
+    await testRegistrySnapshotCacheSeparatesReadOnlyAndMaterializedViews();
     await testRegistryVerificationRepairsMissingProductionAudit();
 
     console.log('Experiment tracking integration tests passed.');
@@ -1547,6 +1548,41 @@ async function testRegistrySnapshotPreventsNoOpSyncSpam() {
         registeredEventSignatures.size,
         (championEntry?.latest_registry_events ?? []).filter((event) => event.event_type === 'registered').length,
     );
+}
+
+async function testRegistrySnapshotCacheSeparatesReadOnlyAndMaterializedViews() {
+    const tenantId = makeUuid(11);
+    const store = buildStore(tenantId);
+
+    store.registryEntries[0] = {
+        ...store.registryEntries[0],
+        benchmark_scorecard: {
+            ...store.registryEntries[0].benchmark_scorecard,
+            severity_critical_recall: 0.93,
+            severity_false_negative_rate: 0.04,
+            dangerous_false_reassurance_rate: 0.03,
+            abstain_accuracy: 0.87,
+            contradiction_detection_rate: 0.9,
+        },
+    };
+
+    const readOnlySnapshot = await getModelRegistryControlPlaneSnapshot(store, tenantId);
+    const readOnlyEntry = readOnlySnapshot.families
+        .flatMap((family) => family.entries)
+        .find((entry) => entry.registry.run_id === createBackfillRunId('diag_registry_v1'));
+    assert.ok(readOnlyEntry);
+    assert.equal(readOnlyEntry?.promotion_gating.gates.calibration, 'pending');
+    assert.equal(readOnlyEntry?.promotion_gating.gates.adversarial, 'pending');
+    assert.equal(readOnlyEntry?.promotion_gating.gates.benchmark, 'pending');
+
+    const materializedSnapshot = await getModelRegistryControlPlaneSnapshot(store, tenantId, { readOnly: false });
+    const materializedEntry = materializedSnapshot.families
+        .flatMap((family) => family.entries)
+        .find((entry) => entry.registry.run_id === createBackfillRunId('diag_registry_v1'));
+    assert.ok(materializedEntry);
+    assert.equal(materializedEntry?.promotion_gating.gates.calibration, 'pass');
+    assert.equal(materializedEntry?.promotion_gating.gates.adversarial, 'pass');
+    assert.equal(materializedEntry?.promotion_gating.gates.benchmark, 'pass');
 }
 
 async function testRegistryVerificationRepairsMissingProductionAudit() {

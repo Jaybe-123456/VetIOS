@@ -47,8 +47,15 @@ const modelRegistryControlPlaneSnapshotCache = new Map<string, {
 const modelRegistryControlPlaneInFlight = new Map<string, Promise<ModelRegistryControlPlaneSnapshot>>();
 
 function invalidateModelRegistryControlPlaneSnapshot(tenantId: string): void {
-    modelRegistryControlPlaneSnapshotCache.delete(tenantId);
-    modelRegistryControlPlaneInFlight.delete(tenantId);
+    for (const readOnly of [true, false]) {
+        const cacheKey = getModelRegistryControlPlaneCacheKey(tenantId, readOnly);
+        modelRegistryControlPlaneSnapshotCache.delete(cacheKey);
+        modelRegistryControlPlaneInFlight.delete(cacheKey);
+    }
+}
+
+function getModelRegistryControlPlaneCacheKey(tenantId: string, readOnly: boolean): string {
+    return `${tenantId}:${readOnly ? 'read_only' : 'materialized'}`;
 }
 
 export class RegistryControlPlaneError extends Error {
@@ -1142,19 +1149,20 @@ export async function getModelRegistryControlPlaneSnapshot(
         readOnly?: boolean;
     } = {},
 ): Promise<ModelRegistryControlPlaneSnapshot> {
+    const readOnly = options.readOnly !== false;
+    const cacheKey = getModelRegistryControlPlaneCacheKey(tenantId, readOnly);
     const now = Date.now();
-    const cached = modelRegistryControlPlaneSnapshotCache.get(tenantId);
+    const cached = modelRegistryControlPlaneSnapshotCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
         return cached.snapshot;
     }
 
-    const inFlight = modelRegistryControlPlaneInFlight.get(tenantId);
+    const inFlight = modelRegistryControlPlaneInFlight.get(cacheKey);
     if (inFlight) {
         return inFlight;
     }
 
     const promise = (async () => {
-        const readOnly = options.readOnly !== false;
         await backfillSummaryExperimentRuns(store, tenantId, {
             materializeGovernance: !readOnly,
         });
@@ -1287,7 +1295,7 @@ export async function getModelRegistryControlPlaneSnapshot(
             refreshed_at: new Date().toISOString(),
         } satisfies ModelRegistryControlPlaneSnapshot;
 
-        modelRegistryControlPlaneSnapshotCache.set(tenantId, {
+        modelRegistryControlPlaneSnapshotCache.set(cacheKey, {
             snapshot,
             expiresAt: Date.now() + CONTROL_PLANE_SNAPSHOT_TTL_MS,
         });
@@ -1301,10 +1309,10 @@ export async function getModelRegistryControlPlaneSnapshot(
             throw error;
         })
         .finally(() => {
-            modelRegistryControlPlaneInFlight.delete(tenantId);
+            modelRegistryControlPlaneInFlight.delete(cacheKey);
         });
 
-    modelRegistryControlPlaneInFlight.set(tenantId, promise);
+    modelRegistryControlPlaneInFlight.set(cacheKey, promise);
     return promise;
 }
 
