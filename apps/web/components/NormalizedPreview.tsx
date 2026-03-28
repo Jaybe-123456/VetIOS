@@ -14,6 +14,13 @@ export function NormalizedPreview({ normalized, onConfirm, onCancel }: Normalize
     const [expanded, setExpanded] = useState(true);
     const [editing, setEditing] = useState(false);
     const [editText, setEditText] = useState('');
+    const antigravitySignal = readRecord(normalized.metadata?.antigravity_signal);
+    const signalQuality = typeof antigravitySignal?.signal_quality_score === 'number'
+        ? antigravitySignal.signal_quality_score
+        : null;
+    const contradictionFlags = Array.isArray(antigravitySignal?.contradiction_flags)
+        ? antigravitySignal.contradiction_flags.filter((flag): flag is string => typeof flag === 'string' && flag !== 'none')
+        : [];
 
     const jsonPreview = JSON.stringify(normalized, null, 2);
 
@@ -32,14 +39,12 @@ export function NormalizedPreview({ normalized, onConfirm, onCancel }: Normalize
                 metadata: parsed.metadata ?? {},
             });
         } catch {
-            // If user broke the JSON, just use original
             onConfirm(normalized);
         }
     }
 
     return (
         <div className="border border-accent/40 bg-accent/5">
-            {/* Header */}
             <button
                 type="button"
                 onClick={() => setExpanded(!expanded)}
@@ -52,18 +57,17 @@ export function NormalizedPreview({ normalized, onConfirm, onCancel }: Normalize
                 {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
 
-            {/* Body */}
-            {expanded && (
+            {expanded ? (
                 <div className="px-4 pb-4 space-y-3">
-                    {/* Summary badges */}
                     <div className="flex flex-wrap gap-2">
-                        <Badge label="Species" value={normalized.species || '—'} />
-                        <Badge label="Breed" value={normalized.breed || '—'} />
+                        <Badge label="Species" value={normalized.species || '-'} />
+                        <Badge label="Breed" value={normalized.breed || '-'} />
                         <Badge label="Symptoms" value={`${normalized.symptoms.length} found`} />
                         <Badge label="Metadata" value={`${Object.keys(normalized.metadata).length} keys`} />
+                        {signalQuality != null ? <Badge label="Signal" value={`${Math.round(signalQuality * 100)}%`} /> : null}
+                        {contradictionFlags.length > 0 ? <Badge label="Flags" value={`${contradictionFlags.length}`} /> : null}
                     </div>
 
-                    {/* JSON Preview / Editor */}
                     {editing ? (
                         <textarea
                             value={editText}
@@ -76,7 +80,6 @@ export function NormalizedPreview({ normalized, onConfirm, onCancel }: Normalize
                         </pre>
                     )}
 
-                    {/* Buttons */}
                     <div className="flex flex-col sm:flex-row gap-2">
                         {editing ? (
                             <button
@@ -116,7 +119,7 @@ export function NormalizedPreview({ normalized, onConfirm, onCancel }: Normalize
                         </button>
                     </div>
                 </div>
-            )}
+            ) : null}
         </div>
     );
 }
@@ -128,4 +131,10 @@ function Badge({ label, value }: { label: string; value: string }) {
             <span className="text-foreground">{value}</span>
         </span>
     );
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
 }

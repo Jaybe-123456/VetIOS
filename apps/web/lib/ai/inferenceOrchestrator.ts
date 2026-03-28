@@ -1,5 +1,6 @@
 import { normalizeInferenceInput } from '@/lib/input/inputNormalizer';
 import type { InputMode } from '@/lib/input/inputNormalizer';
+import { attachAntigravitySignal, buildAntigravityClinicalSignal } from '@/lib/ai/antigravitySignal';
 import { extractClinicalSignals } from '@/lib/ai/clinicalSignals';
 import { runInference } from '@/lib/ai/provider';
 import { applyDiagnosticSafetyLayer, buildSeverityFeatureImportance } from '@/lib/ai/diagnosticSafety';
@@ -23,7 +24,10 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     } else {
         normalizedSig = rawInput;
     }
+    normalizedSig = attachAntigravitySignal(normalizedSig);
     pipelineTrace.push({ stage: 'input_normalization', status: 'completed' });
+    const antigravitySignal = buildAntigravityClinicalSignal(normalizedSig);
+    pipelineTrace.push({ stage: 'clinical_signal_enrichment', status: 'completed' });
 
     const inferenceResult = await runInference({
         model,
@@ -109,6 +113,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
         original_confidence: contradiction?.original_confidence ?? inferenceResult.confidence_score ?? null,
         abstain: safetyLayer.abstain_recommendation,
     };
+    payload.clinical_signal = antigravitySignal;
+    payload.signal_quality_score = antigravitySignal.signal_quality_score;
     const finalDiagnosis = payload.diagnosis as Record<string, unknown>;
     finalDiagnosis.primary_condition_class = resolveConditionClass(finalDiagnosis);
     risk.severity_score = resolveSeverityScore(risk);
@@ -130,6 +136,7 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
         post_cap_confidence: safetyLayer.telemetry.post_cap_confidence ?? null,
         persistence_rule_triggers: safetyLayer.telemetry.persistence_rule_triggers ?? [],
         pipeline_stages: payload.pipeline_trace,
+        signal_quality_score: antigravitySignal.signal_quality_score,
     };
 
     return {

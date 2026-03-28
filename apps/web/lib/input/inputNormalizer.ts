@@ -13,6 +13,7 @@
  */
 
 import { safeParseJson } from './jsonRepair';
+import { attachAntigravitySignal } from '../ai/antigravitySignal';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -60,12 +61,12 @@ export function normalizeInferenceInput(raw: string, mode: InputMode): Normalize
     // JSON mode or auto-detect JSON
     if (mode === 'json' || looksLikeJson(trimmed)) {
         const fromJson = normalizeFromJson(trimmed);
-        if (fromJson) return fromJson;
+        if (fromJson) return enrichNormalizedInput(fromJson);
         // If JSON mode but parse failed, still try text extraction
     }
 
     // Free text / structured fallback
-    return normalizeFromText(trimmed);
+    return enrichNormalizedInput(normalizeFromText(trimmed));
 }
 
 // ── JSON normalization ───────────────────────────────────────────────────────
@@ -294,10 +295,31 @@ function looksLikeJson(raw: string): boolean {
 }
 
 function fallback(raw: string): NormalizedInput {
-    return {
+    return enrichNormalizedInput({
         species: null,
         breed: null,
         symptoms: [],
         metadata: raw ? { raw_note: raw } : {},
+    });
+}
+
+function enrichNormalizedInput(input: NormalizedInput): NormalizedInput {
+    const enriched = attachAntigravitySignal({
+        species: input.species,
+        breed: input.breed,
+        symptoms: input.symptoms,
+        metadata: input.metadata ?? {},
+    });
+    const metadata = enriched.metadata && typeof enriched.metadata === 'object'
+        ? enriched.metadata as Record<string, unknown>
+        : {};
+
+    return {
+        species: typeof enriched.species === 'string' ? enriched.species : input.species,
+        breed: typeof enriched.breed === 'string' ? enriched.breed : input.breed,
+        symptoms: Array.isArray(enriched.symptoms)
+            ? enriched.symptoms.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+            : input.symptoms,
+        metadata,
     };
 }
