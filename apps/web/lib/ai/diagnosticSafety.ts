@@ -326,6 +326,51 @@ const CANDIDATES: CandidateDefinition[] = [
         },
     },
     {
+        name: 'Hyperadrenocorticism',
+        aliases: ['cushing disease', "cushing's disease", 'cushings disease', 'hyperadrenocorticism', 'cushing syndrome'],
+        conditionClass: 'Metabolic / Endocrine',
+        features: {
+            marked_alp_elevation: 0.28,
+            pot_bellied_appearance: 0.18,
+            panting: 0.14,
+            alopecia: 0.16,
+            hypercholesterolemia: 0.14,
+            supportive_acth_stimulation_test: 0.34,
+            dilute_urine: 0.12,
+            polyuria: 0.08,
+            polydipsia: 0.08,
+            polyphagia: 0.06,
+            lethargy: 0.03,
+            abdominal_distension: 0.04,
+        },
+        penalties: {
+            glucosuria: 0.04,
+            ketonuria: 0.05,
+            weight_loss: 0.03,
+        },
+    },
+    {
+        name: 'Diabetes Mellitus',
+        aliases: ['diabetes mellitus', 'diabetes', 'canine diabetes'],
+        conditionClass: 'Metabolic / Endocrine',
+        features: {
+            significant_hyperglycemia: 0.3,
+            glucosuria: 0.28,
+            ketonuria: 0.16,
+            diabetic_metabolic_profile: 0.2,
+            weight_loss: 0.12,
+            polyuria: 0.08,
+            polydipsia: 0.08,
+            polyphagia: 0.06,
+            lethargy: 0.03,
+        },
+        penalties: {
+            marked_alp_elevation: 0.05,
+            supportive_acth_stimulation_test: 0.08,
+            glucosuria_absent: 0.14,
+        },
+    },
+    {
         name: 'Unknown Mixed Presentation',
         aliases: ['unknown'],
         conditionClass: 'Idiopathic / Unknown',
@@ -576,6 +621,66 @@ function scoreCandidates(signals: ClinicalSignals): CandidateScore[] {
             drivers.push({ feature: 'ocular + nasal discharge infectious anchor', weight: 0.12 });
         }
 
+        if (candidate.name === 'Hyperadrenocorticism') {
+            const bodyPatternCount = [
+                signals.evidence.pot_bellied_appearance.present,
+                signals.evidence.panting.present,
+                signals.evidence.alopecia.present,
+                signals.evidence.hypercholesterolemia.present,
+            ].filter(Boolean).length;
+
+            if (signals.evidence.marked_alp_elevation.present && (bodyPatternCount >= 2 || signals.has_chronic_duration || signals.has_gradual_onset)) {
+                rawScore += 0.24;
+                drivers.push({ feature: 'marked ALP + chronic endocrine body-pattern cluster', weight: 0.24 });
+            }
+
+            if (signals.evidence.supportive_acth_stimulation_test.present) {
+                rawScore += 0.34;
+                drivers.push({ feature: 'supportive ACTH stimulation test', weight: 0.34 });
+            }
+
+            if (signals.evidence.dilute_urine.present && signals.has_explicit_glucosuria_absence) {
+                rawScore += 0.16;
+                drivers.push({ feature: 'dilute urine without glucosuria', weight: 0.16 });
+            }
+
+            if (signals.has_chronic_duration || signals.has_gradual_onset) {
+                const chronicBonus = (signals.has_chronic_duration ? 0.08 : 0) + (signals.has_gradual_onset ? 0.06 : 0);
+                rawScore += chronicBonus;
+                drivers.push({ feature: 'chronic gradual endocrine course', weight: Number(chronicBonus.toFixed(2)) });
+            }
+        }
+
+        if (candidate.name === 'Diabetes Mellitus') {
+            if (signals.evidence.significant_hyperglycemia.present && signals.evidence.glucosuria.present) {
+                rawScore += 0.28;
+                drivers.push({ feature: 'significant hyperglycemia + glucosuria', weight: 0.28 });
+            }
+
+            if (signals.evidence.ketonuria.present) {
+                rawScore += 0.14;
+                drivers.push({ feature: 'ketonuria', weight: 0.14 });
+            }
+
+            if (signals.has_explicit_glucosuria_absence) {
+                rawScore -= 0.3;
+            }
+
+            if (signals.evidence.mild_hyperglycemia.present && !signals.evidence.glucosuria.present) {
+                rawScore -= 0.24;
+            }
+
+            if (
+                signals.endocrine_shared_pattern_strength >= 1.2
+                && !signals.evidence.significant_hyperglycemia.present
+                && !signals.evidence.glucosuria.present
+                && !signals.evidence.ketonuria.present
+                && !signals.evidence.diabetic_metabolic_profile.present
+            ) {
+                rawScore -= 0.14;
+            }
+        }
+
         return {
             name: candidate.name,
             conditionClass: candidate.conditionClass,
@@ -634,6 +739,7 @@ function mergeDifferentials(params: {
     applyPersistenceProtection(combined, params);
     applyAnchorFeatureProtection(combined, params.signals);
     applyConditionClassStabilization(combined, params.signals);
+    applyEndocrineDifferentialLogic(combined, params.signals);
     enforceDominantClusterConsistency(combined, params.signals);
     normalizeProbabilities(combined);
 
@@ -763,6 +869,94 @@ function applyConditionClassStabilization(
     }
 }
 
+function applyEndocrineDifferentialLogic(
+    combined: Map<string, DifferentialEntry>,
+    signals: ClinicalSignals,
+) {
+    const hyperadrenocorticism = combined.get('Hyperadrenocorticism');
+    const diabetesMellitus = combined.get('Diabetes Mellitus');
+
+    if (!hyperadrenocorticism && !diabetesMellitus) {
+        return;
+    }
+
+    const hyperadrenocorticismAnchors =
+        (signals.evidence.marked_alp_elevation.present ? 1 : 0)
+        + (signals.evidence.supportive_acth_stimulation_test.present ? 1 : 0)
+        + (signals.evidence.pot_bellied_appearance.present ? 1 : 0)
+        + (signals.evidence.panting.present ? 1 : 0)
+        + (signals.evidence.alopecia.present ? 1 : 0)
+        + (signals.evidence.hypercholesterolemia.present ? 1 : 0)
+        + (signals.has_chronic_duration ? 1 : 0)
+        + (signals.has_gradual_onset ? 1 : 0);
+
+    const diabetesAnchors =
+        (signals.evidence.significant_hyperglycemia.present ? 1 : 0)
+        + (signals.evidence.glucosuria.present ? 1 : 0)
+        + (signals.evidence.ketonuria.present ? 1 : 0)
+        + (signals.evidence.diabetic_metabolic_profile.present ? 1 : 0)
+        + (signals.evidence.weight_loss.present ? 1 : 0);
+
+    if (
+        hyperadrenocorticism
+        && (
+            signals.evidence.supportive_acth_stimulation_test.present
+            || (
+                signals.evidence.marked_alp_elevation.present
+                && signals.endocrine_body_pattern_strength >= 2
+                && (signals.has_chronic_duration || signals.has_gradual_onset)
+            )
+            || (
+                signals.evidence.marked_alp_elevation.present
+                && signals.evidence.dilute_urine.present
+                && signals.has_explicit_glucosuria_absence
+            )
+        )
+    ) {
+        hyperadrenocorticism.probability += 0.12;
+        if (diabetesMellitus && (!signals.evidence.glucosuria.present || !signals.evidence.significant_hyperglycemia.present)) {
+            diabetesMellitus.probability *= 0.7;
+        }
+    }
+
+    if (
+        diabetesMellitus
+        && signals.evidence.significant_hyperglycemia.present
+        && signals.evidence.glucosuria.present
+    ) {
+        diabetesMellitus.probability += signals.evidence.ketonuria.present ? 0.14 : 0.1;
+        if (hyperadrenocorticism && hyperadrenocorticismAnchors < 3) {
+            hyperadrenocorticism.probability *= 0.82;
+        }
+    }
+
+    if (diabetesMellitus && signals.has_explicit_glucosuria_absence) {
+        diabetesMellitus.probability *= 0.55;
+    }
+
+    if (
+        diabetesMellitus
+        && signals.evidence.mild_hyperglycemia.present
+        && !signals.evidence.glucosuria.present
+        && !signals.evidence.ketonuria.present
+    ) {
+        diabetesMellitus.probability *= 0.48;
+        if (hyperadrenocorticism && hyperadrenocorticismAnchors >= 2) {
+            hyperadrenocorticism.probability = Math.max(hyperadrenocorticism.probability, diabetesMellitus.probability + 0.08);
+        }
+    }
+
+    if (
+        hyperadrenocorticism
+        && diabetesMellitus
+        && signals.endocrine_shared_pattern_strength >= 1.2
+        && hyperadrenocorticismAnchors >= 2
+        && diabetesAnchors <= 1
+    ) {
+        hyperadrenocorticism.probability = Math.max(hyperadrenocorticism.probability, diabetesMellitus.probability + 0.06);
+    }
+}
+
 function enforceDominantClusterConsistency(
     combined: Map<string, DifferentialEntry>,
     signals: ClinicalSignals,
@@ -863,6 +1057,16 @@ function buildUncertaintyNotes(params: {
     }
     if (params.postCapConfidence <= 0.45) {
         notes.add('Confidence was kept low to reflect unresolved contradiction burden.');
+    }
+    if (params.signals.evidence.mild_hyperglycemia.present && params.signals.has_explicit_glucosuria_absence) {
+        notes.add('Mild hyperglycemia without glucosuria was treated as negative evidence against diabetes-first ranking.');
+    }
+    if (
+        params.signals.evidence.marked_alp_elevation.present
+        && params.signals.endocrine_body_pattern_strength >= 2
+        && (params.signals.has_chronic_duration || params.signals.has_gradual_onset)
+    ) {
+        notes.add('Marked ALP elevation with chronic endocrine body-pattern signs was preserved as a hyperadrenocorticism anchor.');
     }
 
     return [...notes];
