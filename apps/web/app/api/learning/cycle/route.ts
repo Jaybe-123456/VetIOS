@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
+import { materializeLearningCycleTelemetry } from '@/lib/experiments/learningCycleTelemetry';
+import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
 import { runLearningCycle } from '@/lib/learningEngine/engine';
 import { createSupabaseLearningEngineStore } from '@/lib/learningEngine/supabaseStore';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -51,7 +53,8 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: bodyResult.error, request_id: requestId }, { status: 400 });
     }
 
-    const store = createSupabaseLearningEngineStore(getSupabaseServer());
+    const supabase = getSupabaseServer();
+    const store = createSupabaseLearningEngineStore(supabase);
     const result = await runLearningCycle(store, {
         tenantId: actor.tenantId,
         cycleType: isCycleType(bodyResult.data.cycle_type)
@@ -64,8 +67,33 @@ export async function POST(req: Request) {
             : undefined,
     });
 
+    let experimentTracking:
+        | { status: 'materialized' | 'skipped'; run_ids: string[] }
+        | { status: 'failed'; error: string; run_ids: string[] } = {
+            status: 'skipped',
+            run_ids: [],
+        };
+
+    try {
+        experimentTracking = await materializeLearningCycleTelemetry(
+            createSupabaseExperimentTrackingStore(supabase),
+            {
+                tenantId: actor.tenantId,
+                actorId: actor.userId,
+                result,
+            },
+        );
+    } catch (error) {
+        experimentTracking = {
+            status: 'failed',
+            error: error instanceof Error ? error.message : 'Unknown experiment telemetry bridge error',
+            run_ids: [],
+        };
+    }
+
     const response = NextResponse.json({
         result,
+        experiment_tracking: experimentTracking,
         authenticated_user_id: actor.userId,
         request_id: requestId,
     });

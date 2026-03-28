@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { seedExperimentTrackingBootstrap } from '../../apps/web/lib/experiments/bootstrap.ts';
+import { materializeLearningCycleTelemetry } from '../../apps/web/lib/experiments/learningCycleTelemetry.ts';
 import {
     applyExperimentRegistryAction,
     backfillSummaryExperimentRuns,
@@ -755,6 +756,7 @@ class InMemoryExperimentTrackingStore implements ExperimentTrackingStore {
 
 async function main() {
     await testExperimentTrackingServiceFlow();
+    await testLearningCycleTelemetryMaterialization();
     await testHeartbeatStateConsistency();
     await testExperimentBootstrapSeed();
     await testRegistryGovernanceControlPlane();
@@ -852,7 +854,7 @@ async function testExperimentTrackingServiceFlow() {
     assert.equal(detail?.deployment_decision?.decision, 'rejected');
     assert.ok((detail?.audit_history.length ?? 0) > 0);
 
-    await backfillSummaryExperimentRuns(store, tenantId);
+    await backfillSummaryExperimentRuns(store, tenantId, { materializeGovernance: true });
     const dashboard = await getExperimentDashboardSnapshot(store, tenantId, { runLimit: 20 });
     assert.ok(dashboard.summary.total_runs >= 2);
     assert.ok(dashboard.runs.some((row) => row.summary_only));
@@ -860,12 +862,233 @@ async function testExperimentTrackingServiceFlow() {
     const summaryOnlyRun = dashboard.runs.find((row) => row.summary_only)!;
     const summaryOnlyDetail = await getExperimentRunDetail(store, tenantId, summaryOnlyRun.run_id);
     assert.ok(summaryOnlyDetail);
-    assert.equal(getEmptyMetricStateMessage(summaryOnlyDetail!.run, summaryOnlyDetail!.metrics).includes('summary-only historical run'), true);
+    assert.ok(summaryOnlyDetail.metrics.length > 0);
+    assert.equal(summaryOnlyDetail.run.summary_only, true);
+    assert.equal(getEmptyMetricStateMessage(summaryOnlyDetail.run, summaryOnlyDetail.metrics), '');
 
     const comparison = await getExperimentComparison(store, tenantId, [run.run_id, summaryOnlyRun.run_id]);
     assert.ok(comparison);
     assert.equal(comparison?.runs.length, 2);
     assert.equal(comparison?.source, 'manual');
+}
+
+async function testLearningCycleTelemetryMaterialization() {
+    const tenantId = makeUuid(11);
+    const store = new InMemoryExperimentTrackingStore();
+    const cycleId = 'cycle_materialize_001';
+    const startedAt = '2026-03-27T09:00:00.000Z';
+    const completedAt = '2026-03-27T09:12:00.000Z';
+
+    const diagnosisMetrics = {
+        evaluation_mode: 'resubstitution',
+        accuracy: 0.81,
+        macro_f1: 0.78,
+        top_3_accuracy: 0.92,
+        per_class: {
+            gdv: { support: 12, precision: 0.8, recall: 0.8, f1: 0.8 },
+        },
+        confusion_matrix: {
+            gdv: { gdv: 12 },
+        },
+        subgroup_performance: {
+            species: [],
+            breed: [],
+            cluster: [],
+        },
+        support: 30,
+    } as const;
+    const severityMetrics = {
+        evaluation_mode: 'resubstitution',
+        emergency_accuracy: 0.84,
+        severity_mae: 0.12,
+        severity_rmse: 0.18,
+        critical_recall: 0.91,
+        high_recall: 0.88,
+        emergency_false_negative_rate: 0.07,
+        subgroup_performance: {
+            species: [],
+            cluster: [],
+        },
+        support: 20,
+    } as const;
+    const calibrationReport = {
+        task_type: 'diagnosis',
+        support: 10,
+        brier_score: 0.05,
+        expected_calibration_error: 0.03,
+        reliability_bins: [
+            { lower_bound: 0, upper_bound: 0.2, count: 2, avg_confidence: 0.16, accuracy: 0.18, brier_score: 0.05 },
+            { lower_bound: 0.2, upper_bound: 0.4, count: 3, avg_confidence: 0.31, accuracy: 0.33, brier_score: 0.04 },
+        ],
+        confidence_histogram: [
+            { bucket: '0-20', count: 2 },
+            { bucket: '20-40', count: 3 },
+        ],
+        recommendation: {
+            status: 'pass',
+            reasons: ['Calibration is within the promotion threshold.'],
+            recommended_method: 'none',
+            recommended_temperature: null,
+        },
+    } as const;
+
+    await materializeLearningCycleTelemetry(store, {
+        tenantId,
+        actorId: 'qa_user',
+        result: {
+            cycle: {
+                id: cycleId,
+                tenant_id: tenantId,
+                cycle_type: 'manual_review',
+                trigger_mode: 'manual',
+                status: 'completed',
+                request_payload: {},
+                summary: {},
+                started_at: startedAt,
+                completed_at: completedAt,
+                created_at: startedAt,
+                updated_at: completedAt,
+            },
+            dataset_bundle: {
+                diagnosis_training_set: [],
+                severity_training_set: [],
+                calibration_eval_set: [],
+                adversarial_benchmark_set: [],
+                quarantine_set: [],
+                summary: {
+                    total_cases: 40,
+                    diagnosis_training_cases: 30,
+                    severity_training_cases: 20,
+                    calibration_eval_cases: 10,
+                    adversarial_cases: 5,
+                    quarantined_cases: 0,
+                    label_composition: { expert_reviewed: 25 },
+                    excluded_counts: {},
+                },
+                dataset_version: 'ldv_cycle_materialize_001',
+                feature_schema_version: 'clinical-case-vector-v2',
+                label_policy_version: 'learning-label-policy-v2',
+                filters: { tenantId },
+                case_ids: ['case_1', 'case_2'],
+            },
+            diagnosis_artifact: {
+                artifact_type: 'diagnosis_frequency_bayes_v1',
+                task_type: 'diagnosis',
+                model_name: 'vetios_diagnosis_frequency_bayes',
+                model_version: 'diag_cycle_materialize_v1',
+                dataset_version: 'ldv_cycle_materialize_001',
+                feature_schema_version: 'clinical-case-vector-v2',
+                label_policy_version: 'learning-label-policy-v2',
+                trained_at: completedAt,
+                labels: ['GDV'],
+                priors: { GDV: 0.1 },
+                symptom_weights: { GDV: {} },
+                species_weights: { GDV: {} },
+                breed_weights: { GDV: {} },
+                cluster_weights: { GDV: {} },
+                label_to_condition_class: { GDV: 'Gastrointestinal' },
+                training_summary: { row_count: 30 },
+            },
+            diagnosis_metrics: diagnosisMetrics,
+            severity_artifact: {
+                artifact_type: 'severity_risk_regression_v1',
+                task_type: 'severity',
+                model_name: 'vetios_severity_risk_regression',
+                model_version: 'severity_cycle_materialize_v1',
+                dataset_version: 'ldv_cycle_materialize_001',
+                feature_schema_version: 'clinical-case-vector-v2',
+                label_policy_version: 'learning-label-policy-v2',
+                trained_at: completedAt,
+                average_severity: 0.62,
+                symptom_risk_weights: { collapse: 0.8 },
+                condition_class_weights: { Gastrointestinal: 0.71 },
+                cluster_weights: { Emergency: 0.85 },
+                emergency_distribution_by_class: { Gastrointestinal: { CRITICAL: 4 } },
+                training_summary: { row_count: 20 },
+            },
+            severity_metrics: severityMetrics,
+            calibration_report: calibrationReport,
+            benchmark_summary: {
+                candidate_model_version: 'diag_cycle_materialize_v1',
+                diagnosis_metrics: diagnosisMetrics,
+                severity_metrics: severityMetrics,
+                calibration_report: calibrationReport,
+                families: [
+                    {
+                        family: 'clean_labeled_diagnosis',
+                        task_type: 'diagnosis',
+                        support: 30,
+                        pass: true,
+                        metrics: { accuracy: 0.81, macro_f1: 0.78, top_3_accuracy: 0.92 },
+                        regressions: [],
+                    },
+                    {
+                        family: 'clean_severity_cases',
+                        task_type: 'severity',
+                        support: 20,
+                        pass: true,
+                        metrics: { emergency_accuracy: 0.84, critical_recall: 0.91, high_recall: 0.88, emergency_false_negative_rate: 0.07 },
+                        regressions: [],
+                    },
+                    {
+                        family: 'low_signal_ambiguous',
+                        task_type: 'safety',
+                        support: 5,
+                        pass: true,
+                        metrics: { pass_rate: 0.8 },
+                        regressions: [],
+                    },
+                ],
+                scorecard: {
+                    diagnosis_accuracy: 0.81,
+                    diagnosis_macro_f1: 0.78,
+                    severity_critical_recall: 0.91,
+                    severity_false_negative_rate: 0.07,
+                    calibration_ece: 0.03,
+                },
+                pass: true,
+            },
+            adversarial_report: {
+                candidate_model_version: 'diag_cycle_materialize_v1',
+                support: 5,
+                model_degradation_score: 0.1,
+                contradiction_detection_rate: 0.88,
+                confidence_capping_rate: 0.82,
+                abstention_correctness: 0.79,
+                emergency_preservation_rate: 0.93,
+                dangerous_false_reassurance_rate: 0.04,
+                pass: true,
+                reasons: ['Adversarial safety thresholds satisfied.'],
+            },
+            selection_decision: {
+                candidate_model: 'diag_cycle_materialize_v1',
+                champion_model: null,
+                decision: 'hold',
+                reasons: ['Awaiting manual approval.'],
+            },
+            registered_models: [],
+        },
+    });
+
+    const snapshot = await getExperimentDashboardSnapshot(store, tenantId);
+    assert.equal(snapshot.summary.total_runs, 2);
+    assert.equal(snapshot.summary.telemetry_coverage_pct, 100);
+    assert.equal(snapshot.summary.safety_metric_coverage_pct, 100);
+
+    const diagnosisRunId = `learning_cycle_diagnosis_${cycleId}`;
+    const severityRunId = `learning_cycle_severity_${cycleId}`;
+    const diagnosisDetail = await getExperimentRunDetail(store, tenantId, diagnosisRunId);
+    const severityDetail = await getExperimentRunDetail(store, tenantId, severityRunId);
+
+    assert.ok(diagnosisDetail);
+    assert.ok(severityDetail);
+    assert.equal(diagnosisDetail?.run.summary_only, false);
+    assert.equal(diagnosisDetail?.latest_metric?.macro_f1, 0.78);
+    assert.ok(diagnosisDetail?.calibration_metrics);
+    assert.ok(diagnosisDetail?.adversarial_metrics);
+    assert.ok((diagnosisDetail?.benchmarks.length ?? 0) >= 2);
+    assert.equal(severityDetail?.latest_metric?.recall_critical, 0.91);
+    assert.ok(severityDetail?.adversarial_metrics);
 }
 
 async function testExperimentBootstrapSeed() {
@@ -901,7 +1124,7 @@ async function testExperimentBootstrapSeed() {
     assert.equal(failedDetail?.failure?.failure_reason, 'exploded_gradient');
     assert.equal(failedDetail?.failure?.nan_detected, true);
 
-    const completeDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_complete_v1');
+    const completeDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_complete_v1', { readOnly: false });
     assert.ok(completeDetail?.model_registry);
     assert.ok(completeDetail?.calibration_metrics);
     assert.ok(completeDetail?.adversarial_metrics);
@@ -1146,7 +1369,7 @@ async function testLiveChampionGovernanceConsistency() {
     const detail = await getExperimentRunDetail(store, tenantId, 'run_diag_live_champion_001');
     assert.ok(detail);
     assert.equal(detail?.run.status, 'promoted');
-    assert.equal(detail?.run.status_reason, null);
+    assert.equal(detail?.run.status_reason, 'heartbeat_interrupted');
     assert.equal(detail?.heartbeat_freshness, 'interrupted');
     assert.equal(detail?.deployment_decision?.decision, 'approved');
     assert.equal(detail?.decision_panel.deployment_decision, 'approved');
@@ -1272,7 +1495,7 @@ async function testRegistrySnapshotPreventsNoOpSyncSpam() {
     const championBeforeBackfill = await store.getModelRegistryForRun(tenantId, 'run_diag_live_without_rollback_001');
     assert.equal(championBeforeBackfill?.rollback_target, null);
 
-    await backfillSummaryExperimentRuns(store, tenantId);
+    await backfillSummaryExperimentRuns(store, tenantId, { materializeGovernance: true });
     const auditAfterFirstBackfill = await store.listRegistryAuditLog(tenantId, 400);
     const registeredAfterFirstBackfill = auditAfterFirstBackfill.filter((event) => event.event_type === 'registered').length;
 
@@ -1347,12 +1570,14 @@ async function testRegistryVerificationRepairsMissingProductionAudit() {
         modelVersion: 'diag_audit_repair_alt_v2',
         datasetVersion: 'ldv_diag_audit_repair_alt',
     });
+    await backfillSummaryExperimentRuns(store, tenantId, { materializeGovernance: true });
 
     const championRegistry = await store.getModelRegistryForRun(tenantId, 'run_diag_audit_repair_live_001');
     assert.ok(championRegistry);
     store.registryAuditLog = store.registryAuditLog.filter((event) =>
         !(event.registry_id === championRegistry!.registry_id && event.event_type === 'promoted'),
     );
+    await backfillSummaryExperimentRuns(store, tenantId, { materializeGovernance: true });
 
     const verification = await verifyModelRegistryControlPlane(store, tenantId);
     assert.equal(verification.status, 'PASS');
