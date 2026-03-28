@@ -178,7 +178,7 @@ export default function InferenceConsole() {
             };
             const data = {
                 model: {
-                    name: "gpt-4-turbo",
+                    name: "gpt-4o-mini",
                     version: "1.0.0"
                 },
                 input: {

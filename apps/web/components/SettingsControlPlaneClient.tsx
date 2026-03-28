@@ -1000,7 +1000,7 @@ function renderDebugTab(
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                model: { name: 'gpt-4-turbo', version: '1.0.0' },
+                                model: { name: 'gpt-4o-mini', version: '1.0.0' },
                                 input: {
                                     input_signature: {
                                         species: 'Canis lupus familiaris',

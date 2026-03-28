@@ -431,7 +431,10 @@ export function buildDefaultRoutingProfiles(input: {
             base_cost: 0.18,
             robustness_score: 0.48,
             recall_score: 0.66,
-            metadata: { source: 'routing_defaults' },
+            metadata: {
+                source: 'routing_defaults',
+                explicitly_approved: true,
+            },
         },
         {
             id: `${prefix}_large_v1`,
@@ -450,7 +453,10 @@ export function buildDefaultRoutingProfiles(input: {
             base_cost: 0.82,
             robustness_score: 0.72,
             recall_score: 0.84,
-            metadata: { source: 'routing_defaults' },
+            metadata: {
+                source: 'routing_defaults',
+                explicitly_approved: true,
+            },
         },
         {
             id: `${prefix}_robust_v1`,
@@ -469,7 +475,10 @@ export function buildDefaultRoutingProfiles(input: {
             base_cost: 0.58,
             robustness_score: 0.94,
             recall_score: 0.9,
-            metadata: { source: 'routing_defaults' },
+            metadata: {
+                source: 'routing_defaults',
+                explicitly_approved: true,
+            },
         },
         {
             id: `${prefix}_recall_v1`,
@@ -488,7 +497,10 @@ export function buildDefaultRoutingProfiles(input: {
             base_cost: 0.65,
             robustness_score: 0.82,
             recall_score: 0.95,
-            metadata: { source: 'routing_defaults' },
+            metadata: {
+                source: 'routing_defaults',
+                explicitly_approved: true,
+            },
         },
     ];
 }
