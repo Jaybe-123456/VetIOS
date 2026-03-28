@@ -768,6 +768,7 @@ async function main() {
     await testRegistrySnapshotPreventsNoOpSyncSpam();
     await testRegistrySnapshotCacheSeparatesReadOnlyAndMaterializedViews();
     await testRegistrySnapshotRepairsIncompleteGovernanceEvaluations();
+    await testRegistrySnapshotMaterializesGovernanceForStagedTrainingRun();
     await testRegistryVerificationSkipsRollbackSimulationWithoutChampion();
     await testRegistryVerificationRepairsMissingProductionAudit();
 
@@ -1684,6 +1685,33 @@ async function testRegistrySnapshotRepairsIncompleteGovernanceEvaluations() {
     assert.equal(repairedCalibration?.calibration_pass, true);
     assert.equal(repairedAdversarial?.adversarial_pass, true);
     assert.equal(repairedRequirements?.safety_pass, true);
+}
+
+async function testRegistrySnapshotMaterializesGovernanceForStagedTrainingRun() {
+    const tenantId = makeUuid(14);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await createPromotableDiagnosticRun(store, tenantId, {
+        runId: 'run_diag_staged_training_001',
+        modelVersion: 'diag_staged_training_v1',
+        datasetVersion: 'ldv_diag_staged_training',
+    });
+
+    await store.updateExperimentRun('run_diag_staged_training_001', tenantId, {
+        status: 'training',
+        status_reason: 'worker_status_lag',
+    });
+
+    await applyExperimentRegistryAction(store, tenantId, 'run_diag_staged_training_001', 'promote_to_staging', 'qa_user');
+
+    const snapshot = await refreshModelRegistryControlPlaneSnapshot(store, tenantId);
+    const entry = snapshot.families
+        .flatMap((family) => family.entries)
+        .find((item) => item.registry.run_id === 'run_diag_staged_training_001');
+    assert.ok(entry);
+    assert.notEqual(entry?.promotion_gating.gates.calibration, 'pending');
+    assert.notEqual(entry?.promotion_gating.gates.adversarial, 'pending');
+    assert.notEqual(entry?.promotion_gating.gates.safety, 'pending');
 }
 
 async function testRegistryVerificationSkipsRollbackSimulationWithoutChampion() {

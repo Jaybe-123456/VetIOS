@@ -737,6 +737,7 @@ export function createSupabaseExperimentTrackingStore(
 }
 
 function mapExperimentRun(row: Record<string, unknown>): ExperimentRunRecord {
+    const registryContext = asRecord(row.registry_context);
     return {
         id: String(row.id),
         tenant_id: String(row.tenant_id),
@@ -760,7 +761,7 @@ function mapExperimentRun(row: Record<string, unknown>): ExperimentRunRecord {
         epochs_completed: readNumber(row.epochs_completed),
         metric_primary_name: readString(row.metric_primary_name),
         metric_primary_value: readNumber(row.metric_primary_value),
-        status: String(row.status) as ExperimentRunRecord['status'],
+        status: normalizeExperimentRunStatus(row.status, registryContext),
         status_reason: readString(row.status_reason),
         progress_percent: readNumber(row.progress_percent),
         summary_only: row.summary_only === true,
@@ -770,7 +771,7 @@ function mapExperimentRun(row: Record<string, unknown>): ExperimentRunRecord {
         config_snapshot: asRecord(row.config_snapshot),
         safety_metrics: asRecord(row.safety_metrics),
         resource_usage: asRecord(row.resource_usage),
-        registry_context: asRecord(row.registry_context),
+        registry_context: registryContext,
         last_heartbeat_at: readString(row.last_heartbeat_at),
         started_at: readString(row.started_at),
         ended_at: readString(row.ended_at),
@@ -1079,6 +1080,34 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function normalizeExperimentRunStatus(
+    value: unknown,
+    registryContext: Record<string, unknown>,
+): ExperimentRunRecord['status'] {
+    const raw = readString(value)?.toLowerCase();
+    const registryRole = readString(registryContext.registry_role)?.toLowerCase();
+    const registryStatus = readString(registryContext.registry_status ?? registryContext.promotion_status)?.toLowerCase();
+
+    if (raw === 'rolled_back' || raw === 'rollback' || raw === 'rolledback') return 'rolled_back';
+    if (raw === 'promoted' || raw === 'production' || raw === 'deployed' || raw === 'live') return 'promoted';
+    if (raw === 'completed' || raw === 'complete' || raw === 'completed_successfully' || raw === 'succeeded' || raw === 'success' || raw === 'done' || raw === 'finished' || raw === 'ready' || raw === 'staging' || raw === 'candidate' || raw === 'archived') {
+        return registryStatus === 'production' && registryRole === 'champion' ? 'promoted' : 'completed';
+    }
+    if (raw === 'failed' || raw === 'error' || raw === 'errored') return 'failed';
+    if (raw === 'aborted' || raw === 'canceled' || raw === 'cancelled' || raw === 'terminated') return 'aborted';
+    if (raw === 'queued' || raw === 'pending' || raw === 'scheduled') return 'queued';
+    if (raw === 'initializing' || raw === 'starting' || raw === 'booting') return 'initializing';
+    if (raw === 'training' || raw === 'running' || raw === 'in_progress' || raw === 'active') return 'training';
+    if (raw === 'validating' || raw === 'evaluation' || raw === 'evaluating') return 'validating';
+    if (raw === 'checkpointing' || raw === 'saving') return 'checkpointing';
+    if (raw === 'stalled' || raw === 'paused') return 'stalled';
+    if (raw === 'interrupted') return 'interrupted';
+
+    if (registryStatus === 'production' && registryRole === 'champion') return 'promoted';
+    if (registryStatus === 'staging' || registryRole === 'challenger' || registryRole === 'rollback_target') return 'completed';
+    return 'queued';
 }
 
 function asReliabilityBin(value: unknown): CalibrationMetricRecord['reliability_bins'][number] | null {
