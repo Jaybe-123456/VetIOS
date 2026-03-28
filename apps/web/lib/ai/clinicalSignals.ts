@@ -207,7 +207,7 @@ export const FEATURE_TIER_MULTIPLIER: Record<FeatureTier, number> = {
 };
 
 export function extractClinicalSignals(input: Record<string, unknown>): ClinicalSignals {
-    const species = normalizeString(
+    const species = normalizeSpecies(
         typeof input.species === 'string'
             ? input.species
             : typeof getMetadata(input).species === 'string'
@@ -415,6 +415,44 @@ export function normalizeString(value: string | null | undefined): string | null
     if (typeof value !== 'string') return null;
     const normalized = value.trim().toLowerCase();
     return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeSpecies(value: string | null | undefined): string | null {
+    const normalized = normalizeString(value);
+    if (!normalized) return null;
+
+    const aliases: Record<string, string> = {
+        canine: 'dog',
+        puppy: 'dog',
+        dog: 'dog',
+        'canis lupus familiaris': 'dog',
+        feline: 'cat',
+        kitten: 'cat',
+        cat: 'cat',
+        'felis catus': 'cat',
+        equine: 'horse',
+        horse: 'horse',
+        'equus ferus caballus': 'horse',
+        bovine: 'cow',
+        cow: 'cow',
+        'bos taurus': 'cow',
+        lagomorph: 'rabbit',
+        rabbit: 'rabbit',
+        avian: 'bird',
+        bird: 'bird',
+        reptile: 'reptile',
+        snake: 'reptile',
+        lizard: 'reptile',
+        turtle: 'reptile',
+        fish: 'fish',
+        rodent: 'rodent',
+        hamster: 'rodent',
+        ferret: 'ferret',
+        'guinea pig': 'guinea_pig',
+        'guinea_pig': 'guinea_pig',
+    };
+
+    return aliases[normalized] ?? normalized;
 }
 
 export function readBooleanField(input: Record<string, unknown>, field: string): boolean | null {
