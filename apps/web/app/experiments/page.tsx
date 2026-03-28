@@ -13,7 +13,7 @@ export default async function ExperimentsPage() {
         ? await getExperimentDashboardSnapshot(
             createSupabaseExperimentTrackingStore(getSupabaseServer()),
             tenantId,
-            { runLimit: 50 },
+            { runLimit: 50, readOnly: false },
         )
         : {
             tenant_id: '',

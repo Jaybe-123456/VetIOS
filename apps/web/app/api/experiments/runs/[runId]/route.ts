@@ -21,7 +21,12 @@ export async function GET(
 
     const { runId } = await context.params;
     const store = createSupabaseExperimentTrackingStore(getSupabaseServer());
-    const detail = await getExperimentRunDetail(store, actor?.tenantId ?? process.env.VETIOS_DEV_TENANT_ID ?? 'dev_tenant_001', runId);
+    const detail = await getExperimentRunDetail(
+        store,
+        actor?.tenantId ?? process.env.VETIOS_DEV_TENANT_ID ?? 'dev_tenant_001',
+        runId,
+        { readOnly: false },
+    );
 
     if (!detail) {
         return NextResponse.json({ error: 'Experiment run not found', request_id: requestId }, { status: 404 });
