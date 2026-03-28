@@ -695,6 +695,30 @@ async function main() {
         'registry governance should surface governance issues instead of runtime drift/error spikes',
     );
 
+    const telemetryOperationalAlerts = buildTopologyAlertsForTest({
+        nodes: [
+            {
+                ...makeNode('telemetry_observer', 'Telemetry Observer', {
+                    status: 'critical',
+                    latency: null,
+                    throughput: 18,
+                    error_rate: 0.34,
+                    drift_score: 0.41,
+                    confidence_avg: 0.42,
+                }),
+                kind: 'telemetry',
+            },
+        ],
+        now: new Date().toISOString(),
+        diagnostics: readyState,
+        telemetry_event_timestamps: [new Date(Date.now() - 2_000).toISOString()],
+    });
+    assert.equal(
+        telemetryOperationalAlerts.some((alert) => alert.node_id === 'telemetry_observer' && (alert.category === 'error_rate' || alert.category === 'drift')),
+        false,
+        'telemetry observer should surface stream health issues instead of downstream model error/drift spikes',
+    );
+
     const networkHealth = computeTopologyNetworkHealth(criticalNodes, readyState);
     assert.ok(networkHealth < 70, `expected stressed network health, got ${networkHealth}`);
 

@@ -2565,6 +2565,10 @@ async function ensurePromotionRequirements(
     const existing = await store.getPromotionRequirements(run.tenant_id, run.run_id);
     const benchmarkPass = evaluateBenchmarkGate(benchmarks);
     const safetyPass = deriveSafetyPassValue(run, latestMetric);
+    const resolvedCalibrationPass = calibrationMetrics?.calibration_pass ?? existing?.calibration_pass ?? null;
+    const resolvedAdversarialPass = adversarialMetrics?.adversarial_pass ?? existing?.adversarial_pass ?? null;
+    const resolvedSafetyPass = safetyPass ?? existing?.safety_pass ?? null;
+    const resolvedBenchmarkPass = benchmarkPass ?? existing?.benchmark_pass ?? null;
     const refreshedRegistry = await store.upsertModelRegistry({
         ...modelRegistry,
         artifact_path: modelRegistry.artifact_uri ?? modelRegistry.artifact_path,
@@ -2578,10 +2582,10 @@ async function ensurePromotionRequirements(
         tenant_id: run.tenant_id,
         registry_id: refreshedRegistry.registry_id,
         run_id: run.run_id,
-        calibration_pass: calibrationMetrics?.calibration_pass ?? null,
-        adversarial_pass: adversarialMetrics?.adversarial_pass ?? null,
-        safety_pass: safetyPass,
-        benchmark_pass: benchmarkPass,
+        calibration_pass: resolvedCalibrationPass,
+        adversarial_pass: resolvedAdversarialPass,
+        safety_pass: resolvedSafetyPass,
+        benchmark_pass: resolvedBenchmarkPass,
         manual_approval: existing?.manual_approval ?? (refreshedRegistry.lifecycle_status === 'production' && refreshedRegistry.registry_role === 'champion' ? true : null),
     });
 
@@ -2743,10 +2747,10 @@ async function syncRegistryLinkForRun(
         champion_or_challenger: registryRole,
         promotion_status: modelRegistry?.status ?? current?.promotion_status ?? null,
         calibration_status: calibrationMetrics == null
-            ? current?.calibration_status ?? 'pending'
+            ? resolveStoredGateStatus(promotionRequirements?.calibration_pass, current?.calibration_status)
             : calibrationMetrics.calibration_pass === true ? 'passed' : 'failed',
         adversarial_gate_status: adversarialMetrics == null
-            ? current?.adversarial_gate_status ?? 'pending'
+            ? resolveStoredGateStatus(promotionRequirements?.adversarial_pass, current?.adversarial_gate_status)
             : adversarialMetrics.adversarial_pass === true ? 'passed' : 'failed',
         benchmark_status: benchmarkStatus === 'pending' ? current?.benchmark_status ?? 'pending' : benchmarkStatus === 'pass' ? 'passed' : 'failed',
         manual_approval_status: manualApprovalStatus === 'pending' ? current?.manual_approval_status ?? 'pending' : manualApprovalStatus === 'pass' ? 'passed' : 'failed',
@@ -2764,10 +2768,10 @@ async function syncRegistryLinkForRun(
             promotion_status: modelRegistry?.status ?? current?.promotion_status ?? null,
             deployment_eligibility: deploymentEligibility,
             calibration_status: calibrationMetrics == null
-                ? current?.calibration_status ?? 'pending'
+                ? resolveStoredGateStatus(promotionRequirements?.calibration_pass, current?.calibration_status)
                 : calibrationMetrics.calibration_pass === true ? 'passed' : 'failed',
             adversarial_gate_status: adversarialMetrics == null
-                ? current?.adversarial_gate_status ?? 'pending'
+                ? resolveStoredGateStatus(promotionRequirements?.adversarial_pass, current?.adversarial_gate_status)
                 : adversarialMetrics.adversarial_pass === true ? 'passed' : 'failed',
             benchmark_status: benchmarkStatus,
             manual_approval_status: manualApprovalStatus,
@@ -2775,6 +2779,15 @@ async function syncRegistryLinkForRun(
             rollback_target: modelRegistry?.rollback_target ?? run.registry_context.rollback_target ?? null,
         },
     });
+}
+
+function resolveStoredGateStatus(
+    value: boolean | null | undefined,
+    existingStatus: string | null | undefined,
+): string {
+    if (value === true) return 'passed';
+    if (value === false) return 'failed';
+    return existingStatus ?? 'pending';
 }
 
 function deriveDeploymentEligibilityStatus(

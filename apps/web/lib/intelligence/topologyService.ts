@@ -403,6 +403,8 @@ function buildNodes(input: {
         },
     });
 
+    const downstreamInferenceErrorRate = calculateInferenceErrorRate(totalInferenceEvents, totalEvaluationEvents);
+    const downstreamConfidenceAverage = mean(globalConfidenceValues);
     const telemetryNode = createNode({
         id: 'telemetry_observer',
         kind: 'telemetry',
@@ -410,19 +412,19 @@ function buildNodes(input: {
             status: resolveNodeStatus({
                 hasData: telemetryObserverHasSignal,
                 lastUpdated: latestTelemetryUpdate,
-                latency: percentile(globalLatencyValues, 95),
-                errorRate: calculateInferenceErrorRate(totalInferenceEvents, totalEvaluationEvents),
-                drift: globalDrift,
-                confidence: mean(globalConfidenceValues),
+                latency: null,
+                errorRate: null,
+                drift: null,
+                confidence: null,
                 governanceFailure: false,
                 governancePending: false,
                 now: input.until,
             }),
-            latency: percentile(globalLatencyValues, 95),
+            latency: null,
             throughput: roundNumber(input.telemetryEvents.length / windowMinutes, 2),
-            error_rate: calculateInferenceErrorRate(totalInferenceEvents, totalEvaluationEvents),
-            drift_score: globalDrift,
-            confidence_avg: mean(globalConfidenceValues),
+            error_rate: null,
+            drift_score: null,
+            confidence_avg: null,
             last_updated: latestTelemetryUpdate,
         }, input.nodeOverrides.get('telemetry_observer'), input.until),
         governance: null,
@@ -433,6 +435,10 @@ function buildNodes(input: {
             total_events: input.telemetryEvents.length,
             evaluation_events: totalEvaluationEvents.length,
             drift_state: totalEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
+            downstream_error_rate: downstreamInferenceErrorRate,
+            downstream_drift_score: globalDrift,
+            downstream_confidence_avg: downstreamConfidenceAverage,
+            workload_latency_p95: percentile(globalLatencyValues, 95),
         },
     });
 
@@ -1070,7 +1076,7 @@ function buildAlerts(
             });
         }
 
-        if (node.kind !== 'registry' && (node.state.drift_score ?? 0) >= DRIFT_CRITICAL_THRESHOLD) {
+        if (supportsRuntimeQualityAlerts(node) && (node.state.drift_score ?? 0) >= DRIFT_CRITICAL_THRESHOLD) {
             alerts.push({
                 id: `alert_drift_critical_${node.id}`,
                 node_id: node.id,
@@ -1080,7 +1086,7 @@ function buildAlerts(
                 message: `${node.label} drift is above the critical threshold.`,
                 timestamp: node.state.last_updated ?? now.toISOString(),
             });
-        } else if (node.kind !== 'registry' && (node.state.drift_score ?? 0) >= DRIFT_WARNING_THRESHOLD) {
+        } else if (supportsRuntimeQualityAlerts(node) && (node.state.drift_score ?? 0) >= DRIFT_WARNING_THRESHOLD) {
             alerts.push({
                 id: `alert_drift_warning_${node.id}`,
                 node_id: node.id,
@@ -1092,7 +1098,7 @@ function buildAlerts(
             });
         }
 
-        if (node.kind !== 'registry' && (node.state.error_rate ?? 0) >= ERROR_CRITICAL_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
+        if (supportsRuntimeQualityAlerts(node) && (node.state.error_rate ?? 0) >= ERROR_CRITICAL_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
             alerts.push({
                 id: `alert_error_critical_${node.id}`,
                 node_id: node.id,
@@ -1102,7 +1108,7 @@ function buildAlerts(
                 message: `${node.label} error rate is above the critical threshold.`,
                 timestamp: node.state.last_updated ?? now.toISOString(),
             });
-        } else if (node.kind !== 'registry' && (node.state.error_rate ?? 0) >= ERROR_WARNING_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
+        } else if (supportsRuntimeQualityAlerts(node) && (node.state.error_rate ?? 0) >= ERROR_WARNING_THRESHOLD && !shouldSuppressDerivedErrorAlert(node.id, nodesById)) {
             alerts.push({
                 id: `alert_error_warning_${node.id}`,
                 node_id: node.id,
@@ -2569,6 +2575,13 @@ function shouldSuppressDerivedErrorAlert(
     }
 
     return false;
+}
+
+function supportsRuntimeQualityAlerts(node: TopologyNodeSnapshot) {
+    return node.kind === 'model'
+        || node.kind === 'outcome'
+        || node.kind === 'simulation'
+        || node.kind === 'data';
 }
 
 function shouldRaiseHeartbeatAlert(node: TopologyNodeSnapshot) {
