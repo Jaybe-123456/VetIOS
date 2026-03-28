@@ -150,7 +150,9 @@ export async function getControlPlaneSnapshot(input: {
             window: '24h',
             observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
         }),
-        getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId),
+        getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId, {
+            readOnly: input.readOnly === true,
+        }),
         collectClinicalDatasetDebugSnapshot(input.client, input.tenantId, input.userId),
         getControlPlaneConfigBundle(input.client, input.tenantId),
         listControlPlaneApiKeys(input.client, input.tenantId),
@@ -299,7 +301,9 @@ export async function getDashboardControlPlaneSnapshot(input: {
             window: '24h',
             observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
         }),
-        getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId),
+        getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId, {
+            readOnly: input.readOnly === true,
+        }),
         getControlPlaneConfigBundle(input.client, input.tenantId),
         listDashboardInferenceHistory(input.client, input.tenantId),
         loadDashboardRoutingSummary(input.client, input.tenantId),
@@ -1072,7 +1076,9 @@ export async function injectControlPlaneSimulation(input: {
     severity: 'degraded' | 'critical';
 }): Promise<{ simulation_event_id: string; telemetry_event_id: string }> {
     const experimentStore = createSupabaseExperimentTrackingStore(input.client);
-    const controlPlane = await getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId);
+    const controlPlane = await getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId, {
+        readOnly: false,
+    });
     const target = resolveTopologySimulationTarget(controlPlane, input.targetNodeId);
     const profile = buildSimulationProfile(input.scenario, input.severity, input.targetNodeId);
     const simulationEventId = cryptoRandomId();

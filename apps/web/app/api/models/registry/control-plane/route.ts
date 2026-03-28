@@ -37,6 +37,7 @@ export async function GET(req: Request) {
         const snapshot = await getModelRegistryControlPlaneSnapshot(
             createSupabaseExperimentTrackingStore(getSupabaseServer()),
             tenantId,
+            { readOnly: false },
         );
         const response = NextResponse.json({
             snapshot,
