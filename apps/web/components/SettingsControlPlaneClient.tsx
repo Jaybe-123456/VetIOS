@@ -2,7 +2,6 @@
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import type { Session } from '@supabase/supabase-js';
 import DeveloperApiExplorer from '@/components/DeveloperApiExplorer';
 import {
     ConsoleCard,
@@ -83,7 +82,6 @@ export default function SettingsControlPlaneClient() {
         status: 'idle',
         message: '',
     });
-    const [browserSession, setBrowserSession] = useState<Session | null>(null);
     const [profileDraft, setProfileDraft] = useState<{ organization: string; role: ControlPlaneUserRole }>({
         organization: '',
         role: 'developer',
@@ -118,19 +116,6 @@ export default function SettingsControlPlaneClient() {
         }, 60_000);
 
         return () => window.clearInterval(interval);
-    }, []);
-
-    useEffect(() => {
-        const supabase = getSupabaseBrowser();
-        supabase.auth.getSession().then(({ data }) => {
-            setBrowserSession(data.session ?? null);
-        });
-
-        const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-            setBrowserSession(nextSession);
-        });
-
-        return () => data.subscription.unsubscribe();
     }, []);
 
     useEffect(() => {
@@ -295,13 +280,13 @@ export default function SettingsControlPlaneClient() {
 
     async function handleRefreshSession() {
         const supabase = getSupabaseBrowser();
-        const { data, error: refreshError } = await supabase.auth.refreshSession();
+        const { error: refreshError } = await supabase.auth.refreshSession();
         if (refreshError) {
             setActionState({ status: 'error', message: refreshError.message });
             return;
         }
-        setBrowserSession(data.session ?? null);
-        setActionState({ status: 'success', message: 'JWT session refreshed.', payload: data.session });
+        await refreshSnapshot(false);
+        setActionState({ status: 'success', message: 'Session credentials refreshed. Raw tokens remain hidden for security.' });
     }
 
     if (loading) {
@@ -411,7 +396,6 @@ export default function SettingsControlPlaneClient() {
             {renderTab({
                 activeTab,
                 snapshot,
-                browserSession,
                 profileDraft,
                 configDraft,
                 newKeyLabel,
@@ -440,7 +424,6 @@ export default function SettingsControlPlaneClient() {
 function renderTab(input: {
     activeTab: ControlPlaneTab;
     snapshot: ControlPlaneSnapshot;
-    browserSession: Session | null;
     profileDraft: { organization: string; role: ControlPlaneUserRole };
     configDraft: {
         latency_threshold_ms: number;
@@ -668,21 +651,12 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                         <DataRow label="Scope" value={input.snapshot.access_security.access_scope.join(', ')} />
                     </div>
                     <div className="space-y-4">
-                        <div>
-                            <TerminalLabel>JWT Access Token</TerminalLabel>
-                            <TerminalTextarea
-                                className="min-h-[120px]"
-                                readOnly
-                                value={input.browserSession?.access_token ?? 'NO DATA'}
-                            />
-                        </div>
-                        <div>
-                            <TerminalLabel>Refresh Token</TerminalLabel>
-                            <TerminalTextarea
-                                className="min-h-[120px]"
-                                readOnly
-                                value={input.browserSession?.refresh_token ?? 'NO DATA'}
-                            />
+                        <div className="border border-grid/50 bg-black/20 p-4">
+                            <TerminalLabel>Session Credential Exposure</TerminalLabel>
+                            <div className="font-mono text-xs text-muted leading-relaxed">
+                                Raw JWT access tokens and refresh tokens are intentionally hidden in the control plane.
+                                VetIOS only exposes session metadata here so bearer credentials are not leaked through the UI.
+                            </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
                             <TerminalButton variant="secondary" onClick={() => void input.onRefreshSession()}>
