@@ -1,5 +1,6 @@
 import { detectContradictions, type ContradictionResult } from '@/lib/ai/contradictionEngine';
 import { createHeuristicInferencePayload } from '@/lib/ai/diagnosticSafety';
+import { getClosedWorldDiseasePromptBlock } from '@/lib/ai/diseaseOntology';
 
 export interface InferenceInput {
     model?: string;
@@ -60,6 +61,8 @@ export async function runInference(input: InferenceInput): Promise<InferenceOutp
         ? `\n\nCRITICAL: The following contradictions were detected in the input data:\n${contradictionResult.contradiction_reasons.map((reason) => `- ${reason}`).join('\n')}\nYou MUST:\n1. Explicitly acknowledge the contradictions in uncertainty_notes\n2. Lower diagnosis confidence rather than deleting core symptom evidence\n3. Preserve dangerous high-risk hypotheses when multiple high-value signals remain\n4. Widen the differential rather than collapsing into common low-risk explanations`
         : '';
 
+    const closedWorldDiseaseLibrary = getClosedWorldDiseasePromptBlock();
+
     const systemPrompt = `You are VetIOS Decision Intelligence, a probabilistic clinical reasoning engine for veterinary medicine.
 Respond ONLY with valid JSON and EXACTLY these top-level fields:
 1. "diagnosis"
@@ -85,21 +88,22 @@ RULES:
 1. Target disease hints must be ignored diagnostically.
 2. Diagnosis confidence and severity must remain independent.
 3. Contradictions lower confidence and widen uncertainty; they do not overwrite symptom truth.
-4. Tier 1 features MUST outrank generic distractors:
+4. CLOSED-WORLD DISEASE LIBRARY: diagnosis.top_differentials MUST contain ONLY exact disease names from the following canonical library. If the evidence is weak, choose the closest supported names from this library rather than inventing or paraphrasing a disease.\n${closedWorldDiseaseLibrary}
+5. Tier 1 features MUST outrank generic distractors:
    - Tier 1: unproductive retching, abdominal distension, myoclonus, honking cough, ocular+nasal discharge clusters, collapse with a strong emergency pattern.
    - Tier 2: dyspnea, tachycardia, pale mucous membranes, vomiting, diarrhea, fever.
    - Tier 3: lethargy, anorexia, weakness if isolated.
-5. Generic distractors must not erase structural emergencies like GDV.
-6. If multiple high-risk abdominal emergency signals cluster, retain GDV or another named abdominal emergency in the leading differential set.
-7. NEVER place generic mechanism labels such as "Acute Mechanical Emergency" inside diagnosis.top_differentials. Those belong only in mechanism_class.
-8. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
-9. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.
-10. Endocrine overlap rule: shared PU/PD/polyphagia or lethargy must NOT by themselves decide between Hyperadrenocorticism and Diabetes Mellitus.
-11. Diabetes Mellitus should be strongly favored only when significant hyperglycemia clusters with glucosuria; ketonuria or weight loss further strengthen it.
-12. If glucosuria is absent, explicitly lower Diabetes Mellitus ranking even if polyuria, polydipsia, or mild hyperglycemia are present.
-13. Hyperadrenocorticism should be boosted by marked ALP elevation, pot-bellied appearance, panting, alopecia, chronic gradual onset, hypercholesterolemia, supportive ACTH stimulation testing, or dilute urine without glucosuria.
-14. If a classic GDV pattern is present, strongly favor GDV above simple gastric dilatation and above benign vomiting syndromes.
-15. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
+6. Generic distractors must not erase structural emergencies like GDV.
+7. If multiple high-risk abdominal emergency signals cluster, retain GDV or another named abdominal emergency in the leading differential set.
+8. NEVER place generic mechanism labels such as "Acute Mechanical Emergency" inside diagnosis.top_differentials. Those belong only in mechanism_class.
+9. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
+10. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.
+11. Endocrine overlap rule: shared PU/PD/polyphagia or lethargy must NOT by themselves decide between Hyperadrenocorticism and Diabetes Mellitus.
+12. Diabetes Mellitus should be strongly favored only when significant hyperglycemia clusters with glucosuria; ketonuria or weight loss further strengthen it.
+13. If glucosuria is absent, explicitly lower Diabetes Mellitus ranking even if polyuria, polydipsia, or mild hyperglycemia are present.
+14. Hyperadrenocorticism should be boosted by marked ALP elevation, pot-bellied appearance, panting, alopecia, chronic gradual onset, hypercholesterolemia, supportive ACTH stimulation testing, or dilute urine without glucosuria.
+15. If a classic GDV pattern is present, strongly favor GDV above simple gastric dilatation and above benign vomiting syndromes.
+16. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];

@@ -21,6 +21,11 @@ import {
     shouldSuppressAcuteAbdominalFeature,
     type MechanismClassOutput,
 } from '@/lib/ai/abdominalEmergency';
+import {
+    getMasterDiseaseOntology,
+    normalizeOntologyDiseaseName,
+    scoreClosedWorldDiseases,
+} from '@/lib/ai/diseaseOntology';
 
 type ConditionClass =
     | 'Mechanical'
@@ -406,12 +411,38 @@ const CANDIDATES: CandidateDefinition[] = [
     },
 ];
 
+const LEGACY_CANONICAL_NAME_OVERRIDES = new Map<string, string>([
+    ['foreign body obstruction', 'Intestinal Obstruction'],
+    ['peritonitis / septic abdomen', 'Septic Peritonitis'],
+    ['peritonitis', 'Septic Peritonitis'],
+    ['septic abdomen', 'Septic Peritonitis'],
+    ['pancreatitis', 'Acute Pancreatitis'],
+    ['canine distemper', 'Canine Distemper, Neurologic Form'],
+    ['bacterial pneumonia', 'Pneumonia'],
+]);
+
+const ACTIVE_CANDIDATES: CandidateDefinition[] = getMasterDiseaseOntology().map((entry) => ({
+    name: entry.name,
+    aliases: entry.aliases,
+    conditionClass: entry.condition_class,
+    features: {},
+    penalties: {},
+}));
+
+const CANDIDATE_LOOKUP = new Map<string, CandidateDefinition>(
+    ACTIVE_CANDIDATES.map((candidate) => [candidate.name, candidate]),
+);
+
 const CANONICAL_NAME_ALIASES = new Map<string, string>(
-    CANDIDATES.flatMap((candidate) => [
+    ACTIVE_CANDIDATES.flatMap((candidate) => [
         [candidate.name.toLowerCase(), candidate.name],
         ...candidate.aliases.map((alias) => [alias.toLowerCase(), candidate.name] as const),
     ]),
 );
+
+for (const [legacyName, canonicalName] of LEGACY_CANONICAL_NAME_OVERRIDES.entries()) {
+    CANONICAL_NAME_ALIASES.set(legacyName, canonicalName);
+}
 
 export function applyDiagnosticSafetyLayer(params: {
     inputSignature: Record<string, unknown>;
@@ -427,7 +458,7 @@ export function applyDiagnosticSafetyLayer(params: {
     const signals = extractClinicalSignals(params.inputSignature);
     const contradictionScore = params.contradiction?.contradiction_score ?? 0;
     const signalWeightProfile = buildSignalWeightProfile(params.inputSignature, { contradiction: params.contradiction });
-    const heuristicScores = scoreCandidates(signals);
+    const heuristicScores = scoreCandidates(signals, params.inputSignature);
     const existingDifferentials = normalizeExistingDifferentials(params.diagnosis.top_differentials);
     const mergedDifferentials = mergeDifferentials({
         contradictionScore,
@@ -601,177 +632,99 @@ export function buildSeverityFeatureImportance(
     return features;
 }
 
-function scoreCandidates(signals: ClinicalSignals): CandidateScore[] {
-    return CANDIDATES.map((candidate) => {
-        const drivers: DifferentialDriver[] = [];
-        let rawScore = 0;
-
-        for (const [signalKey, baseWeight] of Object.entries(candidate.features) as Array<[SignalKey, number]>) {
-            const evidence = signals.evidence[signalKey];
-            if (!evidence.present) continue;
-            const weight = baseWeight * FEATURE_TIER_MULTIPLIER[evidence.tier] * evidence.strength;
-            rawScore += weight;
-            drivers.push({
-                feature: getFeatureLabel(signalKey),
-                weight: Number(weight.toFixed(2)),
-            });
-        }
-
-        for (const [signalKey, penalty] of Object.entries(candidate.penalties ?? {}) as Array<[SignalKey, number]>) {
-            if (signals.evidence[signalKey].present) {
-                rawScore -= penalty;
-            }
-        }
-
-        if (candidate.name === 'Gastric Dilatation-Volvulus (GDV)' && signals.has_deep_chested_breed_risk) {
-            rawScore += 0.22;
-            drivers.push({ feature: 'deep-chested breed risk', weight: 0.22 });
-        }
-
-        if (candidate.name === 'Gastric Dilatation-Volvulus (GDV)' && signals.has_acute_onset) {
-            rawScore += 0.14;
-            drivers.push({ feature: 'acute onset', weight: 0.14 });
-        }
-
-        if (candidate.name === 'Gastric Dilatation-Volvulus (GDV)' && hasClassicGdvPattern(signals)) {
-            rawScore += 0.34;
-            drivers.push({ feature: 'classic GDV triad', weight: 0.34 });
-        }
-
-        if (candidate.name === 'Gastric Dilatation-Volvulus (GDV)' && hasPerfusionCompromise(signals)) {
-            rawScore += 0.12;
-            drivers.push({ feature: 'perfusion compromise', weight: 0.12 });
-        }
-
-        if (candidate.name === 'Simple Gastric Dilatation' && signals.evidence.recent_meal.present) {
-            rawScore += 0.1;
-            drivers.push({ feature: 'post-prandial distension context', weight: 0.1 });
-        }
-
-        if (candidate.name === 'Simple Gastric Dilatation' && hasPerfusionCompromise(signals)) {
-            rawScore -= 0.16;
-        }
-
-        if (candidate.name === 'Mesenteric Volvulus' && signals.has_acute_onset) {
-            rawScore += 0.08;
-            drivers.push({ feature: 'acute onset', weight: 0.08 });
-        }
-
-        if (candidate.name === 'Foreign Body Obstruction' && signals.evidence.abdominal_pain.present) {
-            rawScore += 0.08;
-            drivers.push({ feature: 'abdominal pain', weight: 0.08 });
-        }
-
-        if (candidate.name === 'Foreign Body Obstruction' && signals.evidence.recent_meal.present) {
-            rawScore -= 0.05;
-        }
-
-        if (candidate.name === 'Peritonitis / Septic Abdomen' && signals.evidence.abdominal_pain.present) {
-            rawScore += 0.1;
-            drivers.push({ feature: 'abdominal pain', weight: 0.1 });
-        }
-
-        if (candidate.name === 'Peritonitis / Septic Abdomen' && signals.evidence.fever.present) {
-            rawScore += 0.08;
-            drivers.push({ feature: 'fever', weight: 0.08 });
-        }
-
-        if (candidate.name === 'Canine Distemper' && signals.age_months != null && signals.age_months <= 12) {
-            rawScore += 0.08;
-            drivers.push({ feature: 'young dog age profile', weight: 0.08 });
-        }
-
-        if (candidate.name === 'Canine Infectious Tracheobronchitis' && signals.evidence.honking_cough.present) {
-            rawScore += 0.14;
-            drivers.push({ feature: 'anchor feature: honking cough', weight: 0.14 });
-        }
-
-        if (candidate.name === 'Tracheal Collapse' && signals.evidence.honking_cough.present) {
-            const airwayBias = signals.has_small_breed_tracheal_collapse_risk ? 0.12 : 0.05;
-            rawScore += airwayBias;
-            drivers.push({
-                feature: signals.has_small_breed_tracheal_collapse_risk ? 'small-breed airway risk' : 'airway symptom support',
-                weight: Number(airwayBias.toFixed(2)),
-            });
-        }
-
-        if (
-            (candidate.name === 'Upper Respiratory Infection' || candidate.name === 'Canine Infectious Tracheobronchitis')
-            && signals.evidence.ocular_discharge.present
-            && signals.evidence.nasal_discharge.present
-        ) {
-            rawScore += 0.12;
-            drivers.push({ feature: 'ocular + nasal discharge infectious anchor', weight: 0.12 });
-        }
-
-        if (candidate.name === 'Hyperadrenocorticism') {
-            const bodyPatternCount = [
-                signals.evidence.pot_bellied_appearance.present,
-                signals.evidence.panting.present,
-                signals.evidence.alopecia.present,
-                signals.evidence.hypercholesterolemia.present,
-            ].filter(Boolean).length;
-
-            if (signals.evidence.marked_alp_elevation.present && (bodyPatternCount >= 2 || signals.has_chronic_duration || signals.has_gradual_onset)) {
-                rawScore += 0.24;
-                drivers.push({ feature: 'marked ALP + chronic endocrine body-pattern cluster', weight: 0.24 });
-            }
-
-            if (signals.evidence.supportive_acth_stimulation_test.present) {
-                rawScore += 0.34;
-                drivers.push({ feature: 'supportive ACTH stimulation test', weight: 0.34 });
-            }
-
-            if (signals.evidence.dilute_urine.present && signals.has_explicit_glucosuria_absence) {
-                rawScore += 0.16;
-                drivers.push({ feature: 'dilute urine without glucosuria', weight: 0.16 });
-            }
-
-            if (signals.has_chronic_duration || signals.has_gradual_onset) {
-                const chronicBonus = (signals.has_chronic_duration ? 0.08 : 0) + (signals.has_gradual_onset ? 0.06 : 0);
-                rawScore += chronicBonus;
-                drivers.push({ feature: 'chronic gradual endocrine course', weight: Number(chronicBonus.toFixed(2)) });
-            }
-        }
-
-        if (candidate.name === 'Diabetes Mellitus') {
-            if (signals.evidence.significant_hyperglycemia.present && signals.evidence.glucosuria.present) {
-                rawScore += 0.28;
-                drivers.push({ feature: 'significant hyperglycemia + glucosuria', weight: 0.28 });
-            }
-
-            if (signals.evidence.ketonuria.present) {
-                rawScore += 0.14;
-                drivers.push({ feature: 'ketonuria', weight: 0.14 });
-            }
-
-            if (signals.has_explicit_glucosuria_absence) {
-                rawScore -= 0.3;
-            }
-
-            if (signals.evidence.mild_hyperglycemia.present && !signals.evidence.glucosuria.present) {
-                rawScore -= 0.24;
-            }
-
-            if (
-                signals.endocrine_shared_pattern_strength >= 1.2
-                && !signals.evidence.significant_hyperglycemia.present
-                && !signals.evidence.glucosuria.present
-                && !signals.evidence.ketonuria.present
-                && !signals.evidence.diabetic_metabolic_profile.present
-            ) {
-                rawScore -= 0.14;
-            }
-        }
-
-        return {
-            name: candidate.name,
-            conditionClass: candidate.conditionClass,
-            rawScore: Math.max(0.01, Number(rawScore.toFixed(3))),
-            probability: 0,
-            drivers: drivers.sort((a, b) => b.weight - a.weight).slice(0, 4),
-        };
+function scoreCandidates(
+    signals: ClinicalSignals,
+    inputSignature: Record<string, unknown>,
+): CandidateScore[] {
+    const closedWorldScores = scoreClosedWorldDiseases({
+        inputSignature,
+        observationHints: buildOntologyObservationHints(signals),
+        species: signals.species,
     });
+
+    return closedWorldScores.ranked.map((candidate) => ({
+        name: candidate.name,
+        conditionClass: candidate.conditionClass,
+        rawScore: Math.max(0.01, Number(candidate.rawScore.toFixed(3))),
+        probability: 0,
+        drivers: candidate.drivers
+            .map((driver) => ({
+                feature: driver.feature,
+                weight: Number(driver.weight.toFixed(2)),
+            }))
+            .sort((left, right) => right.weight - left.weight)
+            .slice(0, 5),
+    }));
+}
+
+function buildOntologyObservationHints(signals: ClinicalSignals): string[] {
+    const hints = new Set<string>();
+    const signalMap: Array<[SignalKey, string]> = [
+        ['unproductive_retching', 'retching_unproductive'],
+        ['productive_vomiting', 'vomiting'],
+        ['diarrhea', 'diarrhea'],
+        ['abdominal_distension', 'abdominal_distension'],
+        ['abdominal_pain', 'abdominal_pain'],
+        ['hypersalivation', 'hypersalivation'],
+        ['collapse', 'collapse'],
+        ['cyanosis', 'cyanosis'],
+        ['weakness', 'weakness'],
+        ['lethargy', 'lethargy'],
+        ['anorexia', 'anorexia'],
+        ['fever', 'fever'],
+        ['pale_mucous_membranes', 'pale_mucous_membranes'],
+        ['tachycardia', 'tachycardia'],
+        ['dyspnea', 'dyspnea'],
+        ['cough', 'cough'],
+        ['honking_cough', 'honking_cough'],
+        ['seizures', 'seizures'],
+        ['myoclonus', 'myoclonus'],
+        ['alopecia', 'alopecia'],
+        ['weight_loss', 'weight_loss'],
+        ['polyuria', 'polyuria'],
+        ['polydipsia', 'polydipsia'],
+        ['polyphagia', 'polyphagia'],
+        ['panting', 'panting'],
+        ['pot_bellied_appearance', 'pot_bellied_appearance'],
+        ['marked_alp_elevation', 'marked_alp_elevation'],
+        ['hypercholesterolemia', 'hypercholesterolemia'],
+        ['supportive_acth_stimulation_test', 'supportive_acth_stimulation_test'],
+        ['dilute_urine', 'dilute_urine'],
+        ['significant_hyperglycemia', 'significant_hyperglycemia'],
+        ['mild_hyperglycemia', 'mild_hyperglycemia'],
+        ['glucosuria', 'glucosuria'],
+        ['ketonuria', 'ketonuria'],
+        ['diabetic_metabolic_profile', 'diabetic_metabolic_profile'],
+        ['nasal_discharge', 'cough'],
+        ['ocular_discharge', 'cough'],
+        ['pneumonia', 'pneumonia'],
+        ['recent_meal', 'recent_meal'],
+        ['acute_onset', 'acute_onset'],
+    ];
+
+    for (const [signalKey, observation] of signalMap) {
+        if (signals.evidence[signalKey].present) {
+            hints.add(observation);
+        }
+    }
+
+    if (signals.has_deep_chested_breed_risk) {
+        hints.add('deep_chested_breed_risk');
+    }
+    if (signals.has_acute_onset) {
+        hints.add('acute_onset');
+    }
+    if (signals.has_chronic_duration) {
+        hints.add('chronic_duration');
+    }
+    if (signals.has_gradual_onset) {
+        hints.add('gradual_onset');
+    }
+    if (signals.has_explicit_glucosuria_absence) {
+        hints.add('glucosuria_absent');
+    }
+
+    return [...hints];
 }
 
 function mergeDifferentials(params: {
@@ -806,6 +759,9 @@ function mergeDifferentials(params: {
 
     for (const differential of params.existingDifferentials) {
         const canonicalName = toCanonicalName(differential.name);
+        if (!canonicalName) {
+            continue;
+        }
         const existing = combined.get(canonicalName);
         const mergedProbability = (differential.probability * modelWeight) + (existing?.probability ?? 0);
         combined.set(canonicalName, {
@@ -836,6 +792,31 @@ function mergeDifferentials(params: {
         }));
 }
 
+function setCanonicalFloor(
+    combined: Map<string, DifferentialEntry>,
+    rawName: string,
+    floor: number,
+): void {
+    const canonicalName = toCanonicalName(rawName);
+    if (!canonicalName) {
+        return;
+    }
+
+    const existing = combined.get(canonicalName);
+    combined.set(canonicalName, {
+        name: canonicalName,
+        probability: Math.max(existing?.probability ?? 0, floor),
+        key_drivers: existing?.key_drivers,
+    });
+}
+
+function getCanonicalNameSet(names: string[]): Set<string> {
+    const canonicalNames = names
+        .map((name) => toCanonicalName(name))
+        .filter((name): name is string => Boolean(name));
+    return new Set(canonicalNames);
+}
+
 function applyPersistenceProtection(
     combined: Map<string, DifferentialEntry>,
     params: {
@@ -854,22 +835,17 @@ function applyPersistenceProtection(
             ['Gastric Dilatation-Volvulus (GDV)', 0.24],
             ['Simple Gastric Dilatation', 0.12],
             ['Mesenteric Volvulus', 0.11],
-            ['Foreign Body Obstruction', 0.12],
+            ['Intestinal Obstruction', 0.12],
         ])
         : new Map<string, number>([
             ['Gastric Dilatation-Volvulus (GDV)', hasClassicGdvPattern(params.signals) ? 0.52 : 0.38],
             ['Simple Gastric Dilatation', 0.14],
             ['Mesenteric Volvulus', 0.12],
-            ['Foreign Body Obstruction', 0.12],
+            ['Intestinal Obstruction', 0.12],
         ]);
 
     for (const [name, floor] of floors.entries()) {
-        const existing = combined.get(name);
-        combined.set(name, {
-            name,
-            probability: Math.max(existing?.probability ?? 0, floor),
-            key_drivers: existing?.key_drivers,
-        });
+        setCanonicalFloor(combined, name, floor);
     }
 
     if (params.signals.has_small_breed_gdv_mismatch) {
@@ -897,17 +873,12 @@ function applyAnchorFeatureProtection(
     }
 
     if (signals.evidence.ocular_discharge.present && signals.evidence.nasal_discharge.present) {
-        floors.set('Upper Respiratory Infection', Math.max(floors.get('Upper Respiratory Infection') ?? 0, 0.16));
         floors.set('Canine Infectious Tracheobronchitis', Math.max(floors.get('Canine Infectious Tracheobronchitis') ?? 0, 0.15));
+        floors.set('Pneumonia', Math.max(floors.get('Pneumonia') ?? 0, 0.12));
     }
 
     for (const [name, floor] of floors.entries()) {
-        const existing = combined.get(name);
-        combined.set(name, {
-            name,
-            probability: Math.max(existing?.probability ?? 0, floor),
-            key_drivers: existing?.key_drivers,
-        });
+        setCanonicalFloor(combined, name, floor);
     }
 }
 
@@ -919,12 +890,11 @@ function applyConditionClassStabilization(
         return;
     }
 
-    const boostNames = new Set([
+    const boostNames = getCanonicalNameSet([
         'Canine Infectious Tracheobronchitis',
-        'Upper Respiratory Infection',
         'Tracheal Collapse',
         'Bronchitis',
-        'Bacterial Pneumonia',
+        'Pneumonia',
     ]);
     const dampenedClasses = new Set<ConditionClass>([
         'Neoplastic',
@@ -933,7 +903,7 @@ function applyConditionClassStabilization(
     ]);
 
     for (const entry of combined.values()) {
-        const definition = CANDIDATES.find((candidate) => candidate.name === entry.name);
+        const definition = CANDIDATE_LOOKUP.get(entry.name);
         if (definition == null) continue;
 
         if (boostNames.has(entry.name)) {
@@ -1069,12 +1039,14 @@ function applyClassicGdvDominance(
     for (const [name, factor] of [
         ['Simple Gastric Dilatation', hasPerfusionCompromise(signals) ? 0.52 : 0.78],
         ['Mesenteric Volvulus', 0.76],
-        ['Foreign Body Obstruction', 0.58],
+        ['Intestinal Obstruction', 0.58],
         ['Acute Gastroenteritis', 0.4],
-        ['Pancreatitis', 0.46],
-        ['Peritonitis / Septic Abdomen', hasPerfusionCompromise(signals) ? 0.82 : 0.9],
+        ['Acute Pancreatitis', 0.46],
+        ['Septic Peritonitis', hasPerfusionCompromise(signals) ? 0.82 : 0.9],
     ] as Array<[string, number]>) {
-        const entry = combined.get(name);
+        const canonicalName = toCanonicalName(name);
+        if (!canonicalName) continue;
+        const entry = combined.get(canonicalName);
         if (!entry) continue;
         entry.probability *= factor;
     }
@@ -1088,13 +1060,12 @@ function enforceDominantClusterConsistency(
         return;
     }
 
-    const respiratoryLeaders = [
+    const respiratoryLeaders = [...getCanonicalNameSet([
         'Canine Infectious Tracheobronchitis',
         'Tracheal Collapse',
         'Bronchitis',
-        'Upper Respiratory Infection',
-        'Bacterial Pneumonia',
-    ];
+        'Pneumonia',
+    ])];
     const ranked = [...combined.values()].sort((left, right) => right.probability - left.probability);
     const top = ranked[0];
     if (top && respiratoryLeaders.includes(top.name)) {
@@ -1221,7 +1192,7 @@ function buildConditionClassProbabilities(differentials: DifferentialEntry[]): R
     const totals = new Map<ConditionClass, number>(CONDITION_CLASSES.map((conditionClass) => [conditionClass, 0]));
 
     for (const differential of differentials) {
-        const definition = CANDIDATES.find((candidate) => candidate.name === differential.name);
+        const definition = CANDIDATE_LOOKUP.get(differential.name);
         const conditionClass = definition?.conditionClass ?? 'Idiopathic / Unknown';
         totals.set(conditionClass, (totals.get(conditionClass) ?? 0) + differential.probability);
     }
@@ -1313,9 +1284,11 @@ function normalizeExistingDifferentials(raw: unknown): DifferentialEntry[] {
                     : null;
             if (!name) return null;
             if (isGenericMechanismDiagnosis(name)) return null;
+            const canonicalName = toCanonicalName(name);
+            if (!canonicalName) return null;
             const probability = typeof candidate.probability === 'number' ? candidate.probability : 0.1;
             return {
-                name: toCanonicalName(name),
+                name: canonicalName,
                 probability,
                 key_drivers: Array.isArray(candidate.key_drivers)
                     ? (candidate.key_drivers as DifferentialDriver[])
@@ -1326,12 +1299,16 @@ function normalizeExistingDifferentials(raw: unknown): DifferentialEntry[] {
     return mapped.filter((entry): entry is DifferentialEntry => entry !== null);
 }
 
-function toCanonicalName(name: string): string {
+function toCanonicalName(name: string): string | null {
     const normalized = name.trim().toLowerCase();
     if (isGenericMechanismDiagnosis(normalized)) {
-        return 'Acute Mechanical Emergency';
+        return null;
     }
-    return CANONICAL_NAME_ALIASES.get(normalized) ?? name.trim();
+    const ontologyName = normalizeOntologyDiseaseName(name);
+    if (ontologyName) {
+        return ontologyName;
+    }
+    return CANONICAL_NAME_ALIASES.get(normalized) ?? null;
 }
 
 function softmax(values: number[], temperature: number): number[] {

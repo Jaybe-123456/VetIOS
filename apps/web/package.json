@@ -8,6 +8,7 @@
         "start": "next start",
         "lint": "next lint",
         "typecheck": "tsc --noEmit",
+        "test:disease-ontology": "node scripts/test-disease-ontology.cjs",
         "test:control-plane-simulation": "node scripts/test-control-plane-simulation.cjs",
         "test:registry": "node scripts/test-registry-control-plane.cjs",
         "test:api": "bash scripts/test-api-local.sh",
