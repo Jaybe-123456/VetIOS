@@ -224,18 +224,88 @@ function createAdversarialMetrics({
     };
 }
 
+function createArtifact({
+    tenantId,
+    runId,
+    artifactType = 'best_checkpoint',
+    uri = `s3://vetios-models/${runId}/best.ckpt`,
+    isPrimary = true,
+}) {
+    const now = '2026-03-29T00:00:00.000Z';
+    return {
+        id: `${runId}_${artifactType}`,
+        tenant_id: tenantId,
+        run_id: runId,
+        artifact_type: artifactType,
+        label: artifactType,
+        uri,
+        metadata: {},
+        is_primary: isPrimary,
+        created_at: now,
+    };
+}
+
 function createStore({
     runs,
     registryRecords,
     metrics = [],
+    artifacts = [],
+    benchmarks = [],
+    registryLinks = [],
     promotionRequirements = [],
     adversarialMetrics = [],
     calibrationMetrics = [],
     deploymentDecisions = [],
+    subgroupMetrics = [],
+    auditEvents = [],
+    registryAuditLog = [],
+    routingPointers = [],
 }) {
+    const state = {
+        runs: [...runs],
+        registryRecords: [...registryRecords],
+        metrics: [...metrics],
+        artifacts: [...artifacts],
+        benchmarks: [...benchmarks],
+        registryLinks: [...registryLinks],
+        promotionRequirements: [...promotionRequirements],
+        adversarialMetrics: [...adversarialMetrics],
+        calibrationMetrics: [...calibrationMetrics],
+        deploymentDecisions: [...deploymentDecisions],
+        subgroupMetrics: [...subgroupMetrics],
+        auditEvents: [...auditEvents],
+        registryAuditLog: [...registryAuditLog],
+        routingPointers: [...routingPointers],
+    };
+    const now = () => '2026-03-29T00:00:00.000Z';
+    const clone = (value) => structuredClone(value);
+
     return {
         async listExperimentRuns() {
-            return runs;
+            return clone(state.runs);
+        },
+        async getExperimentRun(tenantId, runId) {
+            return clone(state.runs.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null);
+        },
+        async createExperimentRun(record) {
+            const created = {
+                ...record,
+                id: record.id ?? `${record.run_id}_row`,
+                created_at: now(),
+                updated_at: now(),
+            };
+            state.runs.push(created);
+            return clone(created);
+        },
+        async updateExperimentRun(runId, tenantId, patch) {
+            const index = state.runs.findIndex((entry) => entry.tenant_id === tenantId && entry.run_id === runId);
+            if (index < 0) throw new Error(`Run not found: ${runId}`);
+            state.runs[index] = {
+                ...state.runs[index],
+                ...patch,
+                updated_at: now(),
+            };
+            return clone(state.runs[index]);
         },
         async listModelRegistryEntries() {
             return [];
@@ -249,35 +319,208 @@ function createStore({
         async listLearningCalibrationReports() {
             return [];
         },
-        async listExperimentBenchmarks() {
+        async listLearningAuditEvents() {
             return [];
         },
-        async getExperimentRegistryLink() {
-            return null;
+        async listExperimentBenchmarks(tenantId, runId) {
+            return clone(state.benchmarks.filter((entry) => entry.tenant_id === tenantId && entry.run_id === runId));
+        },
+        async upsertExperimentBenchmark(record) {
+            const index = state.benchmarks.findIndex((entry) => entry.id === record.id);
+            const next = {
+                ...record,
+                id: record.id ?? `${record.run_id}_${record.benchmark_family}`,
+                created_at: now(),
+            };
+            if (index >= 0) state.benchmarks[index] = next;
+            else state.benchmarks.push(next);
+            return clone(next);
+        },
+        async getExperimentRegistryLink(tenantId, runId) {
+            return clone(state.registryLinks.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null);
+        },
+        async upsertExperimentRegistryLink(record) {
+            const index = state.registryLinks.findIndex((entry) => entry.tenant_id === record.tenant_id && entry.run_id === record.run_id);
+            const next = {
+                ...record,
+                id: record.id ?? `${record.run_id}_registry_link`,
+                linked_at: state.registryLinks[index]?.linked_at ?? now(),
+                updated_at: now(),
+            };
+            if (index >= 0) state.registryLinks[index] = next;
+            else state.registryLinks.push(next);
+            return clone(next);
         },
         async listExperimentMetrics(tenantId, runId) {
-            return metrics.filter((entry) => entry.tenant_id === tenantId && entry.run_id === runId);
+            return clone(state.metrics.filter((entry) => entry.tenant_id === tenantId && entry.run_id === runId));
+        },
+        async createExperimentMetrics(records) {
+            const created = records.map((record, index) => ({
+                ...record,
+                id: record.id ?? `${record.run_id}_metric_${state.metrics.length + index}`,
+                created_at: now(),
+            }));
+            state.metrics.push(...created);
+            return clone(created);
+        },
+        async listExperimentArtifacts(tenantId, runId) {
+            return clone(state.artifacts.filter((entry) => entry.tenant_id === tenantId && entry.run_id === runId));
+        },
+        async upsertExperimentArtifact(record) {
+            const index = state.artifacts.findIndex((entry) => entry.id === record.id);
+            const next = {
+                ...record,
+                id: record.id ?? `${record.run_id}_${record.artifact_type}`,
+                created_at: state.artifacts[index]?.created_at ?? now(),
+            };
+            if (index >= 0) state.artifacts[index] = next;
+            else state.artifacts.push(next);
+            return clone(next);
+        },
+        async getExperimentFailure() {
+            return null;
+        },
+        async upsertExperimentFailure(record) {
+            return clone({
+                ...record,
+                id: record.id ?? `${record.run_id}_failure`,
+                created_at: now(),
+                updated_at: now(),
+            });
         },
         async listModelRegistry() {
-            return registryRecords;
+            return clone(state.registryRecords);
+        },
+        async getModelRegistryForRun(tenantId, runId) {
+            return clone(state.registryRecords.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null);
+        },
+        async upsertModelRegistry(record) {
+            const index = state.registryRecords.findIndex((entry) => entry.registry_id === record.registry_id);
+            const next = {
+                ...record,
+                created_at: state.registryRecords[index]?.created_at ?? now(),
+                updated_at: now(),
+            };
+            if (index >= 0) state.registryRecords[index] = next;
+            else state.registryRecords.push(next);
+            return clone(next);
         },
         async listPromotionRequirements() {
-            return promotionRequirements;
+            return clone(state.promotionRequirements);
+        },
+        async getPromotionRequirements(tenantId, runId) {
+            return clone(state.promotionRequirements.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null);
+        },
+        async upsertPromotionRequirements(record) {
+            const index = state.promotionRequirements.findIndex((entry) => entry.tenant_id === record.tenant_id && entry.run_id === record.run_id);
+            const next = {
+                ...record,
+                id: record.id ?? `${record.run_id}_requirements`,
+                created_at: state.promotionRequirements[index]?.created_at ?? now(),
+                updated_at: now(),
+            };
+            if (index >= 0) state.promotionRequirements[index] = next;
+            else state.promotionRequirements.push(next);
+            return clone(next);
         },
         async listRegistryRoutingPointers() {
-            return [];
+            return clone(state.routingPointers);
         },
         async listRegistryAuditLog() {
-            return [];
+            return clone(state.registryAuditLog);
+        },
+        async createRegistryAuditLog(record) {
+            const next = {
+                ...record,
+                created_at: now(),
+            };
+            state.registryAuditLog.push(next);
+            return clone(next);
         },
         async getCalibrationMetrics(tenantId, runId) {
-            return calibrationMetrics.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null;
+            return clone(state.calibrationMetrics.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null);
+        },
+        async upsertCalibrationMetrics(record) {
+            const index = state.calibrationMetrics.findIndex((entry) => entry.tenant_id === record.tenant_id && entry.run_id === record.run_id);
+            const next = {
+                ...record,
+                id: record.id ?? `${record.run_id}_calibration`,
+                created_at: state.calibrationMetrics[index]?.created_at ?? now(),
+                updated_at: now(),
+            };
+            if (index >= 0) state.calibrationMetrics[index] = next;
+            else state.calibrationMetrics.push(next);
+            return clone(next);
         },
         async getAdversarialMetrics(tenantId, runId) {
-            return adversarialMetrics.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null;
+            return clone(state.adversarialMetrics.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null);
+        },
+        async upsertAdversarialMetrics(record) {
+            const index = state.adversarialMetrics.findIndex((entry) => entry.tenant_id === record.tenant_id && entry.run_id === record.run_id);
+            const next = {
+                ...record,
+                id: record.id ?? `${record.run_id}_adversarial`,
+                created_at: state.adversarialMetrics[index]?.created_at ?? now(),
+                updated_at: now(),
+            };
+            if (index >= 0) state.adversarialMetrics[index] = next;
+            else state.adversarialMetrics.push(next);
+            return clone(next);
         },
         async getDeploymentDecision(tenantId, runId) {
-            return deploymentDecisions.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null;
+            return clone(state.deploymentDecisions.find((entry) => entry.tenant_id === tenantId && entry.run_id === runId) ?? null);
+        },
+        async upsertDeploymentDecision(record) {
+            const index = state.deploymentDecisions.findIndex((entry) => entry.tenant_id === record.tenant_id && entry.run_id === record.run_id);
+            const next = {
+                ...record,
+                id: record.id ?? `${record.run_id}_decision`,
+                created_at: state.deploymentDecisions[index]?.created_at ?? now(),
+                updated_at: now(),
+            };
+            if (index >= 0) state.deploymentDecisions[index] = next;
+            else state.deploymentDecisions.push(next);
+            return clone(next);
+        },
+        async listSubgroupMetrics(tenantId, runId) {
+            return clone(state.subgroupMetrics.filter((entry) => entry.tenant_id === tenantId && entry.run_id === runId));
+        },
+        async upsertSubgroupMetric(record) {
+            const next = {
+                ...record,
+                id: record.id ?? `${record.run_id}_${record.group}_${record.metric}`,
+                created_at: now(),
+            };
+            state.subgroupMetrics.push(next);
+            return clone(next);
+        },
+        async listAuditLog() {
+            return clone(state.auditEvents);
+        },
+        async createAuditLog(record) {
+            const next = {
+                ...record,
+                created_at: now(),
+            };
+            state.auditEvents.push(next);
+            return clone(next);
+        },
+        async upsertRegistryRoutingPointer(record) {
+            const index = state.routingPointers.findIndex((entry) => entry.tenant_id === record.tenant_id && entry.model_family === record.model_family);
+            const next = {
+                ...record,
+                id: record.id ?? `${record.model_family}_route`,
+                updated_at: now(),
+            };
+            if (index >= 0) state.routingPointers[index] = next;
+            else state.routingPointers.push(next);
+            return clone(next);
+        },
+        async promoteRegistryToProduction() {
+            throw new Error('promoteRegistryToProduction is not implemented in the regression harness.');
+        },
+        async rollbackRegistryToTarget() {
+            throw new Error('rollbackRegistryToTarget is not implemented in the regression harness.');
         },
     };
 }
@@ -298,11 +541,29 @@ async function runScenario(name, buildScenario, verifyScenario, getSnapshot) {
     console.log(`PASS ${name} -> health=${snapshot.registry_health}, active=${activeRegistryId}`);
 }
 
+async function runGovernanceRefreshScenario(name, buildScenario, verifyScenario, refreshRunGovernance, getSnapshot) {
+    const scenario = buildScenario();
+    const store = createStore(scenario);
+    const before = await getSnapshot(store, scenario.tenantId, { readOnly: true });
+    if (typeof scenario.beforeRefresh === 'function') {
+        await scenario.beforeRefresh(store);
+    }
+    const after = await refreshRunGovernance(store, scenario.tenantId, scenario.runId, 'registry:test');
+    verifyScenario(before, after);
+    const family = after.families.find((entry) => entry.model_family === 'diagnostics');
+    const activeRegistryId = family?.active_registry_id ?? 'n/a';
+    console.log(`PASS ${name} -> health=${after.registry_health}, active=${activeRegistryId}`);
+}
+
 async function main() {
     const serviceModule = compileServiceModule();
     const getModelRegistryControlPlaneSnapshot = serviceModule.getModelRegistryControlPlaneSnapshot;
+    const refreshRegistryGovernanceForRun = serviceModule.refreshRegistryGovernanceForRun;
     if (typeof getModelRegistryControlPlaneSnapshot !== 'function') {
         throw new Error('Failed to load getModelRegistryControlPlaneSnapshot from experiments service module.');
+    }
+    if (typeof refreshRegistryGovernanceForRun !== 'function') {
+        throw new Error('Failed to load refreshRegistryGovernanceForRun from experiments service module.');
     }
 
     await runScenario(
@@ -599,6 +860,104 @@ async function main() {
             assert(championEntry?.promotion_gating.gates.adversarial === 'fail', 'Expected adversarial gate to fail with failing adversarial metrics.');
             assert(championEntry?.promotion_gating.gates.safety === 'pending', 'Expected safety gate to stay pending without full safety telemetry.');
         },
+        getModelRegistryControlPlaneSnapshot,
+    );
+
+    await runGovernanceRefreshScenario(
+        'targeted governance refresh repairs stale adversarial and safety status',
+        () => {
+            const tenantId = 'tenant_refresh_governance';
+            const championRun = createRun({
+                tenantId,
+                runId: 'run_refresh_governance',
+                modelVersion: 'diag_refresh_governance_v1',
+                registryId: 'reg_refresh_governance_v1',
+                role: 'champion',
+                lifecycle: 'production',
+            });
+
+            return {
+                tenantId,
+                runId: championRun.run_id,
+                runs: [championRun],
+                artifacts: [createArtifact({ tenantId, runId: championRun.run_id })],
+                registryRecords: [
+                    createRegistry({
+                        tenantId,
+                        runId: championRun.run_id,
+                        registryId: 'reg_refresh_governance_v1',
+                        modelVersion: championRun.model_version,
+                        lifecycle: 'production',
+                        role: 'champion',
+                        rollbackTarget: 'reg_refresh_prev',
+                        deployedAt: '2026-03-29T00:00:00.000Z',
+                    }),
+                ],
+                metrics: [
+                    createMetric({
+                        tenantId,
+                        runId: championRun.run_id,
+                        timestamp: '2026-03-29T00:00:00.000Z',
+                        macroF1: 0.91,
+                        recallCritical: 0.94,
+                        falseNegativeCriticalRate: null,
+                        dangerousFalseReassuranceRate: null,
+                        abstainAccuracy: null,
+                        contradictionDetectionRate: null,
+                    }),
+                ],
+                promotionRequirements: [
+                    createPromotionRequirements({
+                        tenantId,
+                        registryId: 'reg_refresh_governance_v1',
+                        runId: championRun.run_id,
+                        calibrationPass: true,
+                        adversarialPass: false,
+                        safetyPass: null,
+                        benchmarkPass: true,
+                        manualApproval: true,
+                    }),
+                ],
+                adversarialMetrics: [
+                    createAdversarialMetrics({
+                        tenantId,
+                        runId: championRun.run_id,
+                        adversarialPass: false,
+                    }),
+                ],
+                beforeRefresh: async (store) => {
+                    await store.createExperimentMetrics([
+                        createMetric({
+                            tenantId,
+                            runId: championRun.run_id,
+                            timestamp: '2026-03-29T00:05:00.000Z',
+                            macroF1: 0.92,
+                            recallCritical: 0.95,
+                            falseNegativeCriticalRate: 0.04,
+                            dangerousFalseReassuranceRate: 0.02,
+                            abstainAccuracy: 0.88,
+                            contradictionDetectionRate: 0.91,
+                        }),
+                    ]);
+                },
+            };
+        },
+        (before, after) => {
+            const beforeFamily = before.families.find((entry) => entry.model_family === 'diagnostics');
+            const beforeEntry = beforeFamily?.entries.find((entry) => entry.registry.registry_id === 'reg_refresh_governance_v1');
+            const beforeBlockers = beforeEntry?.promotion_gating.blockers ?? [];
+            assert(beforeBlockers.includes('Adversarial gate has not passed.'), 'Expected stale adversarial blocker before targeted governance refresh.');
+            assert(beforeBlockers.includes('Clinical safety evaluation is still pending.'), 'Expected safety pending blocker before targeted governance refresh.');
+
+            const afterFamily = after.families.find((entry) => entry.model_family === 'diagnostics');
+            const afterEntry = afterFamily?.entries.find((entry) => entry.registry.registry_id === 'reg_refresh_governance_v1');
+            const afterBlockers = afterEntry?.promotion_gating.blockers ?? [];
+            assert(!afterBlockers.includes('Adversarial gate has not passed.'), 'Expected targeted governance refresh to clear stale adversarial blocker.');
+            assert(!afterBlockers.includes('Clinical safety evaluation is still pending.'), 'Expected targeted governance refresh to clear stale safety pending blocker.');
+            assert(afterEntry?.promotion_gating.gates.adversarial === 'pass', 'Expected adversarial gate to pass after targeted governance refresh.');
+            assert(afterEntry?.promotion_gating.gates.safety === 'pass', 'Expected safety gate to pass after targeted governance refresh.');
+        },
+        refreshRegistryGovernanceForRun,
         getModelRegistryControlPlaneSnapshot,
     );
 

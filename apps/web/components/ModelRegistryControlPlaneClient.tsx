@@ -181,6 +181,46 @@ export function ModelRegistryControlPlaneClient({
         }
     };
 
+    const handleRefreshRunGovernance = (entry: ModelRegistryControlPlaneEntry) => {
+        startRefreshTransition(() => {
+            void (async () => {
+                setPendingRunId(entry.registry.run_id);
+                setMessage(null);
+                try {
+                    const response = await fetch('/api/models/registry/control-plane', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            action: 'refresh_run_governance',
+                            run_id: entry.registry.run_id,
+                        }),
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok || !payload?.snapshot) {
+                        throw new Error(typeof payload?.error === 'string' ? payload.error : 'Governance refresh failed.');
+                    }
+
+                    setVerification(null);
+                    setMessage({
+                        tone: 'success',
+                        text: `Governance telemetry recomputed for ${entry.registry.run_id}.`,
+                    });
+                    router.refresh();
+                } catch (error) {
+                    setMessage({
+                        tone: 'error',
+                        text: error instanceof Error ? error.message : 'Governance refresh failed.',
+                    });
+                } finally {
+                    setPendingRunId(null);
+                }
+            })();
+        });
+    };
+
     return (
         <Container className="max-w-[112rem]">
             <PageHeader
@@ -344,6 +384,7 @@ export function ModelRegistryControlPlaneClient({
                                             reason: 'Manual production approval granted from registry control plane.',
                                         })}
                                         onPromote={() => submitAction(entry.registry.run_id, 'promote_to_production')}
+                                        onRefreshGovernance={() => handleRefreshRunGovernance(entry)}
                                         onRollback={() => handleRollback(entry)}
                                         onRevokeApproval={() => submitAction(entry.registry.run_id, 'set_manual_approval', {
                                             manualApproval: false,
@@ -400,6 +441,7 @@ function RegistryEntryCard({
     onArchive,
     onGrantApproval,
     onPromote,
+    onRefreshGovernance,
     onRollback,
     onRevokeApproval,
     onStage,
@@ -409,6 +451,7 @@ function RegistryEntryCard({
     onArchive: () => void;
     onGrantApproval: () => void;
     onPromote: () => void;
+    onRefreshGovernance: () => void;
     onRollback: () => void;
     onRevokeApproval: () => void;
     onStage: () => void;
@@ -616,6 +659,15 @@ function RegistryEntryCard({
             ) : null}
 
             <div className="mt-5 flex flex-wrap gap-2 border-t border-grid/30 pt-4">
+                <TerminalButton
+                    variant="secondary"
+                    disabled={isPending}
+                    onClick={onRefreshGovernance}
+                    title="Recompute calibration, adversarial, safety, and deployment state from stored telemetry."
+                >
+                    <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isPending ? 'animate-spin' : ''}`} />
+                    Refresh Governance
+                </TerminalButton>
                 <TerminalButton variant="secondary" disabled={!canStage || isPending} onClick={onStage} title={canStage ? 'Move this candidate into governed staging.' : isLiveProduction ? 'The active production champion cannot be moved back to staging.' : 'Only training or candidate artifacts can be staged.'}>
                     <GitBranchPlus className="mr-2 h-3.5 w-3.5" />
                     Promote To Staging
