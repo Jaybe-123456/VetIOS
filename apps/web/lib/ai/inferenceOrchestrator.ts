@@ -6,6 +6,10 @@ import { attachSignalWeightProfile, buildSignalWeightProfile } from '@/lib/clini
 import { runInference } from '@/lib/ai/provider';
 import { applyDiagnosticSafetyLayer, buildSeverityFeatureImportance } from '@/lib/ai/diagnosticSafety';
 import { evaluateEmergencyRules } from '@/lib/ai/emergencyRules';
+import {
+    buildCatastrophicRiskOutput,
+    severityFloorFromAbdominalSignals,
+} from '@/lib/ai/abdominalEmergency';
 import { mlPredict } from '@/lib/ml/mlClient';
 
 export interface OrchestratorParams {
@@ -42,6 +46,7 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     const contradiction = inferenceResult.contradiction_analysis;
     normalizedSig = attachSignalWeightProfile(normalizedSig, { contradiction });
     const signalWeightProfile = buildSignalWeightProfile(normalizedSig, { contradiction });
+    const signals = extractClinicalSignals(normalizedSig);
 
     if (!payload.diagnosis || typeof payload.diagnosis !== 'object') {
         payload.diagnosis = {
@@ -69,17 +74,16 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
         species,
     });
 
-    if (!('_fallback' in mlRisk)) {
-        const currentSeverity = typeof risk.severity_score === 'number' ? risk.severity_score : 0.5;
-        risk.severity_score = (currentSeverity * 0.7) + (mlRisk.risk_score * 0.3);
-    }
-
     const emergencyEval = evaluateEmergencyRules(normalizedSig);
     if (emergencyEval.emergency_rule_triggered) {
         const currentSeverity = typeof risk.severity_score === 'number' ? risk.severity_score : 0.5;
         risk.severity_score = Math.min(1.0, currentSeverity + emergencyEval.severity_boost);
         risk.emergency_level = elevateEmergencyLevel(String(risk.emergency_level), emergencyEval.emergency_level);
     }
+    risk.severity_score = Math.max(
+        typeof risk.severity_score === 'number' ? risk.severity_score : 0.5,
+        severityFloorFromAbdominalSignals(signals, emergencyEval),
+    );
     pipelineTrace.push({ stage: 'severity_computation', status: 'completed' });
 
     const safetyLayer = applyDiagnosticSafetyLayer({
@@ -94,11 +98,13 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     pipelineTrace.push({ stage: 'contradiction_scoring', status: 'completed' });
 
     payload.diagnosis = safetyLayer.diagnosis;
+    payload.mechanism_class = safetyLayer.mechanism_class;
     payload.diagnosis_feature_importance = safetyLayer.diagnosis_feature_importance;
+    payload.suppressed_signals = safetyLayer.suppressed_signals;
     payload.severity_feature_importance =
         payload.severity_feature_importance && typeof payload.severity_feature_importance === 'object'
             ? payload.severity_feature_importance
-            : buildSeverityFeatureImportance(extractClinicalSignals(normalizedSig), signalWeightProfile);
+            : buildSeverityFeatureImportance(signals, signalWeightProfile);
     payload.uncertainty_notes = safetyLayer.uncertainty_notes;
     payload.contradiction_score = contradiction?.contradiction_score ?? 0;
     payload.contradiction_reasons = contradiction?.contradiction_reasons ?? [];
@@ -127,11 +133,34 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     payload.priority_signals = signalWeightProfile.weighted_signals.slice(0, 6);
     const finalDiagnosis = payload.diagnosis as Record<string, unknown>;
     finalDiagnosis.primary_condition_class = resolveConditionClass(finalDiagnosis);
-    risk.severity_score = resolveSeverityScore(risk);
-    risk.emergency_level = resolveEmergencyLevel(risk);
+    const resolvedSeverityScore = resolveSeverityScore(risk);
+    const resolvedEmergencyLevel = resolveEmergencyLevel(risk);
+    risk.severity_score = resolvedSeverityScore;
+    risk.emergency_level = resolvedEmergencyLevel;
+    payload.emergency_assessment = {
+        emergency_level: resolvedEmergencyLevel,
+        severity_score: resolvedSeverityScore,
+        drivers: Object.entries(payload.severity_feature_importance as Record<string, number>)
+            .map(([feature, weight]) => ({ feature, weight }))
+            .sort((left, right) => Number(right.weight) - Number(left.weight))
+            .slice(0, 5),
+    };
+    const riskModelOutput = buildCatastrophicRiskOutput({
+        signals,
+        emergencyEval,
+        severityScore: resolvedSeverityScore,
+        legacyOperationalRisk: !('_fallback' in mlRisk) ? mlRisk.risk_score : null,
+    });
+    payload.risk_model_output = riskModelOutput;
+    risk.risk_definition = 'severity_score reflects current physiologic instability; catastrophic abdominal risk values estimate near-term deterioration, urgent operative need, and shock progression.';
+    risk.catastrophic_deterioration_risk_6h = riskModelOutput.catastrophic_deterioration_risk_6h;
+    risk.operative_urgency_risk = riskModelOutput.operative_urgency_risk;
+    risk.shock_risk = riskModelOutput.shock_risk;
+    risk.legacy_ml_operational_risk = riskModelOutput.legacy_ml_operational_risk;
     payload.pipeline_trace = [
         ...pipelineTrace,
         { stage: 'condition_classification', status: 'completed', detail: String(finalDiagnosis.primary_condition_class ?? 'Undifferentiated') },
+        { stage: 'mechanism_layering', status: 'completed', detail: String(safetyLayer.mechanism_class.label) },
         { stage: 'dataset_writeback_ready', status: 'completed' },
     ];
     (payload.telemetry as Record<string, unknown>).pipeline_stage_completion = payload.pipeline_trace;
@@ -152,6 +181,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
             emergency_overrides: signalWeightProfile.emergency_overrides,
             category_totals: signalWeightProfile.category_totals,
         },
+        mechanism_class: payload.mechanism_class ?? null,
+        risk_model_output: payload.risk_model_output ?? null,
     };
 
     return {

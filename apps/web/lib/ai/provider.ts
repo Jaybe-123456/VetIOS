@@ -66,14 +66,20 @@ Respond ONLY with valid JSON and EXACTLY these top-level fields:
    - "analysis": detailed reasoning
    - "primary_condition_class": MUST BE ONE OF ["Mechanical", "Infectious", "Toxic", "Neoplastic", "Autoimmune / Immune-Mediated", "Metabolic / Endocrine", "Traumatic", "Degenerative", "Idiopathic / Unknown"]
    - "condition_class_probabilities": object with the same classes
-   - "top_differentials": array of at least 3 objects { "name": string, "probability": number 0-1 }
+   - "top_differentials": array of at least 3 NAMED DISEASE objects { "name": string, "probability": number 0-1 }
    - "confidence_score": number 0-1
-2. "risk_assessment"
+2. "mechanism_class"
+   - "label": one of ["Acute Mechanical Emergency", "Inflammatory Abdomen", "Toxicologic Syndrome", "Undifferentiated"]
+   - "confidence": number 0-1
+3. "risk_assessment"
    - "severity_score": number 0-1
    - "emergency_level": MUST BE ONE OF ["CRITICAL", "HIGH", "MODERATE", "LOW"]
-3. "diagnosis_feature_importance": object mapping features to weights
-4. "severity_feature_importance": object mapping features to weights
-5. "uncertainty_notes": array of strings
+   - optional "catastrophic_deterioration_risk_6h": number 0-1
+   - optional "operative_urgency_risk": number 0-1
+   - optional "shock_risk": number 0-1
+4. "diagnosis_feature_importance": object mapping features to weights
+5. "severity_feature_importance": object mapping features to weights
+6. "uncertainty_notes": array of strings
 
 RULES:
 1. Target disease hints must be ignored diagnostically.
@@ -84,14 +90,16 @@ RULES:
    - Tier 2: dyspnea, tachycardia, pale mucous membranes, vomiting, diarrhea, fever.
    - Tier 3: lethargy, anorexia, weakness if isolated.
 5. Generic distractors must not erase structural emergencies like GDV.
-6. If multiple high-risk abdominal emergency signals cluster, retain GDV or another acute mechanical emergency in the leading differential set.
-7. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
-8. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.
-9. Endocrine overlap rule: shared PU/PD/polyphagia or lethargy must NOT by themselves decide between Hyperadrenocorticism and Diabetes Mellitus.
-10. Diabetes Mellitus should be strongly favored only when significant hyperglycemia clusters with glucosuria; ketonuria or weight loss further strengthen it.
-11. If glucosuria is absent, explicitly lower Diabetes Mellitus ranking even if polyuria, polydipsia, or mild hyperglycemia are present.
-12. Hyperadrenocorticism should be boosted by marked ALP elevation, pot-bellied appearance, panting, alopecia, chronic gradual onset, hypercholesterolemia, supportive ACTH stimulation testing, or dilute urine without glucosuria.
-13. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
+6. If multiple high-risk abdominal emergency signals cluster, retain GDV or another named abdominal emergency in the leading differential set.
+7. NEVER place generic mechanism labels such as "Acute Mechanical Emergency" inside diagnosis.top_differentials. Those belong only in mechanism_class.
+8. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
+9. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.
+10. Endocrine overlap rule: shared PU/PD/polyphagia or lethargy must NOT by themselves decide between Hyperadrenocorticism and Diabetes Mellitus.
+11. Diabetes Mellitus should be strongly favored only when significant hyperglycemia clusters with glucosuria; ketonuria or weight loss further strengthen it.
+12. If glucosuria is absent, explicitly lower Diabetes Mellitus ranking even if polyuria, polydipsia, or mild hyperglycemia are present.
+13. Hyperadrenocorticism should be boosted by marked ALP elevation, pot-bellied appearance, panting, alopecia, chronic gradual onset, hypercholesterolemia, supportive ACTH stimulation testing, or dilute urine without glucosuria.
+14. If a classic GDV pattern is present, strongly favor GDV above simple gastric dilatation and above benign vomiting syndromes.
+15. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];

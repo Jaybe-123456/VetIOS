@@ -167,6 +167,8 @@ export function buildSignalWeightProfile(
         }
     }
 
+    applyAcuteAbdominalSuppression(weightedSignals, terms);
+
     const weighted = [...weightedSignals.values()]
         .sort((left, right) => right.weight - left.weight)
         .map((entry) => ({
@@ -321,6 +323,53 @@ function matchesOverride(
     return true;
 }
 
+function applyAcuteAbdominalSuppression(
+    weightedSignals: Map<string, WeightedSignal>,
+    terms: Set<string>,
+): void {
+    const acuteAbdominalCluster =
+        terms.has('abdominal_distension')
+        && (
+            terms.has('retching_unproductive')
+            || terms.has('abdominal_pain')
+            || terms.has('vomiting')
+        )
+        && (
+            terms.has('acute_onset')
+            || terms.has('collapse')
+            || terms.has('pale_mucous_membranes')
+            || terms.has('tachycardia')
+            || terms.has('dyspnea')
+        );
+    const endocrineAnchors =
+        terms.has('significant_hyperglycemia')
+        || terms.has('glucosuria')
+        || terms.has('ketonuria')
+        || terms.has('diabetic_metabolic_profile')
+        || terms.has('marked_alp_elevation')
+        || terms.has('supportive_acth_stimulation_test');
+
+    if (!acuteAbdominalCluster || endocrineAnchors) {
+        return;
+    }
+
+    for (const term of [
+        'weight_loss',
+        'polyuria',
+        'polydipsia',
+        'polyphagia',
+        'panting',
+        'alopecia',
+        'pot_bellied_appearance',
+    ]) {
+        const existing = weightedSignals.get(term);
+        if (!existing) continue;
+        existing.weight = Number(Math.min(existing.weight, 0.08).toFixed(3));
+        existing.category = 'contextual_signal';
+        existing.rationale.push('Suppressed during acute abdominal emergency clustering because chronic endocrine context should not dominate catastrophic abdominal triage.');
+    }
+}
+
 function inferDefaultCategory(vocabularyCategory?: string): SignalWeightCategory {
     if (!vocabularyCategory) return 'weak_signal';
     if (vocabularyCategory === 'behavior_context') return 'contradiction_modifier';
@@ -382,6 +431,18 @@ function deriveStructuredTerms(input: Record<string, unknown>, narrative: string
     const terms = new Set<string>();
 
     const booleanTerms: Array<[string, string[]]> = [
+        ['retching_unproductive', ['unproductive_retching', 'retching_unproductive']],
+        ['abdominal_distension', ['abdominal_distension']],
+        ['abdominal_pain', ['abdominal_pain']],
+        ['vomiting', ['productive_vomiting', 'vomiting']],
+        ['hypersalivation', ['hypersalivation']],
+        ['collapse', ['collapse']],
+        ['dyspnea', ['dyspnea', 'respiratory_distress']],
+        ['tachycardia', ['tachycardia']],
+        ['pale_mucous_membranes', ['pale_mucous_membranes']],
+        ['weakness', ['weakness']],
+        ['acute_onset', ['acute_onset']],
+        ['recent_meal', ['recent_meal']],
         ['panting', ['panting']],
         ['alopecia', ['alopecia']],
         ['polyuria', ['polyuria']],

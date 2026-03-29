@@ -4,6 +4,7 @@ export type EvidenceSource = 'symptom_vector' | 'free_text' | 'structured_field'
 export type SignalKey =
     | 'unproductive_retching'
     | 'abdominal_distension'
+    | 'abdominal_pain'
     | 'collapse'
     | 'cyanosis'
     | 'honking_cough'
@@ -39,7 +40,9 @@ export type SignalKey =
     | 'seizures'
     | 'nasal_discharge'
     | 'ocular_discharge'
-    | 'pneumonia';
+    | 'pneumonia'
+    | 'recent_meal'
+    | 'acute_onset';
 
 export interface SignalEvidence {
     present: boolean;
@@ -68,6 +71,7 @@ export interface ClinicalSignals {
     has_exposure_risk: boolean;
     has_isolated_environment: boolean;
     has_chronic_duration: boolean;
+    has_acute_onset: boolean;
     has_gradual_onset: boolean;
     has_explicit_glucosuria_absence: boolean;
     gdv_cluster_count: number;
@@ -91,7 +95,7 @@ interface SignalDefinition {
 
 const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
     unproductive_retching: {
-        label: 'unproductive retching',
+        label: 'non-productive retching',
         tier: 1,
         terms: ['unproductive retching', 'non-productive retching', 'dry heaving', 'retching', 'trying to vomit', 'tried to vomit', 'nonproductive retching'],
     },
@@ -100,6 +104,12 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
         tier: 1,
         terms: ['abdominal distension', 'distended abdomen', 'bloated', 'bloat', 'swollen abdomen', 'distended belly', 'stomach looks big', 'belly looks big', 'belly swollen'],
         structured_fields: ['abdominal_distension'],
+    },
+    abdominal_pain: {
+        label: 'abdominal pain',
+        tier: 2,
+        terms: ['abdominal pain', 'painful abdomen', 'belly pain', 'pain on belly palpation', 'painful belly', 'prayer position', 'tucked up abdomen'],
+        structured_fields: ['abdominal_pain'],
     },
     collapse: {
         label: 'collapse',
@@ -142,10 +152,10 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
         terms: ['pale mucous membranes', 'pale gums', 'pale mm', 'pale mucous membrane'],
     },
     productive_vomiting: {
-        label: 'productive vomiting',
+        label: 'vomiting',
         tier: 2,
         terms: ['productive vomiting', 'vomiting', 'vomited', 'emesis', 'throwing up'],
-        structured_fields: ['productive_vomiting'],
+        structured_fields: ['productive_vomiting', 'vomiting'],
     },
     diarrhea: {
         label: 'diarrhea',
@@ -298,6 +308,18 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
         label: 'pneumonia',
         tier: 2,
         terms: ['pneumonia', 'pulmonary infiltrates'],
+    },
+    recent_meal: {
+        label: 'recent meal',
+        tier: 3,
+        terms: ['after eating', 'after a meal', 'post-prandial', 'after feeding', 'after dinner', 'after breakfast'],
+        structured_fields: ['recent_meal'],
+    },
+    acute_onset: {
+        label: 'acute onset',
+        tier: 3,
+        terms: ['acute onset', 'started suddenly', 'came on suddenly', 'abrupt onset', 'suddenly started'],
+        structured_fields: ['acute_onset'],
     },
 };
 
@@ -455,14 +477,22 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
         'fever',
         'lethargy',
     ]);
+    const hasAcuteOnset = Boolean(
+        evidence.acute_onset.present
+        || (durationDays != null && durationDays <= 1)
+        || textIncludesAny(allText, ['started suddenly', 'came on suddenly', 'acute onset', 'abrupt onset', 'suddenly started'])
+    );
     const hasChronicDuration = Boolean(
         (durationDays != null && durationDays >= 21)
         || textIncludesAny(allText, ['chronic', 'long-standing', 'for months', 'ongoing for weeks', 'ongoing for months'])
     );
     const hasGradualOnset = Boolean(
         textIncludesAny(allText, ['gradual onset', 'came on gradually', 'gradually progressive', 'slowly progressive', 'slowly worsening'])
-        || (hasChronicDuration && !textIncludesAny(allText, ['started suddenly', 'came on suddenly', 'acute onset', 'abrupt onset']))
+        || (hasChronicDuration && !hasAcuteOnset)
     );
+    if (hasAcuteOnset && !evidence.acute_onset.present) {
+        markSignalPresent(evidence, 'acute_onset', durationDays != null && durationDays <= 1 ? `duration ${durationDays}d` : 'acute onset derived');
+    }
     const hasExplicitGlucosuriaAbsence = evidence.glucosuria_absent.present || evidence.glucosuria.negated_terms.length > 0;
     const endocrineSharedPatternStrength = weightedPresence(evidence, [
         'polyuria',
@@ -535,6 +565,7 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
         has_exposure_risk: hasExposureRisk,
         has_isolated_environment: hasIsolatedEnvironment,
         has_chronic_duration: hasChronicDuration,
+        has_acute_onset: hasAcuteOnset,
         has_gradual_onset: hasGradualOnset,
         has_explicit_glucosuria_absence: hasExplicitGlucosuriaAbsence,
         gdv_cluster_count: gdvClusterCount,

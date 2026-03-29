@@ -12,6 +12,15 @@ import {
     profileToFeatureImportance,
     type SignalWeightProfile,
 } from '@/lib/clinicalSignal/signalWeightEngine';
+import {
+    buildMechanismClassOutput,
+    getSuppressedAcuteAbdominalFeatures,
+    hasClassicGdvPattern,
+    hasPerfusionCompromise,
+    isGenericMechanismDiagnosis,
+    shouldSuppressAcuteAbdominalFeature,
+    type MechanismClassOutput,
+} from '@/lib/ai/abdominalEmergency';
 
 type ConditionClass =
     | 'Mechanical'
@@ -44,7 +53,9 @@ export interface DifferentialSpread {
 
 export interface SafetyLayerResult {
     diagnosis: Record<string, unknown>;
+    mechanism_class: MechanismClassOutput;
     diagnosis_feature_importance: Record<string, number>;
+    suppressed_signals: string[];
     uncertainty_notes: string[];
     confidence_cap: number;
     was_capped: boolean;
@@ -89,32 +100,20 @@ const CANDIDATES: CandidateDefinition[] = [
         aliases: ['gdv', 'gastric dilatation-volvulus', 'gastric dilatation volvulus'],
         conditionClass: 'Mechanical',
         features: {
-            unproductive_retching: 0.42,
-            abdominal_distension: 0.4,
+            unproductive_retching: 0.48,
+            abdominal_distension: 0.46,
+            acute_onset: 0.14,
             collapse: 0.2,
             dyspnea: 0.12,
             tachycardia: 0.12,
             pale_mucous_membranes: 0.14,
-            hypersalivation: 0.08,
+            hypersalivation: 0.1,
+            recent_meal: 0.06,
         },
         penalties: {
             diarrhea: 0.03,
             fever: 0.05,
-            productive_vomiting: 0.05,
-        },
-    },
-    {
-        name: 'Acute Mechanical Emergency',
-        aliases: ['acute mechanical gastrointestinal emergency', 'acute abdominal emergency'],
-        conditionClass: 'Mechanical',
-        features: {
-            unproductive_retching: 0.2,
-            abdominal_distension: 0.22,
-            collapse: 0.2,
-            dyspnea: 0.16,
-            tachycardia: 0.15,
-            pale_mucous_membranes: 0.16,
-            weakness: 0.08,
+            productive_vomiting: 0.06,
         },
     },
     {
@@ -122,13 +121,15 @@ const CANDIDATES: CandidateDefinition[] = [
         aliases: ['gastric dilatation', 'simple bloat'],
         conditionClass: 'Mechanical',
         features: {
-            abdominal_distension: 0.26,
-            unproductive_retching: 0.18,
+            abdominal_distension: 0.34,
+            unproductive_retching: 0.1,
             hypersalivation: 0.08,
             tachycardia: 0.08,
+            recent_meal: 0.12,
         },
         penalties: {
-            collapse: 0.04,
+            collapse: 0.08,
+            pale_mucous_membranes: 0.08,
         },
     },
     {
@@ -137,10 +138,12 @@ const CANDIDATES: CandidateDefinition[] = [
         conditionClass: 'Mechanical',
         features: {
             abdominal_distension: 0.18,
-            collapse: 0.18,
+            abdominal_pain: 0.12,
+            acute_onset: 0.12,
+            collapse: 0.22,
             dyspnea: 0.1,
-            tachycardia: 0.14,
-            pale_mucous_membranes: 0.14,
+            tachycardia: 0.16,
+            pale_mucous_membranes: 0.18,
             weakness: 0.1,
             fever: 0.03,
         },
@@ -150,12 +153,32 @@ const CANDIDATES: CandidateDefinition[] = [
         aliases: ['intestinal obstruction', 'bowel obstruction', 'foreign body'],
         conditionClass: 'Mechanical',
         features: {
-            productive_vomiting: 0.18,
-            unproductive_retching: 0.08,
-            abdominal_distension: 0.12,
+            productive_vomiting: 0.24,
+            unproductive_retching: 0.06,
+            abdominal_distension: 0.1,
+            abdominal_pain: 0.12,
             weakness: 0.08,
             hypersalivation: 0.08,
             anorexia: 0.08,
+            recent_meal: 0.04,
+        },
+        penalties: {
+            pale_mucous_membranes: 0.06,
+            collapse: 0.08,
+        },
+    },
+    {
+        name: 'Peritonitis / Septic Abdomen',
+        aliases: ['peritonitis', 'septic abdomen', 'septic peritonitis'],
+        conditionClass: 'Infectious',
+        features: {
+            abdominal_pain: 0.24,
+            collapse: 0.18,
+            pale_mucous_membranes: 0.14,
+            tachycardia: 0.14,
+            weakness: 0.1,
+            fever: 0.1,
+            productive_vomiting: 0.08,
         },
     },
     {
@@ -413,6 +436,11 @@ export function applyDiagnosticSafetyLayer(params: {
         emergencyEval: params.emergencyEval,
         signals,
     });
+    const mechanismClass = buildMechanismClassOutput({
+        signals,
+        differentials: mergedDifferentials,
+        emergencyEval: params.emergencyEval,
+    });
     const differentialSpread = computeDifferentialSpread(mergedDifferentials);
     const conditionClassProbabilities = buildConditionClassProbabilities(mergedDifferentials);
     const primaryClassMass = Math.max(...Object.values(conditionClassProbabilities));
@@ -451,7 +479,8 @@ export function applyDiagnosticSafetyLayer(params: {
             ? 'Contradictory clinical context exceeds safe diagnosis-confidence threshold while emergency severity remains high'
             : 'Differential remains too broad for a safe high-confidence diagnosis; clinician review is recommended';
 
-    const diagnosisFeatureImportance = buildDiagnosisFeatureImportance(signals, heuristicScores, signalWeightProfile);
+    const diagnosisFeatureImportance = buildDiagnosisFeatureImportance(signals, mergedDifferentials, heuristicScores, signalWeightProfile);
+    const suppressedSignals = getSuppressedAcuteAbdominalFeatures(signals);
     const uncertaintyNotes = buildUncertaintyNotes({
         contradiction: params.contradiction,
         contradictionScore,
@@ -475,7 +504,9 @@ export function applyDiagnosticSafetyLayer(params: {
 
     return {
         diagnosis,
+        mechanism_class: mechanismClass,
         diagnosis_feature_importance: diagnosisFeatureImportance,
+        suppressed_signals: suppressedSignals,
         uncertainty_notes: uncertaintyNotes,
         confidence_cap: confidenceCap,
         was_capped: wasCapped,
@@ -493,6 +524,8 @@ export function applyDiagnosticSafetyLayer(params: {
             persistence_rule_triggers: params.emergencyEval.emergency_rule_reasons.filter((reason) => reason.toLowerCase().includes('persistence')),
             differential_widened: contradictionScore >= 0.4,
             signal_weight_applied_overrides: signalWeightProfile.applied_overrides,
+            suppressed_signals: suppressedSignals,
+            mechanism_class: mechanismClass,
         },
     };
 }
@@ -527,12 +560,14 @@ export function createHeuristicInferencePayload(params: {
 
     return {
         diagnosis: safetyLayer.diagnosis,
+        mechanism_class: safetyLayer.mechanism_class,
         risk_assessment: {
             severity_score: baseSeverity.score,
             emergency_level: baseSeverity.level,
         },
         diagnosis_feature_importance: safetyLayer.diagnosis_feature_importance,
         severity_feature_importance: buildSeverityFeatureImportance(signals, signalWeightProfile),
+        suppressed_signals: safetyLayer.suppressed_signals,
         uncertainty_notes: safetyLayer.uncertainty_notes,
     };
 }
@@ -542,7 +577,7 @@ export function buildSeverityFeatureImportance(
     signalWeightProfile?: SignalWeightProfile | null,
 ): Record<string, number> {
     const features: Record<string, number> = {};
-    const keys: SignalKey[] = ['collapse', 'dyspnea', 'tachycardia', 'pale_mucous_membranes', 'seizures', 'abdominal_distension'];
+    const keys: SignalKey[] = ['collapse', 'dyspnea', 'tachycardia', 'pale_mucous_membranes', 'seizures', 'abdominal_distension', 'abdominal_pain'];
     for (const key of keys) {
         const evidence = signals.evidence[key];
         if (evidence.present) {
@@ -589,8 +624,56 @@ function scoreCandidates(signals: ClinicalSignals): CandidateScore[] {
         }
 
         if (candidate.name === 'Gastric Dilatation-Volvulus (GDV)' && signals.has_deep_chested_breed_risk) {
-            rawScore += 0.16;
-            drivers.push({ feature: 'deep-chested breed risk', weight: 0.16 });
+            rawScore += 0.22;
+            drivers.push({ feature: 'deep-chested breed risk', weight: 0.22 });
+        }
+
+        if (candidate.name === 'Gastric Dilatation-Volvulus (GDV)' && signals.has_acute_onset) {
+            rawScore += 0.14;
+            drivers.push({ feature: 'acute onset', weight: 0.14 });
+        }
+
+        if (candidate.name === 'Gastric Dilatation-Volvulus (GDV)' && hasClassicGdvPattern(signals)) {
+            rawScore += 0.34;
+            drivers.push({ feature: 'classic GDV triad', weight: 0.34 });
+        }
+
+        if (candidate.name === 'Gastric Dilatation-Volvulus (GDV)' && hasPerfusionCompromise(signals)) {
+            rawScore += 0.12;
+            drivers.push({ feature: 'perfusion compromise', weight: 0.12 });
+        }
+
+        if (candidate.name === 'Simple Gastric Dilatation' && signals.evidence.recent_meal.present) {
+            rawScore += 0.1;
+            drivers.push({ feature: 'post-prandial distension context', weight: 0.1 });
+        }
+
+        if (candidate.name === 'Simple Gastric Dilatation' && hasPerfusionCompromise(signals)) {
+            rawScore -= 0.16;
+        }
+
+        if (candidate.name === 'Mesenteric Volvulus' && signals.has_acute_onset) {
+            rawScore += 0.08;
+            drivers.push({ feature: 'acute onset', weight: 0.08 });
+        }
+
+        if (candidate.name === 'Foreign Body Obstruction' && signals.evidence.abdominal_pain.present) {
+            rawScore += 0.08;
+            drivers.push({ feature: 'abdominal pain', weight: 0.08 });
+        }
+
+        if (candidate.name === 'Foreign Body Obstruction' && signals.evidence.recent_meal.present) {
+            rawScore -= 0.05;
+        }
+
+        if (candidate.name === 'Peritonitis / Septic Abdomen' && signals.evidence.abdominal_pain.present) {
+            rawScore += 0.1;
+            drivers.push({ feature: 'abdominal pain', weight: 0.1 });
+        }
+
+        if (candidate.name === 'Peritonitis / Septic Abdomen' && signals.evidence.fever.present) {
+            rawScore += 0.08;
+            drivers.push({ feature: 'fever', weight: 0.08 });
         }
 
         if (candidate.name === 'Canine Distemper' && signals.age_months != null && signals.age_months <= 12) {
@@ -741,6 +824,7 @@ function mergeDifferentials(params: {
     applyConditionClassStabilization(combined, params.signals);
     applyEndocrineDifferentialLogic(combined, params.signals);
     enforceDominantClusterConsistency(combined, params.signals);
+    applyClassicGdvDominance(combined, params.signals);
     normalizeProbabilities(combined);
 
     return [...combined.values()]
@@ -768,17 +852,15 @@ function applyPersistenceProtection(
     const floors = params.contradictionScore >= 0.7
         ? new Map<string, number>([
             ['Gastric Dilatation-Volvulus (GDV)', 0.24],
-            ['Acute Mechanical Emergency', 0.21],
-            ['Simple Gastric Dilatation', 0.16],
-            ['Mesenteric Volvulus', 0.14],
+            ['Simple Gastric Dilatation', 0.12],
+            ['Mesenteric Volvulus', 0.11],
             ['Foreign Body Obstruction', 0.12],
         ])
         : new Map<string, number>([
-            ['Gastric Dilatation-Volvulus (GDV)', 0.34],
-            ['Acute Mechanical Emergency', 0.26],
-            ['Simple Gastric Dilatation', 0.18],
-            ['Mesenteric Volvulus', 0.14],
-            ['Foreign Body Obstruction', 0.13],
+            ['Gastric Dilatation-Volvulus (GDV)', hasClassicGdvPattern(params.signals) ? 0.52 : 0.38],
+            ['Simple Gastric Dilatation', 0.14],
+            ['Mesenteric Volvulus', 0.12],
+            ['Foreign Body Obstruction', 0.12],
         ]);
 
     for (const [name, floor] of floors.entries()) {
@@ -806,7 +888,6 @@ function applyAnchorFeatureProtection(
 
     if (signals.evidence.unproductive_retching.present) {
         floors.set('Gastric Dilatation-Volvulus (GDV)', 0.15);
-        floors.set('Acute Mechanical Emergency', 0.12);
     }
 
     if (signals.evidence.honking_cough.present) {
@@ -955,6 +1036,48 @@ function applyEndocrineDifferentialLogic(
     ) {
         hyperadrenocorticism.probability = Math.max(hyperadrenocorticism.probability, diabetesMellitus.probability + 0.06);
     }
+
+    if (
+        (hasClassicGdvPattern(signals) || (signals.evidence.abdominal_distension.present && signals.has_acute_onset))
+        && !signals.evidence.significant_hyperglycemia.present
+        && !signals.evidence.glucosuria.present
+        && !signals.evidence.marked_alp_elevation.present
+    ) {
+        if (hyperadrenocorticism) {
+            hyperadrenocorticism.probability *= 0.4;
+        }
+        if (diabetesMellitus) {
+            diabetesMellitus.probability *= 0.32;
+        }
+    }
+}
+
+function applyClassicGdvDominance(
+    combined: Map<string, DifferentialEntry>,
+    signals: ClinicalSignals,
+) {
+    if (!hasClassicGdvPattern(signals)) {
+        return;
+    }
+
+    const gdv = combined.get('Gastric Dilatation-Volvulus (GDV)');
+    if (gdv) {
+        gdv.probability *= hasPerfusionCompromise(signals) ? 2.1 : 1.7;
+        gdv.probability = Math.max(gdv.probability, hasPerfusionCompromise(signals) ? 0.88 : 0.72);
+    }
+
+    for (const [name, factor] of [
+        ['Simple Gastric Dilatation', hasPerfusionCompromise(signals) ? 0.52 : 0.78],
+        ['Mesenteric Volvulus', 0.76],
+        ['Foreign Body Obstruction', 0.58],
+        ['Acute Gastroenteritis', 0.4],
+        ['Pancreatitis', 0.46],
+        ['Peritonitis / Septic Abdomen', hasPerfusionCompromise(signals) ? 0.82 : 0.9],
+    ] as Array<[string, number]>) {
+        const entry = combined.get(name);
+        if (!entry) continue;
+        entry.probability *= factor;
+    }
 }
 
 function enforceDominantClusterConsistency(
@@ -987,16 +1110,20 @@ function enforceDominantClusterConsistency(
 
 function buildDiagnosisFeatureImportance(
     signals: ClinicalSignals,
+    finalDifferentials: DifferentialEntry[],
     heuristicScores: CandidateScore[],
     signalWeightProfile: SignalWeightProfile,
 ): Record<string, number> {
     const importance: Record<string, number> = {};
+    const prioritizedNames = new Set(finalDifferentials.slice(0, 3).map((entry) => entry.name));
     const leadingCandidates = heuristicScores
+        .filter((candidate) => prioritizedNames.has(candidate.name))
         .sort((left, right) => right.rawScore - left.rawScore)
         .slice(0, 3);
 
     for (const candidate of leadingCandidates) {
         for (const driver of candidate.drivers) {
+            if (shouldSuppressAcuteAbdominalFeature(signals, driver.feature)) continue;
             importance[driver.feature] = Math.max(importance[driver.feature] ?? 0, driver.weight);
         }
     }
@@ -1004,6 +1131,7 @@ function buildDiagnosisFeatureImportance(
     for (const [signalKey, evidence] of Object.entries(signals.evidence) as Array<[SignalKey, ClinicalSignals['evidence'][SignalKey]]>) {
         if (!evidence.present) continue;
         const label = getFeatureLabel(signalKey);
+        if (shouldSuppressAcuteAbdominalFeature(signals, label)) continue;
         importance[label] = Math.max(
             importance[label] ?? 0,
             Number((FEATURE_TIER_MULTIPLIER[evidence.tier] * evidence.strength).toFixed(2)),
@@ -1011,10 +1139,11 @@ function buildDiagnosisFeatureImportance(
     }
 
     const weightedImportance = profileToFeatureImportance(signalWeightProfile, {
-        includeCategories: ['red_flag', 'primary_signal', 'contextual_signal'],
-        topN: 8,
+        includeCategories: ['red_flag', 'primary_signal'],
+        topN: 6,
     });
     for (const [label, weight] of Object.entries(weightedImportance)) {
+        if (shouldSuppressAcuteAbdominalFeature(signals, label)) continue;
         importance[label] = Math.max(importance[label] ?? 0, weight);
     }
 
@@ -1048,6 +1177,9 @@ function buildUncertaintyNotes(params: {
     }
     if (params.emergencyEval.emergency_rule_reasons.some((reason) => reason.toLowerCase().includes('persistence'))) {
         notes.add('High-risk abdominal emergency signatures were preserved in the differential despite contradictory metadata.');
+    }
+    if (getSuppressedAcuteAbdominalFeatures(params.signals).length > 0) {
+        notes.add('Chronic endocrine-style context signals were intentionally suppressed so the acute abdominal emergency cluster could dominate ranking and explainability.');
     }
     if (params.signals.has_small_breed_gdv_mismatch) {
         notes.add('Breed/body-size metadata lowers the classic GDV prior but does not invalidate the emergency syndrome when the signal cluster is strong.');
@@ -1155,6 +1287,9 @@ function inferFallbackSeverity(signals: ClinicalSignals): { score: number; level
     if (signals.gdv_cluster_count >= 3 || signals.shock_pattern_strength >= 2.5) {
         return { score: 0.95, level: 'CRITICAL' };
     }
+    if (signals.evidence.abdominal_pain.present && signals.evidence.fever.present && hasPerfusionCompromise(signals)) {
+        return { score: 0.9, level: 'CRITICAL' };
+    }
     if (signals.evidence.seizures.present || signals.evidence.dyspnea.present || signals.distemper_pattern_strength >= 2) {
         return { score: 0.78, level: 'HIGH' };
     }
@@ -1177,6 +1312,7 @@ function normalizeExistingDifferentials(raw: unknown): DifferentialEntry[] {
                     ? candidate.condition
                     : null;
             if (!name) return null;
+            if (isGenericMechanismDiagnosis(name)) return null;
             const probability = typeof candidate.probability === 'number' ? candidate.probability : 0.1;
             return {
                 name: toCanonicalName(name),
@@ -1192,6 +1328,9 @@ function normalizeExistingDifferentials(raw: unknown): DifferentialEntry[] {
 
 function toCanonicalName(name: string): string {
     const normalized = name.trim().toLowerCase();
+    if (isGenericMechanismDiagnosis(normalized)) {
+        return 'Acute Mechanical Emergency';
+    }
     return CANONICAL_NAME_ALIASES.get(normalized) ?? name.trim();
 }
 

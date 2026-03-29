@@ -65,6 +65,7 @@
     {"canonical_term":"ketonuria","category":"primary_signal","base_weight":0.88,"emergency_override":false,"rationale":"High-value diabetic metabolic decompensation signal."},
     {"canonical_term":"weight_loss","category":"primary_signal","base_weight":0.49,"emergency_override":false,"rationale":"Supports catabolic endocrine disease when combined with hyperglycemia/glucosuria."},
     {"canonical_term":"diabetic_metabolic_profile","category":"primary_signal","base_weight":0.78,"emergency_override":false,"rationale":"Pattern-level diabetes laboratory anchor."},
+    {"canonical_term":"acute_onset","category":"contextual_signal","base_weight":0.42,"emergency_override":false,"rationale":"Acute temporal pattern materially increases emergency abdominal risk."},
     {"canonical_term":"gradual_onset","category":"contextual_signal","base_weight":0.36,"emergency_override":false,"rationale":"Gradual progression supports chronic endocrine reasoning over acute metabolic defaulting."},
     {"canonical_term":"recent_meal","category":"contextual_signal","base_weight":0.38,"emergency_override":false,"rationale":"Temporal contextual modifier."},
     {"canonical_term":"kennel_exposure","category":"contextual_signal","base_weight":0.44,"emergency_override":false,"rationale":"Communal infectious exposure modifier."},
@@ -94,6 +95,17 @@
       "category_override": "red_flag",
       "emergency_override": true,
       "rationale": "Non-productive retching plus distension must outrank generic GI noise."
+    },
+    {
+      "id": "classic_gdv_pattern_cluster",
+      "label": "Classic GDV pattern cluster",
+      "when_all": ["retching_unproductive", "abdominal_distension", "acute_onset"],
+      "when_any": ["recent_meal", "pale_mucous_membranes", "collapse", "tachycardia", "dyspnea"],
+      "apply_to": ["retching_unproductive", "abdominal_distension", "acute_onset", "recent_meal"],
+      "weight_delta": 0.16,
+      "category_override": "red_flag",
+      "emergency_override": true,
+      "rationale": "Classic acute GDV signatures should dominate benign gastric explanations."
     },
     {
       "id": "shock_perfusion_cluster",

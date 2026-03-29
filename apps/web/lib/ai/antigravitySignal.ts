@@ -95,6 +95,7 @@ const SPECIES_DISPLAY_MAP: Record<string, string> = {
 const SIGNAL_TERM_MAP: Record<SignalKey, string> = {
     unproductive_retching: 'non-productive retching',
     abdominal_distension: 'abdominal distension',
+    abdominal_pain: 'abdominal pain',
     collapse: 'collapse',
     cyanosis: 'cyanosis',
     honking_cough: 'honking cough',
@@ -131,6 +132,8 @@ const SIGNAL_TERM_MAP: Record<SignalKey, string> = {
     nasal_discharge: 'nasal discharge',
     ocular_discharge: 'ocular discharge',
     pneumonia: 'pneumonia',
+    recent_meal: 'recent meal',
+    acute_onset: 'acute onset',
 };
 
 const SYMPTOM_LABEL_MAP: Record<string, string> = {
@@ -140,6 +143,7 @@ const SYMPTOM_LABEL_MAP: Record<string, string> = {
     ocular_discharge: 'ocular discharge',
     nasal_discharge: 'nasal discharge',
     abdominal_distension: 'abdominal distension',
+    abdominal_pain: 'abdominal pain',
     hypersalivation: 'hypersalivation',
     pale_mucous_membranes: 'pale mucous membranes',
     respiratory_distress: 'respiratory distress',
@@ -154,6 +158,8 @@ const SYMPTOM_LABEL_MAP: Record<string, string> = {
     myoclonus: 'myoclonus',
     cough: 'cough',
     tremors: 'tremors',
+    recent_meal: 'recent meal',
+    acute_onset: 'acute onset',
 };
 
 const SYSTEMIC_SIGNAL_KEYS: Array<{
@@ -163,7 +169,7 @@ const SYSTEMIC_SIGNAL_KEYS: Array<{
 }> = [
     {
         label: 'gastrointestinal',
-        keys: ['unproductive_retching', 'abdominal_distension', 'productive_vomiting', 'diarrhea', 'anorexia', 'hypersalivation'],
+        keys: ['unproductive_retching', 'abdominal_distension', 'abdominal_pain', 'productive_vomiting', 'diarrhea', 'anorexia', 'hypersalivation'],
         required: 1,
     },
     {
