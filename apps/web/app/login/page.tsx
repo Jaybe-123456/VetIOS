@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
+import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
 import {
     TerminalLabel,
     TerminalInput,
@@ -21,35 +22,77 @@ export default function LoginPage() {
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [showResetSuccess, setShowResetSuccess] = useState(false);
     const [authError, setAuthError] = useState<string | null>(null);
+    const [captchaRequired, setCaptchaRequired] = useState(false);
+    const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+    const [captchaResetKey, setCaptchaResetKey] = useState(0);
+    const [nextPath, setNextPath] = useState('/inference');
     const isGoogleEmail = isGoogleMailAddress(email);
     const showGooglePasswordWarning = isGoogleEmail && password.trim().length > 0;
+    const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '';
+    const isWaitingOnCaptcha = captchaRequired && Boolean(turnstileSiteKey) && !captchaToken;
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         setShowResetSuccess(params.get('reset') === 'success');
         setAuthError(params.get('error'));
+        setNextPath(sanitizeNextPath(params.get('next')));
     }, []);
 
     async function handleEmailPasswordLogin(e: React.FormEvent) {
         e.preventDefault();
-        setStatus('submitting');
-        setErrorMessage(null);
-
-        const supabase = getSupabaseBrowser();
-        const { error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-        });
-
-        if (error) {
+        if (isWaitingOnCaptcha) {
             setStatus('error');
-            setErrorMessage(error.message);
+            setErrorMessage('Complete the CAPTCHA challenge to continue.');
             return;
         }
 
-        setStatus('success');
-        router.push('/inference');
-        router.refresh();
+        setStatus('submitting');
+        setErrorMessage(null);
+
+        try {
+            const response = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json',
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    email,
+                    password,
+                    captchaToken,
+                }),
+            });
+
+            let payload: {
+                error?: string;
+                captcha_required?: boolean;
+            } | null = null;
+
+            try {
+                payload = await response.json();
+            } catch {
+                payload = null;
+            }
+
+            if (!response.ok) {
+                setStatus('error');
+                setErrorMessage(payload?.error ?? 'Unable to sign in right now.');
+                setCaptchaRequired(Boolean(payload?.captcha_required));
+                setCaptchaToken(null);
+                setCaptchaResetKey((value) => value + 1);
+                return;
+            }
+
+            setStatus('success');
+            setCaptchaRequired(false);
+            setCaptchaToken(null);
+            router.push(nextPath);
+            router.refresh();
+        } catch {
+            setStatus('error');
+            setErrorMessage('Unable to reach the sign-in service right now.');
+            setCaptchaToken(null);
+        }
     }
 
     async function handleGoogleOAuth() {
@@ -57,7 +100,7 @@ export default function LoginPage() {
         await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: `${window.location.origin}/auth/callback`,
+                redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
             },
         });
     }
@@ -182,7 +225,30 @@ export default function LoginPage() {
                                     )}
                                 </div>
 
-                                <TerminalButton type="submit" disabled={status === 'submitting'}>
+                                {captchaRequired && (
+                                    <div className="space-y-3">
+                                        <div className="p-3 border border-accent/60 bg-accent/5 font-mono text-[10px] leading-relaxed text-accent">
+                                            Additional verification is required because this account or network has multiple recent failed sign-in attempts.
+                                        </div>
+                                        {turnstileSiteKey ? (
+                                            <TurnstileWidget
+                                                enabled={captchaRequired}
+                                                siteKey={turnstileSiteKey}
+                                                resetKey={captchaResetKey}
+                                                onTokenChange={setCaptchaToken}
+                                            />
+                                        ) : (
+                                            <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                CAPTCHA is required, but the site key is not configured yet.
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                <TerminalButton
+                                    type="submit"
+                                    disabled={status === 'submitting' || isWaitingOnCaptcha}
+                                >
                                     {status === 'submitting' ? 'SIGNING IN...' : 'SIGN IN WITH VETIOS PASSWORD'}
                                 </TerminalButton>
 
@@ -207,4 +273,12 @@ export default function LoginPage() {
             </main>
         </div>
     );
+}
+
+function sanitizeNextPath(value: string | null): string {
+    if (!value || !value.startsWith('/') || value.startsWith('//')) {
+        return '/inference';
+    }
+
+    return value;
 }
