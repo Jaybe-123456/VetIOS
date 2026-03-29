@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { resolveExperimentApiActor } from '@/lib/auth/internalApi';
 import {
     getModelRegistryControlPlaneSnapshot,
+    refreshRegistryGovernanceForRun,
     refreshModelRegistryControlPlaneSnapshot,
     RegistryControlPlaneError,
     verifyModelRegistryControlPlane,
@@ -14,7 +15,8 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 
 type RegistryControlPlaneAction =
     | {
-        action?: 'verify_control_plane' | 'refresh_registry';
+        action?: 'verify_control_plane' | 'refresh_registry' | 'refresh_run_governance';
+        run_id?: string;
     };
 
 export const runtime = 'nodejs';
@@ -82,6 +84,29 @@ export async function POST(req: Request) {
             );
             const response = NextResponse.json({
                 snapshot,
+                request_id: requestId,
+            });
+            withRequestHeaders(response.headers, requestId, startTime);
+            return response;
+        }
+
+        if (action === 'refresh_run_governance') {
+            const runId = body.data.run_id?.trim();
+            if (!runId) {
+                throw new RegistryControlPlaneError('INVALID_ACTION', 'run_id is required for refresh_run_governance.', {
+                    httpStatus: 400,
+                });
+            }
+
+            const snapshot = await refreshRegistryGovernanceForRun(
+                createSupabaseExperimentTrackingStore(getSupabaseServer()),
+                tenantId,
+                runId,
+                actor?.userId ?? null,
+            );
+            const response = NextResponse.json({
+                snapshot,
+                refreshed_run_id: runId,
                 request_id: requestId,
             });
             withRequestHeaders(response.headers, requestId, startTime);

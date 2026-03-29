@@ -1324,6 +1324,29 @@ export async function refreshModelRegistryControlPlaneSnapshot(
     return getModelRegistryControlPlaneSnapshot(store, tenantId, { readOnly: false });
 }
 
+export async function refreshRegistryGovernanceForRun(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+    runId: string,
+    actor: string | null,
+): Promise<ModelRegistryControlPlaneSnapshot> {
+    const run = await store.getExperimentRun(tenantId, runId);
+    if (!run) {
+        throw new RegistryControlPlaneError('RUN_NOT_FOUND', `Experiment run not found: ${runId}`, {
+            httpStatus: 404,
+        });
+    }
+
+    invalidateModelRegistryControlPlaneSnapshot(tenantId);
+    await backfillSummaryExperimentRuns(store, tenantId, {
+        materializeGovernance: false,
+    });
+    await ensureGovernanceForRun(store, tenantId, runId, actor, {
+        forceRecompute: true,
+    });
+    return refreshModelRegistryControlPlaneSnapshot(store, tenantId);
+}
+
 export async function verifyModelRegistryControlPlane(
     store: ExperimentTrackingStore,
     tenantId: string,
@@ -2205,6 +2228,9 @@ async function ensureGovernanceForRun(
     tenantId: string,
     runId: string,
     actor: string | null,
+    options: {
+        forceRecompute?: boolean;
+    } = {},
 ): Promise<void> {
     const existingRun = await store.getExperimentRun(tenantId, runId);
     if (!existingRun) return;
@@ -2254,7 +2280,7 @@ async function ensureGovernanceForRun(
         return;
     }
 
-    if (!shouldMaterializeGovernance(run, modelRegistry)) {
+    if (!shouldMaterializeGovernance(run, modelRegistry) && !options.forceRecompute) {
         const promotionRequirements = await ensurePromotionRequirements(
             store,
             run,
@@ -2264,6 +2290,7 @@ async function ensureGovernanceForRun(
             null,
             latestMetric,
             actor,
+            options,
         );
         const decision = await ensureDeploymentDecision(
             store,
@@ -2288,8 +2315,8 @@ async function ensureGovernanceForRun(
         return;
     }
 
-    const calibrationMetrics = await ensureCalibrationMetrics(store, run, metrics, actor);
-    const adversarialMetrics = await ensureAdversarialMetrics(store, run, metrics, benchmarks, actor);
+    const calibrationMetrics = await ensureCalibrationMetrics(store, run, metrics, actor, options);
+    const adversarialMetrics = await ensureAdversarialMetrics(store, run, metrics, benchmarks, actor, options);
     await logBenchmarkAuditEvents(store, run, benchmarks, actor);
     await ensureSubgroupMetrics(store, run, latestMetric);
     const promotionRequirements = await ensurePromotionRequirements(
@@ -2301,6 +2328,7 @@ async function ensureGovernanceForRun(
         adversarialMetrics,
         latestMetric,
         actor,
+        options,
     );
     const decision = await ensureDeploymentDecision(
         store,
@@ -2478,21 +2506,24 @@ async function ensureCalibrationMetrics(
     run: ExperimentRunRecord,
     metrics: ExperimentMetricRecord[],
     actor: string | null,
+    options: {
+        forceRecompute?: boolean;
+    } = {},
 ): Promise<CalibrationMetricRecord> {
     const existing = await store.getCalibrationMetrics(run.tenant_id, run.run_id);
-    if (existing && isCalibrationMetricsComplete(existing)) return existing;
+    if (!options.forceRecompute && existing && isCalibrationMetricsComplete(existing)) return existing;
 
     const computed = computeCalibrationMetrics(run, metrics);
     const record = await store.upsertCalibrationMetrics({
         id: existing?.id,
         tenant_id: run.tenant_id,
         run_id: run.run_id,
-        ece: existing?.ece ?? computed.ece,
-        brier_score: existing?.brier_score ?? computed.brierScore,
-        reliability_bins: existing?.reliability_bins.length ? existing.reliability_bins : computed.reliabilityBins,
-        confidence_histogram: existing?.confidence_histogram.length ? existing.confidence_histogram : computed.confidenceHistogram,
-        calibration_pass: existing?.calibration_pass ?? computed.pass,
-        calibration_notes: existing?.calibration_notes ?? computed.notes,
+        ece: options.forceRecompute ? computed.ece : existing?.ece ?? computed.ece,
+        brier_score: options.forceRecompute ? computed.brierScore : existing?.brier_score ?? computed.brierScore,
+        reliability_bins: options.forceRecompute ? computed.reliabilityBins : existing?.reliability_bins.length ? existing.reliability_bins : computed.reliabilityBins,
+        confidence_histogram: options.forceRecompute ? computed.confidenceHistogram : existing?.confidence_histogram.length ? existing.confidence_histogram : computed.confidenceHistogram,
+        calibration_pass: options.forceRecompute ? computed.pass : existing?.calibration_pass ?? computed.pass,
+        calibration_notes: options.forceRecompute ? computed.notes : existing?.calibration_notes ?? computed.notes,
     });
 
     await logExperimentAuditEvent(store, {
@@ -2517,21 +2548,26 @@ async function ensureAdversarialMetrics(
     metrics: ExperimentMetricRecord[],
     benchmarks: ExperimentBenchmarkRecord[],
     actor: string | null,
+    options: {
+        forceRecompute?: boolean;
+    } = {},
 ): Promise<AdversarialMetricRecord> {
     const existing = await store.getAdversarialMetrics(run.tenant_id, run.run_id);
-    if (existing && isAdversarialMetricsComplete(existing)) return existing;
+    if (!options.forceRecompute && existing && isAdversarialMetricsComplete(existing)) return existing;
 
     const computed = computeAdversarialMetrics(run, metrics, benchmarks);
     const record = await store.upsertAdversarialMetrics({
         id: existing?.id,
         tenant_id: run.tenant_id,
         run_id: run.run_id,
-        degradation_score: existing?.degradation_score ?? computed.degradationScore,
-        contradiction_robustness: existing?.contradiction_robustness ?? computed.contradictionRobustness,
-        critical_case_recall: existing?.critical_case_recall ?? computed.criticalCaseRecall,
-        false_reassurance_rate: existing?.false_reassurance_rate ?? computed.falseReassuranceRate,
-        dangerous_false_reassurance_rate: existing?.dangerous_false_reassurance_rate ?? existing?.false_reassurance_rate ?? computed.falseReassuranceRate,
-        adversarial_pass: existing?.adversarial_pass ?? computed.pass,
+        degradation_score: options.forceRecompute ? computed.degradationScore : existing?.degradation_score ?? computed.degradationScore,
+        contradiction_robustness: options.forceRecompute ? computed.contradictionRobustness : existing?.contradiction_robustness ?? computed.contradictionRobustness,
+        critical_case_recall: options.forceRecompute ? computed.criticalCaseRecall : existing?.critical_case_recall ?? computed.criticalCaseRecall,
+        false_reassurance_rate: options.forceRecompute ? computed.falseReassuranceRate : existing?.false_reassurance_rate ?? computed.falseReassuranceRate,
+        dangerous_false_reassurance_rate: options.forceRecompute
+            ? computed.falseReassuranceRate
+            : existing?.dangerous_false_reassurance_rate ?? existing?.false_reassurance_rate ?? computed.falseReassuranceRate,
+        adversarial_pass: options.forceRecompute ? computed.pass : existing?.adversarial_pass ?? computed.pass,
     });
 
     await logExperimentAuditEvent(store, {
@@ -2561,14 +2597,25 @@ async function ensurePromotionRequirements(
     adversarialMetrics: AdversarialMetricRecord | null,
     latestMetric: ExperimentMetricRecord | null,
     actor: string | null,
+    options: {
+        forceRecompute?: boolean;
+    } = {},
 ): Promise<PromotionRequirementsRecord> {
     const existing = await store.getPromotionRequirements(run.tenant_id, run.run_id);
     const benchmarkPass = evaluateBenchmarkGate(benchmarks);
     const safetyPass = deriveSafetyPassValue(run, latestMetric);
-    const resolvedCalibrationPass = calibrationMetrics?.calibration_pass ?? existing?.calibration_pass ?? null;
-    const resolvedAdversarialPass = adversarialMetrics?.adversarial_pass ?? existing?.adversarial_pass ?? null;
-    const resolvedSafetyPass = safetyPass ?? existing?.safety_pass ?? null;
-    const resolvedBenchmarkPass = benchmarkPass ?? existing?.benchmark_pass ?? null;
+    const resolvedCalibrationPass = options.forceRecompute
+        ? calibrationMetrics?.calibration_pass ?? null
+        : calibrationMetrics?.calibration_pass ?? existing?.calibration_pass ?? null;
+    const resolvedAdversarialPass = options.forceRecompute
+        ? adversarialMetrics?.adversarial_pass ?? null
+        : adversarialMetrics?.adversarial_pass ?? existing?.adversarial_pass ?? null;
+    const resolvedSafetyPass = options.forceRecompute
+        ? safetyPass
+        : safetyPass ?? existing?.safety_pass ?? null;
+    const resolvedBenchmarkPass = options.forceRecompute
+        ? benchmarkPass ?? existing?.benchmark_pass ?? null
+        : benchmarkPass ?? existing?.benchmark_pass ?? null;
     const refreshedRegistry = await store.upsertModelRegistry({
         ...modelRegistry,
         artifact_path: modelRegistry.artifact_uri ?? modelRegistry.artifact_path,
