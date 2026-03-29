@@ -493,11 +493,15 @@ export async function reconcileEpisodeMembership(
     const observedAt = input.observedAt ?? new Date().toISOString();
     const clinicalCase = input.caseId ? await repo.findCaseById(input.tenantId, input.caseId) : null;
     const signalEvent = input.signalEventId ? await repo.findSignalById(input.tenantId, input.signalEventId) : null;
+    const requestedEpisode = input.episodeId
+        ? await repo.findEpisodeById(input.tenantId, input.episodeId)
+        : null;
     const patientId = firstUuid(
         input.patientId,
         clinicalCase?.patient_id,
         readUuidFromObject(clinicalCase?.patient_metadata, ['patient_id', 'patientId']),
         signalEvent?.patient_id,
+        requestedEpisode?.patient_id,
     );
     if (!patientId) {
         throw new Error('Episode reconciliation requires a patient_id or a case already linked to a patient.');
@@ -508,20 +512,29 @@ export async function reconcileEpisodeMembership(
         clinicalCase?.encounter_id,
         readUuidFromObject(clinicalCase?.patient_metadata, ['encounter_id', 'encounterId']),
         signalEvent?.encounter_id,
+        requestedEpisode?.latest_encounter_id,
     );
-    const clinicId = normalizeText(input.clinicId) ?? clinicalCase?.clinic_id ?? signalEvent?.clinic_id ?? null;
+    const clinicId = normalizeText(input.clinicId)
+        ?? clinicalCase?.clinic_id
+        ?? signalEvent?.clinic_id
+        ?? requestedEpisode?.clinic_id
+        ?? null;
     const primaryConditionClass = normalizeText(input.primaryConditionClass)
         ?? clinicalCase?.primary_condition_class
         ?? readTextFromObject(signalEvent?.normalized_facts, ['primary_condition_class', 'condition_class'])
+        ?? requestedEpisode?.primary_condition_class
         ?? null;
 
-    let episode = input.episodeId
-        ? await repo.findEpisodeById(input.tenantId, input.episodeId)
-        : clinicalCase?.episode_id
-            ? await repo.findEpisodeById(input.tenantId, clinicalCase.episode_id)
-            : signalEvent?.episode_id
-                ? await repo.findEpisodeById(input.tenantId, signalEvent.episode_id)
-                : await repo.findOpenEpisodeForPatient(input.tenantId, patientId, primaryConditionClass);
+    let episode = requestedEpisode;
+    if (!episode && clinicalCase?.episode_id) {
+        episode = await repo.findEpisodeById(input.tenantId, clinicalCase.episode_id);
+    }
+    if (!episode && signalEvent?.episode_id) {
+        episode = await repo.findEpisodeById(input.tenantId, signalEvent.episode_id);
+    }
+    if (!episode) {
+        episode = await repo.findOpenEpisodeForPatient(input.tenantId, patientId, primaryConditionClass);
+    }
 
     if (!episode) {
         episode = await repo.createEpisode({

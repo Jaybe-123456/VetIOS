@@ -136,6 +136,31 @@ export const PassiveSignalIngestRequestSchema = z.object({
 
 export type PassiveSignalIngestRequest = z.infer<typeof PassiveSignalIngestRequestSchema>;
 
+export const PassiveConnectorIngestRequestSchema = z.object({
+    connector: z.object({
+        tenant_id: z.string().min(1).optional(),
+        connector_type: z.enum([
+            'lab_result',
+            'prescription_refill',
+            'recheck',
+            'referral',
+            'imaging_report',
+        ]),
+        clinic_id: z.string().optional(),
+        patient_id: z.uuid().optional(),
+        encounter_id: z.uuid().optional(),
+        case_id: z.uuid().optional(),
+        episode_id: z.uuid().optional(),
+        vendor_name: z.string().min(1).optional(),
+        vendor_account_ref: z.string().min(1).optional(),
+        observed_at: z.string().min(1).optional(),
+        payload: z.record(z.string(), z.unknown()),
+        auto_reconcile: z.boolean().optional().default(true),
+    }),
+});
+
+export type PassiveConnectorIngestRequest = z.infer<typeof PassiveConnectorIngestRequestSchema>;
+
 export const EpisodeReconcileRequestSchema = z.object({
     episode_id: z.uuid().optional(),
     patient_id: z.uuid().optional(),
