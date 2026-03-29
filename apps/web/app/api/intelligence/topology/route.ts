@@ -9,6 +9,8 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { resolveTopologySimulationTarget, getTopologySnapshot } from '@/lib/intelligence/topologyService';
 import { logSimulation } from '@/lib/logging/simulationLogger';
+import { buildControlPlanePermissionSet, resolveControlPlaneRole } from '@/lib/settings/permissions';
+import { getControlPlaneSimulationMode } from '@/lib/settings/controlPlane';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { emitTelemetryEvent, telemetrySimulationEventId } from '@/lib/telemetry/service';
 import type { TopologySimulationScenario, TopologyWindow } from '@/lib/intelligence/types';
@@ -91,6 +93,9 @@ export async function POST(req: Request) {
     }
 
     const actor = resolveRequestActor(session);
+    const userContext = await resolveUserContext(session);
+    const currentRole = resolveControlPlaneRole(userContext.user, userContext.auth_mode);
+    const permissionSet = buildControlPlanePermissionSet(currentRole);
     const parsed = await safeJson<{
         scenario?: TopologySimulationScenario;
         target_node_id?: string;
@@ -109,9 +114,22 @@ export async function POST(req: Request) {
             { status: 400 },
         );
     }
+    if (!permissionSet.can_run_simulations) {
+        return NextResponse.json(
+            { error: 'Simulation operator role required for topology simulation.', request_id: requestId },
+            { status: 403 },
+        );
+    }
 
     try {
         const client = getSupabaseServer();
+        const simulationMode = await getControlPlaneSimulationMode(client, actor.tenantId);
+        if (!simulationMode.simulation_enabled) {
+            return NextResponse.json(
+                { error: 'Enable simulation mode before injecting topology scenarios.', request_id: requestId },
+                { status: 409 },
+            );
+        }
         const experimentStore = createSupabaseExperimentTrackingStore(client);
         const controlPlane = await getModelRegistryControlPlaneSnapshot(experimentStore, actor.tenantId);
         const target = resolveTopologySimulationTarget(controlPlane, targetNodeId);
@@ -197,6 +215,21 @@ export async function POST(req: Request) {
 
 function resolveWindow(value: string | null): TopologyWindow {
     return VALID_WINDOWS.includes(value as TopologyWindow) ? value as TopologyWindow : '24h';
+}
+
+async function resolveUserContext(session: Awaited<ReturnType<typeof resolveSessionTenant>>) {
+    if (!session) {
+        return {
+            user: null,
+            auth_mode: 'dev_bypass' as const,
+        };
+    }
+
+    const userResult = await session.supabase.auth.getUser();
+    return {
+        user: userResult.data.user ?? null,
+        auth_mode: 'session' as const,
+    };
 }
 
 function isSimulationScenario(value: string): value is TopologySimulationScenario {

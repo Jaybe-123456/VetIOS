@@ -474,6 +474,7 @@ function renderTab(input: {
     onRefreshSession: () => Promise<void>;
 }) {
     const isAdmin = input.snapshot.profile.permission_set.can_manage_infrastructure;
+    const canRunSimulations = input.snapshot.profile.permission_set.can_run_simulations;
 
     switch (input.activeTab) {
         case 'profile':
@@ -489,7 +490,7 @@ function renderTab(input: {
         case 'debug':
             return renderDebugTab(input.snapshot, input.onRunAction, input.onRunProbe, input.onRunTelemetryStreamProbe, isAdmin);
         case 'simulation':
-            return renderSimulationTab(input, isAdmin);
+            return renderSimulationTab(input, canRunSimulations);
         case 'logs':
             return renderLogsTab(input);
         case 'configuration':
@@ -1056,7 +1057,7 @@ function renderDebugTab(
 
 function renderSimulationTab(
     input: Parameters<typeof renderTab>[0],
-    isAdmin: boolean,
+    canRunSimulations: boolean,
 ) {
     const simulations: Array<{ label: string; scenario: ControlPlaneSimulationScenario; icon: ReactNode }> = [
         { label: 'Inject Latency Spike', scenario: 'failure', icon: <Gauge className="w-3 h-3" /> },
@@ -1071,12 +1072,10 @@ function renderSimulationTab(
                 <div className="space-y-4">
                     <DataRow label="Current Mode" value={input.snapshot.configuration.simulation_enabled ? 'ON' : 'OFF'} />
                     <TerminalButton
-                        disabled={!isAdmin}
+                        disabled={!canRunSimulations}
                         onClick={() => void input.onRunAction({
-                            action: 'update_config',
-                            config: {
-                                simulation_enabled: !input.snapshot.configuration.simulation_enabled,
-                            },
+                            action: 'set_simulation_mode',
+                            enabled: !input.snapshot.configuration.simulation_enabled,
                         })}
                     >
                         {input.snapshot.configuration.simulation_enabled ? 'Disable' : 'Enable'} Simulation Mode
@@ -1114,7 +1113,7 @@ function renderSimulationTab(
                     {simulations.map((simulation) => (
                         <ControlActionButton
                             key={simulation.scenario}
-                            disabled={!isAdmin}
+                            disabled={!canRunSimulations || !input.snapshot.configuration.simulation_enabled}
                             label={simulation.label}
                             icon={simulation.icon}
                             onClick={() => void input.onRunAction(
@@ -1129,9 +1128,14 @@ function renderSimulationTab(
                         />
                     ))}
                 </div>
-                {!isAdmin && (
+                {!canRunSimulations && (
                     <div className="pt-4 font-mono text-[11px] text-muted">
-                        Admin role required to inject synthetic failures into the control graph.
+                        Simulation operator role required to enable simulation mode or inject synthetic failures.
+                    </div>
+                )}
+                {canRunSimulations && !input.snapshot.configuration.simulation_enabled && (
+                    <div className="pt-4 font-mono text-[11px] text-muted">
+                        Enable simulation mode before injecting synthetic failures into the control graph.
                     </div>
                 )}
             </ConsoleCard>

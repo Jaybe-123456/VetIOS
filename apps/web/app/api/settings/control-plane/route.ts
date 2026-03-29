@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import type { User } from '@supabase/supabase-js';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { RegistryControlPlaneError } from '@/lib/experiments/service';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -21,6 +20,11 @@ import {
     updateControlPlaneConfig,
     updateControlPlaneProfile,
 } from '@/lib/settings/controlPlane';
+import {
+    buildControlPlanePermissionSet,
+    classifySettingsControlPlaneActionAccess,
+    resolveControlPlaneRole,
+} from '@/lib/settings/permissions';
 import type {
     ControlPlaneAlertSensitivity,
     ControlPlaneSimulationScenario,
@@ -59,6 +63,10 @@ type SettingsControlAction =
             abstain_threshold?: number;
             auto_execute_confidence_threshold?: number;
         };
+    }
+    | {
+        action: 'set_simulation_mode';
+        enabled?: boolean;
     }
     | {
         action: 'run_system_diagnostic';
@@ -171,16 +179,23 @@ export async function POST(req: Request) {
     const adminClient = getSupabaseServer();
     const actor = resolveRequestActor(session);
     const userContext = await resolveUserContext(session);
-    const currentRole = resolveRole(userContext.user, userContext.auth_mode);
+    const currentRole = resolveControlPlaneRole(userContext.user, userContext.auth_mode);
+    const permissionSet = buildControlPlanePermissionSet(currentRole);
     const observerHeartbeatTimestamp = new Date().toISOString();
 
     try {
         const payload = parsed.data;
         let actionResult: Record<string, unknown> = {};
-        const requiresAdmin = isAdminOnlyAction(payload.action);
-        if (requiresAdmin && currentRole !== 'admin') {
+        const accessLevel = classifySettingsControlPlaneActionAccess(payload.action);
+        if (accessLevel === 'admin' && currentRole !== 'admin') {
             return NextResponse.json(
                 { error: 'Admin role required for this control-plane action.', request_id: requestId },
+                { status: 403 },
+            );
+        }
+        if (accessLevel === 'simulation' && !permissionSet.can_run_simulations) {
+            return NextResponse.json(
+                { error: 'Simulation operator role required for this control-plane action.', request_id: requestId },
                 { status: 403 },
             );
         }
@@ -236,6 +251,20 @@ export async function POST(req: Request) {
                     patch: config,
                 }),
             };
+        } else if (payload.action === 'set_simulation_mode') {
+            if (typeof payload.enabled !== 'boolean') {
+                throw new Error('enabled is required');
+            }
+            actionResult = {
+                configuration: await updateControlPlaneConfig({
+                    client: adminClient,
+                    tenantId: actor.tenantId,
+                    actor: actor.userId,
+                    patch: {
+                        simulation_enabled: payload.enabled,
+                    },
+                }),
+            };
         } else if (payload.action === 'run_system_diagnostic') {
             const snapshot = await getControlPlaneSnapshot({
                 client: adminClient,
@@ -274,6 +303,10 @@ export async function POST(req: Request) {
         } else if (payload.action === 'inject_simulation') {
             if (!payload.scenario || !payload.target_node_id) {
                 throw new Error('scenario and target_node_id are required');
+            }
+            const simulationMode = await getControlPlaneSimulationMode(adminClient, actor.tenantId);
+            if (!simulationMode.simulation_enabled) {
+                throw new Error('Enable simulation mode before injecting synthetic scenarios.');
             }
             actionResult = await injectControlPlaneSimulation({
                 client: adminClient,
@@ -376,29 +409,6 @@ async function resolveUserContext(session: Awaited<ReturnType<typeof resolveSess
     };
 }
 
-function resolveRole(user: User | null, authMode: 'session' | 'dev_bypass'): ControlPlaneUserRole {
-    if (authMode === 'dev_bypass') return 'admin';
-    const metadata = asRecord(user?.user_metadata);
-    const appMetadata = asRecord(user?.app_metadata);
-    const candidate = textOrNull(metadata.role) ?? textOrNull(appMetadata.role);
-    if (candidate === 'admin' || candidate === 'researcher' || candidate === 'clinician' || candidate === 'developer') {
-        return candidate;
-    }
-    return 'developer';
-}
-
-function isAdminOnlyAction(action: SettingsControlAction['action']) {
-    return action === 'generate_api_key'
-        || action === 'revoke_api_key'
-        || action === 'update_config'
-        || action === 'registry_action'
-        || action === 'inject_simulation'
-        || action === 'restart_telemetry_stream'
-        || action === 'reinitialize_pipelines'
-        || action === 'reindex_dataset'
-        || action === 'backfill_evaluation_events';
-}
-
 function requiresConfirmation(action: SettingsControlAction['action']) {
     return action === 'registry_action'
         || action === 'revoke_api_key'
@@ -440,16 +450,6 @@ function validateConfig(config: NonNullable<Extract<SettingsControlAction, { act
     if (config.auto_execute_confidence_threshold != null && (config.auto_execute_confidence_threshold < 0 || config.auto_execute_confidence_threshold > 1)) {
         throw new Error('auto_execute_confidence_threshold must be between 0 and 1');
     }
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : {};
-}
-
-function textOrNull(value: unknown) {
-    return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
 function resolveControlPlaneView(value: string | null) {

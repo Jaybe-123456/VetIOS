@@ -31,6 +31,11 @@ import {
     telemetrySimulationEventId,
 } from '@/lib/telemetry/service';
 import type { TelemetryEventRecord, TelemetryLogEntry, TelemetrySnapshot } from '@/lib/telemetry/types';
+import {
+    buildControlPlanePermissionSet,
+    CONTROL_PLANE_ROLE_PERMISSIONS,
+    resolveControlPlaneRole,
+} from '@/lib/settings/permissions';
 import type {
     ControlPlaneActionRecord,
     ControlPlaneActionStatus,
@@ -67,35 +72,6 @@ const DEFAULT_CONFIG: ControlPlaneConfiguration = {
     updated_by: null,
 };
 
-const ROLE_PERMISSIONS: Record<ControlPlaneUserRole, string[]> = {
-    admin: [
-        'manage_profile',
-        'manage_api_keys',
-        'manage_models',
-        'manage_configuration',
-        'manage_infrastructure',
-        'run_debug_tools',
-        'run_simulations',
-    ],
-    developer: [
-        'manage_profile',
-        'run_debug_tools',
-        'run_simulations',
-        'view_governance',
-        'view_alerts',
-    ],
-    researcher: [
-        'manage_profile',
-        'view_governance',
-        'run_debug_tools',
-        'view_alerts',
-    ],
-    clinician: [
-        'manage_profile',
-        'view_alerts',
-        'view_governance',
-    ],
-};
 const CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS = [
     TELEMETRY_EVENTS.COLUMNS.event_id,
     TELEMETRY_EVENTS.COLUMNS.tenant_id,
@@ -1173,8 +1149,8 @@ export async function runDatasetBackfill(client: SupabaseClient, tenantId: strin
 }
 
 function buildProfile(user: User | null, authMode: 'session' | 'dev_bypass'): ControlPlaneProfile {
-    const role = resolveRole(user, authMode);
-    const permissions = ROLE_PERMISSIONS[role];
+    const role = resolveControlPlaneRole(user, authMode);
+    const permissions = CONTROL_PLANE_ROLE_PERMISSIONS[role];
     return {
         user_id: user?.id ?? null,
         email: user?.email ?? null,
@@ -1187,31 +1163,11 @@ function buildProfile(user: User | null, authMode: 'session' | 'dev_bypass'): Co
 }
 
 function buildPermissionSet(role: ControlPlaneUserRole): ControlPlanePermissionSet {
-    const has = new Set(ROLE_PERMISSIONS[role]);
-    return {
-        can_manage_profile: has.has('manage_profile'),
-        can_manage_api_keys: has.has('manage_api_keys'),
-        can_manage_models: has.has('manage_models'),
-        can_manage_configuration: has.has('manage_configuration'),
-        can_manage_infrastructure: has.has('manage_infrastructure'),
-        can_run_debug_tools: has.has('run_debug_tools'),
-        can_run_simulations: has.has('run_simulations'),
-    };
-}
-
-function resolveRole(user: User | null, authMode: 'session' | 'dev_bypass'): ControlPlaneUserRole {
-    if (authMode === 'dev_bypass') return 'admin';
-    const metadata = asRecord(user?.user_metadata);
-    const appMetadata = asRecord(user?.app_metadata);
-    const candidate = textOrNull(metadata.role) ?? textOrNull(appMetadata.role);
-    if (candidate === 'admin' || candidate === 'researcher' || candidate === 'clinician' || candidate === 'developer') {
-        return candidate;
-    }
-    return 'developer';
+    return buildControlPlanePermissionSet(role);
 }
 
 function buildAccessScope(role: ControlPlaneUserRole, tenantId: string) {
-    return [`tenant:${tenantId}`, `role:${role}`, ...ROLE_PERMISSIONS[role]];
+    return [`tenant:${tenantId}`, `role:${role}`, ...CONTROL_PLANE_ROLE_PERMISSIONS[role]];
 }
 
 function buildSystemHealth(
