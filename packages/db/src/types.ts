@@ -1210,6 +1210,45 @@ export interface Database {
                     }
                 ];
             };
+            auth_login_events: {
+                Row: {
+                    id: string;
+                    email_hash: string;
+                    ip_hash: string;
+                    ip_email_hash: string;
+                    outcome: string;
+                    reason: string;
+                    request_id: string | null;
+                    user_agent_hash: string | null;
+                    metadata: Json;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    email_hash: string;
+                    ip_hash: string;
+                    ip_email_hash: string;
+                    outcome: string;
+                    reason: string;
+                    request_id?: string | null;
+                    user_agent_hash?: string | null;
+                    metadata?: Json;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    email_hash?: string;
+                    ip_hash?: string;
+                    ip_email_hash?: string;
+                    outcome?: string;
+                    reason?: string;
+                    request_id?: string | null;
+                    user_agent_hash?: string | null;
+                    metadata?: Json;
+                    created_at?: string;
+                };
+                Relationships: [];
+            };
         };
         Views: {
             clinical_case_live_view: {
@@ -1294,3 +1333,4 @@ export type AIInferenceEvent = Database['public']['Tables']['ai_inference_events
 export type ClinicalOutcomeEvent = Database['public']['Tables']['clinical_outcome_events']['Row'];
 export type EdgeSimulationEvent = Database['public']['Tables']['edge_simulation_events']['Row'];
 export type NetworkIntelligenceMetric = Database['public']['Tables']['network_intelligence_metrics']['Row'];
+export type AuthLoginEvent = Database['public']['Tables']['auth_login_events']['Row'];
