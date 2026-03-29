@@ -22,6 +22,14 @@ interface MLRiskData {
     _reason?: string;
 }
 
+interface RiskModelOutputData {
+    definition: string;
+    catastrophic_deterioration_risk_6h: number;
+    operative_urgency_risk: number;
+    shock_risk: number;
+    legacy_ml_operational_risk?: number | null;
+}
+
 interface UploadedArtifact {
     file_name: string;
     mime_type: string;
@@ -55,6 +63,7 @@ interface InferenceState {
         severityFeatureImportance: Array<{ feature: string; impact: number }>;
     } | null;
     mlRisk: MLRiskData | null;
+    riskModelOutput: RiskModelOutputData | null;
     riskAssessment: {
         severity_score: number;
         emergency_level: string;
@@ -75,6 +84,7 @@ export default function InferenceConsole() {
         probabilities: [],
         explainability: null,
         mlRisk: null,
+        riskModelOutput: null,
         riskAssessment: null,
         errorMessage: null,
         normalizedInput: null,
@@ -241,6 +251,7 @@ export default function InferenceConsole() {
             const output = (result.output ?? result.prediction) as Record<string, unknown> | undefined;
             const diagnosis = output?.diagnosis as Record<string, unknown> | undefined;
             const riskAssessment = output?.risk_assessment as Record<string, unknown> | undefined;
+            const riskModelOutput = output?.risk_model_output as Record<string, unknown> | undefined;
             
             const diffs = Array.isArray(diagnosis?.top_differentials) ? diagnosis.top_differentials : [];
             const mappedProbabilities = diffs.map((d: any) => ({
@@ -269,6 +280,13 @@ export default function InferenceConsole() {
                     severityFeatureImportance: mapFeatures(sevFeatures),
                 },
                 mlRisk: result.ml_risk || null,
+                riskModelOutput: riskModelOutput ? {
+                    definition: typeof riskModelOutput.definition === 'string' ? riskModelOutput.definition : '',
+                    catastrophic_deterioration_risk_6h: typeof riskModelOutput.catastrophic_deterioration_risk_6h === 'number' ? riskModelOutput.catastrophic_deterioration_risk_6h : 0,
+                    operative_urgency_risk: typeof riskModelOutput.operative_urgency_risk === 'number' ? riskModelOutput.operative_urgency_risk : 0,
+                    shock_risk: typeof riskModelOutput.shock_risk === 'number' ? riskModelOutput.shock_risk : 0,
+                    legacy_ml_operational_risk: typeof riskModelOutput.legacy_ml_operational_risk === 'number' ? riskModelOutput.legacy_ml_operational_risk : null,
+                } : null,
                 riskAssessment: riskAssessment ? {
                     severity_score: typeof riskAssessment.severity_score === 'number' ? riskAssessment.severity_score : 0,
                     emergency_level: typeof riskAssessment.emergency_level === 'string' ? riskAssessment.emergency_level : 'UNKNOWN',
@@ -658,50 +676,51 @@ export default function InferenceConsole() {
                                 </ConsoleCard>
                             )}
 
-                            {/* ML Risk Assessment Panel */}
-                            {state.mlRisk && (
-                                <ConsoleCard title="ML Risk Assessment" className="border-accent/40">
+                            {state.riskModelOutput && state.mlRisk && (
+                                <ConsoleCard title="Catastrophic Risk Model" className="border-accent/40">
                                     <div className="space-y-4">
                                         <div className="flex items-center gap-3">
                                             <Brain className="w-5 h-5 text-accent" />
-                                            <span className="font-mono text-xs text-muted uppercase">TensorFlow Autograd Risk Model</span>
-                                            {state.mlRisk._fallback && (
-                                                <span className="font-mono text-[10px] text-yellow-400 bg-yellow-400/10 px-2 py-0.5 border border-yellow-400/30">
-                                                    FALLBACK
-                                                </span>
-                                            )}
+                                            <span className="font-mono text-xs text-muted uppercase">Abdominal catastrophic deterioration model</span>
                                         </div>
 
                                         <div className="flex flex-col gap-1">
                                             <div className="flex items-center justify-between font-mono text-xs">
-                                                <span className="text-muted">Risk Score</span>
-                                                <span className={`font-bold ${state.mlRisk.risk_score > 0.7 ? 'text-red-400' :
-                                                        state.mlRisk.risk_score > 0.4 ? 'text-yellow-400' : 'text-green-400'
+                                                <span className="text-muted">Catastrophic 6h Risk</span>
+                                                <span className={`font-bold ${state.riskModelOutput.catastrophic_deterioration_risk_6h > 0.7 ? 'text-red-400' :
+                                                        state.riskModelOutput.catastrophic_deterioration_risk_6h > 0.4 ? 'text-yellow-400' : 'text-green-400'
                                                     }`}>
-                                                    {(state.mlRisk.risk_score * 100).toFixed(1)}%
+                                                    {(state.riskModelOutput.catastrophic_deterioration_risk_6h * 100).toFixed(1)}%
                                                 </span>
                                             </div>
                                             <div className="w-full h-2 bg-dim overflow-hidden">
                                                 <div
-                                                    className={`h-full transition-all duration-700 ${state.mlRisk.risk_score > 0.7 ? 'bg-red-400' :
-                                                            state.mlRisk.risk_score > 0.4 ? 'bg-yellow-400' : 'bg-green-400'
+                                                    className={`h-full transition-all duration-700 ${state.riskModelOutput.catastrophic_deterioration_risk_6h > 0.7 ? 'bg-red-400' :
+                                                            state.riskModelOutput.catastrophic_deterioration_risk_6h > 0.4 ? 'bg-yellow-400' : 'bg-green-400'
                                                         }`}
-                                                    style={{ width: `${state.mlRisk.risk_score * 100}%` }}
+                                                    style={{ width: `${state.riskModelOutput.catastrophic_deterioration_risk_6h * 100}%` }}
                                                 />
                                             </div>
                                         </div>
 
-                                        <div className="grid grid-cols-2 gap-4">
+                                        <div className="grid grid-cols-3 gap-4">
                                             <div className="font-mono">
-                                                <span className="text-[10px] text-muted uppercase block">Confidence</span>
-                                                <span className="text-sm text-foreground">{(state.mlRisk.confidence * 100).toFixed(1)}%</span>
+                                                <span className="text-[10px] text-muted uppercase block">Operative Urgency</span>
+                                                <span className="text-sm text-foreground">{(state.riskModelOutput.operative_urgency_risk * 100).toFixed(1)}%</span>
                                             </div>
                                             <div className="font-mono">
-                                                <span className="text-[10px] text-muted uppercase block">Abstain</span>
-                                                <span className={`text-sm ${state.mlRisk.abstain ? 'text-yellow-400' : 'text-green-400'}`}>
+                                                <span className="text-[10px] text-muted uppercase block">Legacy ML Abstain</span>
+                                                <span className="text-sm text-foreground">
                                                     {state.mlRisk.abstain ? 'YES — LOW CONFIDENCE' : 'NO — CONFIDENT'}
                                                 </span>
                                             </div>
+                                        </div>
+
+                                        <div className="font-mono text-[10px] text-muted uppercase">
+                                            Shock Risk: <span className="text-foreground normal-case">{(state.riskModelOutput.shock_risk * 100).toFixed(1)}%</span>
+                                        </div>
+                                        <div className="font-mono text-[10px] text-muted">
+                                            {state.riskModelOutput.definition}
                                         </div>
 
                                         <div className="font-mono text-[10px] text-muted border-t border-grid pt-2">
