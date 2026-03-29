@@ -53,6 +53,9 @@ export interface ClinicalCaseRecord {
     tenant_id: string;
     user_id: string | null;
     clinic_id: string | null;
+    patient_id: string | null;
+    encounter_id: string | null;
+    episode_id: string | null;
     source_module: string | null;
     case_key: string;
     source_case_reference: string | null;
@@ -71,6 +74,7 @@ export interface ClinicalCaseRecord {
     metadata: Record<string, unknown>;
     latest_input_signature: Record<string, unknown>;
     ingestion_status: ClinicalCaseIngestionStatus;
+    episode_status: string | null;
     invalid_case: boolean;
     validation_error_code: string | null;
     primary_condition_class: string | null;
@@ -102,6 +106,7 @@ export interface ClinicalCaseRecord {
     inference_event_count: number;
     first_inference_at: string;
     last_inference_at: string;
+    resolved_at: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -157,6 +162,8 @@ interface ClinicalCaseSnapshot {
     preferredCaseId: string | null;
     caseKey: string;
     sourceCaseReference: string | null;
+    patientId: string | null;
+    encounterId: string | null;
     speciesCanonical: string | null;
     speciesDisplay: string | null;
     speciesRaw: string | null;
@@ -206,6 +213,8 @@ export function buildClinicalCaseSnapshot(input: EnsureCanonicalClinicalCaseInpu
     const symptoms = normalizeSymptomSet(input.inputSignature.symptoms);
     const patientMetadata = extractCaseMetadata(input.inputSignature);
     const latestInputSignature = sanitizeSignatureForCase(input.inputSignature);
+    const patientId = resolveLinkedEntityUuid(input.inputSignature, ['patient_id', 'patientId']);
+    const encounterId = resolveLinkedEntityUuid(input.inputSignature, ['encounter_id', 'encounterId']);
 
     return {
         preferredCaseId,
@@ -220,6 +229,8 @@ export function buildClinicalCaseSnapshot(input: EnsureCanonicalClinicalCaseInpu
             latestInputSignature,
         }),
         sourceCaseReference,
+        patientId,
+        encounterId,
         speciesCanonical,
         speciesDisplay: resolveSpeciesDisplay(speciesRaw, speciesCanonical),
         speciesRaw,
@@ -278,6 +289,9 @@ export async function ensureCanonicalClinicalCase(
         tenant_id: input.tenantId,
         user_id: input.userId ?? existingCase?.user_id ?? null,
         clinic_id: input.clinicId ?? existingCase?.clinic_id ?? null,
+        patient_id: snapshot.patientId ?? existingCase?.patient_id ?? null,
+        encounter_id: snapshot.encounterId ?? existingCase?.encounter_id ?? null,
+        episode_id: existingCase?.episode_id ?? null,
         source_module: input.sourceModule ?? existingCase?.source_module ?? null,
         case_key: existingCase?.case_key ?? snapshot.caseKey,
         source_case_reference: existingCase?.source_case_reference ?? snapshot.sourceCaseReference,
@@ -302,6 +316,7 @@ export async function ensureCanonicalClinicalCase(
         metadata: patientMetadata,
         latest_input_signature: snapshot.latestInputSignature,
         ingestion_status: validation.ingestion_status,
+        episode_status: existingCase?.episode_status ?? null,
         invalid_case: validation.invalid_case,
         validation_error_code: validation.validation_error_code,
         primary_condition_class: learning.primary_condition_class,
@@ -333,6 +348,7 @@ export async function ensureCanonicalClinicalCase(
         inference_event_count: existingCase?.inference_event_count ?? 0,
         first_inference_at: existingCase?.first_inference_at ?? input.observedAt,
         last_inference_at: existingCase?.last_inference_at ?? input.observedAt,
+        resolved_at: existingCase?.resolved_at ?? null,
     });
 }
 
@@ -530,6 +546,26 @@ function extractCaseMetadata(signature: Record<string, unknown>): Record<string,
     return sanitizeJsonRecord(merged);
 }
 
+function resolveLinkedEntityUuid(
+    signature: Record<string, unknown>,
+    keys: string[],
+): string | null {
+    for (const key of keys) {
+        const direct = normalizeUuid(signature[key]);
+        if (direct) return direct;
+    }
+
+    const metadata = isRecord(signature.metadata) ? signature.metadata : null;
+    if (!metadata) return null;
+
+    for (const key of keys) {
+        const nested = normalizeUuid(metadata[key]);
+        if (nested) return nested;
+    }
+
+    return null;
+}
+
 function sanitizeSignatureForCase(signature: Record<string, unknown>): Record<string, unknown> {
     const symptoms = normalizeSymptomSet(signature.symptoms);
 
@@ -573,6 +609,9 @@ export function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRe
         tenant_id: String(row.tenant_id),
         user_id: normalizeUuid(row.user_id) ?? normalizeText(row.user_id),
         clinic_id: normalizeText(row.clinic_id),
+        patient_id: normalizeUuid(row.patient_id) ?? normalizeText(row.patient_id),
+        encounter_id: normalizeUuid(row.encounter_id) ?? normalizeText(row.encounter_id),
+        episode_id: normalizeUuid(row.episode_id) ?? normalizeText(row.episode_id),
         source_module: normalizeText(row.source_module),
         case_key: String(row.case_key),
         source_case_reference: normalizeText(row.source_case_reference),
@@ -595,6 +634,7 @@ export function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRe
         metadata: patientMetadata,
         latest_input_signature: isRecord(row.latest_input_signature) ? row.latest_input_signature : {},
         ingestion_status: normalizeIngestionStatus(row.ingestion_status),
+        episode_status: normalizeText(row.episode_status),
         invalid_case: row.invalid_case === true,
         validation_error_code: normalizeText(row.validation_error_code),
         primary_condition_class: normalizeText(row.primary_condition_class),
@@ -626,6 +666,7 @@ export function mapClinicalCaseRow(row: Record<string, unknown>): ClinicalCaseRe
         inference_event_count: typeof row.inference_event_count === 'number' ? row.inference_event_count : 0,
         first_inference_at: String(row.first_inference_at),
         last_inference_at: String(row.last_inference_at),
+        resolved_at: normalizeText(row.resolved_at),
         created_at: String(row.created_at),
         updated_at: String(row.updated_at),
     };

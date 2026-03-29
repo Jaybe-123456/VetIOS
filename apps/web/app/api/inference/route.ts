@@ -26,6 +26,10 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { InferenceRequestSchema, formatZodErrors } from '@/lib/http/schemas';
 import { safeJson } from '@/lib/http/safeJson';
 import {
+    createOutcomeNetworkRepository,
+    reconcileEpisodeMembership,
+} from '@/lib/outcomeNetwork/service';
+import {
     beginTelemetryExecutionSample,
     emitTelemetryEvent,
     extractPredictionLabel,
@@ -238,6 +242,52 @@ export async function POST(req: Request) {
         });
         revalidatePath('/dataset');
 
+        const finalizedClinicalCase = await finalizeClinicalCaseAfterInference(
+            caseStore,
+            canonicalClinicalCase,
+            persistedInferenceEventId,
+            {
+                observedAt,
+                userId,
+                sourceModule: 'inference_console',
+                outputPayload: inferenceResult.output_payload,
+                confidenceScore: inferenceResult.confidence_score,
+                modelVersion: routedModel.model_version,
+                metadataPatch: {
+                    latest_inference_confidence: inferenceResult.confidence_score,
+                    latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
+                    latest_inference_model_version: routedModel.model_version,
+                    latest_inference_source: 'inference_console',
+                },
+            },
+        );
+
+        let episodeId: string | null = finalizedClinicalCase.episode_id ?? null;
+        let episodeReconcileError: string | null = null;
+        try {
+            const episodeLink = await reconcileEpisodeMembership(
+                createOutcomeNetworkRepository(supabase),
+                {
+                    tenantId,
+                    clinicId: body.clinic_id ?? null,
+                    caseId: finalizedClinicalCase.id,
+                    observedAt,
+                    primaryConditionClass: finalizedClinicalCase.primary_condition_class,
+                    summaryPatch: {
+                        latest_inference_event_id: persistedInferenceEventId,
+                        latest_inference_at: observedAt,
+                        latest_inference_model_version: routedModel.model_version,
+                    },
+                },
+            );
+            episodeId = episodeLink.episode.id;
+        } catch (episodeError) {
+            episodeReconcileError = episodeError instanceof Error
+                ? episodeError.message
+                : 'Failed to attach inference to episode.';
+            console.warn(`[${requestId}] Episode reconciliation failed (non-fatal):`, episodeError);
+        }
+
         await Promise.all([
             settleNonCriticalEffect(
                 requestId,
@@ -342,34 +392,11 @@ export async function POST(req: Request) {
                 'Routing decision finalization',
                 finalizeRoutingDecisionRecord(supabase, routingPlan, routingExecution, {
                     inferenceEventId: persistedInferenceEventId,
-                    caseId: canonicalClinicalCase.id,
+                    caseId: finalizedClinicalCase.id,
                     actualLatencyMs: measuredLatencyMs,
                     prediction: extractPredictionLabel(inferenceResult.output_payload),
                     predictionConfidence: inferenceResult.confidence_score,
                 }),
-            ),
-            settleNonCriticalEffect(
-                requestId,
-                'Clinical case finalization',
-                finalizeClinicalCaseAfterInference(
-                    caseStore,
-                    canonicalClinicalCase,
-                    persistedInferenceEventId,
-                    {
-                        observedAt,
-                        userId,
-                        sourceModule: 'inference_console',
-                        outputPayload: inferenceResult.output_payload,
-                        confidenceScore: inferenceResult.confidence_score,
-                        modelVersion: routedModel.model_version,
-                        metadataPatch: {
-                            latest_inference_confidence: inferenceResult.confidence_score,
-                            latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
-                            latest_inference_model_version: routedModel.model_version,
-                            latest_inference_source: 'inference_console',
-                        },
-                    },
-                ),
             ),
             settleNonCriticalEffect(
                 requestId,
@@ -385,7 +412,9 @@ export async function POST(req: Request) {
 
         const response = NextResponse.json({
             inference_event_id: persistedInferenceEventId,
-            clinical_case_id: canonicalClinicalCase.id,
+            clinical_case_id: finalizedClinicalCase.id,
+            episode_id: episodeId,
+            episode_reconcile_error: episodeReconcileError,
             prediction: inferenceResult.output_payload,
             output: inferenceResult.output_payload,
             confidence_score: inferenceResult.confidence_score,

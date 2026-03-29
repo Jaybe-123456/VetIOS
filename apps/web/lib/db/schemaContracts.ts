@@ -35,6 +35,9 @@ export const CLINICAL_CASES = {
         tenant_id: 'tenant_id',                   // uuid, NOT NULL
         user_id: 'user_id',                       // uuid, nullable
         clinic_id: 'clinic_id',                   // uuid, nullable
+        patient_id: 'patient_id',                 // uuid, nullable
+        encounter_id: 'encounter_id',             // uuid, nullable
+        episode_id: 'episode_id',                 // uuid, nullable
         source_module: 'source_module',           // text, nullable
         case_key: 'case_key',                     // text, NOT NULL
         source_case_reference: 'source_case_reference', // text, nullable
@@ -53,6 +56,7 @@ export const CLINICAL_CASES = {
         metadata: 'metadata',                     // jsonb, NOT NULL
         latest_input_signature: 'latest_input_signature', // jsonb, NOT NULL
         ingestion_status: 'ingestion_status',     // text, NOT NULL
+        episode_status: 'episode_status',         // text, nullable
         invalid_case: 'invalid_case',             // boolean, NOT NULL
         validation_error_code: 'validation_error_code', // text, nullable
         primary_condition_class: 'primary_condition_class', // text, nullable
@@ -84,6 +88,7 @@ export const CLINICAL_CASES = {
         inference_event_count: 'inference_event_count', // integer, NOT NULL
         first_inference_at: 'first_inference_at', // timestamptz, NOT NULL
         last_inference_at: 'last_inference_at',   // timestamptz, NOT NULL
+        resolved_at: 'resolved_at',               // timestamptz, nullable
         created_at: 'created_at',                 // timestamptz, NOT NULL
         updated_at: 'updated_at',                 // timestamptz, NOT NULL
     },
@@ -155,6 +160,204 @@ export const CLINICAL_OUTCOME_EVENTS = {
 } as const;
 
 // ─── outcome_calibrations ───────────────────────────────────────────────────
+export const SIGNAL_SOURCES = {
+    TABLE: 'signal_sources',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        clinic_id: 'clinic_id',
+        source_type: 'source_type',
+        vendor_name: 'vendor_name',
+        vendor_account_ref: 'vendor_account_ref',
+        status: 'status',
+        cursor_state: 'cursor_state',
+        last_synced_at: 'last_synced_at',
+        metadata: 'metadata',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PATIENT_EPISODES = {
+    TABLE: 'patient_episodes',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        clinic_id: 'clinic_id',
+        patient_id: 'patient_id',
+        primary_condition_class: 'primary_condition_class',
+        episode_key: 'episode_key',
+        status: 'status',
+        started_at: 'started_at',
+        ended_at: 'ended_at',
+        resolved_at: 'resolved_at',
+        latest_case_id: 'latest_case_id',
+        latest_encounter_id: 'latest_encounter_id',
+        outcome_state: 'outcome_state',
+        outcome_confidence: 'outcome_confidence',
+        severity_peak: 'severity_peak',
+        recurrence_count: 'recurrence_count',
+        summary: 'summary',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PASSIVE_SIGNAL_EVENTS = {
+    TABLE: 'passive_signal_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        clinic_id: 'clinic_id',
+        patient_id: 'patient_id',
+        encounter_id: 'encounter_id',
+        case_id: 'case_id',
+        episode_id: 'episode_id',
+        source_id: 'source_id',
+        signal_type: 'signal_type',
+        signal_subtype: 'signal_subtype',
+        observed_at: 'observed_at',
+        payload: 'payload',
+        normalized_facts: 'normalized_facts',
+        confidence: 'confidence',
+        dedupe_key: 'dedupe_key',
+        ingestion_status: 'ingestion_status',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const EPISODE_EVENT_LINKS = {
+    TABLE: 'episode_event_links',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        episode_id: 'episode_id',
+        event_table: 'event_table',
+        event_id: 'event_id',
+        event_kind: 'event_kind',
+        observed_at: 'observed_at',
+        sequence_no: 'sequence_no',
+        state_transition: 'state_transition',
+        metadata: 'metadata',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const OUTCOME_INFERENCES = {
+    TABLE: 'outcome_inferences',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        clinic_id: 'clinic_id',
+        episode_id: 'episode_id',
+        case_id: 'case_id',
+        inference_type: 'inference_type',
+        inferred_state: 'inferred_state',
+        confidence: 'confidence',
+        window_start: 'window_start',
+        window_end: 'window_end',
+        rationale: 'rationale',
+        evidence_event_ids: 'evidence_event_ids',
+        review_status: 'review_status',
+        reviewed_by: 'reviewed_by',
+        reviewed_at: 'reviewed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const BENCHMARK_COHORTS = {
+    TABLE: 'benchmark_cohorts',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        scope: 'scope',
+        cohort_key: 'cohort_key',
+        species: 'species',
+        condition_class: 'condition_class',
+        acuity_band: 'acuity_band',
+        clinic_type: 'clinic_type',
+        geography_region: 'geography_region',
+        matching_rules: 'matching_rules',
+        min_support: 'min_support',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const BENCHMARK_SNAPSHOTS = {
+    TABLE: 'benchmark_snapshots',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        clinic_id: 'clinic_id',
+        cohort_id: 'cohort_id',
+        metric_name: 'metric_name',
+        window_start: 'window_start',
+        window_end: 'window_end',
+        support_n: 'support_n',
+        observed_value: 'observed_value',
+        expected_value: 'expected_value',
+        risk_adjusted_value: 'risk_adjusted_value',
+        oe_ratio: 'oe_ratio',
+        confidence_interval: 'confidence_interval',
+        computed_at: 'computed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const PROTOCOL_TEMPLATES = {
+    TABLE: 'protocol_templates',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        protocol_key: 'protocol_key',
+        version: 'version',
+        condition_class: 'condition_class',
+        trigger_rules: 'trigger_rules',
+        steps: 'steps',
+        writeback_targets: 'writeback_targets',
+        status: 'status',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PROTOCOL_EXECUTIONS = {
+    TABLE: 'protocol_executions',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        clinic_id: 'clinic_id',
+        patient_id: 'patient_id',
+        encounter_id: 'encounter_id',
+        episode_id: 'episode_id',
+        case_id: 'case_id',
+        template_id: 'template_id',
+        trigger_source: 'trigger_source',
+        status: 'status',
+        recommended_actions: 'recommended_actions',
+        accepted_actions: 'accepted_actions',
+        started_at: 'started_at',
+        completed_at: 'completed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const EVIDENCE_CARDS = {
+    TABLE: 'evidence_cards',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        subject_type: 'subject_type',
+        subject_id: 'subject_id',
+        headline: 'headline',
+        summary: 'summary',
+        lineage: 'lineage',
+        support_n: 'support_n',
+        model_versions: 'model_versions',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const OUTCOME_CALIBRATIONS = {
     TABLE: 'outcome_calibrations',
     COLUMNS: {

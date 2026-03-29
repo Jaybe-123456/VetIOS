@@ -775,6 +775,9 @@ export interface Database {
                     tenant_id: string;
                     user_id: string | null;
                     clinic_id: string | null;
+                    patient_id: string | null;
+                    encounter_id: string | null;
+                    episode_id: string | null;
                     source_module: string | null;
                     case_key: string;
                     source_case_reference: string | null;
@@ -793,6 +796,7 @@ export interface Database {
                     metadata: Json;
                     latest_input_signature: Json;
                     ingestion_status: string;
+                    episode_status: string | null;
                     invalid_case: boolean;
                     validation_error_code: string | null;
                     primary_condition_class: string | null;
@@ -824,6 +828,7 @@ export interface Database {
                     inference_event_count: number;
                     first_inference_at: string;
                     last_inference_at: string;
+                    resolved_at: string | null;
                     created_at: string;
                     updated_at: string;
                 };
@@ -832,6 +837,9 @@ export interface Database {
                     tenant_id: string;
                     user_id?: string | null;
                     clinic_id?: string | null;
+                    patient_id?: string | null;
+                    encounter_id?: string | null;
+                    episode_id?: string | null;
                     source_module?: string | null;
                     case_key: string;
                     source_case_reference?: string | null;
@@ -850,6 +858,7 @@ export interface Database {
                     metadata?: Json;
                     latest_input_signature?: Json;
                     ingestion_status?: string;
+                    episode_status?: string | null;
                     invalid_case?: boolean;
                     validation_error_code?: string | null;
                     primary_condition_class?: string | null;
@@ -881,6 +890,7 @@ export interface Database {
                     inference_event_count?: number;
                     first_inference_at?: string;
                     last_inference_at?: string;
+                    resolved_at?: string | null;
                     created_at?: string;
                     updated_at?: string;
                 };
@@ -889,6 +899,9 @@ export interface Database {
                     tenant_id?: string;
                     user_id?: string | null;
                     clinic_id?: string | null;
+                    patient_id?: string | null;
+                    encounter_id?: string | null;
+                    episode_id?: string | null;
                     source_module?: string | null;
                     case_key?: string;
                     source_case_reference?: string | null;
@@ -907,6 +920,7 @@ export interface Database {
                     metadata?: Json;
                     latest_input_signature?: Json;
                     ingestion_status?: string;
+                    episode_status?: string | null;
                     invalid_case?: boolean;
                     validation_error_code?: string | null;
                     primary_condition_class?: string | null;
@@ -938,6 +952,7 @@ export interface Database {
                     inference_event_count?: number;
                     first_inference_at?: string;
                     last_inference_at?: string;
+                    resolved_at?: string | null;
                     created_at?: string;
                     updated_at?: string;
                 };
@@ -946,6 +961,24 @@ export interface Database {
                         foreignKeyName: "clinical_cases_tenant_id_fkey";
                         columns: ["tenant_id"];
                         referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "clinical_cases_patient_id_fkey";
+                        columns: ["patient_id"];
+                        referencedRelation: "patients";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "clinical_cases_encounter_id_fkey";
+                        columns: ["encounter_id"];
+                        referencedRelation: "encounters";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "clinical_cases_episode_id_fkey";
+                        columns: ["episode_id"];
+                        referencedRelation: "patient_episodes";
                         referencedColumns: ["id"];
                     },
                     {
@@ -1097,6 +1130,698 @@ export interface Database {
                         foreignKeyName: "clinical_outcome_events_case_id_fkey";
                         columns: ["case_id"];
                         referencedRelation: "clinical_cases";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            signal_sources: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    source_type: string;
+                    vendor_name: string | null;
+                    vendor_account_ref: string | null;
+                    status: string;
+                    cursor_state: Json;
+                    last_synced_at: string | null;
+                    metadata: Json;
+                    created_at: string;
+                    updated_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    source_type: string;
+                    vendor_name?: string | null;
+                    vendor_account_ref?: string | null;
+                    status?: string;
+                    cursor_state?: Json;
+                    last_synced_at?: string | null;
+                    metadata?: Json;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    source_type?: string;
+                    vendor_name?: string | null;
+                    vendor_account_ref?: string | null;
+                    status?: string;
+                    cursor_state?: Json;
+                    last_synced_at?: string | null;
+                    metadata?: Json;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "signal_sources_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            patient_episodes: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    patient_id: string;
+                    primary_condition_class: string | null;
+                    episode_key: string;
+                    status: string;
+                    started_at: string;
+                    ended_at: string | null;
+                    resolved_at: string | null;
+                    latest_case_id: string | null;
+                    latest_encounter_id: string | null;
+                    outcome_state: string;
+                    outcome_confidence: number | null;
+                    severity_peak: number | null;
+                    recurrence_count: number;
+                    summary: Json;
+                    created_at: string;
+                    updated_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    patient_id: string;
+                    primary_condition_class?: string | null;
+                    episode_key: string;
+                    status?: string;
+                    started_at?: string;
+                    ended_at?: string | null;
+                    resolved_at?: string | null;
+                    latest_case_id?: string | null;
+                    latest_encounter_id?: string | null;
+                    outcome_state?: string;
+                    outcome_confidence?: number | null;
+                    severity_peak?: number | null;
+                    recurrence_count?: number;
+                    summary?: Json;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    patient_id?: string;
+                    primary_condition_class?: string | null;
+                    episode_key?: string;
+                    status?: string;
+                    started_at?: string;
+                    ended_at?: string | null;
+                    resolved_at?: string | null;
+                    latest_case_id?: string | null;
+                    latest_encounter_id?: string | null;
+                    outcome_state?: string;
+                    outcome_confidence?: number | null;
+                    severity_peak?: number | null;
+                    recurrence_count?: number;
+                    summary?: Json;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "patient_episodes_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "patient_episodes_patient_id_fkey";
+                        columns: ["patient_id"];
+                        referencedRelation: "patients";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "patient_episodes_latest_case_id_fkey";
+                        columns: ["latest_case_id"];
+                        referencedRelation: "clinical_cases";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "patient_episodes_latest_encounter_id_fkey";
+                        columns: ["latest_encounter_id"];
+                        referencedRelation: "encounters";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            passive_signal_events: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    patient_id: string | null;
+                    encounter_id: string | null;
+                    case_id: string | null;
+                    episode_id: string | null;
+                    source_id: string | null;
+                    signal_type: string;
+                    signal_subtype: string | null;
+                    observed_at: string;
+                    payload: Json;
+                    normalized_facts: Json;
+                    confidence: number | null;
+                    dedupe_key: string | null;
+                    ingestion_status: string;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    patient_id?: string | null;
+                    encounter_id?: string | null;
+                    case_id?: string | null;
+                    episode_id?: string | null;
+                    source_id?: string | null;
+                    signal_type: string;
+                    signal_subtype?: string | null;
+                    observed_at: string;
+                    payload?: Json;
+                    normalized_facts?: Json;
+                    confidence?: number | null;
+                    dedupe_key?: string | null;
+                    ingestion_status?: string;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    patient_id?: string | null;
+                    encounter_id?: string | null;
+                    case_id?: string | null;
+                    episode_id?: string | null;
+                    source_id?: string | null;
+                    signal_type?: string;
+                    signal_subtype?: string | null;
+                    observed_at?: string;
+                    payload?: Json;
+                    normalized_facts?: Json;
+                    confidence?: number | null;
+                    dedupe_key?: string | null;
+                    ingestion_status?: string;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "passive_signal_events_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "passive_signal_events_patient_id_fkey";
+                        columns: ["patient_id"];
+                        referencedRelation: "patients";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "passive_signal_events_encounter_id_fkey";
+                        columns: ["encounter_id"];
+                        referencedRelation: "encounters";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "passive_signal_events_case_id_fkey";
+                        columns: ["case_id"];
+                        referencedRelation: "clinical_cases";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "passive_signal_events_episode_id_fkey";
+                        columns: ["episode_id"];
+                        referencedRelation: "patient_episodes";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "passive_signal_events_source_id_fkey";
+                        columns: ["source_id"];
+                        referencedRelation: "signal_sources";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            episode_event_links: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    episode_id: string;
+                    event_table: string;
+                    event_id: string;
+                    event_kind: string;
+                    observed_at: string;
+                    sequence_no: number;
+                    state_transition: string | null;
+                    metadata: Json;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    episode_id: string;
+                    event_table: string;
+                    event_id: string;
+                    event_kind: string;
+                    observed_at: string;
+                    sequence_no?: number;
+                    state_transition?: string | null;
+                    metadata?: Json;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    episode_id?: string;
+                    event_table?: string;
+                    event_id?: string;
+                    event_kind?: string;
+                    observed_at?: string;
+                    sequence_no?: number;
+                    state_transition?: string | null;
+                    metadata?: Json;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "episode_event_links_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "episode_event_links_episode_id_fkey";
+                        columns: ["episode_id"];
+                        referencedRelation: "patient_episodes";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            outcome_inferences: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    episode_id: string;
+                    case_id: string | null;
+                    inference_type: string;
+                    inferred_state: string;
+                    confidence: number;
+                    window_start: string | null;
+                    window_end: string | null;
+                    rationale: Json;
+                    evidence_event_ids: string[];
+                    review_status: string;
+                    reviewed_by: string | null;
+                    reviewed_at: string | null;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    episode_id: string;
+                    case_id?: string | null;
+                    inference_type: string;
+                    inferred_state: string;
+                    confidence?: number;
+                    window_start?: string | null;
+                    window_end?: string | null;
+                    rationale?: Json;
+                    evidence_event_ids?: string[];
+                    review_status?: string;
+                    reviewed_by?: string | null;
+                    reviewed_at?: string | null;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    episode_id?: string;
+                    case_id?: string | null;
+                    inference_type?: string;
+                    inferred_state?: string;
+                    confidence?: number;
+                    window_start?: string | null;
+                    window_end?: string | null;
+                    rationale?: Json;
+                    evidence_event_ids?: string[];
+                    review_status?: string;
+                    reviewed_by?: string | null;
+                    reviewed_at?: string | null;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "outcome_inferences_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "outcome_inferences_episode_id_fkey";
+                        columns: ["episode_id"];
+                        referencedRelation: "patient_episodes";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "outcome_inferences_case_id_fkey";
+                        columns: ["case_id"];
+                        referencedRelation: "clinical_cases";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "outcome_inferences_reviewed_by_fkey";
+                        columns: ["reviewed_by"];
+                        referencedRelation: "users";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            benchmark_cohorts: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    scope: string;
+                    cohort_key: string;
+                    species: string | null;
+                    condition_class: string | null;
+                    acuity_band: string | null;
+                    clinic_type: string | null;
+                    geography_region: string | null;
+                    matching_rules: Json;
+                    min_support: number;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    scope?: string;
+                    cohort_key: string;
+                    species?: string | null;
+                    condition_class?: string | null;
+                    acuity_band?: string | null;
+                    clinic_type?: string | null;
+                    geography_region?: string | null;
+                    matching_rules?: Json;
+                    min_support?: number;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    scope?: string;
+                    cohort_key?: string;
+                    species?: string | null;
+                    condition_class?: string | null;
+                    acuity_band?: string | null;
+                    clinic_type?: string | null;
+                    geography_region?: string | null;
+                    matching_rules?: Json;
+                    min_support?: number;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "benchmark_cohorts_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            benchmark_snapshots: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    cohort_id: string;
+                    metric_name: string;
+                    window_start: string;
+                    window_end: string;
+                    support_n: number;
+                    observed_value: number | null;
+                    expected_value: number | null;
+                    risk_adjusted_value: number | null;
+                    oe_ratio: number | null;
+                    confidence_interval: Json;
+                    computed_at: string;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    cohort_id: string;
+                    metric_name: string;
+                    window_start: string;
+                    window_end: string;
+                    support_n?: number;
+                    observed_value?: number | null;
+                    expected_value?: number | null;
+                    risk_adjusted_value?: number | null;
+                    oe_ratio?: number | null;
+                    confidence_interval?: Json;
+                    computed_at?: string;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    cohort_id?: string;
+                    metric_name?: string;
+                    window_start?: string;
+                    window_end?: string;
+                    support_n?: number;
+                    observed_value?: number | null;
+                    expected_value?: number | null;
+                    risk_adjusted_value?: number | null;
+                    oe_ratio?: number | null;
+                    confidence_interval?: Json;
+                    computed_at?: string;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "benchmark_snapshots_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "benchmark_snapshots_cohort_id_fkey";
+                        columns: ["cohort_id"];
+                        referencedRelation: "benchmark_cohorts";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            protocol_templates: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    protocol_key: string;
+                    version: number;
+                    condition_class: string | null;
+                    trigger_rules: Json;
+                    steps: Json;
+                    writeback_targets: Json;
+                    status: string;
+                    created_at: string;
+                    updated_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    protocol_key: string;
+                    version?: number;
+                    condition_class?: string | null;
+                    trigger_rules?: Json;
+                    steps?: Json;
+                    writeback_targets?: Json;
+                    status?: string;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    protocol_key?: string;
+                    version?: number;
+                    condition_class?: string | null;
+                    trigger_rules?: Json;
+                    steps?: Json;
+                    writeback_targets?: Json;
+                    status?: string;
+                    created_at?: string;
+                    updated_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "protocol_templates_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            protocol_executions: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    clinic_id: string | null;
+                    patient_id: string | null;
+                    encounter_id: string | null;
+                    episode_id: string | null;
+                    case_id: string | null;
+                    template_id: string;
+                    trigger_source: string;
+                    status: string;
+                    recommended_actions: Json;
+                    accepted_actions: Json;
+                    started_at: string;
+                    completed_at: string | null;
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    clinic_id?: string | null;
+                    patient_id?: string | null;
+                    encounter_id?: string | null;
+                    episode_id?: string | null;
+                    case_id?: string | null;
+                    template_id: string;
+                    trigger_source: string;
+                    status?: string;
+                    recommended_actions?: Json;
+                    accepted_actions?: Json;
+                    started_at?: string;
+                    completed_at?: string | null;
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    clinic_id?: string | null;
+                    patient_id?: string | null;
+                    encounter_id?: string | null;
+                    episode_id?: string | null;
+                    case_id?: string | null;
+                    template_id?: string;
+                    trigger_source?: string;
+                    status?: string;
+                    recommended_actions?: Json;
+                    accepted_actions?: Json;
+                    started_at?: string;
+                    completed_at?: string | null;
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "protocol_executions_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "protocol_executions_patient_id_fkey";
+                        columns: ["patient_id"];
+                        referencedRelation: "patients";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "protocol_executions_encounter_id_fkey";
+                        columns: ["encounter_id"];
+                        referencedRelation: "encounters";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "protocol_executions_episode_id_fkey";
+                        columns: ["episode_id"];
+                        referencedRelation: "patient_episodes";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "protocol_executions_case_id_fkey";
+                        columns: ["case_id"];
+                        referencedRelation: "clinical_cases";
+                        referencedColumns: ["id"];
+                    },
+                    {
+                        foreignKeyName: "protocol_executions_template_id_fkey";
+                        columns: ["template_id"];
+                        referencedRelation: "protocol_templates";
+                        referencedColumns: ["id"];
+                    }
+                ];
+            };
+
+            evidence_cards: {
+                Row: {
+                    id: string;
+                    tenant_id: string;
+                    subject_type: string;
+                    subject_id: string;
+                    headline: string;
+                    summary: string | null;
+                    lineage: Json;
+                    support_n: number;
+                    model_versions: string[];
+                    created_at: string;
+                };
+                Insert: {
+                    id?: string;
+                    tenant_id: string;
+                    subject_type: string;
+                    subject_id: string;
+                    headline: string;
+                    summary?: string | null;
+                    lineage?: Json;
+                    support_n?: number;
+                    model_versions?: string[];
+                    created_at?: string;
+                };
+                Update: {
+                    id?: string;
+                    tenant_id?: string;
+                    subject_type?: string;
+                    subject_id?: string;
+                    headline?: string;
+                    summary?: string | null;
+                    lineage?: Json;
+                    support_n?: number;
+                    model_versions?: string[];
+                    created_at?: string;
+                };
+                Relationships: [
+                    {
+                        foreignKeyName: "evidence_cards_tenant_id_fkey";
+                        columns: ["tenant_id"];
+                        referencedRelation: "tenants";
                         referencedColumns: ["id"];
                     }
                 ];
