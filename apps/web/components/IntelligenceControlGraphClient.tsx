@@ -528,10 +528,8 @@ export default function IntelligenceControlGraphClient() {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    action: 'update_config',
-                    config: {
-                        simulation_enabled: nextMode,
-                    },
+                    action: 'set_simulation_mode',
+                    enabled: nextMode,
                 }),
             });
             const payload = await response.json() as { error?: string; snapshot?: { configuration?: { simulation_enabled?: boolean } } };
