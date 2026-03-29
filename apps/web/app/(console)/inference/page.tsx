@@ -3,6 +3,11 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel, TerminalInput, TerminalTextarea, TerminalButton } from '@/components/ui/terminal';
+import {
+    ClinicWorkflowPanel,
+    type WorkflowBenchmarkSnapshot,
+    type WorkflowEpisodeDetail,
+} from '@/components/ClinicWorkflowPanel';
 import { InferenceForm } from '@/components/InferenceForm';
 import { NormalizedPreview } from '@/components/NormalizedPreview';
 import { normalizeInferenceInput, type InputMode, type NormalizedInput } from '@/lib/input/inputNormalizer';
@@ -33,6 +38,9 @@ interface OutcomeState {
         outcome_alignment_delta: number | null;
     };
     outcomeEventId?: string;
+    episodeId?: string;
+    workflowEpisode?: WorkflowEpisodeDetail;
+    benchmarkSnapshot?: WorkflowBenchmarkSnapshot | null;
     errorMessage?: string;
 }
 
@@ -280,6 +288,18 @@ export default function InferenceConsole() {
         setState(prev => ({ ...prev, status: 'idle', normalizedInput: null }));
     }
 
+    async function loadEpisodeWorkflow(episodeId: string): Promise<WorkflowEpisodeDetail> {
+        const response = await fetch(`/api/episodes/${episodeId}?limit=20`, {
+            credentials: 'same-origin',
+            cache: 'no-store',
+        });
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.error || 'Failed to load episode workflow.');
+        }
+        return result as WorkflowEpisodeDetail;
+    }
+
     // ── Ground Truth / Outcome Attachment ──────────────────────────────────────
 
     async function handleOutcomeSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -325,10 +345,25 @@ export default function InferenceConsole() {
                 throw new Error(result.error || 'Failed to attach outcome');
             }
 
+            const episodeId = typeof result.episode_id === 'string' ? result.episode_id : undefined;
+            let workflowEpisode: WorkflowEpisodeDetail | undefined;
+            if (episodeId) {
+                try {
+                    workflowEpisode = await loadEpisodeWorkflow(episodeId);
+                } catch (workflowError) {
+                    console.warn('Failed to load episode workflow after outcome submission:', workflowError);
+                }
+            }
+
             setOutcomeState({
                 status: 'submitted',
                 outcomeEventId: result.outcome_event_id,
                 evaluation: result.evaluation || undefined,
+                episodeId,
+                workflowEpisode,
+                benchmarkSnapshot: (result.benchmark_snapshot && typeof result.benchmark_snapshot === 'object')
+                    ? result.benchmark_snapshot as WorkflowBenchmarkSnapshot
+                    : null,
             });
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : 'Unknown error';
@@ -529,6 +564,17 @@ export default function InferenceConsole() {
                                 <div className="text-danger font-mono text-xs border border-danger p-3 bg-danger/5">
                                     ERR: {outcomeState.errorMessage}
                                 </div>
+                            )}
+
+                            {outcomeState.status === 'submitted' && outcomeState.workflowEpisode && (
+                                <ClinicWorkflowPanel
+                                    episodeDetail={outcomeState.workflowEpisode}
+                                    benchmarkSnapshot={outcomeState.benchmarkSnapshot ?? null}
+                                    onEpisodeRefresh={(workflowEpisode) => setOutcomeState((current) => ({
+                                        ...current,
+                                        workflowEpisode,
+                                    }))}
+                                />
                             )}
 
                             <ConsoleCard title="Probability Vectors (Top 3)">

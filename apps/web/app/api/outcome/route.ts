@@ -116,6 +116,7 @@ export async function POST(req: Request) {
                     protocol_error: null,
                     benchmark_cohort_id: null,
                     benchmark_snapshot_id: null,
+                    benchmark_snapshot: null,
                     benchmark_error: null,
                     linked_inference_event_id: body.inference_event_id,
                     idempotent: true,
@@ -216,6 +217,7 @@ export async function POST(req: Request) {
         let protocolError: string | null = null;
         let benchmarkCohortId: string | null = null;
         let benchmarkSnapshotId: string | null = null;
+        let benchmarkSnapshot: BenchmarkSnapshotSummary | null = null;
         let benchmarkError: string | null = null;
         try {
             const episodeLink = await reconcileEpisodeMembership(
@@ -303,7 +305,8 @@ export async function POST(req: Request) {
                     clinicalCase: finalizedClinicalCase,
                 });
                 benchmarkCohortId = benchmarkRollup.benchmarkCohortId;
-                benchmarkSnapshotId = benchmarkRollup.benchmarkSnapshotId;
+                benchmarkSnapshotId = benchmarkRollup.benchmarkSnapshot?.id ?? null;
+                benchmarkSnapshot = benchmarkRollup.benchmarkSnapshot;
             } catch (benchmarkErr) {
                 benchmarkError = benchmarkErr instanceof Error
                     ? benchmarkErr.message
@@ -579,6 +582,7 @@ export async function POST(req: Request) {
             protocol_error: protocolError,
             benchmark_cohort_id: benchmarkCohortId,
             benchmark_snapshot_id: benchmarkSnapshotId,
+            benchmark_snapshot: benchmarkSnapshot,
             benchmark_error: benchmarkError,
             linked_inference_event_id: body.inference_event_id,
             learning_pipeline: pipelineResult,
@@ -1057,6 +1061,19 @@ type BenchmarkRollupPlan = {
     matchingRules: Record<string, unknown>;
 };
 
+type BenchmarkSnapshotSummary = {
+    id: string;
+    metric_name: string;
+    support_n: number;
+    observed_value: number | null;
+    expected_value: number | null;
+    risk_adjusted_value: number | null;
+    oe_ratio: number | null;
+    confidence_interval: Record<string, unknown>;
+    window_start: string;
+    window_end: string;
+};
+
 async function ensureEpisodeBenchmarkRollup(
     supabase: ReturnType<typeof getSupabaseServer>,
     input: {
@@ -1073,11 +1090,11 @@ async function ensureEpisodeBenchmarkRollup(
             severity_score: number | null;
         };
     },
-): Promise<{ benchmarkCohortId: string | null; benchmarkSnapshotId: string | null }> {
+): Promise<{ benchmarkCohortId: string | null; benchmarkSnapshot: BenchmarkSnapshotSummary | null }> {
     if (!input.clinicId) {
         return {
             benchmarkCohortId: null,
-            benchmarkSnapshotId: null,
+            benchmarkSnapshot: null,
         };
     }
 
@@ -1085,7 +1102,7 @@ async function ensureEpisodeBenchmarkRollup(
     if (!plan) {
         return {
             benchmarkCohortId: null,
-            benchmarkSnapshotId: null,
+            benchmarkSnapshot: null,
         };
     }
 
@@ -1093,7 +1110,7 @@ async function ensureEpisodeBenchmarkRollup(
         tenantId: input.tenantId,
         plan,
     });
-    const benchmarkSnapshotId = await upsertBenchmarkSnapshotRecord(supabase, {
+    const benchmarkSnapshot = await upsertBenchmarkSnapshotRecord(supabase, {
         tenantId: input.tenantId,
         clinicId: input.clinicId,
         cohortId: benchmarkCohortId,
@@ -1102,7 +1119,7 @@ async function ensureEpisodeBenchmarkRollup(
 
     return {
         benchmarkCohortId,
-        benchmarkSnapshotId,
+        benchmarkSnapshot,
     };
 }
 
@@ -1210,7 +1227,7 @@ async function upsertBenchmarkSnapshotRecord(
         cohortId: string;
         plan: BenchmarkRollupPlan;
     },
-): Promise<string | null> {
+): Promise<BenchmarkSnapshotSummary | null> {
     const pool = await loadBenchmarkEpisodePool(supabase, {
         tenantId: input.tenantId,
         plan: input.plan,
@@ -1251,14 +1268,37 @@ async function upsertBenchmarkSnapshotRecord(
         }, {
             onConflict: 'tenant_id,clinic_id,cohort_id,metric_name,window_end',
         })
-        .select(C.id)
+        .select([
+            C.id,
+            C.metric_name,
+            C.support_n,
+            C.observed_value,
+            C.expected_value,
+            C.risk_adjusted_value,
+            C.oe_ratio,
+            C.confidence_interval,
+            C.window_start,
+            C.window_end,
+        ].join(', '))
         .single();
 
     if (error || !data) {
         throw new Error(`Failed to upsert benchmark snapshot: ${error?.message ?? 'Unknown error'}`);
     }
+    const snapshotRow = asRecord(data);
 
-    return String(data.id);
+    return {
+        id: String(snapshotRow.id),
+        metric_name: String(snapshotRow.metric_name),
+        support_n: typeof snapshotRow.support_n === 'number' ? snapshotRow.support_n : 0,
+        observed_value: typeof snapshotRow.observed_value === 'number' ? snapshotRow.observed_value : null,
+        expected_value: typeof snapshotRow.expected_value === 'number' ? snapshotRow.expected_value : null,
+        risk_adjusted_value: typeof snapshotRow.risk_adjusted_value === 'number' ? snapshotRow.risk_adjusted_value : null,
+        oe_ratio: typeof snapshotRow.oe_ratio === 'number' ? snapshotRow.oe_ratio : null,
+        confidence_interval: asRecord(snapshotRow.confidence_interval),
+        window_start: String(snapshotRow.window_start),
+        window_end: String(snapshotRow.window_end),
+    };
 }
 
 async function loadBenchmarkEpisodePool(
