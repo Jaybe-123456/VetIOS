@@ -101,6 +101,67 @@ export const MLPredictRequestSchema = z.object({
 
 export type MLPredictRequest = z.infer<typeof MLPredictRequestSchema>;
 
+export const PassiveSignalIngestRequestSchema = z.object({
+    signal: z.object({
+        source_id: z.uuid().optional(),
+        source: z.object({
+            source_type: z.string().min(1),
+            vendor_name: z.string().min(1).optional(),
+            vendor_account_ref: z.string().min(1).optional(),
+        }).optional(),
+        patient_id: z.uuid().optional(),
+        encounter_id: z.uuid().optional(),
+        case_id: z.uuid().optional(),
+        episode_id: z.uuid().optional(),
+        clinic_id: z.string().optional(),
+        signal_type: z.string().min(1),
+        signal_subtype: z.string().min(1).optional(),
+        observed_at: z.string().min(1),
+        payload: z.record(z.string(), z.unknown()).optional().default({}),
+        normalized_facts: z.record(z.string(), z.unknown()).optional().default({}),
+        confidence: z.number().min(0).max(1).optional(),
+        dedupe_key: z.string().min(1).optional(),
+        auto_reconcile: z.boolean().optional().default(true),
+    }),
+    episode: z.object({
+        patient_id: z.uuid().optional(),
+        encounter_id: z.uuid().optional(),
+        primary_condition_class: z.string().min(1).optional(),
+        status: z.enum(['open', 'monitoring', 'resolved', 'closed', 'archived']).optional(),
+        outcome_state: z.string().min(1).optional(),
+        resolved_at: z.string().min(1).optional(),
+        summary_patch: z.record(z.string(), z.unknown()).optional().default({}),
+    }).optional(),
+});
+
+export type PassiveSignalIngestRequest = z.infer<typeof PassiveSignalIngestRequestSchema>;
+
+export const EpisodeReconcileRequestSchema = z.object({
+    episode_id: z.uuid().optional(),
+    patient_id: z.uuid().optional(),
+    encounter_id: z.uuid().optional(),
+    case_id: z.uuid().optional(),
+    signal_event_id: z.uuid().optional(),
+    clinic_id: z.string().optional(),
+    primary_condition_class: z.string().min(1).optional(),
+    observed_at: z.string().min(1).optional(),
+    status: z.enum(['open', 'monitoring', 'resolved', 'closed', 'archived']).optional(),
+    outcome_state: z.string().min(1).optional(),
+    resolved_at: z.string().min(1).optional(),
+    summary_patch: z.record(z.string(), z.unknown()).optional().default({}),
+}).refine(
+    (value) =>
+        value.episode_id != null ||
+        value.patient_id != null ||
+        value.case_id != null ||
+        value.signal_event_id != null,
+    {
+        message: 'At least one of episode_id, patient_id, case_id, or signal_event_id is required.',
+    },
+);
+
+export type EpisodeReconcileRequest = z.infer<typeof EpisodeReconcileRequestSchema>;
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
