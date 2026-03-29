@@ -3442,15 +3442,12 @@ function findLastStableModel(
 ): ModelRegistryRecord | null {
     if (!modelRegistry) return null;
     if (modelRegistry.rollback_target) {
-        return registryRecords.find((entry) => entry.registry_id === modelRegistry.rollback_target) ?? null;
+        const explicitTarget = registryRecords.find((entry) => entry.registry_id === modelRegistry.rollback_target) ?? null;
+        if (explicitTarget && isRollbackProvisionCandidate(modelRegistry, explicitTarget)) {
+            return explicitTarget;
+        }
     }
-    return registryRecords
-        .filter((entry) =>
-            entry.model_family === modelRegistry.model_family &&
-            entry.registry_id !== modelRegistry.registry_id &&
-            entry.registry_role === 'rollback_target',
-        )
-        .sort((left, right) => (right.deployed_at ?? right.updated_at).localeCompare(left.deployed_at ?? left.updated_at))[0] ?? null;
+    return selectRollbackProvisionCandidate(modelRegistry, registryRecords);
 }
 
 function resolveModelFamilyForRun(run: ExperimentRunRecord): ModelFamily {
@@ -3482,6 +3479,34 @@ function rankRegistryEntry(registry: ModelRegistryRecord): number {
     if (registry.lifecycle_status === 'training') return 4;
     if (registry.registry_role === 'rollback_target') return 5;
     return 6;
+}
+
+function hasRollbackProvisionMetadata(record: ModelRegistryRecord): boolean {
+    return Boolean((record.artifact_uri ?? record.artifact_path) && record.dataset_version && record.feature_schema_version);
+}
+
+function isHistoricallyStableRollbackCandidate(record: ModelRegistryRecord): boolean {
+    return record.lifecycle_status === 'archived' && Boolean(record.deployed_at ?? record.rollback_metadata ?? record.archived_at);
+}
+
+function isRollbackProvisionCandidate(
+    champion: ModelRegistryRecord,
+    entry: ModelRegistryRecord,
+): boolean {
+    if (entry.model_family !== champion.model_family) return false;
+    if (entry.registry_id === champion.registry_id) return false;
+    if (entry.registry_role === 'at_risk') return false;
+    if (!hasRollbackProvisionMetadata(entry)) return false;
+
+    return entry.registry_role === 'rollback_target' ||
+        isHistoricallyStableRollbackCandidate(entry) ||
+        entry.lifecycle_status === 'staging' ||
+        entry.lifecycle_status === 'candidate' ||
+        entry.lifecycle_status === 'training';
+}
+
+function rollbackProvisionCandidateTimestamp(record: ModelRegistryRecord): string {
+    return record.deployed_at ?? record.archived_at ?? record.updated_at ?? record.created_at;
 }
 
 function buildArtifactUris(
@@ -4054,7 +4079,7 @@ function evaluateRollbackReadiness(
         };
     }
 
-    const targetRegistryId = registry.rollback_target ?? lastStableModel?.registry_id ?? null;
+    const targetRegistryId = lastStableModel?.registry_id ?? registry.rollback_target ?? null;
     const reasons: string[] = [];
     if (!targetRegistryId) {
         reasons.push('No rollback target is configured for this production model.');
@@ -4098,10 +4123,13 @@ function validateRegistryConsistency(
             });
         }
         if (record.lifecycle_status === 'production' && record.registry_role === 'champion' && !record.rollback_target) {
+            const inferredRollbackTarget = findLastStableModel(record, registryRecords);
             issues.push({
                 code: 'missing_rollback_target',
-                severity: 'critical',
-                message: `Production champion ${record.registry_id} has no rollback target.`,
+                severity: inferredRollbackTarget ? 'warning' : 'critical',
+                message: inferredRollbackTarget
+                    ? `Production champion ${record.registry_id} is relying on inferred rollback target ${inferredRollbackTarget.registry_id}; persist rollback_target metadata.`
+                    : `Production champion ${record.registry_id} has no rollback target.`,
                 model_family: record.model_family,
                 registry_id: record.registry_id,
                 run_id: record.run_id,
@@ -4306,29 +4334,21 @@ function selectRollbackProvisionCandidate(
     registryRecords: ModelRegistryRecord[],
 ): ModelRegistryRecord | null {
     return registryRecords
-        .filter((entry) =>
-            entry.model_family === champion.model_family &&
-            entry.registry_id !== champion.registry_id &&
-            entry.registry_role !== 'at_risk' &&
-            ((entry.artifact_uri ?? entry.artifact_path) != null) &&
-            entry.dataset_version != null &&
-            entry.feature_schema_version != null &&
-            (
-                entry.registry_role === 'rollback_target' ||
-                entry.lifecycle_status === 'staging' ||
-                entry.lifecycle_status === 'candidate' ||
-                entry.lifecycle_status === 'training'
-            )
-        )
-        .sort((left, right) => rankRollbackProvisionCandidate(left) - rankRollbackProvisionCandidate(right) || (right.updated_at ?? right.created_at).localeCompare(left.updated_at ?? left.created_at))[0] ?? null;
+        .filter((entry) => isRollbackProvisionCandidate(champion, entry))
+        .sort((left, right) =>
+            rankRollbackProvisionCandidate(left) - rankRollbackProvisionCandidate(right) ||
+            rollbackProvisionCandidateTimestamp(right).localeCompare(rollbackProvisionCandidateTimestamp(left))
+        )[0] ?? null;
 }
 
 function rankRollbackProvisionCandidate(record: ModelRegistryRecord): number {
     if (record.registry_role === 'rollback_target') return 0;
-    if (record.lifecycle_status === 'staging' && record.registry_role === 'challenger') return 1;
-    if (record.lifecycle_status === 'candidate') return 2;
-    if (record.lifecycle_status === 'training') return 3;
-    return 4;
+    if (isHistoricallyStableRollbackCandidate(record)) return 1;
+    if (record.lifecycle_status === 'staging' && record.registry_role === 'challenger') return 2;
+    if (record.lifecycle_status === 'staging') return 3;
+    if (record.lifecycle_status === 'candidate') return 4;
+    if (record.lifecycle_status === 'training') return 5;
+    return 6;
 }
 
 function isEquivalentRegistryRecord(

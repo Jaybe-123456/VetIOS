@@ -888,8 +888,16 @@ function renderGovernanceTab(
                                     ))}
                                 </div>
                                 {entry.blockers.length > 0 && (
-                                    <div className="mt-3 border border-danger/30 bg-danger/5 p-3 font-mono text-xs text-danger">
-                                        Promotion Blockers: {entry.blockers.join('; ')}
+                                    <div
+                                        className={`mt-3 p-3 font-mono text-xs ${
+                                            entry.lifecycle_status === 'production' && entry.registry_role === 'champion'
+                                                ? 'border border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
+                                                : 'border border-danger/30 bg-danger/5 text-danger'
+                                        }`}
+                                    >
+                                        {entry.lifecycle_status === 'production' && entry.registry_role === 'champion'
+                                            ? 'Operational Watchlist'
+                                            : 'Promotion Blockers'}: {entry.blockers.join('; ')}
                                     </div>
                                 )}
                                 <div className="flex flex-wrap gap-2 mt-3">
