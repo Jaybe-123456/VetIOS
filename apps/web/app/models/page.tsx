@@ -1,6 +1,7 @@
 import { ModelRegistryControlPlaneClient } from '@/components/ModelRegistryControlPlaneClient';
 import { getModelRegistryControlPlaneSnapshot } from '@/lib/experiments/service';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
+import { buildControlPlanePermissionSet, resolveControlPlaneRole } from '@/lib/settings/permissions';
 import type { ModelFamily, ModelRegistryControlPlaneSnapshot } from '@/lib/experiments/types';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
@@ -8,6 +9,22 @@ export const dynamic = 'force-dynamic';
 
 export default async function ModelRegistryPage() {
     const session = await resolveSessionTenant();
+    const user = session ? (await session.supabase.auth.getUser()).data.user ?? null : null;
+    const role = resolveControlPlaneRole(user, session ? 'session' : 'dev_bypass');
+    const permissionSet = buildControlPlanePermissionSet(role);
+    if (!permissionSet.can_view_governance) {
+        return (
+            <div className="min-h-screen bg-background px-6 py-12 text-foreground">
+                <div className="mx-auto max-w-3xl border border-grid bg-panel p-6">
+                    <div className="font-mono text-sm uppercase tracking-[0.18em] text-danger">Access Denied</div>
+                    <p className="mt-4 font-mono text-xs text-muted">
+                        Governance viewer role required to access the model registry control plane.
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     const tenantId = session?.tenantId ?? resolveDevTenantId();
 
     const initialSnapshot = tenantId

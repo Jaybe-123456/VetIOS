@@ -10,6 +10,8 @@ export const CONTROL_PLANE_ROLE_PERMISSIONS: Record<ControlPlaneUserRole, string
         'manage_infrastructure',
         'run_debug_tools',
         'run_simulations',
+        'view_governance',
+        'view_alerts',
     ],
     developer: [
         'manage_profile',
@@ -41,6 +43,8 @@ export function buildControlPlanePermissionSet(role: ControlPlaneUserRole): Cont
         can_manage_infrastructure: has.has('manage_infrastructure'),
         can_run_debug_tools: has.has('run_debug_tools'),
         can_run_simulations: has.has('run_simulations'),
+        can_view_governance: has.has('view_governance'),
+        can_view_alerts: has.has('view_alerts'),
     };
 }
 
@@ -55,7 +59,7 @@ export function resolveControlPlaneRole(
     if (candidate === 'admin' || candidate === 'researcher' || candidate === 'clinician' || candidate === 'developer') {
         return candidate;
     }
-    return 'developer';
+    return 'clinician';
 }
 
 export function canRoleRunSimulations(role: ControlPlaneUserRole) {

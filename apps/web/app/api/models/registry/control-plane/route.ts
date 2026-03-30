@@ -1,4 +1,10 @@
 import { NextResponse } from 'next/server';
+import {
+    buildForbiddenRouteResponse,
+    buildRouteAuthorizationContext,
+    isRouteAuthorizationGranted,
+    type RouteAuthorizationContext,
+} from '@/lib/auth/authorization';
 import { resolveExperimentApiActor } from '@/lib/auth/internalApi';
 import {
     getModelRegistryControlPlaneSnapshot,
@@ -11,7 +17,7 @@ import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabas
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
-import { getSupabaseServer } from '@/lib/supabaseServer';
+import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
 type RegistryControlPlaneAction =
     | {
@@ -35,9 +41,21 @@ export async function GET(req: Request) {
     }
 
     try {
+        const adminClient = getSupabaseServer();
+        const authContext = await resolveRegistryAuthorizationContext(actor);
+        if (!authContext || !isRouteAuthorizationGranted(authContext, 'view_governance')) {
+            return buildForbiddenRouteResponse({
+                client: adminClient,
+                requestId,
+                context: authContext ?? buildDevBypassAuthorizationContext(),
+                route: 'api/models/registry/control-plane:GET',
+                requirement: 'view_governance',
+            });
+        }
+
         const tenantId = actor?.tenantId ?? process.env.VETIOS_DEV_TENANT_ID ?? 'dev_tenant_001';
         const snapshot = await getModelRegistryControlPlaneSnapshot(
-            createSupabaseExperimentTrackingStore(getSupabaseServer()),
+            createSupabaseExperimentTrackingStore(adminClient),
             tenantId,
             { readOnly: false },
         );
@@ -75,11 +93,28 @@ export async function POST(req: Request) {
     }
 
     try {
+        const adminClient = getSupabaseServer();
+        const authContext = await resolveRegistryAuthorizationContext(actor);
         const tenantId = actor?.tenantId ?? process.env.VETIOS_DEV_TENANT_ID ?? 'dev_tenant_001';
         const action = body.data.action ?? 'verify_control_plane';
+        const requirement = action === 'verify_control_plane' ? 'view_governance' : 'manage_models';
+        if (!authContext || !isRouteAuthorizationGranted(authContext, requirement)) {
+            return buildForbiddenRouteResponse({
+                client: adminClient,
+                requestId,
+                context: authContext ?? buildDevBypassAuthorizationContext(),
+                route: `api/models/registry/control-plane:${action}`,
+                requirement,
+                metadata: {
+                    requested_action: action,
+                    run_id: body.data.run_id ?? null,
+                },
+            });
+        }
+
         if (action === 'refresh_registry') {
             const snapshot = await refreshModelRegistryControlPlaneSnapshot(
-                createSupabaseExperimentTrackingStore(getSupabaseServer()),
+                createSupabaseExperimentTrackingStore(adminClient),
                 tenantId,
             );
             const response = NextResponse.json({
@@ -99,7 +134,7 @@ export async function POST(req: Request) {
             }
 
             const snapshot = await refreshRegistryGovernanceForRun(
-                createSupabaseExperimentTrackingStore(getSupabaseServer()),
+                createSupabaseExperimentTrackingStore(adminClient),
                 tenantId,
                 runId,
                 actor?.userId ?? null,
@@ -119,7 +154,7 @@ export async function POST(req: Request) {
             });
         }
 
-        const store = createSupabaseExperimentTrackingStore(getSupabaseServer());
+        const store = createSupabaseExperimentTrackingStore(adminClient);
         const verification = await verifyModelRegistryControlPlane(store, tenantId);
         const response = NextResponse.json({
             verification,
@@ -145,4 +180,43 @@ export async function POST(req: Request) {
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     }
+}
+
+async function resolveRegistryAuthorizationContext(
+    actor: Awaited<ReturnType<typeof resolveExperimentApiActor>>,
+): Promise<RouteAuthorizationContext | null> {
+    if (actor?.authMode === 'internal_token') {
+        return buildRouteAuthorizationContext({
+            tenantId: actor.tenantId,
+            userId: actor.userId,
+            authMode: 'internal_token',
+            user: null,
+        });
+    }
+
+    const session = await resolveSessionTenant();
+    if (session) {
+        const user = (await session.supabase.auth.getUser()).data.user ?? null;
+        return buildRouteAuthorizationContext({
+            tenantId: actor?.tenantId ?? session.tenantId,
+            userId: actor?.userId ?? session.userId,
+            authMode: 'session',
+            user,
+        });
+    }
+
+    if (process.env.VETIOS_DEV_BYPASS === 'true') {
+        return buildDevBypassAuthorizationContext();
+    }
+
+    return null;
+}
+
+function buildDevBypassAuthorizationContext(): RouteAuthorizationContext {
+    return buildRouteAuthorizationContext({
+        tenantId: process.env.VETIOS_DEV_TENANT_ID ?? 'dev_tenant_001',
+        userId: process.env.VETIOS_DEV_USER_ID ?? null,
+        authMode: 'dev_bypass',
+        user: null,
+    });
 }

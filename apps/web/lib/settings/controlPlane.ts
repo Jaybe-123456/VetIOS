@@ -359,6 +359,43 @@ export async function getDashboardControlPlaneSnapshot(input: {
     };
 }
 
+export function redactControlPlaneSnapshotForPermissions(
+    snapshot: ControlPlaneSnapshot,
+    permissionSet: ControlPlanePermissionSet,
+): ControlPlaneSnapshot {
+    return {
+        ...snapshot,
+        access_security: {
+            ...snapshot.access_security,
+            api_keys: permissionSet.can_manage_api_keys ? snapshot.access_security.api_keys : [],
+        },
+        decision_engine: permissionSet.can_run_debug_tools
+            ? snapshot.decision_engine
+            : {
+                ...snapshot.decision_engine,
+                decisions: [],
+                audit_log: [],
+            },
+        actions: permissionSet.can_run_debug_tools || permissionSet.can_manage_models || permissionSet.can_manage_configuration
+            ? snapshot.actions
+            : [],
+        debug: permissionSet.can_run_debug_tools
+            ? snapshot.debug
+            : {
+                latest_inference_event_id: null,
+                latest_outcome_event_id: null,
+                latest_evaluation_event_id: null,
+                dataset_row_count: 0,
+                orphan_counts: {
+                    inference_events_missing_case_id: 0,
+                    outcome_events_missing_case_id: 0,
+                    simulation_events_missing_case_id: 0,
+                },
+            },
+        telemetry_events: permissionSet.can_run_debug_tools ? snapshot.telemetry_events : [],
+    };
+}
+
 export async function getControlPlaneSimulationMode(
     client: SupabaseClient,
     tenantId: string,

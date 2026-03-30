@@ -27,6 +27,8 @@ export interface ControlPlanePermissionSet {
     can_manage_infrastructure: boolean;
     can_run_debug_tools: boolean;
     can_run_simulations: boolean;
+    can_view_governance: boolean;
+    can_view_alerts: boolean;
 }
 
 export interface ControlPlaneProfile {
