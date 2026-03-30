@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { buildForbiddenRouteResponse, buildRouteAuthorizationContext } from '@/lib/auth/authorization';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { RegistryControlPlaneError } from '@/lib/experiments/service';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -13,6 +14,7 @@ import {
     getControlPlaneSnapshot,
     injectControlPlaneSimulation,
     markControlPlaneAlertResolved,
+    redactControlPlaneSnapshotForPermissions,
     recordControlPlaneAction,
     revokeControlPlaneApiKey,
     runDatasetBackfill,
@@ -108,6 +110,9 @@ export async function GET(req: Request) {
         const actor = resolveRequestActor(session);
         const adminClient = getSupabaseServer();
         const observerHeartbeatTimestamp = new Date().toISOString();
+        const userContext = await resolveUserContext(session);
+        const currentRole = resolveControlPlaneRole(userContext.user, userContext.auth_mode);
+        const permissionSet = buildControlPlanePermissionSet(currentRole);
         let response: NextResponse;
 
         if (view === 'simulation_mode') {
@@ -128,7 +133,6 @@ export async function GET(req: Request) {
                 request_id: requestId,
             });
         } else {
-            const userContext = await resolveUserContext(session);
             const snapshot = await getControlPlaneSnapshot({
                 client: adminClient,
                 tenantId: actor.tenantId,
@@ -139,7 +143,7 @@ export async function GET(req: Request) {
             });
 
             response = NextResponse.json({
-                snapshot,
+                snapshot: redactControlPlaneSnapshotForPermissions(snapshot, permissionSet),
                 request_id: requestId,
             });
         }
@@ -181,6 +185,12 @@ export async function POST(req: Request) {
     const userContext = await resolveUserContext(session);
     const currentRole = resolveControlPlaneRole(userContext.user, userContext.auth_mode);
     const permissionSet = buildControlPlanePermissionSet(currentRole);
+    const authContext = buildRouteAuthorizationContext({
+        tenantId: actor.tenantId,
+        userId: actor.userId,
+        authMode: userContext.auth_mode,
+        user: userContext.user,
+    });
     const observerHeartbeatTimestamp = new Date().toISOString();
 
     try {
@@ -188,16 +198,28 @@ export async function POST(req: Request) {
         let actionResult: Record<string, unknown> = {};
         const accessLevel = classifySettingsControlPlaneActionAccess(payload.action);
         if (accessLevel === 'admin' && currentRole !== 'admin') {
-            return NextResponse.json(
-                { error: 'Admin role required for this control-plane action.', request_id: requestId },
-                { status: 403 },
-            );
+            return buildForbiddenRouteResponse({
+                client: adminClient,
+                requestId,
+                context: authContext,
+                route: `api/settings/control-plane:${payload.action}`,
+                requirement: 'admin',
+                metadata: {
+                    requested_action: payload.action,
+                },
+            });
         }
         if (accessLevel === 'simulation' && !permissionSet.can_run_simulations) {
-            return NextResponse.json(
-                { error: 'Simulation operator role required for this control-plane action.', request_id: requestId },
-                { status: 403 },
-            );
+            return buildForbiddenRouteResponse({
+                client: adminClient,
+                requestId,
+                context: authContext,
+                route: `api/settings/control-plane:${payload.action}`,
+                requirement: 'run_simulations',
+                metadata: {
+                    requested_action: payload.action,
+                },
+            });
         }
 
         if (payload.action === 'update_profile') {
@@ -359,7 +381,7 @@ export async function POST(req: Request) {
 
         const response = NextResponse.json({
             result: actionResult,
-            snapshot,
+            snapshot: redactControlPlaneSnapshotForPermissions(snapshot, permissionSet),
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);

@@ -1,4 +1,9 @@
 import { NextResponse } from 'next/server';
+import {
+    buildForbiddenRouteResponse,
+    buildRouteAuthorizationContext,
+    isRouteAuthorizationGranted,
+} from '@/lib/auth/authorization';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
@@ -18,7 +23,25 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
     }
 
+    const adminClient = getSupabaseServer();
     const actor = resolveRequestActor(session);
+    const user = session ? (await session.supabase.auth.getUser()).data.user ?? null : null;
+    const authContext = buildRouteAuthorizationContext({
+        tenantId: actor.tenantId,
+        userId: actor.userId,
+        authMode: session ? 'session' : 'dev_bypass',
+        user,
+    });
+    if (!isRouteAuthorizationGranted(authContext, 'manage_models')) {
+        return buildForbiddenRouteResponse({
+            client: adminClient,
+            requestId,
+            context: authContext,
+            route: 'api/learning/rollback:POST',
+            requirement: 'manage_models',
+        });
+    }
+
     const body = await safeJson<{
         execute?: boolean;
         reason?: string;
@@ -30,7 +53,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: body.error, request_id: requestId }, { status: 400 });
     }
 
-    const store = createSupabaseLearningEngineStore(getSupabaseServer());
+    const store = createSupabaseLearningEngineStore(adminClient);
     const evaluation = await evaluateRollbackGuard(store, actor.tenantId, {
         calibrationFailure: body.data.calibration_failure,
         adversarialFailure: body.data.adversarial_failure,

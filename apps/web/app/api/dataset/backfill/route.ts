@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
+import {
+    buildForbiddenRouteResponse,
+    buildRouteAuthorizationContext,
+    isRouteAuthorizationGranted,
+} from '@/lib/auth/authorization';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { backfillTenantClinicalCaseLearningState } from '@/lib/clinicalCases/clinicalCaseBackfill';
@@ -20,10 +25,27 @@ export async function POST(req: Request) {
     }
 
     const { tenantId, userId } = resolveRequestActor(session);
+    const adminClient = getSupabaseServer();
+    const user = session ? (await session.supabase.auth.getUser()).data.user ?? null : null;
+    const authContext = buildRouteAuthorizationContext({
+        tenantId,
+        userId,
+        authMode: session ? 'session' : 'dev_bypass',
+        user,
+    });
+    if (!isRouteAuthorizationGranted(authContext, 'run_debug_tools')) {
+        return buildForbiddenRouteResponse({
+            client: adminClient,
+            requestId,
+            context: authContext,
+            route: 'api/dataset/backfill:POST',
+            requirement: 'run_debug_tools',
+        });
+    }
 
     try {
         const result = await backfillTenantClinicalCaseLearningState(
-            getSupabaseServer(),
+            adminClient,
             tenantId,
         );
         const response = NextResponse.json({
