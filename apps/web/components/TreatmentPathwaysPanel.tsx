@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ShieldAlert } from 'lucide-react';
 import { ConsoleCard, TerminalButton, TerminalInput, TerminalLabel, TerminalTextarea } from '@/components/ui/terminal';
 import type {
@@ -39,7 +39,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
         error: '',
     });
 
-    async function loadRecommendations() {
+    const loadRecommendations = useCallback(async () => {
         setLoadState((current) => current.status === 'ready'
             ? { status: 'ready', bundle: current.bundle, message: current.message ?? null }
             : { status: 'loading' });
@@ -71,11 +71,11 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                 message: error instanceof Error ? error.message : 'Failed to load treatment pathways.',
             });
         }
-    }
+    }, [careEnvironment, inferenceEventId, regulatoryRegion, resourceProfile]);
 
     useEffect(() => {
         void loadRecommendations();
-    }, [inferenceEventId]);
+    }, [loadRecommendations]);
 
     const pathwayOptions = useMemo(() => loadState.status === 'ready'
         ? loadState.bundle.options
