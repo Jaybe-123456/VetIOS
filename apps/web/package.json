@@ -8,6 +8,7 @@
         "start": "next start",
         "lint": "next lint",
         "typecheck": "tsc --noEmit",
+        "test:auth-surface": "node scripts/test-auth-surface.cjs",
         "test:access-control": "node scripts/test-access-control.cjs",
         "test:disease-ontology": "node scripts/test-disease-ontology.cjs",
         "test:control-plane-simulation": "node scripts/test-control-plane-simulation.cjs",

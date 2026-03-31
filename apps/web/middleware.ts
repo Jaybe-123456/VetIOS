@@ -7,6 +7,7 @@
  */
 
 import { NextResponse, type NextRequest } from 'next/server';
+import { buildConfiguredAbsoluteUrl, shouldRedirectPreviewAuthHost } from '@/lib/site';
 
 const PUBLIC_ROUTES = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth/callback'];
 
@@ -28,6 +29,13 @@ export async function middleware(request: NextRequest) {
     const pathname = request.nextUrl.pathname;
     const isPublicRoute = PUBLIC_ROUTES.some((route) => pathname.startsWith(route));
     const hasAuthCookie = hasSupabaseAuthCookie(request);
+
+    if (shouldRedirectPreviewAuthHost(request.nextUrl.host, pathname)) {
+        const redirectTarget = buildConfiguredAbsoluteUrl(pathname, request.nextUrl.search);
+        if (redirectTarget) {
+            return NextResponse.redirect(redirectTarget, 307);
+        }
+    }
 
     if (!hasAuthCookie && !isPublicRoute) {
         const loginUrl = request.nextUrl.clone();

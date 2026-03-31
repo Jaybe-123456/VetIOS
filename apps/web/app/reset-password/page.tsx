@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { validatePasswordPolicy } from '@/lib/auth/passwordPolicy';
+import { AuthDomainNotice } from '@/components/auth/AuthDomainNotice';
 import {
     TerminalLabel,
     TerminalInput,
@@ -147,6 +148,8 @@ export default function ResetPasswordPage() {
                         </div>
                     ) : (
                         <div className="space-y-8">
+                            <AuthDomainNotice actionLabel="reset a VetIOS password" />
+
                             <div className="p-4 border border-grid bg-dim/50 space-y-2">
                                 <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
                                     Reset Guidance
