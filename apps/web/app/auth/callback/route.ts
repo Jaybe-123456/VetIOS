@@ -11,11 +11,20 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse, type NextRequest } from 'next/server';
+import { buildConfiguredAbsoluteUrl, sanitizeInternalPath, shouldRedirectPreviewAuthHost } from '@/lib/site';
 
 export async function GET(request: NextRequest) {
-    const { searchParams, origin } = new URL(request.url);
+    const requestUrl = new URL(request.url);
+    const { searchParams, origin } = requestUrl;
     const code = searchParams.get('code');
-    const next = searchParams.get('next') ?? '/inference';
+    const next = sanitizeInternalPath(searchParams.get('next'), '/inference');
+
+    if (shouldRedirectPreviewAuthHost(requestUrl.host, requestUrl.pathname)) {
+        const redirectTarget = buildConfiguredAbsoluteUrl(requestUrl.pathname, requestUrl.search);
+        if (redirectTarget) {
+            return NextResponse.redirect(redirectTarget, 307);
+        }
+    }
 
     if (code) {
         const cookieStore = await cookies();
@@ -44,10 +53,14 @@ export async function GET(request: NextRequest) {
         const { error } = await supabase.auth.exchangeCodeForSession(code);
 
         if (!error) {
-            return NextResponse.redirect(`${origin}${next}`);
+            return NextResponse.redirect(
+                buildConfiguredAbsoluteUrl(next, '', origin) ?? `${origin}${next}`,
+            );
         }
     }
 
     // Auth failed: redirect to login with error
-    return NextResponse.redirect(`${origin}/login?error=auth_failed`);
+    return NextResponse.redirect(
+        buildConfiguredAbsoluteUrl('/login', '?error=auth_failed', origin) ?? `${origin}/login?error=auth_failed`,
+    );
 }

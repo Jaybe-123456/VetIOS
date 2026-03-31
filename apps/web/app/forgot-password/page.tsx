@@ -3,6 +3,8 @@
 import { useState } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
+import { AuthDomainNotice } from '@/components/auth/AuthDomainNotice';
+import { buildClientAuthCallbackUrl } from '@/lib/site';
 import {
     TerminalLabel,
     TerminalInput,
@@ -12,9 +14,7 @@ import {
 } from '@/components/ui/terminal';
 
 function buildResetRedirectUrl(): string {
-    const callbackUrl = new URL('/auth/callback', window.location.origin);
-    callbackUrl.searchParams.set('next', '/reset-password');
-    return callbackUrl.toString();
+    return buildClientAuthCallbackUrl(window.location.origin, '/reset-password');
 }
 
 export default function ForgotPasswordPage() {
@@ -91,6 +91,8 @@ export default function ForgotPasswordPage() {
                         </div>
                     ) : (
                         <div className="space-y-8">
+                            <AuthDomainNotice actionLabel="request a password reset" />
+
                             <div className="p-4 border border-grid bg-dim/50 space-y-2">
                                 <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
                                     Password Recovery Guidance

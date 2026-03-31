@@ -2,13 +2,40 @@ import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import AppShell from '@/components/AppShell';
+import { getConfiguredSiteOrigin, shouldIndexSite } from '@/lib/site';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-geist-mono' });
+const siteOrigin = getConfiguredSiteOrigin();
+const allowIndexing = shouldIndexSite();
 
 export const metadata: Metadata = {
-    title: 'VetIOS Inference Console',
-    description: 'Intelligence infrastructure for veterinary medicine.',
+    metadataBase: siteOrigin ? new URL(siteOrigin) : undefined,
+    applicationName: 'VetIOS',
+    title: {
+        default: 'VetIOS',
+        template: '%s | VetIOS',
+    },
+    description: 'VetIOS clinical intelligence console for veterinary inference, triage, model operations, and outcome learning.',
+    alternates: siteOrigin ? { canonical: '/' } : undefined,
+    referrer: 'origin-when-cross-origin',
+    robots: allowIndexing
+        ? {
+            index: true,
+            follow: true,
+            googleBot: {
+                index: true,
+                follow: true,
+            },
+        }
+        : {
+            index: false,
+            follow: false,
+            googleBot: {
+                index: false,
+                follow: false,
+            },
+        },
 };
 
 export default function RootLayout({

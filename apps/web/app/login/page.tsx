@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
+import { AuthDomainNotice } from '@/components/auth/AuthDomainNotice';
+import { buildClientAuthCallbackUrl } from '@/lib/site';
 import {
     TerminalLabel,
     TerminalInput,
@@ -100,7 +102,7 @@ export default function LoginPage() {
         await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
+                redirectTo: buildClientAuthCallbackUrl(window.location.origin, nextPath),
             },
         });
     }
@@ -130,6 +132,8 @@ export default function LoginPage() {
                         </div>
                     ) : (
                         <div className="space-y-8">
+                            <AuthDomainNotice actionLabel="sign in" />
+
                             <div className="p-4 border border-grid bg-dim/50 space-y-2">
                                 <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
                                     Sign-In Guidance

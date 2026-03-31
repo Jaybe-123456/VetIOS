@@ -1,15 +1,27 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import UserNav from '@/components/UserNav';
 import { Menu, X, TerminalSquare } from 'lucide-react';
+import { isPublicAuthPath } from '@/lib/site';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const pathname = usePathname();
 
     const handleToggle = useCallback(() => setSidebarOpen(prev => !prev), []);
     const handleClose = useCallback(() => setSidebarOpen(false), []);
+    const isAuthSurface = pathname ? isPublicAuthPath(pathname) : false;
+
+    if (isAuthSurface) {
+        return (
+            <div className="flex-1 flex flex-col h-full overflow-auto bg-background">
+                {children}
+            </div>
+        );
+    }
 
     return (
         <>

@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
 import { validatePasswordPolicy } from '@/lib/auth/passwordPolicy';
+import { AuthDomainNotice } from '@/components/auth/AuthDomainNotice';
+import { buildClientAuthCallbackUrl } from '@/lib/site';
 import {
     TerminalLabel,
     TerminalInput,
@@ -48,7 +50,7 @@ export default function SignupPage() {
             email,
             password,
             options: {
-                emailRedirectTo: `${window.location.origin}/auth/callback`,
+                emailRedirectTo: buildClientAuthCallbackUrl(window.location.origin),
             },
         });
 
@@ -69,7 +71,7 @@ export default function SignupPage() {
         await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: `${window.location.origin}/auth/callback`,
+                redirectTo: buildClientAuthCallbackUrl(window.location.origin),
             },
         });
     }
@@ -109,6 +111,8 @@ export default function SignupPage() {
                         </div>
                     ) : (
                         <div className="space-y-8">
+                            <AuthDomainNotice actionLabel="create an account" />
+
                             <div className="p-4 border border-grid bg-dim/50 space-y-2">
                                 <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
                                     Account Setup Guidance
