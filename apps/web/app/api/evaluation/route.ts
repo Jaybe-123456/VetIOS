@@ -12,6 +12,7 @@
 import { NextResponse } from 'next/server';
 import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
 import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
+import { loadTelemetryObservabilitySnapshot } from '@/lib/telemetry/observability';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { EvaluationRequestSchema, formatZodErrors } from '@/lib/http/schemas';
@@ -56,7 +57,10 @@ export async function GET(req: Request) {
         );
     }
 
-    const recent = await getRecentEvaluations(supabase, tenantId, model ?? '', 50);
+    const [recent, observability] = await Promise.all([
+        getRecentEvaluations(supabase, tenantId, model ?? '', 50),
+        loadTelemetryObservabilitySnapshot(supabase, tenantId),
+    ]);
     const errors = recent.map(e => e.calibration_error).filter((e): e is number => e != null);
     const drifts = recent.map(e => e.drift_score).filter((e): e is number => e != null);
 
@@ -68,6 +72,12 @@ export async function GET(req: Request) {
         mean_drift_score: drifts.length > 0
             ? drifts.reduce((a, b) => a + b, 0) / drifts.length
             : null,
+        rolling_top1_accuracy: observability.latest_accuracy?.top1_accuracy ?? null,
+        rolling_top3_accuracy: observability.latest_accuracy?.top3_accuracy ?? null,
+        calibration_gap: observability.latest_accuracy?.calibration_gap ?? null,
+        overconfidence_rate: observability.latest_accuracy?.overconfidence_rate ?? null,
+        abstention_rate: observability.latest_accuracy?.abstention_rate ?? null,
+        recent_failure_events: observability.recent_failures.length,
     };
 
     const response = NextResponse.json({

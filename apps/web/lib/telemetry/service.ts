@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { TELEMETRY_EVENTS } from '@/lib/db/schemaContracts';
+import { loadTelemetryObservabilitySnapshot } from '@/lib/telemetry/observability';
 import type {
     TelemetryChartPoint,
     TelemetryEventRecord,
@@ -17,7 +18,7 @@ export const TELEMETRY_HEARTBEAT_INTERVAL_MS = 15 * 1000;
 const LATENCY_ANOMALY_MS = 5_000;
 const MIN_OUTCOMES_FOR_DRIFT = 2;
 // Bound observer reads so the control plane stays operational on the free tier.
-const MAX_EVENTS_PER_WINDOW = 600;
+const MAX_EVENTS_PER_WINDOW = 240;
 const MAX_LOGS = 16;
 const TELEMETRY_EVENT_SELECT_COLUMNS = [
     TELEMETRY_EVENTS.COLUMNS.event_id,
@@ -125,13 +126,16 @@ export async function getTelemetrySnapshot(
     const C = TELEMETRY_EVENTS.COLUMNS;
     const windowStart = new Date(Date.now() - WINDOW_MS).toISOString();
 
-    const { data, error } = await client
-        .from(TELEMETRY_EVENTS.TABLE)
-        .select(TELEMETRY_EVENT_SELECT_COLUMNS)
-        .eq(C.tenant_id, tenantId)
-        .gte(C.timestamp, windowStart)
-        .order(C.timestamp, { ascending: false })
-        .limit(MAX_EVENTS_PER_WINDOW);
+    const [{ data, error }, observability] = await Promise.all([
+        client
+            .from(TELEMETRY_EVENTS.TABLE)
+            .select(TELEMETRY_EVENT_SELECT_COLUMNS)
+            .eq(C.tenant_id, tenantId)
+            .gte(C.timestamp, windowStart)
+            .order(C.timestamp, { ascending: false })
+            .limit(MAX_EVENTS_PER_WINDOW),
+        loadTelemetryObservabilitySnapshot(client, tenantId),
+    ]);
 
     if (error) {
         throw new Error(`Failed to load telemetry events: ${error.message}`);
@@ -141,7 +145,7 @@ export async function getTelemetrySnapshot(
         .slice()
         .reverse()
         .map(mapTelemetryEventRow);
-    return buildTelemetrySnapshot(events, options);
+    return buildTelemetrySnapshot(events, options, observability);
 }
 
 export function buildTelemetrySnapshotFromEvents(
@@ -343,6 +347,7 @@ function buildTelemetrySnapshot(
         trafficMode?: TelemetryTrafficMode;
         observerHeartbeatTimestamp?: string | null;
     },
+    observability?: Awaited<ReturnType<typeof loadTelemetryObservabilitySnapshot>>,
 ): TelemetrySnapshot {
     const trafficMode = options?.trafficMode === 'simulation' ? 'simulation' : 'production';
     const observerEvents = filterObserverTraffic(events, trafficMode);
@@ -424,6 +429,17 @@ function buildTelemetrySnapshot(
     const driftScore = driftPairs.length >= MIN_OUTCOMES_FOR_DRIFT
         ? computeDriftScore(driftPairs)
         : null;
+    const latestAccuracy = observability?.latest_accuracy ?? null;
+    const recentFailures = observability?.recent_failures ?? [];
+    const latestMemory = observability?.latest_memory ?? null;
+    const bufferState = observability?.buffer_state ?? {
+        buffer_size: 0,
+        log_queue_depth: 0,
+        dropped_events: 0,
+        last_flush_at: null,
+    };
+    const failureCount = recentFailures.length;
+    const nearMissCount = recentFailures.filter((failure) => failure.error_type === 'near_miss').length;
 
     return {
         generated_at: new Date().toISOString(),
@@ -435,15 +451,30 @@ function buildTelemetrySnapshot(
             p95_latency_ms: p95Latency,
             avg_confidence: avgConfidence,
             accuracy,
+            rolling_top1_accuracy: latestAccuracy?.top1_accuracy ?? null,
+            rolling_top3_accuracy: latestAccuracy?.top3_accuracy ?? null,
             drift_score: driftScore,
+            calibration_gap: latestAccuracy?.calibration_gap ?? null,
+            overconfidence_rate: latestAccuracy?.overconfidence_rate ?? null,
+            abstention_rate: latestAccuracy?.abstention_rate ?? null,
+            failure_event_count: failureCount,
+            near_miss_count: nearMissCount,
             outcome_count: outcomeEvents.length,
             anomaly_count: anomalyCount,
+            memory_usage: latestMemory?.memory_usage ?? findLatestSystemMetrics(observerEvents.length > 0 ? observerEvents : events).memory ?? null,
+            buffer_size: bufferState.buffer_size,
+            log_queue_depth: bufferState.log_queue_depth,
         },
         metric_states: {
             p95_latency: latencies.length > 0 ? 'READY' : 'NO_DATA',
             avg_confidence: confidences.length > 0 ? 'READY' : 'NO_DATA',
             accuracy: accuracyPairs.length > 0 ? 'READY' : 'INSUFFICIENT_OUTCOMES',
+            rolling_top1_accuracy: latestAccuracy?.sample_size ? 'READY' : 'INSUFFICIENT_OUTCOMES',
+            rolling_top3_accuracy: latestAccuracy?.sample_size ? 'READY' : 'INSUFFICIENT_OUTCOMES',
             drift_score: driftPairs.length >= MIN_OUTCOMES_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_OUTCOMES',
+            calibration_gap: latestAccuracy?.sample_size ? 'READY' : 'INSUFFICIENT_OUTCOMES',
+            failure_events: failureCount > 0 ? 'READY' : 'NO_DATA',
+            memory: latestMemory?.memory_usage != null ? 'READY' : 'NO_DATA',
         },
         latest_system: findLatestSystemMetrics(observerEvents.length > 0 ? observerEvents : events),
         charts: {
@@ -452,6 +483,18 @@ function buildTelemetrySnapshot(
                 value: numberOrNull(event.metrics.latency_ms) ?? 0,
             })),
             drift: buildDriftTimeline(driftPairs),
+            memory: observability?.memory_timeline ?? [],
+        },
+        observability: {
+            sample_window_size: latestAccuracy?.sample_size ?? 0,
+            disease_performance: observability?.disease_performance ?? [],
+            recent_failures: recentFailures,
+            retention_policy: observability?.retention_policy ?? {
+                hot_storage: 'Raw telemetry reads kept to 24h hot window.',
+                warm_storage: 'No warm aggregate retention policy available.',
+                cold_storage: 'No cold retention policy available.',
+            },
+            buffer: bufferState,
         },
         logs: buildLogs(observerEvents, {
             p95Latency,

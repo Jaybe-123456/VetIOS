@@ -288,6 +288,9 @@ export async function createEvaluationEvent(
     );
 
     const confidence = input.predicted_confidence ?? 0.5;
+    const top3Labels = extractTopDifferentialLabels(input.predicted_output, 3);
+    const actualInTop3 = groundTruth != null && top3Labels.includes(groundTruth);
+    const abstain = Boolean(input.predicted_output && input.predicted_output.abstain_recommendation === true);
     const stratified = stratifyConfidence(confidence, calibrationError, driftScore);
     const calibrationBucket = deriveCalibrationBucket(confidence);
     const conditionClassMatch =
@@ -335,6 +338,10 @@ export async function createEvaluationEvent(
                 prediction,
                 ground_truth: groundTruth,
                 prediction_correct: predictionCorrect,
+                top3_labels: top3Labels,
+                actual_in_top3: actualInTop3,
+                abstain,
+                abstain_reason: textOrNull(input.predicted_output?.abstain_reason),
                 condition_class_match: conditionClassMatch,
                 severity_match: severityMatch,
                 calibration_bucket: calibrationBucket,
@@ -426,6 +433,22 @@ function extractOutcomeLabel(output?: Record<string, unknown>) {
     );
 }
 
+function extractTopDifferentialLabels(output?: Record<string, unknown>, limit: number = 3): string[] {
+    if (!output) return [];
+    const diagnosis = asRecord(output.diagnosis);
+    const topDifferentials = Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials
+        : [];
+    const labels = topDifferentials
+        .map((entry) => normalizeLabel(asRecord(entry).name))
+        .filter((value): value is string => value != null);
+    if (labels.length === 0) {
+        const primary = normalizeLabel(diagnosis.primary_condition_class);
+        return primary ? [primary] : [];
+    }
+    return labels.slice(0, limit);
+}
+
 function normalizeLabel(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.replace(/\s+/g, ' ').trim();
@@ -446,4 +469,8 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function textOrNull(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }

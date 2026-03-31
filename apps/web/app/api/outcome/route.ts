@@ -57,8 +57,11 @@ import {
     telemetryInferenceEventId,
     telemetryOutcomeEventId,
 } from '@/lib/telemetry/service';
+import { recordOutcomeObservability } from '@/lib/telemetry/observability';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { attachRoutingOutcomeFeedback } from '@/lib/routingEngine/service';
+
+const NON_CRITICAL_EFFECT_TIMEOUT_MS = 1_500;
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
@@ -554,6 +557,28 @@ export async function POST(req: Request) {
                     calibration_improvement: pipelineResult.calibration?.calibration_error ?? 0,
                     failure_correction_report: pipelineResult.failure_correction,
                 });
+
+                if (pipelineResult.evaluation) {
+                    await settleNonCriticalEffect(
+                        requestId,
+                        'Observability aggregation',
+                        recordOutcomeObservability(supabase, {
+                            tenantId,
+                            inferenceEventId: body.inference_event_id,
+                            outcomeEventId,
+                            evaluationEventId: pipelineResult.evaluation.evaluation_event_id,
+                            modelVersion: inf.model_version,
+                            observedAt: body.outcome.timestamp,
+                            prediction: pipelineResult.evaluation.prediction,
+                            actual: pipelineResult.evaluation.ground_truth,
+                            confidence: inf.confidence_score,
+                            contradictionScore,
+                            outputPayload: inf.output_payload,
+                            actualOutcome,
+                        }),
+                        { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+                    );
+                }
             }
         } catch (pipelineErr) {
             console.warn(`[${requestId}] Learning Pipeline auto-trigger failed (non-fatal):`, pipelineErr);
@@ -1804,4 +1829,29 @@ function mergeNumericFeatures(...sources: Array<Record<string, number>>): Record
     }
 
     return merged;
+}
+
+async function settleNonCriticalEffect(
+    requestId: string,
+    label: string,
+    effect: Promise<unknown>,
+    options: {
+        timeoutMs?: number;
+    } = {},
+) {
+    try {
+        if (options.timeoutMs && options.timeoutMs > 0) {
+            await Promise.race([
+                effect,
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error(`${label} timed out after ${options.timeoutMs}ms`)), options.timeoutMs),
+                ),
+            ]);
+            return;
+        }
+
+        await effect;
+    } catch (error) {
+        console.error(`[${requestId}] ${label} failed (non-fatal):`, error);
+    }
 }

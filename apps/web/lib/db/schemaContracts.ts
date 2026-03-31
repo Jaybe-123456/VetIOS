@@ -549,6 +549,91 @@ export const CONTROL_PLANE_ALERTS = {
     },
 } as const;
 
+export const ACCURACY_METRICS = {
+    TABLE: 'accuracy_metrics',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        window_id: 'window_id',
+        model_version: 'model_version',
+        top1_accuracy: 'top1_accuracy',
+        top3_accuracy: 'top3_accuracy',
+        calibration_gap: 'calibration_gap',
+        overconfidence_rate: 'overconfidence_rate',
+        abstention_rate: 'abstention_rate',
+        sample_size: 'sample_size',
+        metadata: 'metadata',
+        computed_at: 'computed_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const DISEASE_PERFORMANCE = {
+    TABLE: 'disease_performance',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        window_id: 'window_id',
+        disease_name: 'disease_name',
+        precision: 'precision',
+        recall: 'recall',
+        false_positive_rate: 'false_positive_rate',
+        false_negative_rate: 'false_negative_rate',
+        top1_accuracy: 'top1_accuracy',
+        top3_recall: 'top3_recall',
+        support_n: 'support_n',
+        misclassification_patterns: 'misclassification_patterns',
+        metadata: 'metadata',
+        computed_at: 'computed_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const FAILURE_EVENTS = {
+    TABLE: 'failure_events',
+    COLUMNS: {
+        id: 'id',
+        event_id: 'event_id',
+        tenant_id: 'tenant_id',
+        inference_event_id: 'inference_event_id',
+        outcome_event_id: 'outcome_event_id',
+        evaluation_event_id: 'evaluation_event_id',
+        model_version: 'model_version',
+        predicted: 'predicted',
+        actual: 'actual',
+        error_type: 'error_type',
+        severity: 'severity',
+        failure_classification: 'failure_classification',
+        confidence: 'confidence',
+        contradiction_score: 'contradiction_score',
+        actual_in_top3: 'actual_in_top3',
+        abstained: 'abstained',
+        payload_json: 'payload_json',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const MEMORY_METRICS = {
+    TABLE: 'memory_metrics',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        metric_timestamp: 'metric_timestamp',
+        memory_usage: 'memory_usage',
+        rss_mb: 'rss_mb',
+        heap_used_mb: 'heap_used_mb',
+        heap_total_mb: 'heap_total_mb',
+        external_mb: 'external_mb',
+        buffer_size: 'buffer_size',
+        log_queue_depth: 'log_queue_depth',
+        retention_tier: 'retention_tier',
+        metadata: 'metadata',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const CLINICAL_INTEGRITY_EVENTS = {
     TABLE: 'clinical_integrity_events',
     COLUMNS: {
