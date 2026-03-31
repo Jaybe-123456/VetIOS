@@ -8,6 +8,7 @@ import {
     type WorkflowBenchmarkSnapshot,
     type WorkflowEpisodeDetail,
 } from '@/components/ClinicWorkflowPanel';
+import { TreatmentPathwaysPanel } from '@/components/TreatmentPathwaysPanel';
 import { InferenceForm } from '@/components/InferenceForm';
 import { NormalizedPreview } from '@/components/NormalizedPreview';
 import { normalizeInferenceInput, type InputMode, type NormalizedInput } from '@/lib/input/inputNormalizer';
@@ -732,6 +733,11 @@ export default function InferenceConsole() {
                                     </div>
                                 </ConsoleCard>
                             )}
+
+                            <TreatmentPathwaysPanel
+                                inferenceEventId={state.eventId}
+                                diagnosisLabel={state.probabilities[0]?.label ?? null}
+                            />
                         </div>
                     )}
                 </div>

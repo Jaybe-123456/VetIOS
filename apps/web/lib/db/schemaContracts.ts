@@ -358,6 +358,75 @@ export const EVIDENCE_CARDS = {
     },
 } as const;
 
+export const TREATMENT_CANDIDATES = {
+    TABLE: 'treatment_candidates',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        inference_event_id: 'inference_event_id',
+        case_id: 'case_id',
+        episode_id: 'episode_id',
+        disease: 'disease',
+        diagnosis_confidence: 'diagnosis_confidence',
+        species_applicability: 'species_applicability',
+        treatment_pathway: 'treatment_pathway',
+        treatment_type: 'treatment_type',
+        intervention_json: 'intervention_json',
+        indication_criteria: 'indication_criteria',
+        contraindications: 'contraindications',
+        detected_contraindications: 'detected_contraindications',
+        risk_level: 'risk_level',
+        urgency_level: 'urgency_level',
+        evidence_level: 'evidence_level',
+        environment_constraints: 'environment_constraints',
+        expected_outcome_json: 'expected_outcome_json',
+        uncertainty_json: 'uncertainty_json',
+        risks: 'risks',
+        regulatory_notes: 'regulatory_notes',
+        supporting_signals: 'supporting_signals',
+        rationale: 'rationale',
+        clinician_validation_required: 'clinician_validation_required',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const TREATMENT_EVENTS = {
+    TABLE: 'treatment_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        inference_event_id: 'inference_event_id',
+        case_id: 'case_id',
+        episode_id: 'episode_id',
+        treatment_candidate_id: 'treatment_candidate_id',
+        disease: 'disease',
+        selected_treatment: 'selected_treatment',
+        clinician_override: 'clinician_override',
+        clinician_validation_status: 'clinician_validation_status',
+        context_json: 'context_json',
+        selected_at: 'selected_at',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const TREATMENT_OUTCOMES = {
+    TABLE: 'treatment_outcomes',
+    COLUMNS: {
+        id: 'id',
+        event_id: 'event_id',
+        tenant_id: 'tenant_id',
+        outcome_status: 'outcome_status',
+        recovery_time_days: 'recovery_time_days',
+        complications: 'complications',
+        notes: 'notes',
+        short_term_response: 'short_term_response',
+        outcome_json: 'outcome_json',
+        observed_at: 'observed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const OUTCOME_CALIBRATIONS = {
     TABLE: 'outcome_calibrations',
     COLUMNS: {
