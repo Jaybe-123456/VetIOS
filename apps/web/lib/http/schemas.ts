@@ -192,6 +192,48 @@ export type EpisodeReconcileRequest = z.infer<typeof EpisodeReconcileRequestSche
 /**
  * Format Zod errors into a clean, client-friendly message.
  */
+export const TreatmentRecommendRequestSchema = z.object({
+    inference_event_id: z.uuid(),
+    context: z.object({
+        resource_profile: z.enum(['advanced', 'low_resource']).optional().default('advanced'),
+        regulatory_region: z.string().min(1).optional(),
+        care_environment: z.string().min(1).optional(),
+        comorbidities: z.array(z.string()).optional().default([]),
+        lab_flags: z.array(z.string()).optional().default([]),
+    }).optional().default({
+        resource_profile: 'advanced',
+        comorbidities: [],
+        lab_flags: [],
+    }),
+});
+
+export type TreatmentRecommendRequest = z.infer<typeof TreatmentRecommendRequestSchema>;
+
+export const TreatmentOutcomeRequestSchema = z.object({
+    inference_event_id: z.uuid(),
+    treatment_candidate_id: z.uuid().optional(),
+    treatment_event_id: z.uuid().optional(),
+    selection: z.object({
+        disease: z.string().min(1),
+        treatment_pathway: z.enum(['gold_standard', 'resource_constrained', 'supportive_only']),
+        clinician_confirmed: z.boolean(),
+        clinician_override: z.boolean().optional().default(false),
+        actual_intervention: z.record(z.string(), z.unknown()).optional().default({}),
+        context: z.record(z.string(), z.unknown()).optional().default({}),
+    }),
+    outcome: z.object({
+        outcome_status: z.enum(['planned', 'ongoing', 'improved', 'resolved', 'complication', 'deteriorated', 'deceased', 'unknown']),
+        recovery_time_days: z.number().min(0).optional(),
+        complications: z.array(z.string()).optional().default([]),
+        notes: z.string().optional(),
+        short_term_response: z.string().optional(),
+        observed_at: z.string().optional(),
+        outcome_json: z.record(z.string(), z.unknown()).optional().default({}),
+    }).optional(),
+});
+
+export type TreatmentOutcomeRequest = z.infer<typeof TreatmentOutcomeRequestSchema>;
+
 export function formatZodErrors(error: z.ZodError): string {
     return error.issues
         .map((issue) => {
