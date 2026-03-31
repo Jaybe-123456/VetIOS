@@ -38,6 +38,7 @@ import {
     resolveTelemetryRunId,
     telemetryInferenceEventId,
 } from '@/lib/telemetry/service';
+import { recordInferenceObservability } from '@/lib/telemetry/observability';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { evaluateClinicalIntegrity } from '@/lib/integrity/clinicalIntegrityEngine';
 import {
@@ -385,6 +386,23 @@ export async function POST(req: Request) {
                         },
                     }),
                 ]),
+                { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+            ),
+            settleNonCriticalEffect(
+                requestId,
+                'Observability aggregation',
+                recordInferenceObservability(supabase, {
+                    tenantId,
+                    inferenceEventId: persistedInferenceEventId,
+                    modelVersion: routedModel.model_version,
+                    observedAt,
+                    outputPayload: inferenceResult.output_payload,
+                    confidenceScore: inferenceResult.confidence_score,
+                    contradictionScore:
+                        typeof contradictionAnalysis.contradiction_score === 'number'
+                            ? contradictionAnalysis.contradiction_score
+                            : null,
+                }),
                 { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
             ),
             settleNonCriticalEffect(

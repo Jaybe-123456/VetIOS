@@ -130,7 +130,7 @@ export default function TelemetryObserverPage() {
         <Container>
             <PageHeader
                 title="TELEMETRY OBSERVER"
-                description="Real-time clinical telemetry, event streaming, drift monitoring, and observer health."
+                description="Real-time clinical telemetry, rolling accuracy, failure tracking, and observer health."
             />
 
             <div className="flex flex-col gap-3 mb-4 sm:mb-6">
@@ -181,7 +181,7 @@ export default function TelemetryObserverPage() {
                 )}
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-7 gap-3 sm:gap-4 mb-6 sm:mb-8">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6 gap-3 sm:gap-4 mb-6 sm:mb-8">
                 <MetricCard
                     label="Inferences (24h)"
                     value={formatCount(snapshot?.metrics.inference_count, disconnectedWithoutData)}
@@ -199,10 +199,20 @@ export default function TelemetryObserverPage() {
                     tone={(snapshot?.metrics.avg_confidence ?? 1) < 0.6 ? 'danger' : 'accent'}
                 />
                 <MetricCard
-                    label="Accuracy"
+                    label="Raw Accuracy"
                     value={formatPercentMetric(snapshot?.metrics.accuracy, snapshot?.metric_states.accuracy, streamStatus)}
                     tone="accent"
                     icon={snapshot?.metric_states.accuracy === 'READY' ? <CheckCircle2 className="w-3 h-3 text-accent" /> : undefined}
+                />
+                <MetricCard
+                    label="Rolling Top-1"
+                    value={formatPercentMetric(snapshot?.metrics.rolling_top1_accuracy, snapshot?.metric_states.rolling_top1_accuracy, streamStatus)}
+                    tone={(snapshot?.metrics.rolling_top1_accuracy ?? 1) < 0.75 ? 'danger' : 'accent'}
+                />
+                <MetricCard
+                    label="Rolling Top-3"
+                    value={formatPercentMetric(snapshot?.metrics.rolling_top3_accuracy, snapshot?.metric_states.rolling_top3_accuracy, streamStatus)}
+                    tone={(snapshot?.metrics.rolling_top3_accuracy ?? 1) < 0.9 ? 'danger' : 'accent'}
                 />
                 <MetricCard
                     label="Drift Score"
@@ -211,14 +221,44 @@ export default function TelemetryObserverPage() {
                     icon={snapshot?.metric_states.drift_score === 'READY' && (snapshot.metrics.drift_score ?? 0) > 0.2 ? <AlertTriangle className="w-3 h-3 text-danger" /> : undefined}
                 />
                 <MetricCard
+                    label="Calibration Gap"
+                    value={formatPercentMetric(snapshot?.metrics.calibration_gap, snapshot?.metric_states.calibration_gap, streamStatus)}
+                    tone={(snapshot?.metrics.calibration_gap ?? 0) > 0.15 ? 'danger' : 'accent'}
+                />
+                <MetricCard
+                    label="Abstention Rate"
+                    value={formatPercentMetric(snapshot?.metrics.abstention_rate, snapshot?.metric_states.rolling_top1_accuracy, streamStatus)}
+                    tone={(snapshot?.metrics.abstention_rate ?? 0) > 0.12 ? 'danger' : 'accent'}
+                />
+                <MetricCard
                     label="Outcomes (24h)"
                     value={formatCount(snapshot?.metrics.outcome_count, disconnectedWithoutData)}
                     tone="accent"
                 />
                 <MetricCard
+                    label="Failure Events"
+                    value={formatCount(snapshot?.metrics.failure_event_count, disconnectedWithoutData)}
+                    tone={(snapshot?.metrics.failure_event_count ?? 0) > 0 ? 'danger' : 'muted'}
+                />
+                <MetricCard
+                    label="Near Misses"
+                    value={formatCount(snapshot?.metrics.near_miss_count, disconnectedWithoutData)}
+                    tone={(snapshot?.metrics.near_miss_count ?? 0) > 0 ? 'danger' : 'muted'}
+                />
+                <MetricCard
                     label="Latency Anomalies"
                     value={formatCount(snapshot?.metrics.anomaly_count, disconnectedWithoutData)}
                     tone={snapshot?.metrics.anomaly_count ? 'danger' : 'muted'}
+                />
+                <MetricCard
+                    label="Memory Usage"
+                    value={formatPercentMetric(snapshot?.metrics.memory_usage, snapshot?.metric_states.memory, streamStatus)}
+                    tone={(snapshot?.metrics.memory_usage ?? 0) > 0.8 ? 'danger' : 'accent'}
+                />
+                <MetricCard
+                    label="Buffer Depth"
+                    value={formatCount(snapshot?.metrics.buffer_size, disconnectedWithoutData)}
+                    tone={(snapshot?.metrics.buffer_size ?? 0) > 100 ? 'danger' : 'muted'}
                 />
             </div>
 
@@ -269,9 +309,78 @@ export default function TelemetryObserverPage() {
                             value={formatUtilization(snapshot?.latest_system.memory, streamStatus)}
                         />
                         <DataRow
+                            label="Observer Memory"
+                            value={formatPercentMetric(snapshot?.metrics.memory_usage, snapshot?.metric_states.memory, streamStatus)}
+                        />
+                        <DataRow
+                            label="Buffer Size"
+                            value={snapshot ? String(snapshot.observability.buffer.buffer_size) : stateForMissingSnapshot(streamStatus)}
+                        />
+                        <DataRow
+                            label="Queue Depth"
+                            value={snapshot ? String(snapshot.observability.buffer.log_queue_depth) : stateForMissingSnapshot(streamStatus)}
+                        />
+                        <DataRow
                             label="Simulation"
                             value={simulationMode ? 'ENABLED' : 'DISABLED'}
                         />
+                    </div>
+                </ConsoleCard>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 sm:gap-6 mb-4 sm:mb-6">
+                <ConsoleCard title="Memory Pressure Trend" className="h-[240px] sm:h-[280px]" collapsible>
+                    {snapshot && snapshot.charts.memory.length > 0 ? (
+                        <div className="flex-1 -mx-2 sm:-mx-4 h-full">
+                            <TelemetryChart data={snapshot.charts.memory} color="#ffaa00" />
+                        </div>
+                    ) : (
+                        <EmptyChartState message="NO MEMORY SERIES YET" />
+                    )}
+                </ConsoleCard>
+
+                <ConsoleCard title="Disease Performance" collapsible>
+                    <div className="space-y-2 font-mono text-xs">
+                        {snapshot && snapshot.observability.disease_performance.length > 0 ? (
+                            snapshot.observability.disease_performance.slice(0, 6).map((row) => (
+                                <div key={row.disease_name} className="border border-grid/60 p-2 space-y-1">
+                                    <div className="flex items-center justify-between gap-3">
+                                        <span className="text-accent truncate">{row.disease_name}</span>
+                                        <span className="text-muted">n={row.support_n}</span>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 text-[10px] text-muted">
+                                        <span>PREC {formatInlinePercent(row.precision)}</span>
+                                        <span>REC {formatInlinePercent(row.recall)}</span>
+                                        <span>TOP1 {formatInlinePercent(row.top1_accuracy)}</span>
+                                        <span>TOP3 {formatInlinePercent(row.top3_recall)}</span>
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="text-muted/50">NO DISEASE PERFORMANCE SNAPSHOT</div>
+                        )}
+                    </div>
+                </ConsoleCard>
+
+                <ConsoleCard title="Failure Telemetry" collapsible>
+                    <div className="space-y-2 font-mono text-xs">
+                        {snapshot && snapshot.observability.recent_failures.length > 0 ? (
+                            snapshot.observability.recent_failures.map((failure) => (
+                                <div key={failure.id} className="border border-grid/60 p-2">
+                                    <div className={`text-[10px] uppercase ${failure.severity === 'critical' ? 'text-danger' : failure.severity === 'warning' ? 'text-[#ffcc00]' : 'text-muted'}`}>
+                                        {failure.error_type.replace(/_/g, ' ')} / {failure.failure_classification.replace(/_/g, ' ')}
+                                    </div>
+                                    <div className="text-muted mt-1 truncate">
+                                        {failure.predicted ?? 'ABSTAIN'} {'->'} {failure.actual ?? 'OUTCOME PENDING'}
+                                    </div>
+                                    <div className="text-[10px] text-muted/70 mt-1">
+                                        conf={formatInlinePercent(failure.confidence)} top3={failure.actual_in_top3 ? 'yes' : 'no'} abstain={failure.abstained ? 'yes' : 'no'}
+                                    </div>
+                                </div>
+                            ))
+                        ) : (
+                            <div className="text-muted/50">NO FAILURE EVENTS</div>
+                        )}
                     </div>
                 </ConsoleCard>
             </div>
@@ -414,6 +523,13 @@ function formatPercentMetric(
         return `${(value * 100).toFixed(1)}%`;
     }
     return formatMetricState(state, streamStatus);
+}
+
+function formatInlinePercent(value: number | null | undefined) {
+    if (value == null) {
+        return 'NO DATA';
+    }
+    return `${(value * 100).toFixed(1)}%`;
 }
 
 function formatDriftMetric(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
