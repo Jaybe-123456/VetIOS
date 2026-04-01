@@ -10,7 +10,8 @@
  */
 
 import { NextResponse } from 'next/server';
-import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
 import { loadTelemetryObservabilitySnapshot } from '@/lib/telemetry/observability';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -23,21 +24,23 @@ export async function GET(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    const session = await resolveSessionTenant();
-    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['evaluation:read'],
+    });
+    if (auth.error || !auth.actor) {
         return NextResponse.json(
-            { error: 'Unauthorized', request_id: requestId },
-            { status: 401 }
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 }
         );
     }
-    const tenantId = session?.tenantId || 'dev_tenant_001';
+    const tenantId = auth.actor.tenantId;
 
     const url = new URL(req.url);
     const model = url.searchParams.get('model');
     const limit = parseInt(url.searchParams.get('limit') ?? '20', 10);
     const trigger = url.searchParams.get('trigger');
-
-    const supabase = getSupabaseServer();
 
     let query = supabase
         .from('model_evaluation_events')
@@ -94,14 +97,18 @@ export async function POST(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    const session = await resolveSessionTenant();
-    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['evaluation:write'],
+    });
+    if (auth.error || !auth.actor) {
         return NextResponse.json(
-            { error: 'Unauthorized', request_id: requestId },
-            { status: 401 }
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 }
         );
     }
-    const tenantId = session?.tenantId || 'dev_tenant_001';
+    const tenantId = auth.actor.tenantId;
 
     const parsed = await safeJson(req);
     if (!parsed.ok) {
@@ -121,7 +128,6 @@ export async function POST(req: Request) {
     const body = result.data;
 
     try {
-        const supabase = getSupabaseServer();
         const recentEvals = await getRecentEvaluations(
             supabase, tenantId, body.model_name, 20,
         );

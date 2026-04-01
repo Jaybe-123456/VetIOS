@@ -1,7 +1,8 @@
 /**
  * API Guard — rate limiting + request size enforcement.
  *
- * In-memory sliding-window rate limiter keyed by IP address.
+ * In-memory sliding-window rate limiter keyed by API credential when present,
+ * otherwise by IP address.
  * For production scale, migrate to @upstash/ratelimit + Vercel KV.
  *
  * Usage in route handlers:
@@ -10,6 +11,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { createHash } from 'crypto';
 import { getRequestId } from './requestId';
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -101,12 +103,7 @@ export async function apiGuard(
     const startTime = Date.now();
 
     // ── Rate limit check ──
-    const ip =
-        req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-        req.headers.get('x-real-ip') ||
-        'unknown';
-
-    const rateLimitKey = `${ip}:${new URL(req.url).pathname}`;
+    const rateLimitKey = `${resolveRateLimitIdentity(req)}:${new URL(req.url).pathname}`;
     const rateResult = checkRateLimit(rateLimitKey, maxRequests, windowMs);
 
     if (!rateResult.allowed) {
@@ -140,4 +137,28 @@ export async function apiGuard(
     }
 
     return { blocked: false, response: null, requestId, startTime };
+}
+
+function resolveRateLimitIdentity(req: Request): string {
+    const apiKey =
+        req.headers.get('x-vetios-api-key')?.trim() ||
+        extractBearerToken(req.headers.get('authorization')) ||
+        req.headers.get('x-vetios-connector-key')?.trim() ||
+        null;
+
+    if (apiKey && apiKey.length > 12) {
+        return `api:${createHash('sha256').update(apiKey).digest('hex').slice(0, 16)}`;
+    }
+
+    const ip =
+        req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+        req.headers.get('x-real-ip') ||
+        'unknown';
+
+    return `ip:${ip}`;
+}
+
+function extractBearerToken(authorization: string | null): string | null {
+    const match = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
+    return match && match.length > 0 ? match : null;
 }

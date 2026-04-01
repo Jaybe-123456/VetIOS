@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { resolveRequestActor } from '@/lib/auth/requestActor';
+import {
+    resolveClinicalApiActor,
+    validateConnectorInstallationAccess,
+} from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import {
@@ -12,7 +15,7 @@ import {
     createOutcomeNetworkRepository,
     reconcileEpisodeMembership,
 } from '@/lib/outcomeNetwork/service';
-import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,12 +25,19 @@ export async function POST(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    const session = await resolveSessionTenant();
-    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
-        return NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['signals:ingest'],
+    });
+    if (auth.error || !auth.actor) {
+        return NextResponse.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 },
+        );
     }
 
-    const actor = resolveRequestActor(session);
+    const actor = auth.actor;
     const parsed = await safeJson(req);
     if (!parsed.ok) {
         return NextResponse.json({ error: parsed.error, request_id: requestId }, { status: 400 });
@@ -39,9 +49,23 @@ export async function POST(req: Request) {
     }
 
     const body = result.data;
+    if (body.signal.source) {
+        const connectorAccess = validateConnectorInstallationAccess({
+            actor,
+            connectorType: body.signal.source.source_type,
+            vendorName: body.signal.source.vendor_name ?? null,
+            vendorAccountRef: body.signal.source.vendor_account_ref ?? null,
+        });
+        if (!connectorAccess.ok) {
+            return NextResponse.json(
+                { error: connectorAccess.message, request_id: requestId },
+                { status: connectorAccess.status },
+            );
+        }
+    }
 
     try {
-        const repo = createOutcomeNetworkRepository(getSupabaseServer());
+        const repo = createOutcomeNetworkRepository(supabase);
         let sourceId = body.signal.source_id ?? null;
         if (!sourceId && body.signal.source) {
             const existingSource = await repo.findSignalSource(

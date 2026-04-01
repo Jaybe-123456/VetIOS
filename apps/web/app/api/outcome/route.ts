@@ -13,8 +13,8 @@
 
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
-import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
-import { resolveRequestActor } from '@/lib/auth/requestActor';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 import { logOutcome } from '@/lib/logging/outcomeLogger';
 import { createEvaluationEvent, getRecentEvaluations } from '@/lib/evaluation/evaluationEngine';
 import { logOutcomeCalibration } from '@/lib/evaluation/calibrationEngine';
@@ -68,14 +68,18 @@ export async function POST(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    const session = await resolveSessionTenant();
-    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['outcome:write'],
+    });
+    if (auth.error || !auth.actor) {
         return NextResponse.json(
-            { error: 'Unauthorized', request_id: requestId },
-            { status: 401 },
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 },
         );
     }
-    const { tenantId, userId } = resolveRequestActor(session);
+    const { tenantId, userId } = auth.actor;
 
     const idempotencyKey = req.headers.get('x-idempotency-key');
 
@@ -97,8 +101,6 @@ export async function POST(req: Request) {
     const body = result.data;
 
     try {
-        const supabase = getSupabaseServer();
-
         if (idempotencyKey) {
             const { data: existing } = await supabase
                 .from('clinical_outcome_events')

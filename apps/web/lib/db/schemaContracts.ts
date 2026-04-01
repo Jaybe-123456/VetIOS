@@ -763,6 +763,63 @@ export const CONTROL_PLANE_API_KEYS = {
     },
 } as const;
 
+export const SERVICE_ACCOUNTS = {
+    TABLE: 'service_accounts',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        name: 'name',
+        description: 'description',
+        status: 'status',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        last_used_at: 'last_used_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const CONNECTOR_INSTALLATIONS = {
+    TABLE: 'connector_installations',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        installation_name: 'installation_name',
+        connector_type: 'connector_type',
+        vendor_name: 'vendor_name',
+        vendor_account_ref: 'vendor_account_ref',
+        status: 'status',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        last_used_at: 'last_used_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const API_CREDENTIALS = {
+    TABLE: 'api_credentials',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        principal_type: 'principal_type',
+        service_account_id: 'service_account_id',
+        connector_installation_id: 'connector_installation_id',
+        label: 'label',
+        key_prefix: 'key_prefix',
+        key_hash: 'key_hash',
+        scopes: 'scopes',
+        status: 'status',
+        expires_at: 'expires_at',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        revoked_by: 'revoked_by',
+        last_used_at: 'last_used_at',
+        created_at: 'created_at',
+        revoked_at: 'revoked_at',
+    },
+} as const;
+
 export const CONTROL_PLANE_ACTION_LOG = {
     TABLE: 'control_plane_action_log',
     COLUMNS: {

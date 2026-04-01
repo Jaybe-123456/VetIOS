@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
+import {
+    resolveClinicalApiActor,
+    validateConnectorInstallationAccess,
+} from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import {
     PassiveConnectorIngestRequestSchema,
@@ -12,7 +16,7 @@ import {
     reconcileEpisodeMembership,
 } from '@/lib/outcomeNetwork/service';
 import { normalizePassiveConnectorPayload } from '@/lib/outcomeNetwork/passiveConnectors';
-import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +25,7 @@ export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
+    const supabase = getSupabaseServer();
 
     const parsed = await safeJson(req);
     if (!parsed.ok) {
@@ -33,18 +38,39 @@ export async function POST(req: Request) {
     }
 
     const body = result.data;
-    const session = await resolveSessionTenant();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['signals:connect'],
+    });
     const connectorKey = req.headers.get('x-vetios-connector-key');
     const expectedConnectorKey = process.env.PASSIVE_CONNECTOR_INGEST_KEY?.trim() ?? '';
-    const hasConnectorAccess = expectedConnectorKey.length > 0 && connectorKey === expectedConnectorKey;
+    const hasLegacyConnectorAccess = expectedConnectorKey.length > 0 && connectorKey === expectedConnectorKey;
 
-    const tenantId = session?.tenantId
+    const tenantId = auth.actor?.tenantId
         ?? body.connector.tenant_id
         ?? process.env.VETIOS_DEV_TENANT_ID
         ?? null;
 
-    if (!tenantId || (!session && !hasConnectorAccess && process.env.VETIOS_DEV_BYPASS !== 'true')) {
-        return NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
+    if (!tenantId || (!auth.actor && !hasLegacyConnectorAccess)) {
+        return NextResponse.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 },
+        );
+    }
+
+    if (auth.actor) {
+        const connectorAccess = validateConnectorInstallationAccess({
+            actor: auth.actor,
+            connectorType: body.connector.connector_type,
+            vendorName: body.connector.vendor_name ?? null,
+            vendorAccountRef: body.connector.vendor_account_ref ?? null,
+        });
+        if (!connectorAccess.ok) {
+            return NextResponse.json(
+                { error: connectorAccess.message, request_id: requestId },
+                { status: connectorAccess.status },
+            );
+        }
     }
 
     try {
@@ -55,7 +81,7 @@ export async function POST(req: Request) {
             observedAt: body.connector.observed_at ?? null,
             payload: body.connector.payload,
         });
-        const repo = createOutcomeNetworkRepository(getSupabaseServer());
+        const repo = createOutcomeNetworkRepository(supabase);
 
         let sourceId: string | null = null;
         const existingSource = await repo.findSignalSource(

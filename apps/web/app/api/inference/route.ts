@@ -7,8 +7,8 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
-import { resolveSessionTenant, getSupabaseServer } from '@/lib/supabaseServer';
-import { resolveRequestActor } from '@/lib/auth/requestActor';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import {
@@ -62,14 +62,18 @@ export async function POST(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    const session = await resolveSessionTenant();
-    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['inference:write'],
+    });
+    if (auth.error || !auth.actor) {
         return NextResponse.json(
-            { error: 'Unauthorized', request_id: requestId },
-            { status: 401 },
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 },
         );
     }
-    const { tenantId, userId } = resolveRequestActor(session);
+    const { tenantId, userId } = auth.actor;
 
     const parsed = await safeJson(req);
     if (!parsed.ok) {
@@ -116,7 +120,6 @@ export async function POST(req: Request) {
     let routingPlan: Awaited<ReturnType<typeof planModelRoute>> | null = null;
 
     try {
-        const supabase = getSupabaseServer();
         routingPlan = await planModelRoute({
             client: supabase,
             tenantId,
@@ -477,7 +480,6 @@ export async function POST(req: Request) {
         console.error(`[${requestId}] POST /api/inference Error:`, err);
         if (routingPlan) {
             try {
-                const supabase = getSupabaseServer();
                 await failRoutingDecisionRecord(
                     supabase,
                     routingPlan.routing_decision_id,
