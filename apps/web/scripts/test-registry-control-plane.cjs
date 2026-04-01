@@ -531,6 +531,10 @@ function assert(condition, message) {
     }
 }
 
+function hasBlockerPrefix(blockers, prefix) {
+    return blockers.some((blocker) => blocker.startsWith(prefix));
+}
+
 async function runScenario(name, buildScenario, verifyScenario, getSnapshot) {
     const scenario = buildScenario();
     const store = createStore(scenario);
@@ -786,8 +790,8 @@ async function main() {
             const family = snapshot.families.find((entry) => entry.model_family === 'diagnostics');
             const championEntry = family?.entries.find((entry) => entry.registry.registry_id === 'reg_live_clear_v1');
             const blockers = championEntry?.promotion_gating.blockers ?? [];
-            assert(!blockers.includes('Adversarial gate has not passed.'), 'Expected adversarial warning to clear once adversarial metrics pass.');
-            assert(!blockers.includes('Clinical safety evaluation is still pending.'), 'Expected clinical safety pending warning to clear once full safety telemetry exists.');
+            assert(!hasBlockerPrefix(blockers, 'Adversarial gate has not passed.'), 'Expected adversarial warning to clear once adversarial metrics pass.');
+            assert(!hasBlockerPrefix(blockers, 'Clinical safety evaluation is still pending.'), 'Expected clinical safety pending warning to clear once full safety telemetry exists.');
             assert(championEntry?.promotion_gating.gates.adversarial === 'pass', 'Expected adversarial gate to pass with passing adversarial metrics.');
             assert(championEntry?.promotion_gating.gates.safety === 'pass', 'Expected safety gate to pass with full safety telemetry.');
         },
@@ -855,8 +859,8 @@ async function main() {
             const family = snapshot.families.find((entry) => entry.model_family === 'diagnostics');
             const championEntry = family?.entries.find((entry) => entry.registry.registry_id === 'reg_live_blocked_v1');
             const blockers = championEntry?.promotion_gating.blockers ?? [];
-            assert(blockers.includes('Adversarial gate has not passed.'), 'Expected adversarial warning to remain when adversarial metrics fail.');
-            assert(blockers.includes('Clinical safety evaluation is still pending.'), 'Expected clinical safety pending warning to remain with partial safety telemetry.');
+            assert(hasBlockerPrefix(blockers, 'Adversarial gate has not passed.'), 'Expected adversarial warning to remain when adversarial metrics fail.');
+            assert(hasBlockerPrefix(blockers, 'Clinical safety evaluation is still pending.'), 'Expected clinical safety pending warning to remain with partial safety telemetry.');
             assert(championEntry?.promotion_gating.gates.adversarial === 'fail', 'Expected adversarial gate to fail with failing adversarial metrics.');
             assert(championEntry?.promotion_gating.gates.safety === 'pending', 'Expected safety gate to stay pending without full safety telemetry.');
         },
@@ -946,14 +950,14 @@ async function main() {
             const beforeFamily = before.families.find((entry) => entry.model_family === 'diagnostics');
             const beforeEntry = beforeFamily?.entries.find((entry) => entry.registry.registry_id === 'reg_refresh_governance_v1');
             const beforeBlockers = beforeEntry?.promotion_gating.blockers ?? [];
-            assert(beforeBlockers.includes('Adversarial gate has not passed.'), 'Expected stale adversarial blocker before targeted governance refresh.');
-            assert(beforeBlockers.includes('Clinical safety evaluation is still pending.'), 'Expected safety pending blocker before targeted governance refresh.');
+            assert(hasBlockerPrefix(beforeBlockers, 'Adversarial gate has not passed.'), 'Expected stale adversarial blocker before targeted governance refresh.');
+            assert(hasBlockerPrefix(beforeBlockers, 'Clinical safety evaluation is still pending.'), 'Expected safety pending blocker before targeted governance refresh.');
 
             const afterFamily = after.families.find((entry) => entry.model_family === 'diagnostics');
             const afterEntry = afterFamily?.entries.find((entry) => entry.registry.registry_id === 'reg_refresh_governance_v1');
             const afterBlockers = afterEntry?.promotion_gating.blockers ?? [];
-            assert(!afterBlockers.includes('Adversarial gate has not passed.'), 'Expected targeted governance refresh to clear stale adversarial blocker.');
-            assert(!afterBlockers.includes('Clinical safety evaluation is still pending.'), 'Expected targeted governance refresh to clear stale safety pending blocker.');
+            assert(!hasBlockerPrefix(afterBlockers, 'Adversarial gate has not passed.'), 'Expected targeted governance refresh to clear stale adversarial blocker.');
+            assert(!hasBlockerPrefix(afterBlockers, 'Clinical safety evaluation is still pending.'), 'Expected targeted governance refresh to clear stale safety pending blocker.');
             assert(afterEntry?.promotion_gating.gates.adversarial === 'pass', 'Expected adversarial gate to pass after targeted governance refresh.');
             assert(afterEntry?.promotion_gating.gates.safety === 'pass', 'Expected safety gate to pass after targeted governance refresh.');
         },
