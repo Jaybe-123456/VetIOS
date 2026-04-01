@@ -4,6 +4,7 @@ import {
     resolveClinicalApiActor,
     validateConnectorInstallationAccess,
 } from '@/lib/auth/machineAuth';
+import { enqueueOutboxEvent } from '@/lib/eventPlane/outbox';
 import { apiGuard } from '@/lib/http/apiGuard';
 import {
     PassiveConnectorIngestRequestSchema,
@@ -126,29 +127,72 @@ export async function POST(req: Request) {
         }
 
         let episode = null;
+        let reconcileQueued = false;
         let reconcileError: string | null = null;
+        let outboxEventId: string | null = null;
         if (body.connector.auto_reconcile !== false) {
-            try {
-                const reconcile = await reconcileEpisodeMembership(repo, {
-                    tenantId,
-                    clinicId: body.connector.clinic_id ?? null,
-                    patientId: body.connector.patient_id ?? null,
-                    encounterId: body.connector.encounter_id ?? null,
-                    caseId: body.connector.case_id ?? null,
-                    signalEventId: signalEvent.id,
-                    episodeId: body.connector.episode_id ?? null,
-                    primaryConditionClass: normalized.primaryConditionClass,
-                    observedAt: normalized.observedAt,
-                    status: normalized.episodeStatus,
-                    outcomeState: normalized.outcomeState,
-                    resolvedAt: normalized.resolvedAt,
-                    summaryPatch: normalized.summaryPatch,
-                });
-                episode = reconcile.episode;
-            } catch (error) {
-                reconcileError = error instanceof Error
-                    ? error.message
-                    : 'Failed to attach passive connector signal to episode.';
+            const deferReconcile = shouldDeferSignalReconcile(auth.actor?.authMode ?? null, req, hasLegacyConnectorAccess);
+            if (deferReconcile) {
+                if (signalEvent.episode_id) {
+                    episode = await repo.findEpisodeById(tenantId, signalEvent.episode_id);
+                }
+
+                if (signalEvent.ingestion_status !== 'attached') {
+                    signalEvent = await repo.updateSignal(tenantId, signalEvent.id, {
+                        ingestion_status: 'queued',
+                    });
+                    const queued = await enqueueOutboxEvent(supabase, {
+                        tenantId,
+                        topic: 'passive_signal.reconcile_requested',
+                        handlerKey: 'passive_signal_reconcile',
+                        idempotencyKey: `signal-reconcile:${signalEvent.id}`,
+                        payload: {
+                            signal_event_id: signalEvent.id,
+                            clinic_id: body.connector.clinic_id ?? null,
+                            patient_id: body.connector.patient_id ?? null,
+                            encounter_id: body.connector.encounter_id ?? null,
+                            case_id: body.connector.case_id ?? null,
+                            episode_id: body.connector.episode_id ?? null,
+                            primary_condition_class: normalized.primaryConditionClass,
+                            observed_at: normalized.observedAt,
+                            status: normalized.episodeStatus,
+                            outcome_state: normalized.outcomeState,
+                            resolved_at: normalized.resolvedAt,
+                            summary_patch: normalized.summaryPatch,
+                        },
+                        metadata: {
+                            source_module: 'api/signals/connect',
+                            connector_type: body.connector.connector_type,
+                            vendor_name: body.connector.vendor_name ?? null,
+                            vendor_account_ref: body.connector.vendor_account_ref ?? null,
+                        },
+                    });
+                    outboxEventId = queued.event.id;
+                    reconcileQueued = true;
+                }
+            } else {
+                try {
+                    const reconcile = await reconcileEpisodeMembership(repo, {
+                        tenantId,
+                        clinicId: body.connector.clinic_id ?? null,
+                        patientId: body.connector.patient_id ?? null,
+                        encounterId: body.connector.encounter_id ?? null,
+                        caseId: body.connector.case_id ?? null,
+                        signalEventId: signalEvent.id,
+                        episodeId: body.connector.episode_id ?? null,
+                        primaryConditionClass: normalized.primaryConditionClass,
+                        observedAt: normalized.observedAt,
+                        status: normalized.episodeStatus,
+                        outcomeState: normalized.outcomeState,
+                        resolvedAt: normalized.resolvedAt,
+                        summaryPatch: normalized.summaryPatch,
+                    });
+                    episode = reconcile.episode;
+                } catch (error) {
+                    reconcileError = error instanceof Error
+                        ? error.message
+                        : 'Failed to attach passive connector signal to episode.';
+                }
             }
         }
 
@@ -168,6 +212,8 @@ export async function POST(req: Request) {
                 outcome_state: normalized.outcomeState,
             },
             idempotent,
+            reconcile_queued: reconcileQueued,
+            outbox_event_id: outboxEventId,
             reconcile_error: reconcileError,
             request_id: requestId,
         });
@@ -180,4 +226,19 @@ export async function POST(req: Request) {
             { status: 500 },
         );
     }
+}
+
+function shouldDeferSignalReconcile(
+    authMode: 'session' | 'dev_bypass' | 'service_account' | 'connector_installation' | null,
+    req: Request,
+    hasLegacyConnectorAccess: boolean,
+): boolean {
+    const requestedMode = req.headers.get('x-vetios-event-mode')?.trim().toLowerCase();
+    if (requestedMode === 'async') {
+        return true;
+    }
+
+    return hasLegacyConnectorAccess
+        || authMode === 'service_account'
+        || authMode === 'connector_installation';
 }
