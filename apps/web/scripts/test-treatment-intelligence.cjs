@@ -128,6 +128,7 @@ function main() {
     const recommendRoute = fs.readFileSync(recommendRouteSource, 'utf8');
     const outcomeRoute = fs.readFileSync(outcomeRouteSource, 'utf8');
     assert(inferencePage.includes('TreatmentPathwaysPanel'), 'Inference console is missing the treatment pathways panel.');
+    assert(inferencePage.includes('Acute deterioration risk model'), 'Inference console is missing the generic non-abdominal risk label.');
     assert(recommendRoute.includes('recommendTreatmentPathways'), 'Treatment recommend route is missing treatment service integration.');
     assert(outcomeRoute.includes('recordTreatmentDecisionAndOutcome'), 'Treatment outcome route is missing treatment logging integration.');
 

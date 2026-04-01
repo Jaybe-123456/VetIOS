@@ -77,7 +77,7 @@ const CONTRAINDICATION_LABELS: Record<ContraindicationFlag, string> = {
     bleeding_risk: 'Bleeding or coagulopathy risk present; invasive procedures and ulcerogenic therapies require caution.',
     pregnancy: 'Pregnancy or reproductive status may alter intervention safety and timing.',
     shock_or_instability: 'Hemodynamic instability present; stabilize before definitive intervention whenever possible.',
-    neurologic_instability: 'Neurologic instability present; sedation and certain drug classes require extra review.',
+    neurologic_instability: 'Significant neurologic deficits present; sedation and certain drug classes require extra review.',
     respiratory_compromise: 'Respiratory compromise present; airway and oxygenation plans take priority.',
     dehydration: 'Volume depletion is present; correct fluid deficits before escalating risky therapies.',
     jurisdiction_review_required: 'Regional or regulatory review is required before finalizing this pathway.',
