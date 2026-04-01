@@ -87,6 +87,12 @@ interface CandidateScore {
     drivers: DifferentialDriver[];
 }
 
+interface CandidateScoringResult {
+    scores: CandidateScore[];
+    signalHierarchy: ReturnType<typeof scoreClosedWorldDiseases>['signalHierarchy'];
+    activeCategories: ReturnType<typeof scoreClosedWorldDiseases>['activeCategories'];
+}
+
 const CONDITION_CLASSES: ConditionClass[] = [
     'Mechanical',
     'Infectious',
@@ -458,7 +464,8 @@ export function applyDiagnosticSafetyLayer(params: {
     const signals = extractClinicalSignals(params.inputSignature);
     const contradictionScore = params.contradiction?.contradiction_score ?? 0;
     const signalWeightProfile = buildSignalWeightProfile(params.inputSignature, { contradiction: params.contradiction });
-    const heuristicScores = scoreCandidates(signals, params.inputSignature);
+    const heuristicScoring = scoreCandidates(signals, params.inputSignature);
+    const heuristicScores = heuristicScoring.scores;
     const existingDifferentials = normalizeExistingDifferentials(params.diagnosis.top_differentials);
     const mergedDifferentials = mergeDifferentials({
         contradictionScore,
@@ -520,6 +527,7 @@ export function applyDiagnosticSafetyLayer(params: {
         postCapConfidence,
         existingNotes: params.existingUncertaintyNotes,
         signals,
+        signalHierarchy: heuristicScoring.signalHierarchy,
     });
     const primaryConditionClass = pickPrimaryConditionClass(mergedDifferentials, params.diagnosis.primary_condition_class, signals);
     const diagnosisAnalysis = buildAnalysisText(params.diagnosis.analysis, mergedDifferentials, contradictionScore, params.emergencyEval);
@@ -557,6 +565,8 @@ export function applyDiagnosticSafetyLayer(params: {
             signal_weight_applied_overrides: signalWeightProfile.applied_overrides,
             suppressed_signals: suppressedSignals,
             mechanism_class: mechanismClass,
+            signal_hierarchy: heuristicScoring.signalHierarchy,
+            ontology_active_categories: heuristicScoring.activeCategories,
         },
     };
 }
@@ -635,26 +645,30 @@ export function buildSeverityFeatureImportance(
 function scoreCandidates(
     signals: ClinicalSignals,
     inputSignature: Record<string, unknown>,
-): CandidateScore[] {
+): CandidateScoringResult {
     const closedWorldScores = scoreClosedWorldDiseases({
         inputSignature,
         observationHints: buildOntologyObservationHints(signals),
         species: signals.species,
     });
 
-    return closedWorldScores.ranked.map((candidate) => ({
-        name: candidate.name,
-        conditionClass: candidate.conditionClass,
-        rawScore: Math.max(0.01, Number(candidate.rawScore.toFixed(3))),
-        probability: 0,
-        drivers: candidate.drivers
-            .map((driver) => ({
-                feature: driver.feature,
-                weight: Number(driver.weight.toFixed(2)),
-            }))
-            .sort((left, right) => right.weight - left.weight)
-            .slice(0, 5),
-    }));
+    return {
+        signalHierarchy: closedWorldScores.signalHierarchy,
+        activeCategories: closedWorldScores.activeCategories,
+        scores: closedWorldScores.ranked.map((candidate) => ({
+            name: candidate.name,
+            conditionClass: candidate.conditionClass,
+            rawScore: Math.max(0.01, Number(candidate.rawScore.toFixed(3))),
+            probability: 0,
+            drivers: candidate.drivers
+                .map((driver) => ({
+                    feature: driver.feature,
+                    weight: Number(driver.weight.toFixed(2)),
+                }))
+                .sort((left, right) => right.weight - left.weight)
+                .slice(0, 5),
+        })),
+    };
 }
 
 function buildOntologyObservationHints(signals: ClinicalSignals): string[] {
@@ -1129,6 +1143,7 @@ function buildUncertaintyNotes(params: {
     postCapConfidence: number;
     existingNotes: unknown;
     signals: ClinicalSignals;
+    signalHierarchy: CandidateScoringResult['signalHierarchy'];
 }): string[] {
     const notes = new Set<string>();
 
@@ -1170,6 +1185,15 @@ function buildUncertaintyNotes(params: {
         && (params.signals.has_chronic_duration || params.signals.has_gradual_onset)
     ) {
         notes.add('Marked ALP elevation with chronic endocrine body-pattern signs was preserved as a hyperadrenocorticism anchor.');
+    }
+    if (params.signalHierarchy.anchor_locks.length > 0) {
+        notes.add('High-specificity signal anchors were protected from generic-noise dilution during differential ranking.');
+    }
+    if (params.signalHierarchy.generic_noise_score >= 0.4) {
+        notes.add('Low-specificity generic features were down-weighted so they could widen the differential without hijacking the primary diagnostic direction.');
+    }
+    if (params.signalHierarchy.abstain_recommended) {
+        notes.add('Signal hierarchy flagged the case as too weakly anchored for an aggressive single-diagnosis commitment.');
     }
 
     return [...notes];

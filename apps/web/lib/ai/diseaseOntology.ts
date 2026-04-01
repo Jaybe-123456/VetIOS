@@ -50,6 +50,41 @@ export interface OntologyObservationDefinition {
     category: 'symptom' | 'exam' | 'lab' | 'exposure' | 'history' | 'reproductive';
 }
 
+export type SignalClassification =
+    | 'anchor_signal'
+    | 'contextual_signal'
+    | 'generic_signal'
+    | 'contradictory_signal';
+
+export interface SignalHierarchyObservation {
+    term: string;
+    classification: SignalClassification;
+    supportingDiseases: string[];
+    supportingCategories: DiseaseDomain[];
+}
+
+export interface SignalAnchorLock {
+    id: string;
+    label: string;
+    anchoredDiseases: string[];
+    protectedCategories: DiseaseDomain[];
+    matchedTerms: string[];
+}
+
+export interface ClosedWorldSignalHierarchy {
+    classified_observations: SignalHierarchyObservation[];
+    anchor_signals: string[];
+    contextual_signals: string[];
+    generic_signals: string[];
+    contradictory_signals: string[];
+    anchor_locks: SignalAnchorLock[];
+    protected_categories: DiseaseDomain[];
+    contradiction_score: number;
+    generic_noise_score: number;
+    missing_data_score: number;
+    abstain_recommended: boolean;
+}
+
 export interface ClosedWorldCandidateScore {
     name: string;
     category: DiseaseDomain;
@@ -61,12 +96,25 @@ export interface ClosedWorldCandidateScore {
     keyMatchCount: number;
     supportingMatchCount: number;
     labMatchCount: number;
+    anchorMatchCount: number;
+    contextualMatchCount: number;
+    genericMatchCount: number;
+    contradictoryMatchCount: number;
+    hierarchySupport: 'anchor_led' | 'context_led' | 'generic_led';
+    penalties: {
+        contradiction: number;
+        generic_dominance: number;
+        missing_support: number;
+        ontology_mismatch: number;
+    };
+    anchorLocked: boolean;
     drivers: Array<{ feature: string; weight: number }>;
 }
 
 export interface ClosedWorldScoreResult {
     observations: string[];
     activeCategories: DiseaseDomain[];
+    signalHierarchy: ClosedWorldSignalHierarchy;
     ranked: ClosedWorldCandidateScore[];
 }
 
@@ -1063,8 +1111,185 @@ export const MASTER_DISEASE_ONTOLOGY: DiseaseOntologyEntry[] = [
     },
 ];
 
+interface ObservationTermMetadata {
+    term: string;
+    diseaseCount: number;
+    categoryCount: number;
+    keyCount: number;
+    supportingCount: number;
+    labCount: number;
+    exclusionCount: number;
+    diseaseNames: string[];
+    categories: DiseaseDomain[];
+}
+
+interface AnchorLockRule {
+    id: string;
+    label: string;
+    requires_all?: string[];
+    required_groups?: string[][];
+    anchored_diseases: string[];
+    protected_categories: DiseaseDomain[];
+}
+
+const ANCHOR_SIGNAL_OVERRIDES = new Set<string>([
+    'retching_unproductive',
+    'abdominal_distension',
+    'aggression',
+    'dysphagia',
+    'myoclonus',
+    'jaw_rigidity',
+    'muscle_rigidity',
+    'miosis',
+    'rodenticide_exposure',
+    'organophosphate_exposure',
+    'carbamate_exposure',
+    'nsaid_exposure',
+    'ivermectin_exposure',
+    'heavy_metal_exposure',
+    'aflatoxin_exposure',
+    'plant_toxin_exposure',
+    'glucosuria',
+    'ketonuria',
+    'significant_hyperglycemia',
+    'diabetic_metabolic_profile',
+    'supportive_acth_stimulation_test',
+    'marked_alp_elevation',
+    'coagulopathy',
+    'vaginal_discharge',
+    'labor_not_progressing',
+    'mammary_swelling',
+    'mammary_pain',
+    'worms_in_stool',
+    'hemoglobinuria',
+    'pyuria',
+]);
+
+const GENERIC_SIGNAL_OVERRIDES = new Set<string>([
+    'lethargy',
+    'anorexia',
+    'weakness',
+    'seizures',
+    'vomiting',
+    'diarrhea',
+    'fever',
+    'weight_loss',
+    'cough',
+    'tachypnea',
+    'dehydration',
+    'collapse',
+    'acute_onset',
+    'chronic_duration',
+    'intermittent_course',
+    'progressive_worsening',
+    'gradual_onset',
+]);
+
+const CONTRADICTORY_SIGNAL_OVERRIDES = new Set<string>([
+    'glucosuria_absent',
+]);
+
+const ANCHOR_LOCK_RULES: AnchorLockRule[] = [
+    {
+        id: 'gdv-anchor',
+        label: 'Classic mechanical gastric emergency anchor',
+        requires_all: ['retching_unproductive', 'abdominal_distension'],
+        required_groups: [
+            ['acute_onset', 'collapse', 'tachycardia', 'pale_mucous_membranes', 'dyspnea'],
+            ['deep_chested_breed_risk', 'recent_meal', 'hypersalivation'],
+        ],
+        anchored_diseases: [
+            'Gastric Dilatation-Volvulus (GDV)',
+            'Simple Gastric Dilatation',
+            'Mesenteric Volvulus',
+            'Intestinal Obstruction',
+        ],
+        protected_categories: ['Gastrointestinal'],
+    },
+    {
+        id: 'rabies-anchor',
+        label: 'Rabies behavior-swallowing anchor',
+        requires_all: ['aggression', 'dysphagia'],
+        required_groups: [['hypersalivation', 'paralysis', 'mentation_change']],
+        anchored_diseases: ['Rabies'],
+        protected_categories: ['Neurological'],
+    },
+    {
+        id: 'infectious-neuro-anchor',
+        label: 'Infectious neurologic anchor',
+        requires_all: ['fever'],
+        required_groups: [
+            ['seizures', 'mentation_change', 'neck_pain', 'ataxia', 'myoclonus'],
+            ['pneumonia', 'nasal_discharge', 'ocular_discharge', 'tick_exposure', 'lymphadenopathy'],
+        ],
+        anchored_diseases: [
+            'Infectious Meningoencephalitis',
+            'Canine Distemper, Neurologic Form',
+            'Rabies',
+        ],
+        protected_categories: ['Neurological'],
+    },
+    {
+        id: 'organophosphate-anchor',
+        label: 'Cholinergic toxidrome anchor',
+        required_groups: [
+            ['organophosphate_exposure', 'carbamate_exposure'],
+            ['miosis', 'hypersalivation', 'tremors'],
+        ],
+        anchored_diseases: [
+            'Organophosphate Toxicity',
+            'Carbamate Toxicity',
+        ],
+        protected_categories: ['Toxicology'],
+    },
+    {
+        id: 'rodenticide-anchor',
+        label: 'Hemotoxic rodenticide anchor',
+        requires_all: ['rodenticide_exposure'],
+        required_groups: [['bleeding', 'coagulopathy', 'anemia', 'dyspnea']],
+        anchored_diseases: ['Anticoagulant Rodenticide Toxicity'],
+        protected_categories: ['Toxicology'],
+    },
+    {
+        id: 'diabetes-anchor',
+        label: 'Persistent diabetic anchor',
+        requires_all: ['significant_hyperglycemia', 'glucosuria'],
+        required_groups: [['ketonuria', 'diabetic_metabolic_profile', 'weight_loss', 'polyuria', 'polydipsia']],
+        anchored_diseases: ['Diabetes Mellitus'],
+        protected_categories: ['Endocrine'],
+    },
+    {
+        id: 'pyometra-anchor',
+        label: 'Pyometra reproductive anchor',
+        requires_all: ['intact_female'],
+        required_groups: [
+            ['recent_estrus', 'vaginal_discharge'],
+            ['fever', 'vomiting', 'polydipsia', 'lethargy'],
+        ],
+        anchored_diseases: ['Pyometra'],
+        protected_categories: ['Reproductive'],
+    },
+    {
+        id: 'hemoparasitic-anchor',
+        label: 'Tick-borne hemoparasitic anchor',
+        required_groups: [
+            ['tick_exposure', 'tick_infestation'],
+            ['anemia', 'thrombocytopenia', 'hemoglobinuria', 'petechiae', 'ecchymosis'],
+            ['fever', 'weakness', 'icterus'],
+        ],
+        anchored_diseases: [
+            'Babesiosis',
+            'Ehrlichiosis',
+            'Anaplasmosis',
+            'Theileriosis',
+        ],
+        protected_categories: ['Hemoparasitic'],
+    },
+];
+
 const OBSERVATION_ALIAS_LOOKUP = buildObservationAliasLookup();
 const DISEASE_ALIAS_LOOKUP = buildDiseaseAliasLookup();
+const OBSERVATION_TERM_METADATA = buildObservationTermMetadata();
 
 const CATEGORY_TRIGGER_TERMS: Record<DiseaseDomain, string[]> = {
     Neurological: ['seizures', 'myoclonus', 'tremors', 'ataxia', 'head_tilt', 'circling', 'paresis', 'paralysis', 'disorientation', 'mentation_change', 'nystagmus', 'proprioceptive_deficits', 'aggression', 'neck_pain', 'muscle_rigidity', 'jaw_rigidity', 'head_pressing'],
@@ -1077,6 +1302,240 @@ const CATEGORY_TRIGGER_TERMS: Record<DiseaseDomain, string[]> = {
     Renal: ['stranguria', 'dysuria', 'pollakiuria', 'hematuria', 'oliguria', 'anuria', 'pyuria', 'azotemia'],
     Reproductive: ['intact_female', 'pregnant', 'postpartum', 'recent_estrus', 'vaginal_discharge', 'mammary_swelling', 'mammary_pain', 'labor_not_progressing'],
 };
+
+function buildObservationTermMetadata() {
+    const metadata = new Map<string, {
+        keyCount: number;
+        supportingCount: number;
+        labCount: number;
+        exclusionCount: number;
+        diseaseNames: Set<string>;
+        categories: Set<DiseaseDomain>;
+    }>();
+
+    const add = (term: string, disease: DiseaseOntologyEntry, field: 'keyCount' | 'supportingCount' | 'labCount' | 'exclusionCount') => {
+        const current = metadata.get(term) ?? {
+            keyCount: 0,
+            supportingCount: 0,
+            labCount: 0,
+            exclusionCount: 0,
+            diseaseNames: new Set<string>(),
+            categories: new Set<DiseaseDomain>(),
+        };
+        current[field] += 1;
+        current.diseaseNames.add(disease.name);
+        current.categories.add(disease.category);
+        metadata.set(term, current);
+    };
+
+    for (const disease of MASTER_DISEASE_ONTOLOGY) {
+        for (const feature of disease.key_clinical_features) add(feature.term, disease, 'keyCount');
+        for (const feature of disease.supporting_features) add(feature.term, disease, 'supportingCount');
+        for (const feature of disease.lab_signatures) add(feature.term, disease, 'labCount');
+        for (const feature of disease.exclusion_features) add(feature.term, disease, 'exclusionCount');
+    }
+
+    return new Map<string, ObservationTermMetadata>(
+        [...metadata.entries()].map(([term, current]) => [
+            term,
+            {
+                term,
+                diseaseCount: current.diseaseNames.size,
+                categoryCount: current.categories.size,
+                keyCount: current.keyCount,
+                supportingCount: current.supportingCount,
+                labCount: current.labCount,
+                exclusionCount: current.exclusionCount,
+                diseaseNames: [...current.diseaseNames],
+                categories: [...current.categories],
+            },
+        ]),
+    );
+}
+
+function classifyObservationTerm(term: string): SignalClassification {
+    if (CONTRADICTORY_SIGNAL_OVERRIDES.has(term)) {
+        return 'contradictory_signal';
+    }
+    if (ANCHOR_SIGNAL_OVERRIDES.has(term)) {
+        return 'anchor_signal';
+    }
+    if (GENERIC_SIGNAL_OVERRIDES.has(term)) {
+        return 'generic_signal';
+    }
+
+    const metadata = OBSERVATION_TERM_METADATA.get(term);
+    if (!metadata) {
+        return 'contextual_signal';
+    }
+
+    if (
+        (metadata.keyCount >= 1 || metadata.labCount >= 1)
+        && metadata.diseaseCount <= 3
+        && metadata.categoryCount <= 2
+    ) {
+        return 'anchor_signal';
+    }
+
+    if (
+        metadata.diseaseCount >= 6
+        || metadata.categoryCount >= 3
+        || (metadata.supportingCount >= 4 && metadata.keyCount === 0)
+    ) {
+        return 'generic_signal';
+    }
+
+    return 'contextual_signal';
+}
+
+function buildSignalHierarchy(
+    observations: Set<string>,
+    activeCategories: DiseaseDomain[],
+): ClosedWorldSignalHierarchy {
+    const classifiedObservations: SignalHierarchyObservation[] = [...observations]
+        .sort()
+        .map((term) => {
+            const metadata = OBSERVATION_TERM_METADATA.get(term);
+            return {
+                term,
+                classification: classifyObservationTerm(term),
+                supportingDiseases: metadata?.diseaseNames ?? [],
+                supportingCategories: metadata?.categories ?? [],
+            };
+        });
+
+    const anchorSignals = classifiedObservations
+        .filter((observation) => observation.classification === 'anchor_signal')
+        .map((observation) => observation.term);
+    const contextualSignals = classifiedObservations
+        .filter((observation) => observation.classification === 'contextual_signal')
+        .map((observation) => observation.term);
+    const genericSignals = classifiedObservations
+        .filter((observation) => observation.classification === 'generic_signal')
+        .map((observation) => observation.term);
+    const contradictorySignals = classifiedObservations
+        .filter((observation) => observation.classification === 'contradictory_signal')
+        .map((observation) => observation.term);
+
+    const contradictionScore = computeSignalContradictionScore(observations, contradictorySignals);
+    const anchorLocks = ANCHOR_LOCK_RULES
+        .map((rule) => evaluateAnchorLockRule(rule, observations))
+        .filter((lock): lock is SignalAnchorLock => lock !== null);
+
+    const protectedCategories = new Set<DiseaseDomain>([
+        ...activeCategories,
+        ...anchorLocks.flatMap((lock) => lock.protectedCategories),
+    ]);
+
+    for (const observation of classifiedObservations) {
+        if (observation.classification !== 'anchor_signal') continue;
+        if (observation.supportingCategories.length === 1) {
+            protectedCategories.add(observation.supportingCategories[0]);
+        }
+    }
+
+    const genericNoiseScore = Number(
+        (
+            (genericSignals.length * 0.18)
+            + (Math.max(0, genericSignals.length - anchorSignals.length) * 0.05)
+        ).toFixed(3),
+    );
+    const missingDataScore = Number(
+        Math.max(
+            0,
+            Math.min(
+                1,
+                0.48
+                - (anchorSignals.length * 0.16)
+                - (contextualSignals.length * 0.08)
+                + (genericSignals.length * 0.04)
+                + (contradictionScore * 0.25),
+            ),
+        ).toFixed(3),
+    );
+
+    return {
+        classified_observations: classifiedObservations,
+        anchor_signals: anchorSignals,
+        contextual_signals: contextualSignals,
+        generic_signals: genericSignals,
+        contradictory_signals: contradictorySignals,
+        anchor_locks: anchorLocks,
+        protected_categories: [...protectedCategories],
+        contradiction_score: contradictionScore,
+        generic_noise_score: genericNoiseScore,
+        missing_data_score: missingDataScore,
+        abstain_recommended: contradictionScore >= 0.55 && anchorLocks.length === 0 && anchorSignals.length < 2,
+    };
+}
+
+function evaluateAnchorLockRule(rule: AnchorLockRule, observations: Set<string>): SignalAnchorLock | null {
+    if (rule.requires_all && !rule.requires_all.every((term) => observations.has(term))) {
+        return null;
+    }
+    if (rule.required_groups && !rule.required_groups.every((group) => group.some((term) => observations.has(term)))) {
+        return null;
+    }
+
+    const matchedTerms = [
+        ...(rule.requires_all ?? []).filter((term) => observations.has(term)),
+        ...(rule.required_groups ?? []).flatMap((group) => group.filter((term) => observations.has(term))),
+    ];
+
+    if (matchedTerms.length === 0) {
+        return null;
+    }
+
+    return {
+        id: rule.id,
+        label: rule.label,
+        anchoredDiseases: rule.anchored_diseases,
+        protectedCategories: rule.protected_categories,
+        matchedTerms: [...new Set(matchedTerms)],
+    };
+}
+
+function computeSignalContradictionScore(observations: Set<string>, contradictorySignals: string[]) {
+    let score = contradictorySignals.length * 0.18;
+
+    if (observations.has('acute_onset') && observations.has('chronic_duration')) {
+        score += 0.2;
+    }
+    if (observations.has('acute_onset') && observations.has('gradual_onset')) {
+        score += 0.14;
+    }
+    if (observations.has('glucosuria') && observations.has('glucosuria_absent')) {
+        score += 0.32;
+    }
+    if (observations.has('pregnant') && observations.has('recent_estrus')) {
+        score += 0.12;
+    }
+    if (observations.has('weight_loss') && observations.has('pot_bellied_appearance') && observations.has('acute_onset')) {
+        score += 0.06;
+    }
+
+    return Number(Math.min(1, score).toFixed(3));
+}
+
+function getObservationClassificationWeight(classification: SignalClassification) {
+    if (classification === 'anchor_signal') return 2.45;
+    if (classification === 'contextual_signal') return 1.05;
+    if (classification === 'generic_signal') return 0.34;
+    return 0.18;
+}
+
+function getExclusionPenaltyWeight(classification: SignalClassification) {
+    if (classification === 'anchor_signal') return 1.55;
+    if (classification === 'contextual_signal') return 1.2;
+    if (classification === 'generic_signal') return 0.85;
+    return 1.35;
+}
+
+function getHierarchySupportMode(anchorMatchCount: number, contextualMatchCount: number) {
+    if (anchorMatchCount > 0) return 'anchor_led';
+    if (contextualMatchCount > 0) return 'context_led';
+    return 'generic_led';
+}
 
 export function getMasterDiseaseOntology() {
     return MASTER_DISEASE_ONTOLOGY;
@@ -1134,35 +1593,64 @@ export function scoreClosedWorldDiseases(params: {
 
     const observations = [...observationSet];
     const activeCategories = inferActiveCategories(observationSet);
+    const signalHierarchy = buildSignalHierarchy(observationSet, activeCategories);
     const species = normalizeSpecies(params.species);
     const scored = MASTER_DISEASE_ONTOLOGY
-        .map((disease) => scoreDisease(disease, observationSet, activeCategories, species))
+        .map((disease) => scoreDisease(disease, observationSet, activeCategories, species, signalHierarchy))
         .filter((score) => score.rawScore > 0);
 
     const candidatePool = scored
         .filter((score) => {
             const support = score.keyMatchCount + score.supportingMatchCount + score.labMatchCount;
+            const lowInformationMode =
+                signalHierarchy.anchor_signals.length === 0
+                && signalHierarchy.contextual_signals.length <= 1
+                && signalHierarchy.generic_signals.length > 0;
             if (support === 0) {
                 return false;
             }
 
+            if (signalHierarchy.protected_categories.length > 0) {
+                if (signalHierarchy.protected_categories.includes(score.category)) {
+                    return score.rawScore >= 0.08 || score.anchorMatchCount >= 1;
+                }
+
+                if (score.anchorMatchCount >= 2) {
+                    return score.rawScore >= 0.12;
+                }
+
+                return score.contextualMatchCount >= 2 && score.rawScore >= 0.15;
+            }
+
+            if (lowInformationMode) {
+                return score.rawScore >= 0.03 || score.genericMatchCount >= 1;
+            }
+
             if (activeCategories.length === 0) {
-                return score.rawScore >= 0.12;
+                return score.rawScore >= 0.1 || score.anchorMatchCount >= 1;
             }
 
             if (activeCategories.includes(score.category)) {
-                return score.rawScore >= 0.1;
+                return score.rawScore >= 0.08;
             }
 
-            return support >= 2 && score.rawScore >= 0.18;
+            return (score.anchorMatchCount >= 1 && score.rawScore >= 0.12) || (support >= 2 && score.rawScore >= 0.18);
         })
         .sort((left, right) => right.rawScore - left.rawScore);
 
-    const probabilities = softmax(candidatePool.map((score) => score.rawScore), activeCategories.length >= 2 ? 0.92 : 0.82);
+    const temperatureBase = activeCategories.length >= 2 ? 0.9 : 0.78;
+    const temperature =
+        temperatureBase
+        + (signalHierarchy.contradiction_score * 0.95)
+        + (signalHierarchy.missing_data_score * 0.45)
+        + (signalHierarchy.generic_noise_score * 0.28)
+        - (signalHierarchy.anchor_locks.length > 0 ? 0.12 : 0);
+    const probabilities = softmax(candidatePool.map((score) => score.rawScore), Math.max(0.62, temperature));
 
     return {
         observations,
         activeCategories,
+        signalHierarchy,
         ranked: candidatePool
             .map((score, index) => ({
                 ...score,
@@ -1177,6 +1665,7 @@ function scoreDisease(
     observations: Set<string>,
     activeCategories: DiseaseDomain[],
     species: string | null,
+    signalHierarchy: ClosedWorldSignalHierarchy,
 ): ClosedWorldCandidateScore {
     if (species && !disease.species_relevance.includes(species)) {
         return emptyScore(disease);
@@ -1184,44 +1673,116 @@ function scoreDisease(
 
     const drivers: Array<{ feature: string; weight: number }> = [];
     const matchedObservations = new Set<string>();
-    let rawScore = 0.02;
+    let rawScore = 0.01;
     let keyMatchCount = 0;
     let supportingMatchCount = 0;
     let labMatchCount = 0;
+    let anchorMatchCount = 0;
+    let contextualMatchCount = 0;
+    let genericMatchCount = 0;
+    let contradictoryMatchCount = 0;
+    let contradictionPenalty = 0;
+    let genericDominancePenalty = 0;
+    let missingSupportPenalty = 0;
+    let ontologyMismatchPenalty = 0;
 
-    keyMatchCount += addFeatureWeights(observations, disease.key_clinical_features, drivers, matchedObservations, (weight) => {
-        rawScore += weight;
+    keyMatchCount += addFeatureWeights(observations, disease.key_clinical_features, drivers, matchedObservations, (featureWeight, classification, weightedValue) => {
+        rawScore += weightedValue;
+        if (classification === 'anchor_signal') anchorMatchCount += 1;
+        else if (classification === 'contextual_signal') contextualMatchCount += 1;
+        else if (classification === 'generic_signal') genericMatchCount += 1;
+        else contradictoryMatchCount += 1;
     });
-    supportingMatchCount += addFeatureWeights(observations, disease.supporting_features, drivers, matchedObservations, (weight) => {
-        rawScore += weight;
+    supportingMatchCount += addFeatureWeights(observations, disease.supporting_features, drivers, matchedObservations, (featureWeight, classification, weightedValue) => {
+        rawScore += weightedValue;
+        if (classification === 'anchor_signal') anchorMatchCount += 1;
+        else if (classification === 'contextual_signal') contextualMatchCount += 1;
+        else if (classification === 'generic_signal') genericMatchCount += 1;
+        else contradictoryMatchCount += 1;
     });
-    labMatchCount += addFeatureWeights(observations, disease.lab_signatures, drivers, matchedObservations, (weight) => {
-        rawScore += weight;
+    labMatchCount += addFeatureWeights(observations, disease.lab_signatures, drivers, matchedObservations, (featureWeight, classification, weightedValue) => {
+        rawScore += weightedValue;
+        if (classification === 'anchor_signal') anchorMatchCount += 1;
+        else if (classification === 'contextual_signal') contextualMatchCount += 1;
+        else if (classification === 'generic_signal') genericMatchCount += 1;
+        else contradictoryMatchCount += 1;
     });
 
     for (const exclusion of disease.exclusion_features) {
         if (observations.has(exclusion.term)) {
-            rawScore -= exclusion.weight;
+            const classification = classifyObservationTerm(exclusion.term);
+            const penalty = exclusion.weight * getExclusionPenaltyWeight(classification);
+            rawScore -= penalty;
+            contradictionPenalty += penalty;
+            if (classification === 'contradictory_signal') {
+                contradictoryMatchCount += 1;
+            }
         }
     }
 
-    if (activeCategories.length > 0 && !activeCategories.includes(disease.category)) {
+    const matchingAnchorLocks = signalHierarchy.anchor_locks.filter((lock) => lock.anchoredDiseases.includes(disease.name));
+    if (matchingAnchorLocks.length > 0) {
+        rawScore += 0.16 + (anchorMatchCount * 0.04);
+    } else if (anchorMatchCount >= Math.max(1, disease.minimum_key_feature_matches ?? 1) && keyMatchCount >= 1) {
+        rawScore += 0.1 + Math.max(0, anchorMatchCount - 1) * 0.03;
+    }
+
+    const protectedCategories = signalHierarchy.protected_categories;
+    if (protectedCategories.length > 0 && !protectedCategories.includes(disease.category)) {
+        const support = keyMatchCount + supportingMatchCount + labMatchCount;
+        const reduction = anchorMatchCount >= 2 ? 0.62 : contextualMatchCount >= 2 ? 0.48 : 0.24;
+        rawScore *= reduction;
+        ontologyMismatchPenalty += 1 - reduction;
+    } else if (activeCategories.length > 0 && !activeCategories.includes(disease.category)) {
         const support = keyMatchCount + supportingMatchCount + labMatchCount;
         rawScore *= support >= 2 ? 0.65 : 0.24;
+        ontologyMismatchPenalty += support >= 2 ? 0.35 : 0.76;
     } else if (activeCategories.includes(disease.category)) {
         rawScore += 0.05;
     }
 
     rawScore += disease.progression_pattern.filter((pattern) => observations.has(patternToObservation(pattern))).length * 0.03;
 
+    if (genericMatchCount > 0 && anchorMatchCount === 0 && contextualMatchCount === 0) {
+        const anchoredCase = signalHierarchy.anchor_signals.length > 0 || signalHierarchy.contextual_signals.length > 0;
+        genericDominancePenalty += anchoredCase ? 0.24 : 0.02;
+        if (anchoredCase && disease.condition_class === 'Idiopathic / Unknown') {
+            genericDominancePenalty += 0.12;
+        }
+        if (disease.name === 'Idiopathic Epilepsy' && (observations.has('fever') || observations.has('neck_pain') || observations.has('myoclonus') || observations.has('tick_exposure'))) {
+            genericDominancePenalty += 0.24;
+        }
+    } else if (genericMatchCount > anchorMatchCount + contextualMatchCount && signalHierarchy.anchor_signals.length > 0) {
+        genericDominancePenalty += 0.1;
+    }
+
+    if (contradictoryMatchCount > 0 || signalHierarchy.contradiction_score > 0) {
+        contradictionPenalty += signalHierarchy.contradiction_score * (0.12 + (contradictoryMatchCount * 0.04));
+    }
+
+    if (observations.has('acute_onset') && observations.has('chronic_duration')) {
+        contradictionPenalty += disease.progression_pattern.includes('episodic') ? 0.04 : 0.08;
+    }
+
+    if (signalHierarchy.anchor_locks.length > 0 && matchingAnchorLocks.length === 0 && anchorMatchCount === 0 && contextualMatchCount === 0) {
+        missingSupportPenalty += 0.12;
+    } else if (anchorMatchCount === 0 && contextualMatchCount <= 1 && signalHierarchy.anchor_signals.length > 0) {
+        missingSupportPenalty += 0.06;
+    }
+
     if (typeof disease.minimum_key_feature_matches === 'number' && keyMatchCount < disease.minimum_key_feature_matches) {
-        rawScore *= 0.38;
+        rawScore *= anchorMatchCount > 0 || contextualMatchCount > 0 ? 0.56 : 0.34;
+        missingSupportPenalty += 0.12;
     }
     if (typeof disease.minimum_feature_match_threshold === 'number' && (keyMatchCount + supportingMatchCount + labMatchCount) < disease.minimum_feature_match_threshold) {
-        rawScore *= 0.24;
+        rawScore *= anchorMatchCount > 0 ? 0.72 : 0.28;
+        missingSupportPenalty += 0.14;
     }
 
     rawScore += diseaseSpecificOverride(disease.id, observations);
+    rawScore -= genericDominancePenalty;
+    rawScore -= contradictionPenalty;
+    rawScore -= missingSupportPenalty;
     rawScore = Math.max(0, Number(rawScore.toFixed(4)));
 
     return {
@@ -1235,6 +1796,18 @@ function scoreDisease(
         keyMatchCount,
         supportingMatchCount,
         labMatchCount,
+        anchorMatchCount,
+        contextualMatchCount,
+        genericMatchCount,
+        contradictoryMatchCount,
+        hierarchySupport: getHierarchySupportMode(anchorMatchCount, contextualMatchCount),
+        penalties: {
+            contradiction: Number(contradictionPenalty.toFixed(3)),
+            generic_dominance: Number(genericDominancePenalty.toFixed(3)),
+            missing_support: Number(missingSupportPenalty.toFixed(3)),
+            ontology_mismatch: Number(ontologyMismatchPenalty.toFixed(3)),
+        },
+        anchorLocked: matchingAnchorLocks.length > 0,
         drivers: drivers.sort((left, right) => right.weight - left.weight).slice(0, 5),
     };
 }
@@ -1251,6 +1824,18 @@ function emptyScore(disease: DiseaseOntologyEntry): ClosedWorldCandidateScore {
         keyMatchCount: 0,
         supportingMatchCount: 0,
         labMatchCount: 0,
+        anchorMatchCount: 0,
+        contextualMatchCount: 0,
+        genericMatchCount: 0,
+        contradictoryMatchCount: 0,
+        hierarchySupport: 'generic_led',
+        penalties: {
+            contradiction: 0,
+            generic_dominance: 0,
+            missing_support: 0,
+            ontology_mismatch: 0,
+        },
+        anchorLocked: false,
         drivers: [],
     };
 }
@@ -1260,17 +1845,19 @@ function addFeatureWeights(
     features: DiseaseFeatureWeight[],
     drivers: Array<{ feature: string; weight: number }>,
     matchedObservations: Set<string>,
-    onMatch: (weight: number) => void,
+    onMatch: (featureWeight: DiseaseFeatureWeight, classification: SignalClassification, weightedValue: number) => void,
 ) {
     let count = 0;
     for (const featureWeight of features) {
         if (!observations.has(featureWeight.term)) continue;
         count += 1;
         matchedObservations.add(featureWeight.term);
-        onMatch(featureWeight.weight);
+        const classification = classifyObservationTerm(featureWeight.term);
+        const weightedValue = featureWeight.weight * getObservationClassificationWeight(classification);
+        onMatch(featureWeight, classification, weightedValue);
         drivers.push({
             feature: featureWeight.term.replace(/_/g, ' '),
-            weight: Number(featureWeight.weight.toFixed(2)),
+            weight: Number(weightedValue.toFixed(2)),
         });
     }
     return count;
