@@ -215,15 +215,26 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
 
                 {loadState.status === 'ready' ? (
                     <div className="mt-4 space-y-4">
-                        <div className="grid gap-3 md:grid-cols-3">
+                        <div className="grid gap-3 md:grid-cols-4">
                             <MetricBox label="Primary Disease" value={loadState.bundle.disease} />
                             <MetricBox label="Emergency Level" value={loadState.bundle.emergency_level ?? 'UNKNOWN'} />
+                            <MetricBox label="Mode" value={loadState.bundle.management_mode === 'diagnostic_management' ? 'DIAGNOSTIC MANAGEMENT' : 'DEFINITIVE READY'} />
                             <MetricBox label="Uncertainty" value={loadState.bundle.uncertainty_summary} />
                         </div>
 
                         {loadState.message ? (
                             <div className="border border-accent/30 bg-accent/5 p-3 font-mono text-xs text-accent">
                                 {loadState.message}
+                            </div>
+                        ) : null}
+
+                        {loadState.bundle.management_mode === 'diagnostic_management' ? (
+                            <div className="border border-yellow-500/40 bg-yellow-500/10 p-3 font-mono text-xs text-yellow-200">
+                                <div className="mb-2 flex items-center gap-2 uppercase tracking-[0.15em]">
+                                    <AlertTriangle className="h-4 w-4" />
+                                    Diagnostic Management Mode
+                                </div>
+                                <div>{loadState.bundle.diagnostic_management_summary ?? 'The differential remains too noisy for definitive disease-directed treatment; prioritize stabilization and confirmatory diagnostics.'}</div>
                             </div>
                         ) : null}
 
@@ -390,6 +401,9 @@ function TreatmentOptionCard({
                     <StatusPill label={option.treatment_type} tone="neutral" />
                     <StatusPill label={option.urgency_level} tone={option.urgency_level === 'emergent' ? 'danger' : option.urgency_level === 'urgent' ? 'warn' : 'neutral'} />
                     <StatusPill label={`evidence ${option.evidence_level}`} tone={option.evidence_level === 'high' ? 'success' : option.evidence_level === 'moderate' ? 'neutral' : 'warn'} />
+                    {option.uncertainty.diagnostic_management_required ? (
+                        <StatusPill label="diagnostic management" tone="warn" />
+                    ) : null}
                 </div>
             </div>
 
@@ -427,7 +441,11 @@ function TreatmentOptionCard({
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
                     Recommendation confidence {(option.uncertainty.recommendation_confidence * 100).toFixed(0)}%.{' '}
-                    {option.uncertainty.evidence_gaps.length > 0 ? option.uncertainty.evidence_gaps.join(' ') : 'Evidence gaps are low, but clinician confirmation is still required.'}
+                    {option.uncertainty.diagnostic_management_required
+                        ? `Diagnostic-management mode is active. ${option.uncertainty.noise_reasons.join(' ')}`
+                        : option.uncertainty.evidence_gaps.length > 0
+                            ? option.uncertainty.evidence_gaps.join(' ')
+                            : 'Evidence gaps are low, but clinician confirmation is still required.'}
                 </div>
             </div>
         </div>
