@@ -2,6 +2,7 @@
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import DeveloperApiExplorer from '@/components/DeveloperApiExplorer';
 import {
     ConsoleCard,
@@ -35,6 +36,7 @@ import {
     ShieldCheck,
     UserCog,
     Wifi,
+    ArrowRight,
 } from 'lucide-react';
 
 type ControlPlaneTab =
@@ -367,6 +369,13 @@ export default function SettingsControlPlaneClient() {
                             <RefreshCw className="w-3 h-3 mr-2" />
                             Refresh Snapshot
                         </TerminalButton>
+                        <Link
+                            href="/settings/outbox"
+                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
+                        >
+                            Outbox Ops
+                            <ArrowRight className="ml-2 h-3 w-3" />
+                        </Link>
                         <TerminalButton variant="secondary" onClick={() => void runAction({ action: 'run_system_diagnostic' })}>
                             <ShieldCheck className="w-3 h-3 mr-2" />
                             Run System Diagnostic
