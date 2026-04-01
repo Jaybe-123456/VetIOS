@@ -95,6 +95,8 @@ export default function InferenceConsole() {
 
     const [inputMode, setInputMode] = useState<InputMode>('structured');
     const [outcomeState, setOutcomeState] = useState<OutcomeState>({ status: 'idle' });
+    const riskModelDefinition = state.riskModelOutput?.definition?.toLowerCase() ?? '';
+    const hasAbdominalRiskCalibration = Boolean(state.riskModelOutput) && !riskModelDefinition.includes('non-abdominal');
 
     // ── File reader ──────────────────────────────────────────────────────────
 
@@ -682,12 +684,14 @@ export default function InferenceConsole() {
                                     <div className="space-y-4">
                                         <div className="flex items-center gap-3">
                                             <Brain className="w-5 h-5 text-accent" />
-                                            <span className="font-mono text-xs text-muted uppercase">Abdominal catastrophic deterioration model</span>
+                                            <span className="font-mono text-xs text-muted uppercase">
+                                                {hasAbdominalRiskCalibration ? 'Abdominal catastrophic deterioration model' : 'Acute deterioration risk model'}
+                                            </span>
                                         </div>
 
                                         <div className="flex flex-col gap-1">
                                             <div className="flex items-center justify-between font-mono text-xs">
-                                                <span className="text-muted">Catastrophic 6h Risk</span>
+                                                <span className="text-muted">{hasAbdominalRiskCalibration ? 'Catastrophic 6h Risk' : 'Acute Deterioration Risk'}</span>
                                                 <span className={`font-bold ${state.riskModelOutput.catastrophic_deterioration_risk_6h > 0.7 ? 'text-red-400' :
                                                         state.riskModelOutput.catastrophic_deterioration_risk_6h > 0.4 ? 'text-yellow-400' : 'text-green-400'
                                                     }`}>

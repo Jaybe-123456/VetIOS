@@ -124,6 +124,19 @@ function main() {
             },
         },
         {
+            name: 'ivdd structural anchors outrank infectious neurologic noise',
+            species: 'dog',
+            expectedTop: 'Intervertebral Disc Disease (IVDD)',
+            expectedProtectedCategory: 'Neurological',
+            minimumMargin: 0.45,
+            inputSignature: {
+                species: 'dog',
+                breed: 'Dachshund',
+                symptoms: ['back pain', 'reluctance to move', 'hindlimb weakness', 'ataxia', 'paralysis'],
+                history: 'Presenting complaint: Acute onset back pain and hindlimb weakness. Duration: Sudden onset after jumping. Owner observations: Dog cried out, now reluctant to move, dragging hind legs. Neurologic exam: Spinal cord deficits. Imaging: Disc extrusion.',
+            },
+        },
+        {
             name: 'gdv anchor defeats gastritis noise',
             species: 'dog',
             expectedTop: 'Gastric Dilatation-Volvulus (GDV)',

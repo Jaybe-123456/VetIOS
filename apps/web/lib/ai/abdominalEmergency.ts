@@ -139,6 +139,18 @@ export function severityFloorFromAbdominalSignals(
     return 0;
 }
 
+function hasAbdominalRiskContext(
+    signals: ClinicalSignals,
+    emergencyEval: Pick<EmergencyRuleResult, 'catastrophic_risk_floor' | 'operative_urgency_floor'>,
+): boolean {
+    return hasAcuteAbdominalEmergencyPattern(signals)
+        || signals.evidence.abdominal_distension.present
+        || signals.evidence.unproductive_retching.present
+        || signals.evidence.abdominal_pain.present
+        || (emergencyEval.catastrophic_risk_floor ?? 0) >= 0.5
+        || (emergencyEval.operative_urgency_floor ?? 0) >= 0.5;
+}
+
 export function buildMechanismClassOutput(params: {
     signals: ClinicalSignals;
     differentials: RankedDiagnosis[];
@@ -218,6 +230,7 @@ export function buildCatastrophicRiskOutput(params: {
     legacyOperationalRisk?: number | null;
 }): CatastrophicRiskOutput {
     const { signals, emergencyEval, severityScore, legacyOperationalRisk = null } = params;
+    const abdominalRiskContext = hasAbdominalRiskContext(signals, emergencyEval);
     let catastrophic = 0.18;
     let operative = 0.12;
     let shock = 0.08;
@@ -249,12 +262,14 @@ export function buildCatastrophicRiskOutput(params: {
     operative = Math.max(operative, emergencyEval.operative_urgency_floor ?? 0);
     shock = Math.max(shock, emergencyEval.shock_risk_floor ?? 0);
 
-    if (severityScore >= 0.95) catastrophic = Math.max(catastrophic, 0.9);
-    if (severityScore >= 0.88) operative = Math.max(operative, 0.84);
+    if (abdominalRiskContext && severityScore >= 0.95) catastrophic = Math.max(catastrophic, 0.9);
+    if (abdominalRiskContext && severityScore >= 0.88) operative = Math.max(operative, 0.84);
     if (severityScore >= 0.88 && hasPerfusionCompromise(signals)) shock = Math.max(shock, 0.82);
 
     return {
-        definition: 'Risk predicts the short-horizon probability of catastrophic abdominal deterioration, urgent operative need, and shock progression if the syndrome is untreated.',
+        definition: abdominalRiskContext
+            ? 'Risk predicts the short-horizon probability of catastrophic abdominal deterioration, urgent operative need, and shock progression if the syndrome is untreated.'
+            : 'This auxiliary risk panel emphasizes shock and urgent-intervention burden; abdominal catastrophe estimates are not calibrated for non-abdominal syndromes.',
         catastrophic_deterioration_risk_6h: clamp(catastrophic, 0, 0.99),
         operative_urgency_risk: clamp(operative + (shock * 0.2), 0, 0.99),
         shock_risk: clamp(shock, 0, 0.99),
