@@ -820,6 +820,52 @@ export const API_CREDENTIALS = {
     },
 } as const;
 
+export const OUTBOX_EVENTS = {
+    TABLE: 'outbox_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        topic: 'topic',
+        handler_key: 'handler_key',
+        target_type: 'target_type',
+        target_ref: 'target_ref',
+        idempotency_key: 'idempotency_key',
+        payload: 'payload',
+        headers: 'headers',
+        metadata: 'metadata',
+        status: 'status',
+        attempt_count: 'attempt_count',
+        max_attempts: 'max_attempts',
+        available_at: 'available_at',
+        locked_at: 'locked_at',
+        locked_by: 'locked_by',
+        last_error: 'last_error',
+        delivered_at: 'delivered_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const CONNECTOR_DELIVERY_ATTEMPTS = {
+    TABLE: 'connector_delivery_attempts',
+    COLUMNS: {
+        id: 'id',
+        outbox_event_id: 'outbox_event_id',
+        tenant_id: 'tenant_id',
+        connector_installation_id: 'connector_installation_id',
+        handler_key: 'handler_key',
+        attempt_no: 'attempt_no',
+        worker_id: 'worker_id',
+        status: 'status',
+        request_payload: 'request_payload',
+        response_payload: 'response_payload',
+        error_message: 'error_message',
+        started_at: 'started_at',
+        finished_at: 'finished_at',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const CONTROL_PLANE_ACTION_LOG = {
     TABLE: 'control_plane_action_log',
     COLUMNS: {
