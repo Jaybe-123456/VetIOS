@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import UserNav from '@/components/UserNav';
 import { Menu, X, TerminalSquare } from 'lucide-react';
-import { isPublicAuthPath } from '@/lib/site';
+import { isShelllessPublicPath } from '@/lib/site';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -13,9 +13,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     const handleToggle = useCallback(() => setSidebarOpen(prev => !prev), []);
     const handleClose = useCallback(() => setSidebarOpen(false), []);
-    const isAuthSurface = pathname ? isPublicAuthPath(pathname) : false;
+    const isShelllessSurface = pathname ? isShelllessPublicPath(pathname) : false;
 
-    if (isAuthSurface) {
+    if (isShelllessSurface) {
         return (
             <div className="flex-1 flex flex-col h-full overflow-auto bg-background">
                 {children}
