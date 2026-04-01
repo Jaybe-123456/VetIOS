@@ -530,6 +530,8 @@ function mapTreatmentCandidateRow(row: JsonRecord): TreatmentCandidateRecord {
             evidence_gaps: readStringArray(asRecord(row.uncertainty_json).evidence_gaps),
             alternative_diagnoses: readStringArray(asRecord(row.uncertainty_json).alternative_diagnoses),
             weak_evidence: readBoolean(asRecord(row.uncertainty_json).weak_evidence) === true,
+            diagnostic_management_required: readBoolean(asRecord(row.uncertainty_json).diagnostic_management_required) === true,
+            noise_reasons: readStringArray(asRecord(row.uncertainty_json).noise_reasons),
         },
         clinician_validation_required: readBoolean(row.clinician_validation_required) !== false,
         autonomous_prescribing_blocked: true,

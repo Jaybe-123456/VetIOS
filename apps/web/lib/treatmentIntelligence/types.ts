@@ -33,6 +33,8 @@ export interface TreatmentUncertaintyEnvelope {
     evidence_gaps: string[];
     alternative_diagnoses: string[];
     weak_evidence: boolean;
+    diagnostic_management_required: boolean;
+    noise_reasons: string[];
 }
 
 export interface TreatmentEnvironmentConstraints {
@@ -100,6 +102,8 @@ export interface TreatmentRecommendationBundle {
     observed_performance: TreatmentPerformanceSummary[];
     clinician_notice: string;
     uncertainty_summary: string;
+    management_mode: 'definitive' | 'diagnostic_management';
+    diagnostic_management_summary: string | null;
 }
 
 export interface TreatmentOutcomeWriteInput {

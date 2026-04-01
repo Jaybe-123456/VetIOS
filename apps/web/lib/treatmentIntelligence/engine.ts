@@ -68,6 +68,19 @@ interface BuildBundleInput {
     observedPerformance?: TreatmentPerformanceSummary[];
 }
 
+interface RankedDifferential {
+    name: string;
+    probability: number | null;
+    category: DiseaseOntologyEntry['category'] | null;
+}
+
+interface DiagnosticManagementAssessment {
+    required: boolean;
+    reasons: string[];
+    summary: string | null;
+    confirmatory_actions: string[];
+}
+
 const CLINICIAN_NOTICE = 'This is a clinical decision-support system. Final decisions require licensed clinician judgment.';
 
 const CONTRAINDICATION_LABELS: Record<ContraindicationFlag, string> = {
@@ -98,6 +111,11 @@ export function buildTreatmentRecommendationBundle(input: BuildBundleInput): Tre
 
     const observations = extractOntologyObservations(input.inputSignature);
     const contradictionFlags = extractContradictionFlags(input.outputPayload);
+    const rankedDifferentials = extractRankedDifferentials(input.outputPayload, canonicalDisease);
+    const alternatives = rankedDifferentials
+        .map((entry) => entry.name)
+        .filter((name) => name !== canonicalDisease)
+        .slice(0, 3);
     const supportingSignals = deriveSupportingSignals(disease, observations);
     const contextFlags = deriveContextFlags({
         disease,
@@ -106,14 +124,21 @@ export function buildTreatmentRecommendationBundle(input: BuildBundleInput): Tre
         context: input.context,
         contradictionFlags,
     });
-    const alternatives = extractAlternativeDiagnoses(input.outputPayload, canonicalDisease);
+    const diagnosticManagement = assessDiagnosticManagement({
+        disease,
+        diagnosisConfidence: input.diagnosisConfidence,
+        supportingSignals,
+        contradictionFlags,
+        rankedDifferentials,
+        outputPayload: input.outputPayload,
+    });
     const playbook = resolveTreatmentPlaybook(disease);
     const regulatoryNotes = buildRegulatoryNotes(input.context.regulatory_region);
 
     const options = [
-        materializeOption(playbook.gold_standard, disease, input, supportingSignals, alternatives, contextFlags, regulatoryNotes),
-        materializeOption(playbook.resource_constrained, disease, input, supportingSignals, alternatives, contextFlags, regulatoryNotes),
-        materializeOption(playbook.supportive_only, disease, input, supportingSignals, alternatives, contextFlags, regulatoryNotes),
+        materializeOption(playbook.gold_standard, disease, input, supportingSignals, alternatives, contextFlags, regulatoryNotes, diagnosticManagement),
+        materializeOption(playbook.resource_constrained, disease, input, supportingSignals, alternatives, contextFlags, regulatoryNotes, diagnosticManagement),
+        materializeOption(playbook.supportive_only, disease, input, supportingSignals, alternatives, contextFlags, regulatoryNotes, diagnosticManagement),
     ].sort((left, right) => rankOption(right, input.context, input.emergencyLevel, input.severityScore) - rankOption(left, input.context, input.emergencyLevel, input.severityScore));
 
     return {
@@ -133,7 +158,9 @@ export function buildTreatmentRecommendationBundle(input: BuildBundleInput): Tre
         options,
         observed_performance: input.observedPerformance ?? [],
         clinician_notice: CLINICIAN_NOTICE,
-        uncertainty_summary: buildUncertaintySummary(input.diagnosisConfidence, alternatives, contradictionFlags, options),
+        uncertainty_summary: buildUncertaintySummary(input.diagnosisConfidence, alternatives, contradictionFlags, options, diagnosticManagement),
+        management_mode: diagnosticManagement.required ? 'diagnostic_management' : 'definitive',
+        diagnostic_management_summary: diagnosticManagement.summary,
     };
 }
 
@@ -163,6 +190,7 @@ function materializeOption(
     alternatives: string[],
     contextFlags: Set<ContraindicationFlag>,
     regulatoryNotes: string[],
+    diagnosticManagement: DiagnosticManagementAssessment,
 ): TreatmentCandidateRecord {
     const speciesNormalized = normalizeSpecies(input.species);
     const detectedContraindications = new Set<string>();
@@ -182,9 +210,10 @@ function materializeOption(
         alternatives,
         template.evidence_level,
         detectedContraindications.size,
+        diagnosticManagement,
     );
 
-    return {
+    const baseOption: TreatmentCandidateRecord = {
         id: '',
         disease: disease.name,
         species_applicability: disease.species_relevance,
@@ -207,6 +236,10 @@ function materializeOption(
         clinician_validation_required: true,
         autonomous_prescribing_blocked: true,
     };
+
+    return diagnosticManagement.required
+        ? applyDiagnosticManagementOverlay(baseOption, disease, diagnosticManagement)
+        : baseOption;
 }
 
 function resolveTreatmentPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
@@ -917,26 +950,257 @@ function buildOption(input: {
     };
 }
 
+function extractRankedDifferentials(outputPayload: Record<string, unknown>, primaryDiagnosis: string): RankedDifferential[] {
+    const diagnosis = asRecord(outputPayload.diagnosis);
+    const differentials = Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials
+        : [];
+    const seen = new Set<string>();
+
+    return differentials
+        .map((entry): RankedDifferential | null => {
+            const rawName = typeof entry === 'string'
+                ? entry
+                : typeof entry === 'object' && entry !== null
+                    ? (entry as Record<string, unknown>).name
+                    : null;
+            const canonicalName = normalizeOntologyDiseaseName(rawName);
+            if (!canonicalName || seen.has(canonicalName)) {
+                return null;
+            }
+            seen.add(canonicalName);
+            const ontologyEntry = getMasterDiseaseOntology().find((candidate) => candidate.name === canonicalName) ?? null;
+            const probability = typeof entry === 'object' && entry !== null
+                ? readNumber((entry as Record<string, unknown>).probability)
+                : null;
+            return {
+                name: canonicalName,
+                probability,
+                category: ontologyEntry?.category ?? (canonicalName === primaryDiagnosis ? findDiseaseEntry(primaryDiagnosis)?.category ?? null : null),
+            };
+        })
+        .filter((entry): entry is RankedDifferential => entry != null)
+        .slice(0, 6);
+}
+
+function assessDiagnosticManagement(input: {
+    disease: DiseaseOntologyEntry;
+    diagnosisConfidence: number | null;
+    supportingSignals: string[];
+    contradictionFlags: string[];
+    rankedDifferentials: RankedDifferential[];
+    outputPayload: Record<string, unknown>;
+}): DiagnosticManagementAssessment {
+    const contradictionAnalysis = asRecord(input.outputPayload.contradiction_analysis);
+    const contradictionScore = readNumber(contradictionAnalysis.contradiction_score)
+        ?? readNumber(input.outputPayload.contradiction_score)
+        ?? 0;
+    const abstainRecommended = readBoolean(input.outputPayload.abstain_recommendation) === true
+        || readBoolean(contradictionAnalysis.abstain) === true;
+    const ranked = input.rankedDifferentials.length > 0
+        ? input.rankedDifferentials
+        : [{ name: input.disease.name, probability: input.diagnosisConfidence, category: input.disease.category }];
+    const topProbability = ranked[0]?.probability ?? input.diagnosisConfidence;
+    const secondProbability = ranked[1]?.probability ?? null;
+    const margin = topProbability != null && secondProbability != null
+        ? topProbability - secondProbability
+        : null;
+    const crossCategoryAlternatives = ranked
+        .filter((entry) => entry.name !== input.disease.name && entry.category != null && entry.category !== input.disease.category)
+        .map((entry) => entry.name)
+        .slice(0, 3);
+
+    const reasons: string[] = [];
+    let noiseScore = 0;
+
+    if (abstainRecommended) {
+        reasons.push('The diagnostic safety layer already recommends clinician-led confirmation before definitive treatment.');
+        noiseScore += 3;
+    }
+    if (contradictionScore >= 0.35 || input.contradictionFlags.length >= 2) {
+        reasons.push('Contradictory case context is widening the differential and lowering treatment certainty.');
+        noiseScore += contradictionScore >= 0.35 ? 2 : 1;
+    }
+    if ((topProbability ?? input.diagnosisConfidence ?? 1) < 0.72) {
+        reasons.push(`Primary diagnosis confidence remains limited at ${(((topProbability ?? input.diagnosisConfidence ?? 0) as number) * 100).toFixed(0)}%.`);
+        noiseScore += (topProbability ?? input.diagnosisConfidence ?? 1) < 0.58 ? 2 : 1;
+    }
+    if (margin != null && margin < 0.18) {
+        reasons.push('Top differentials remain too close to justify disease-specific treatment as the default.');
+        noiseScore += margin < 0.1 ? 2 : 1;
+    }
+    if (input.supportingSignals.length < 2) {
+        reasons.push('Too few disease-specific supporting signals were matched from the available case data.');
+        noiseScore += 1;
+    }
+    if (crossCategoryAlternatives.length > 0) {
+        reasons.push(`Meaningful alternatives from other clinical domains are still active: ${formatDiseaseList(crossCategoryAlternatives)}.`);
+        noiseScore += 1;
+    }
+
+    const required = abstainRecommended
+        || contradictionScore >= 0.45
+        || (margin != null && margin < 0.1)
+        || noiseScore >= 3;
+    const confirmatoryActions = required
+        ? deriveDiagnosticManagementActions(input.disease, crossCategoryAlternatives, input.contradictionFlags)
+        : [];
+
+    return {
+        required,
+        reasons,
+        summary: required
+            ? `Diagnostic-management mode active. ${reasons.slice(0, 3).join(' ')}`
+            : null,
+        confirmatory_actions: confirmatoryActions,
+    };
+}
+
+function deriveDiagnosticManagementActions(
+    disease: DiseaseOntologyEntry,
+    crossCategoryAlternatives: string[],
+    contradictionFlags: string[],
+): string[] {
+    const actions = [
+        'Confirmatory diagnostics should precede definitive disease-specific treatment whenever the patient can tolerate that delay.',
+    ];
+
+    switch (disease.category) {
+        case 'Neurological':
+            actions.push('Repeat focused neurologic examination and lesion localization before committing to a definitive pathway.');
+            actions.push('Use advanced imaging, CSF analysis, or infectious/toxic screening to separate structural, inflammatory, and exposure-driven causes.');
+            break;
+        case 'Gastrointestinal':
+            actions.push('Use targeted imaging and repeat abdominal assessment to separate obstructive, inflammatory, and surgical abdominal disease.');
+            actions.push('Trend perfusion and abdominal findings while confirmatory diagnostics are being assembled.');
+            break;
+        case 'Toxicology':
+            actions.push('Reconcile exposure history and toxidrome-defining findings before selecting cause-specific antidotal management.');
+            break;
+        case 'Cardiopulmonary':
+            actions.push('Prioritize oxygenation/perfusion stabilization plus confirmatory cardiopulmonary imaging or point-of-care assessment.');
+            break;
+        case 'Renal':
+            actions.push('Clarify obstructive, intrinsic, and systemic contributors with focused urinary and renal diagnostics before locking into definitive therapy.');
+            break;
+        case 'Reproductive':
+            actions.push('Use reproductive imaging and focused examination to confirm the pathology before definitive intervention.');
+            break;
+        case 'Endocrine':
+            actions.push('Confirm endocrine-specific laboratory anchors before escalating disease-specific long-course management.');
+            break;
+        default:
+            actions.push('Use focused confirmatory diagnostics and repeat clinician examination to narrow the differential before definitive therapy.');
+            break;
+    }
+
+    if (crossCategoryAlternatives.length > 0) {
+        actions.push(`Explicitly discriminate ${disease.name} from ${formatDiseaseList(crossCategoryAlternatives)} before committing to a definitive treatment path.`);
+    }
+    if (contradictionFlags.length > 0) {
+        actions.push('Resolve contradictory history, metadata, or exposure signals before translating this pathway into definitive treatment.');
+    }
+
+    return dedupeStrings(actions).slice(0, 4);
+}
+
+function applyDiagnosticManagementOverlay(
+    option: TreatmentCandidateRecord,
+    disease: DiseaseOntologyEntry,
+    diagnosticManagement: DiagnosticManagementAssessment,
+): TreatmentCandidateRecord {
+    const pathwayLead = option.treatment_pathway === 'gold_standard'
+        ? 'Advanced diagnostic-management pathway prioritizes stabilization plus confirmatory workup before definitive disease-directed treatment.'
+        : option.treatment_pathway === 'resource_constrained'
+            ? 'Resource-constrained diagnostic-management pathway favors staged diagnostics and monitored reassessment over premature definitive treatment.'
+            : 'Bridge-only diagnostic-management pathway keeps the patient stabilized while clinician confirmation and escalation decisions are pending.';
+    const provisionalDrugClasses = option.treatment_pathway === 'supportive_only'
+        ? []
+        : ['Only clinician-selected stabilization or symptom-control classes should be considered until confirmatory diagnostics narrow the differential.'];
+    const confirmatoryProcedures = diagnosticManagement.confirmatory_actions;
+
+    return {
+        ...option,
+        treatment_type: option.treatment_pathway === 'supportive_only' ? 'supportive care' : 'medical',
+        intervention_details: {
+            ...option.intervention_details,
+            drug_classes: provisionalDrugClasses,
+            procedure_types: dedupeStrings([
+                ...confirmatoryProcedures,
+                ...option.intervention_details.procedure_types.filter((entry) => /confirm|diagnostic|reassess|assessment|screen/i.test(entry)),
+            ]),
+            supportive_measures: dedupeStrings([
+                'Serial reassessment while tracking which differential is becoming better anchored.',
+                ...option.intervention_details.supportive_measures,
+                'Escalate immediately if instability or disease-defining features emerge during workup.',
+            ]),
+            monitoring: dedupeStrings([
+                'Monitor the findings that discriminate the leading differential set.',
+                ...option.intervention_details.monitoring,
+            ]),
+            reference_range_notes: dedupeStrings([
+                ...option.intervention_details.reference_range_notes,
+                'Definitive disease-specific prescribing or procedures should wait for confirmatory diagnostics whenever clinically feasible.',
+            ]),
+        },
+        indication_criteria: dedupeStrings([
+            `Use when ${disease.name} remains plausible but the differential is too noisy for definitive disease-directed management.`,
+            ...option.indication_criteria,
+        ]),
+        evidence_level: option.evidence_level === 'high' ? 'moderate' : option.evidence_level,
+        expected_outcome_range: {
+            ...option.expected_outcome_range,
+            recovery_expectation: 'Outcome depends on rapid stabilization, confirmatory diagnostics, and timely clinician escalation once the leading diagnosis is better anchored.',
+        },
+        why_relevant: `${pathwayLead} ${option.why_relevant}`.trim(),
+        risks: dedupeStrings([
+            'Premature commitment to the wrong disease-specific pathway.',
+            ...option.risks,
+        ]),
+        regulatory_notes: dedupeStrings([
+            ...option.regulatory_notes,
+            'Translate this pathway into definitive therapy only after clinician review of confirmatory diagnostics and the current safety context.',
+        ]),
+        uncertainty: {
+            ...option.uncertainty,
+            recommendation_confidence: clamp(Number((option.uncertainty.recommendation_confidence - 0.12).toFixed(3)), 0.12, 0.9),
+            evidence_gaps: dedupeStrings([
+                ...option.uncertainty.evidence_gaps,
+                ...diagnosticManagement.reasons,
+            ]),
+            weak_evidence: true,
+            diagnostic_management_required: true,
+            noise_reasons: diagnosticManagement.reasons,
+        },
+    };
+}
+
 function buildUncertaintyEnvelope(
     diagnosisConfidence: number | null,
     alternatives: string[],
     evidenceLevel: TreatmentEvidenceLevel,
     detectedContraindicationCount: number,
+    diagnosticManagement: DiagnosticManagementAssessment,
 ): TreatmentUncertaintyEnvelope {
     const boundedConfidence = clamp(diagnosisConfidence ?? 0.5, 0.2, 0.98);
-    const penalty = detectedContraindicationCount * 0.08 + (evidenceLevel === 'low' ? 0.12 : evidenceLevel === 'moderate' ? 0.05 : 0);
+    const penalty = detectedContraindicationCount * 0.08
+        + (evidenceLevel === 'low' ? 0.12 : evidenceLevel === 'moderate' ? 0.05 : 0)
+        + (diagnosticManagement.required ? 0.12 : 0);
     const recommendationConfidence = clamp(Number((boundedConfidence - penalty).toFixed(3)), 0.15, 0.97);
     const evidenceGaps = [
         alternatives.length > 0 ? 'Top differentials remain close enough that pathway choice should be validated against confirmatory diagnostics.' : null,
         evidenceLevel === 'low' ? 'Published or internally observed evidence is limited for this exact context.' : null,
         detectedContraindicationCount > 0 ? 'Potential contraindications were detected and require clinician review before definitive intervention.' : null,
+        diagnosticManagement.required ? 'Diagnostic-management mode is active because the current differential is too noisy for definitive disease-directed treatment.' : null,
     ].filter((value): value is string => value != null);
 
     return {
         recommendation_confidence: recommendationConfidence,
         evidence_gaps: evidenceGaps,
         alternative_diagnoses: alternatives,
-        weak_evidence: evidenceLevel === 'low' || recommendationConfidence < 0.55,
+        weak_evidence: evidenceLevel === 'low' || recommendationConfidence < 0.55 || diagnosticManagement.required,
+        diagnostic_management_required: diagnosticManagement.required,
+        noise_reasons: diagnosticManagement.reasons,
     };
 }
 
@@ -945,8 +1209,12 @@ function buildUncertaintySummary(
     alternatives: string[],
     contradictionFlags: string[],
     options: TreatmentCandidateRecord[],
+    diagnosticManagement: DiagnosticManagementAssessment,
 ) {
     const caveats = [
+        diagnosticManagement.required
+            ? diagnosticManagement.summary
+            : null,
         diagnosisConfidence != null && diagnosisConfidence < 0.65
             ? `Primary diagnosis confidence is only ${(diagnosisConfidence * 100).toFixed(0)}%.`
             : null,
@@ -1078,6 +1346,27 @@ function rankOption(
     return score;
 }
 
+function findDiseaseEntry(name: string) {
+    return getMasterDiseaseOntology().find((entry) => entry.name === name) ?? null;
+}
+
+function formatDiseaseList(values: string[]) {
+    return values.join(', ');
+}
+
+function dedupeStrings(values: Array<string | null | undefined>) {
+    const seen = new Set<string>();
+    const ordered: string[] = [];
+    for (const value of values) {
+        const normalized = normalizeText(value);
+        if (!normalized) continue;
+        if (seen.has(normalized)) continue;
+        seen.add(normalized);
+        ordered.push(normalized);
+    }
+    return ordered;
+}
+
 function normalizeSpecies(value: string | null | undefined) {
     const normalized = normalizeText(value)?.toLowerCase() ?? null;
     if (!normalized) return null;
@@ -1106,6 +1395,19 @@ function clamp(value: number, min: number, max: number) {
 
 function normalizeText(value: unknown) {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function readBoolean(value: unknown) {
+    return typeof value === 'boolean' ? value : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
