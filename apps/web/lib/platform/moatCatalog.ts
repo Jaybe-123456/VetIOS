@@ -42,8 +42,9 @@ export const platformLayers: PlatformLayerDefinition[] = [
         capabilities: [
             {
                 label: 'PetPass (pet owner app)',
-                status: 'missing',
-                summary: 'No consumer-facing pet owner application is present in this repo.',
+                status: 'partial',
+                summary: 'A PetPass preview surface now exists, but it is not yet a production-backed consumer application.',
+                href: '/platform/petpass',
             },
             {
                 label: 'Clinic PetPass integration',
@@ -53,8 +54,8 @@ export const platformLayers: PlatformLayerDefinition[] = [
             {
                 label: 'Health history & alerts',
                 status: 'partial',
-                summary: 'Clinical history exists internally, but there is no owner-facing alerting surface.',
-                href: '/dataset',
+                summary: 'Owner-facing timeline and alerts are now previewed, but not yet backed by a live clinic-consumer sync.',
+                href: '/platform/petpass',
             },
         ],
     },
@@ -148,14 +149,14 @@ export const moatCards: MoatCardDefinition[] = [
         claim: 'PIMS vendors build on it.',
         availableNow: [
             'Authenticated API routes already exist for inference, outcomes, simulation, evaluation, and passive connector ingest.',
-            'A developer API explorer is already exposed in the settings control plane for internal operators.',
+            'A public developer portal and endpoint catalog now document the integration surface.',
         ],
         missingNow: [
-            'No external developer portal, self-serve API keys, partner onboarding flow, or versioned public docs.',
+            'No self-serve API keys, partner onboarding flow, or durable versioned public docs contract yet.',
             'Routes are still operator-first rather than productized for third-party vendors.',
         ],
         links: [
-            { label: 'Developer Explorer', href: '/settings' },
+            { label: 'Developer Portal', href: '/platform/developers' },
             { label: 'Inference Console', href: '/inference' },
         ],
     },
@@ -163,19 +164,19 @@ export const moatCards: MoatCardDefinition[] = [
         id: 'petpass',
         company: 'APPLE',
         themeClass: 'border-[#8b5cf6] bg-[#221b4b]',
-        status: 'missing',
+        status: 'partial',
         title: 'PetPass app',
         thesis: 'Two-sided consumer ecosystem',
         claim: 'Pet owners pull clinics toward VetIOS.',
         availableNow: [
-            'Clinic-side clinical intelligence and governance layers exist.',
+            'A PetPass preview app now exists with owner alerts, history timeline, and clinic-linked care actions.',
         ],
         missingNow: [
-            'No consumer mobile/web app, owner accounts, household timelines, or clinic invitation funnel exist yet.',
-            'No owner-controlled health history, reminders, or alert delivery surface is implemented.',
+            'Owner accounts, invitation flows, and production clinic sync are still not implemented.',
+            'The preview is a product shell, not yet a fully backed consumer network.',
         ],
         links: [
-            { label: 'Clinical Dataset', href: '/dataset' },
+            { label: 'PetPass Preview', href: '/platform/petpass' },
         ],
     },
     {
@@ -188,14 +189,14 @@ export const moatCards: MoatCardDefinition[] = [
         claim: 'The network gets smarter every case.',
         availableNow: [
             'Inference -> outcome -> dataset -> benchmark -> promotion loops are implemented.',
-            'Outcome-linked learning cycles, calibration, adversarial evaluation, and registry promotion are live.',
+            'Outcome-linked learning cycles, calibration, adversarial evaluation, registry promotion, and a public learning snapshot are live.',
         ],
         missingNow: [
             'Learning is still scoped by tenant in the codebase rather than truly federated across clinics.',
             'There is no privacy-preserving cross-clinic parameter aggregation or federation coordinator yet.',
         ],
         links: [
-            { label: 'Outcome Learning', href: '/outcome' },
+            { label: 'Network Learning', href: '/platform/network-learning' },
             { label: 'Experiment Track', href: '/experiments' },
         ],
     },
@@ -228,14 +229,14 @@ export const moatCards: MoatCardDefinition[] = [
         claim: 'Clinics generate data by working.',
         availableNow: [
             'Passive connector normalization exists for lab results, rechecks, referrals, imaging, and medication refill signals.',
-            'Episode reconciliation and a clinic workflow signal dock are already built.',
+            'Episode reconciliation, a clinic workflow signal dock, and a published connector catalog are already built.',
         ],
         missingNow: [
             'Most connector ingestion is still manual or shared-secret based, not turnkey vendor sync at fleet scale.',
             'There is no connector marketplace, scheduler, or broad EHR/PIMS sync coverage yet.',
         ],
         links: [
-            { label: 'Outcome Learning', href: '/outcome' },
+            { label: 'Passive Signals', href: '/platform/passive-signals' },
         ],
     },
     {

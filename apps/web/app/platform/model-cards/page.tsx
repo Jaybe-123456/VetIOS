@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
-import Link from 'next/link';
 import type { ReactNode } from 'react';
-import { ArrowRight, Database, ShieldCheck } from 'lucide-react';
+import Link from 'next/link';
+import { Database, ShieldCheck } from 'lucide-react';
+import { PlatformShell } from '@/components/platform/PlatformShell';
 import { getPublicModelCardsCatalog, type PublicModelCard } from '@/lib/platform/publicModelCards';
 
 export const metadata: Metadata = {
@@ -15,94 +16,68 @@ export default async function PublicModelCardsPage() {
     const catalog = await getPublicModelCardsCatalog();
 
     return (
-        <div className="min-h-full bg-[#07101f] text-white">
-            <div className="mx-auto max-w-7xl px-6 py-10 sm:px-8 lg:px-12">
-                <div className="rounded-[28px] border border-white/10 bg-[radial-gradient(circle_at_top_left,_rgba(239,68,68,0.14),_transparent_28%),radial-gradient(circle_at_top_right,_rgba(59,130,246,0.18),_transparent_30%),linear-gradient(180deg,_rgba(15,23,42,0.97),_rgba(7,16,31,0.98))] p-8 shadow-[0_30px_120px_rgba(2,6,23,0.45)] sm:p-10">
-                    <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-200">
-                        PUBLIC MODEL CARDS
-                    </div>
-                    <div className="mt-6 grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-                        <div>
-                            <h1 className="text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-                                Governance evidence that can leave the control plane.
-                            </h1>
-                            <p className="mt-5 max-w-3xl text-base leading-8 text-slate-300">
-                                These cards expose the active registry state, governance gates, and promotion blockers in a read-only
-                                public surface. This is the first trust layer for the moat claim around transparency.
-                            </p>
-                        </div>
-
-                        <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-                            <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Catalog status</div>
-                            <div className="mt-4 space-y-3 text-sm text-slate-300">
-                                <MetricRow label="Configured" value={catalog.configured ? 'YES' : 'NO'} />
-                                <MetricRow label="Source" value={catalog.source.toUpperCase()} />
-                                <MetricRow label="Tenant" value={catalog.tenant_id ?? 'NOT CONFIGURED'} />
-                                <MetricRow label="Refreshed" value={formatDateTime(catalog.refreshed_at)} />
-                            </div>
-                            <div className="mt-5 flex flex-wrap gap-3">
-                                <Link
-                                    href="/api/public/model-cards"
-                                    className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-4 py-2 text-sm text-white transition hover:border-white/30 hover:bg-white/15"
-                                >
-                                    JSON endpoint
-                                    <Database className="h-4 w-4" />
-                                </Link>
-                                <Link
-                                    href="/platform"
-                                    className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white transition hover:border-white/30 hover:bg-white/10"
-                                >
-                                    Back to moat audit
-                                    <ArrowRight className="h-4 w-4" />
-                                </Link>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {!catalog.configured ? (
-                    <section className="mt-10 rounded-[24px] border border-amber-400/20 bg-amber-400/10 p-8 text-amber-100">
-                        <div className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-200">Configuration needed</div>
-                        <h2 className="mt-2 text-2xl font-semibold text-white">Public model cards are wired, but no public catalog tenant is configured yet.</h2>
-                        <p className="mt-4 max-w-3xl text-sm leading-7">
-                            Set <code className="rounded bg-black/20 px-1.5 py-0.5 text-amber-100">VETIOS_PUBLIC_TENANT_ID</code> to the
-                            tenant whose registry you want to publish, or sign in so the page can fall back to your current session tenant.
-                        </p>
-                    </section>
-                ) : (
-                    <section className="mt-10 space-y-8">
-                        {catalog.families.map((family) => (
-                            <div key={family.model_family} className="rounded-[26px] border border-white/10 bg-white/[0.04] p-6">
-                                <div className="flex flex-wrap items-center justify-between gap-4">
-                                    <div>
-                                        <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">{family.model_family}</div>
-                                        <h2 className="mt-2 text-2xl font-semibold text-white">
-                                            {family.cards.length > 0 ? `${family.cards.length} published registry cards` : 'No registry cards published'}
-                                        </h2>
-                                    </div>
-                                    <div className="flex flex-wrap gap-3">
-                                        <FamilyBadge label="Active" value={family.active_model_version ?? 'NO DATA'} />
-                                        <FamilyBadge label="Last stable" value={family.last_stable_model_version ?? 'NO DATA'} />
-                                    </div>
-                                </div>
-
-                                {family.cards.length === 0 ? (
-                                    <div className="mt-6 rounded-2xl border border-white/8 bg-black/15 p-5 text-sm text-slate-300">
-                                        No registry entries are available for this family in the published tenant yet.
-                                    </div>
-                                ) : (
-                                    <div className="mt-6 grid gap-5 xl:grid-cols-2">
-                                        {family.cards.map((card) => (
-                                            <ModelCardPanel key={card.registry_id} card={card} />
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </section>
-                )}
+        <PlatformShell
+            badge="PUBLIC MODEL CARDS"
+            title="Governance evidence that can leave the control plane."
+            description="These cards expose the active registry state, governance gates, and promotion blockers in a read-only public surface. This is the first trust layer for the moat claim around transparency."
+            actions={(
+                <Link
+                    href="/api/public/model-cards"
+                    className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+                >
+                    JSON endpoint
+                    <Database className="h-4 w-4" />
+                </Link>
+            )}
+        >
+            <div className="grid gap-4 md:grid-cols-4">
+                <StatCard label="Configured" value={catalog.configured ? 'YES' : 'NO'} />
+                <StatCard label="Source" value={catalog.source.toUpperCase()} />
+                <StatCard label="Tenant" value={catalog.tenant_id ?? 'NOT CONFIGURED'} />
+                <StatCard label="Refreshed" value={formatDateTime(catalog.refreshed_at)} />
             </div>
-        </div>
+
+            {!catalog.configured ? (
+                <section className="mt-10 rounded-[24px] border border-amber-400/20 bg-amber-400/10 p-8 text-amber-100">
+                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-200">Configuration needed</div>
+                    <h2 className="mt-2 text-2xl font-semibold text-white">Public model cards are wired, but no public catalog tenant is configured yet.</h2>
+                    <p className="mt-4 max-w-3xl text-sm leading-7">
+                        Set <code className="rounded bg-black/20 px-1.5 py-0.5 text-amber-100">VETIOS_PUBLIC_TENANT_ID</code> to the tenant whose registry you want to publish, or sign in so the page can fall back to your current session tenant.
+                    </p>
+                </section>
+            ) : (
+                <section className="mt-10 space-y-8">
+                    {catalog.families.map((family) => (
+                        <div key={family.model_family} className="rounded-[26px] border border-white/10 bg-white/[0.04] p-6">
+                            <div className="flex flex-wrap items-center justify-between gap-4">
+                                <div>
+                                    <div className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">{family.model_family}</div>
+                                    <h2 className="mt-2 text-2xl font-semibold text-white">
+                                        {family.cards.length > 0 ? `${family.cards.length} published registry cards` : 'No registry cards published'}
+                                    </h2>
+                                </div>
+                                <div className="flex flex-wrap gap-3">
+                                    <FamilyBadge label="Active" value={family.active_model_version ?? 'NO DATA'} />
+                                    <FamilyBadge label="Last stable" value={family.last_stable_model_version ?? 'NO DATA'} />
+                                </div>
+                            </div>
+
+                            {family.cards.length === 0 ? (
+                                <div className="mt-6 rounded-2xl border border-white/8 bg-black/15 p-5 text-sm text-slate-300">
+                                    No registry entries are available for this family in the published tenant yet.
+                                </div>
+                            ) : (
+                                <div className="mt-6 grid gap-5 xl:grid-cols-2">
+                                    {family.cards.map((card) => (
+                                        <ModelCardPanel key={card.registry_id} card={card} />
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </section>
+            )}
+        </PlatformShell>
     );
 }
 
@@ -173,6 +148,15 @@ function ModelCardPanel({ card }: { card: PublicModelCard }) {
                 )}
             </div>
         </article>
+    );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="rounded-[22px] border border-white/10 bg-white/[0.04] p-5">
+            <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</div>
+            <div className="mt-2 break-all text-lg font-semibold text-white">{value}</div>
+        </div>
     );
 }
 

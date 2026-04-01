@@ -1,9 +1,8 @@
 import { getModelRegistryControlPlaneSnapshot } from '@/lib/experiments/service';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
 import type { GateStatus, ModelFamily, ModelRegistryControlPlaneEntry } from '@/lib/experiments/types';
-import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
-
-type PublicCatalogSource = 'public_env' | 'session' | 'dev_bypass' | 'none';
+import { getSupabaseServer } from '@/lib/supabaseServer';
+import { resolvePublicCatalogTenant, type PublicCatalogSource } from '@/lib/platform/publicTenant';
 
 export interface PublicModelCard {
     registry_id: string;
@@ -83,27 +82,6 @@ export async function getPublicModelCardsCatalog(): Promise<PublicModelCardsCata
             cards: selectPublicEntries(family.entries).map(mapPublicCard),
         })),
     };
-}
-
-async function resolvePublicCatalogTenant(): Promise<{ tenantId: string | null; source: PublicCatalogSource }> {
-    const publicTenantId = process.env.VETIOS_PUBLIC_TENANT_ID?.trim();
-    if (publicTenantId) {
-        return { tenantId: publicTenantId, source: 'public_env' };
-    }
-
-    const session = await resolveSessionTenant();
-    if (session?.tenantId) {
-        return { tenantId: session.tenantId, source: 'session' };
-    }
-
-    if (process.env.VETIOS_DEV_BYPASS === 'true') {
-        const devTenantId = process.env.VETIOS_DEV_TENANT_ID?.trim();
-        if (devTenantId) {
-            return { tenantId: devTenantId, source: 'dev_bypass' };
-        }
-    }
-
-    return { tenantId: null, source: 'none' };
 }
 
 function selectPublicEntries(entries: ModelRegistryControlPlaneEntry[]): ModelRegistryControlPlaneEntry[] {
