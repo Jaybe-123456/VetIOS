@@ -1,5 +1,6 @@
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth/callback'];
+const PUBLIC_MARKETING_PATH_PREFIXES = ['/platform'];
 
 function normalizeConfiguredOrigin(value: string | null | undefined): string | null {
     const trimmed = value?.trim();
@@ -46,6 +47,20 @@ export function isPublicAuthPath(pathname: string): boolean {
     return PUBLIC_AUTH_PATH_PREFIXES.some((prefix) =>
         pathname === prefix || pathname.startsWith(`${prefix}/`),
     );
+}
+
+export function isPublicMarketingPath(pathname: string): boolean {
+    return PUBLIC_MARKETING_PATH_PREFIXES.some((prefix) =>
+        pathname === prefix || pathname.startsWith(`${prefix}/`),
+    );
+}
+
+export function isPublicRoutePath(pathname: string): boolean {
+    return isPublicAuthPath(pathname) || isPublicMarketingPath(pathname);
+}
+
+export function isShelllessPublicPath(pathname: string): boolean {
+    return isPublicRoutePath(pathname);
 }
 
 export function shouldRedirectPreviewAuthHost(hostname: string, pathname: string): boolean {
