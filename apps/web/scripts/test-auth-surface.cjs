@@ -55,6 +55,9 @@ function main() {
     assert(site.shouldIndexSite() === false, 'Preview deployments must not be indexed.');
 
     assertFileContains(path.join(appRoot, 'middleware.ts'), 'shouldRedirectPreviewAuthHost');
+    assertFileContains(path.join(appRoot, 'lib', 'auth', 'pageGuard.ts'), "redirect(`/login?next=${encodeURIComponent(nextPath)}`)");
+    assertFileContains(path.join(appRoot, 'app', 'dashboard', 'layout.tsx'), "requirePageSession('/dashboard')");
+    assertFileContains(path.join(appRoot, 'app', '(console)', 'layout.tsx'), "requirePageSession('/inference')");
     assertFileContains(path.join(appRoot, 'app', 'auth', 'callback', 'route.ts'), 'sanitizeInternalPath');
     assertFileContains(path.join(appRoot, 'app', 'login', 'page.tsx'), 'buildClientAuthCallbackUrl');
     assertFileContains(path.join(appRoot, 'app', 'signup', 'page.tsx'), 'AuthDomainNotice');
