@@ -1,5 +1,11 @@
 {
     "framework": "nextjs",
     "buildCommand": "cd ../.. && pnpm run build --filter=@vetios/web",
-    "outputDirectory": ".next"
+    "outputDirectory": ".next",
+    "crons": [
+        {
+            "path": "/api/cron/outbox-dispatch",
+            "schedule": "*/1 * * * *"
+        }
+    ]
 }

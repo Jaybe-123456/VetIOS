@@ -62,6 +62,14 @@ export interface OutboxQueueSnapshot {
     recent_attempts: ConnectorDeliveryAttemptRecord[];
 }
 
+export interface OutboxQueueSnapshotOptions {
+    limit?: number;
+    status?: OutboxStatus | 'all' | null;
+    attemptStatus?: ConnectorDeliveryAttemptStatus | 'all' | null;
+    topic?: string | null;
+    handlerKey?: OutboxHandlerKey | 'all' | null;
+}
+
 export interface EnqueueOutboxEventInput {
     tenantId: string;
     topic: string;
@@ -87,6 +95,11 @@ export interface DispatchOutboxBatchResult {
         status: OutboxStatus;
         error: string | null;
     }>;
+}
+
+export interface RequeueOutboxEventsResult {
+    count: number;
+    event_ids: string[];
 }
 
 interface HandlerResult {
@@ -154,27 +167,50 @@ export async function enqueueOutboxEvent(
 export async function getOutboxQueueSnapshot(
     client: SupabaseClient,
     tenantId: string,
-    options: {
-        limit?: number;
-    } = {},
+    options: OutboxQueueSnapshotOptions = {},
 ): Promise<OutboxQueueSnapshot> {
     const limit = Math.max(1, Math.min(options.limit ?? 30, 100));
     const outboxColumns = OUTBOX_EVENTS.COLUMNS;
     const attemptColumns = CONNECTOR_DELIVERY_ATTEMPTS.COLUMNS;
+    let eventQuery = client
+        .from(OUTBOX_EVENTS.TABLE)
+        .select('*')
+        .eq(outboxColumns.tenant_id, tenantId)
+        .order(outboxColumns.created_at, { ascending: false })
+        .limit(limit);
 
-    const [{ data: events, error: eventError }, { data: attempts, error: attemptError }] = await Promise.all([
-        client
-            .from(OUTBOX_EVENTS.TABLE)
-            .select('*')
-            .eq(outboxColumns.tenant_id, tenantId)
-            .order(outboxColumns.created_at, { ascending: false })
-            .limit(limit),
-        client
-            .from(CONNECTOR_DELIVERY_ATTEMPTS.TABLE)
-            .select('*')
-            .eq(attemptColumns.tenant_id, tenantId)
-            .order(attemptColumns.created_at, { ascending: false })
-            .limit(limit),
+    const statusFilter = normalizeSnapshotStatusFilter(options.status);
+    if (statusFilter) {
+        eventQuery = eventQuery.eq(outboxColumns.status, statusFilter);
+    }
+    const handlerFilter = normalizeSnapshotHandlerFilter(options.handlerKey);
+    if (handlerFilter) {
+        eventQuery = eventQuery.eq(outboxColumns.handler_key, handlerFilter);
+    }
+    const topicFilter = normalizeOptionalText(options.topic);
+    if (topicFilter) {
+        eventQuery = eventQuery.eq(outboxColumns.topic, topicFilter);
+    }
+
+    let attemptQuery = client
+        .from(CONNECTOR_DELIVERY_ATTEMPTS.TABLE)
+        .select('*')
+        .eq(attemptColumns.tenant_id, tenantId)
+        .order(attemptColumns.created_at, { ascending: false })
+        .limit(limit);
+
+    const attemptStatusFilter = normalizeSnapshotAttemptStatusFilter(options.attemptStatus);
+    if (attemptStatusFilter) {
+        attemptQuery = attemptQuery.eq(attemptColumns.status, attemptStatusFilter);
+    }
+    if (handlerFilter) {
+        attemptQuery = attemptQuery.eq(attemptColumns.handler_key, handlerFilter);
+    }
+
+    const [{ data: events, error: eventError }, { data: attempts, error: attemptError }, counts] = await Promise.all([
+        eventQuery,
+        attemptQuery,
+        countOutboxEventsByStatus(client, tenantId),
     ]);
 
     if (eventError) {
@@ -184,22 +220,134 @@ export async function getOutboxQueueSnapshot(
         throw new Error(`Failed to load outbox delivery attempts: ${attemptError.message}`);
     }
 
-    const recentEvents = (events ?? []).map((row) => mapOutboxEvent(row as JsonObject));
-    const counts: Record<OutboxStatus, number> = {
-        pending: 0,
-        processing: 0,
-        retryable: 0,
-        delivered: 0,
-        dead_letter: 0,
-    };
-    for (const event of recentEvents) {
-        counts[event.status] += 1;
-    }
-
     return {
         counts,
-        recent_events: recentEvents,
+        recent_events: (events ?? []).map((row) => mapOutboxEvent(row as JsonObject)),
         recent_attempts: (attempts ?? []).map((row) => mapConnectorDeliveryAttempt(row as JsonObject)),
+    };
+}
+
+export async function requeueOutboxEvent(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        eventId: string;
+    },
+): Promise<OutboxEventRecord> {
+    const C = OUTBOX_EVENTS.COLUMNS;
+    const { data, error } = await client
+        .from(OUTBOX_EVENTS.TABLE)
+        .update({
+            [C.status]: 'pending',
+            [C.available_at]: new Date().toISOString(),
+            [C.locked_at]: null,
+            [C.locked_by]: null,
+            [C.last_error]: null,
+            [C.delivered_at]: null,
+            [C.attempt_count]: 0,
+        })
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.id, input.eventId)
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to requeue outbox event: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    const event = mapOutboxEvent(data as JsonObject);
+    await markPassiveSignalQueued(client, event);
+    return event;
+}
+
+export async function requeueDeadLetterEvents(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        limit?: number;
+        handlerKey?: OutboxHandlerKey | null;
+    },
+): Promise<RequeueOutboxEventsResult> {
+    const C = OUTBOX_EVENTS.COLUMNS;
+    let query = client
+        .from(OUTBOX_EVENTS.TABLE)
+        .select(C.id)
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.status, 'dead_letter')
+        .order(C.created_at, { ascending: true })
+        .limit(Math.max(1, Math.min(input.limit ?? 25, 100)));
+
+    if (input.handlerKey) {
+        query = query.eq(C.handler_key, input.handlerKey);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+        throw new Error(`Failed to load dead-letter events: ${error.message}`);
+    }
+
+    const eventIds = (data ?? [])
+        .map((row) => normalizeOptionalText((row as JsonObject).id))
+        .filter((value): value is string => value != null);
+
+    if (eventIds.length === 0) {
+        return { count: 0, event_ids: [] };
+    }
+
+    await Promise.all(eventIds.map((eventId) =>
+        requeueOutboxEvent(client, {
+            tenantId: input.tenantId,
+            eventId,
+        })
+    ));
+
+    return {
+        count: eventIds.length,
+        event_ids: eventIds,
+    };
+}
+
+export async function releaseStaleOutboxEvents(
+    client: SupabaseClient,
+    input: {
+        tenantId?: string | null;
+        olderThanMinutes?: number;
+    } = {},
+): Promise<RequeueOutboxEventsResult> {
+    const olderThanMinutes = Math.max(1, Math.min(input.olderThanMinutes ?? 5, 120));
+    const threshold = new Date(Date.now() - (olderThanMinutes * 60 * 1000)).toISOString();
+    const C = OUTBOX_EVENTS.COLUMNS;
+
+    let query = client
+        .from(OUTBOX_EVENTS.TABLE)
+        .update({
+            [C.status]: 'retryable',
+            [C.available_at]: new Date().toISOString(),
+            [C.locked_at]: null,
+            [C.locked_by]: null,
+            [C.last_error]: 'Lease released by operator after stale processing timeout.',
+        })
+        .eq(C.status, 'processing')
+        .lt(C.locked_at, threshold)
+        .select(C.id);
+
+    const tenantId = normalizeOptionalText(input.tenantId);
+    if (tenantId) {
+        query = query.eq(C.tenant_id, tenantId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+        throw new Error(`Failed to release stale outbox leases: ${error.message}`);
+    }
+
+    const eventIds = (data ?? [])
+        .map((row) => normalizeOptionalText((row as JsonObject).id))
+        .filter((value): value is string => value != null);
+
+    return {
+        count: eventIds.length,
+        event_ids: eventIds,
     };
 }
 
@@ -564,6 +712,28 @@ async function reflectSignalIngestionStatus(
     }
 }
 
+async function markPassiveSignalQueued(
+    client: SupabaseClient,
+    event: OutboxEventRecord,
+): Promise<void> {
+    if (event.handler_key !== 'passive_signal_reconcile') {
+        return;
+    }
+
+    const signalEventId = normalizeOptionalText(event.payload.signal_event_id);
+    if (!signalEventId) {
+        return;
+    }
+
+    try {
+        await createOutcomeNetworkRepository(client).updateSignal(event.tenant_id, signalEventId, {
+            ingestion_status: 'queued',
+        });
+    } catch {
+        // Best-effort reflection. Outbox remains the authoritative state.
+    }
+}
+
 async function loadConnectorInstallation(
     client: SupabaseClient,
     tenantId: string,
@@ -673,6 +843,28 @@ function normalizeOutboxStatus(value: unknown): OutboxStatus {
         : 'pending';
 }
 
+function normalizeSnapshotStatusFilter(value: OutboxQueueSnapshotOptions['status']): OutboxStatus | null {
+    return value === 'processing' || value === 'retryable' || value === 'delivered' || value === 'dead_letter' || value === 'pending'
+        ? value
+        : null;
+}
+
+function normalizeSnapshotAttemptStatusFilter(
+    value: OutboxQueueSnapshotOptions['attemptStatus'],
+): ConnectorDeliveryAttemptStatus | null {
+    return value === 'succeeded' || value === 'retryable' || value === 'dead_letter' || value === 'processing'
+        ? value
+        : null;
+}
+
+function normalizeSnapshotHandlerFilter(
+    value: OutboxQueueSnapshotOptions['handlerKey'],
+): OutboxHandlerKey | null {
+    return value === 'connector_webhook' || value === 'passive_signal_reconcile'
+        ? value
+        : null;
+}
+
 function normalizeTargetType(value: unknown): OutboxTargetType {
     return value === 'connector_webhook' ? 'connector_webhook' : 'internal_task';
 }
@@ -729,4 +921,28 @@ function truncateText(value: string, maxLength: number): string {
     return value.length <= maxLength
         ? value
         : `${value.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+async function countOutboxEventsByStatus(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<Record<OutboxStatus, number>> {
+    const C = OUTBOX_EVENTS.COLUMNS;
+    const statuses: OutboxStatus[] = ['pending', 'processing', 'retryable', 'delivered', 'dead_letter'];
+
+    const counts = await Promise.all(statuses.map(async (status) => {
+        const { count, error } = await client
+            .from(OUTBOX_EVENTS.TABLE)
+            .select('*', { count: 'exact', head: true })
+            .eq(C.tenant_id, tenantId)
+            .eq(C.status, status);
+
+        if (error) {
+            throw new Error(`Failed to count ${status} outbox events: ${error.message}`);
+        }
+
+        return [status, count ?? 0] as const;
+    }));
+
+    return Object.fromEntries(counts) as Record<OutboxStatus, number>;
 }
