@@ -760,6 +760,7 @@ async function main() {
     await testLearningCycleTelemetryMaterialization();
     await testHeartbeatStateConsistency();
     await testExperimentBootstrapSeed();
+    await testGovernanceDiagnosticsExplainMissingMetricsAndThresholdFailures();
     await testRegistryGovernanceControlPlane();
     await testLiveChampionGovernanceConsistency();
     await testRegistryRegistrationValidationBlocksInvalidMetadata();
@@ -1242,6 +1243,33 @@ async function testExperimentBootstrapSeed() {
     assert.ok(auditTypes.has('adversarial_completed'));
     assert.ok(auditTypes.has('deployment_evaluated'));
     assert.ok(auditTypes.has('benchmark_completed'));
+}
+
+async function testGovernanceDiagnosticsExplainMissingMetricsAndThresholdFailures() {
+    const tenantId = makeUuid(16);
+    const store = new InMemoryExperimentTrackingStore();
+
+    await seedExperimentTrackingBootstrap(store, tenantId);
+
+    const completeDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_complete_v1', { readOnly: false });
+    assert.ok(completeDetail?.model_registry);
+    assert.equal(completeDetail?.promotion_gating.gates.safety, 'pending');
+    assert.ok(completeDetail?.promotion_gating.blockers.some((blocker) =>
+        blocker.includes('Clinical safety evaluation is still pending. Missing metrics: false_negative_critical_rate, dangerous_false_reassurance_rate, abstain_accuracy, contradiction_detection_rate.'),
+    ));
+    assert.ok(completeDetail?.decision_panel.reasons.some((reason) =>
+        reason.includes('Missing metrics: false_negative_critical_rate, dangerous_false_reassurance_rate, abstain_accuracy, contradiction_detection_rate.'),
+    ));
+
+    const smokeDetail = await getExperimentRunDetail(store, tenantId, 'run_diag_smoke_v1', { readOnly: false });
+    assert.ok(smokeDetail?.model_registry);
+    assert.equal(smokeDetail?.promotion_gating.gates.adversarial, 'fail');
+    assert.ok(smokeDetail?.promotion_gating.blockers.some((blocker) =>
+        blocker.includes('Adversarial gate has not passed. degradation_score 0.270 >= 0.25.'),
+    ));
+    assert.ok(smokeDetail?.decision_panel.reasons.some((reason) =>
+        reason.includes('Adversarial gate has not passed. degradation_score 0.270 >= 0.25.'),
+    ));
 }
 
 async function testRegistryGovernanceControlPlane() {

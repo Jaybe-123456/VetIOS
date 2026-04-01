@@ -871,80 +871,86 @@ function renderGovernanceTab(
                         <DataCard label="Rollback Target" value={family.rollback_target ?? 'NO DATA'} />
                         <DataCard label="Active Route" value={family.active_registry_id ?? 'NO DATA'} />
                     </div>
-                    <div className="space-y-3">
-                        {family.entries.map((entry) => (
-                            <div key={entry.registry_id} className="border border-grid p-3">
-                                <div className="grid grid-cols-1 xl:grid-cols-5 gap-3">
-                                    <DataCard label="Version" value={entry.model_version} />
-                                    <DataCard label="Role" value={entry.registry_role.toUpperCase()} />
-                                    <DataCard label="Lifecycle" value={entry.lifecycle_status.toUpperCase()} />
-                                    <DataCard label="Promotion" value={entry.promotion_allowed ? 'YES' : 'NO'} />
-                                    <DataCard label="Decision" value={entry.deployment_decision.toUpperCase()} />
-                                </div>
-                                <div className="grid grid-cols-1 lg:grid-cols-5 gap-2 mt-3 font-mono text-[10px] uppercase tracking-widest text-muted">
-                                    {Object.entries(entry.gating).map(([gate, status]) => (
-                                        <div key={gate} className="border border-grid px-2 py-2">
-                                            {gate}: <span className={status === 'pass' ? 'text-accent' : status === 'fail' ? 'text-danger' : 'text-[#ffcc00]'}>{status.toUpperCase()}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                                {entry.blockers.length > 0 && (
-                                    <div
-                                        className={`mt-3 p-3 font-mono text-xs ${
-                                            entry.lifecycle_status === 'production' && entry.registry_role === 'champion'
-                                                ? 'border border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
-                                                : 'border border-danger/30 bg-danger/5 text-danger'
-                                        }`}
-                                    >
-                                        {entry.lifecycle_status === 'production' && entry.registry_role === 'champion'
-                                            ? 'Operational Watchlist'
-                                            : 'Promotion Blockers'}: {entry.blockers.join('; ')}
+                    {family.entries.length === 0 ? (
+                        <div className="border border-dashed border-grid p-4 font-mono text-xs text-muted">
+                            No registry models are tracked for this family yet. The summary cards show NO DATA until a {family.model_family} registry entry is created.
+                        </div>
+                    ) : (
+                        <div className="space-y-3">
+                            {family.entries.map((entry) => (
+                                <div key={entry.registry_id} className="border border-grid p-3">
+                                    <div className="grid grid-cols-1 xl:grid-cols-5 gap-3">
+                                        <DataCard label="Version" value={entry.model_version} />
+                                        <DataCard label="Role" value={entry.registry_role.toUpperCase()} />
+                                        <DataCard label="Lifecycle" value={entry.lifecycle_status.toUpperCase()} />
+                                        <DataCard label="Promotion" value={entry.promotion_allowed ? 'YES' : 'NO'} />
+                                        <DataCard label="Decision" value={entry.deployment_decision.toUpperCase()} />
                                     </div>
-                                )}
-                                <div className="flex flex-wrap gap-2 mt-3">
-                                    <TerminalButton
-                                        disabled={!isAdmin || !entry.promotion_allowed || entry.lifecycle_status === 'production'}
-                                        onClick={() => void onRunAction(
-                                            { action: 'registry_action', run_id: entry.run_id, registry_action: 'promote_to_production' },
-                                            { confirmMessage: `Promote ${entry.model_version} to production?` },
-                                        )}
-                                    >
-                                        Promote
-                                    </TerminalButton>
-                                    <TerminalButton
-                                        variant="secondary"
-                                        disabled={!isAdmin || entry.lifecycle_status !== 'candidate'}
-                                        onClick={() => void onRunAction(
-                                            { action: 'registry_action', run_id: entry.run_id, registry_action: 'promote_to_staging' },
-                                            { confirmMessage: `Promote ${entry.model_version} to staging?` },
-                                        )}
-                                    >
-                                        Stage
-                                    </TerminalButton>
-                                    <TerminalButton
-                                        variant="secondary"
-                                        disabled={!isAdmin || entry.registry_role !== 'champion'}
-                                        onClick={() => void onRunAction(
-                                            { action: 'registry_action', run_id: entry.run_id, registry_action: 'rollback', reason: 'settings_control_plane_manual_rollback' },
-                                            { confirmMessage: `Rollback champion ${entry.model_version}?` },
-                                        )}
-                                    >
-                                        Rollback
-                                    </TerminalButton>
-                                    <TerminalButton
-                                        variant="danger"
-                                        disabled={!isAdmin || entry.lifecycle_status === 'archived'}
-                                        onClick={() => void onRunAction(
-                                            { action: 'registry_action', run_id: entry.run_id, registry_action: 'archive' },
-                                            { confirmMessage: `Archive ${entry.model_version}?` },
-                                        )}
-                                    >
-                                        Archive
-                                    </TerminalButton>
+                                    <div className="grid grid-cols-1 lg:grid-cols-5 gap-2 mt-3 font-mono text-[10px] uppercase tracking-widest text-muted">
+                                        {Object.entries(entry.gating).map(([gate, status]) => (
+                                            <div key={gate} className="border border-grid px-2 py-2">
+                                                {gate}: <span className={status === 'pass' ? 'text-accent' : status === 'fail' ? 'text-danger' : 'text-[#ffcc00]'}>{status.toUpperCase()}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {entry.blockers.length > 0 && (
+                                        <div
+                                            className={`mt-3 p-3 font-mono text-xs ${
+                                                entry.lifecycle_status === 'production' && entry.registry_role === 'champion'
+                                                    ? 'border border-yellow-500/30 bg-yellow-500/10 text-yellow-300'
+                                                    : 'border border-danger/30 bg-danger/5 text-danger'
+                                            }`}
+                                        >
+                                            {entry.lifecycle_status === 'production' && entry.registry_role === 'champion'
+                                                ? 'Operational Watchlist'
+                                                : 'Promotion Blockers'}: {entry.blockers.join('; ')}
+                                        </div>
+                                    )}
+                                    <div className="flex flex-wrap gap-2 mt-3">
+                                        <TerminalButton
+                                            disabled={!isAdmin || !entry.promotion_allowed || entry.lifecycle_status === 'production'}
+                                            onClick={() => void onRunAction(
+                                                { action: 'registry_action', run_id: entry.run_id, registry_action: 'promote_to_production' },
+                                                { confirmMessage: `Promote ${entry.model_version} to production?` },
+                                            )}
+                                        >
+                                            Promote
+                                        </TerminalButton>
+                                        <TerminalButton
+                                            variant="secondary"
+                                            disabled={!isAdmin || entry.lifecycle_status !== 'candidate'}
+                                            onClick={() => void onRunAction(
+                                                { action: 'registry_action', run_id: entry.run_id, registry_action: 'promote_to_staging' },
+                                                { confirmMessage: `Promote ${entry.model_version} to staging?` },
+                                            )}
+                                        >
+                                            Stage
+                                        </TerminalButton>
+                                        <TerminalButton
+                                            variant="secondary"
+                                            disabled={!isAdmin || entry.registry_role !== 'champion'}
+                                            onClick={() => void onRunAction(
+                                                { action: 'registry_action', run_id: entry.run_id, registry_action: 'rollback', reason: 'settings_control_plane_manual_rollback' },
+                                                { confirmMessage: `Rollback champion ${entry.model_version}?` },
+                                            )}
+                                        >
+                                            Rollback
+                                        </TerminalButton>
+                                        <TerminalButton
+                                            variant="danger"
+                                            disabled={!isAdmin || entry.lifecycle_status === 'archived'}
+                                            onClick={() => void onRunAction(
+                                                { action: 'registry_action', run_id: entry.run_id, registry_action: 'archive' },
+                                                { confirmMessage: `Archive ${entry.model_version}?` },
+                                            )}
+                                        >
+                                            Archive
+                                        </TerminalButton>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
-                    </div>
+                            ))}
+                        </div>
+                    )}
                 </ConsoleCard>
             ))}
         </div>
