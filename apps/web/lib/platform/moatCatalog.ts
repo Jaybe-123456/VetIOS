@@ -100,7 +100,7 @@ export const platformLayers: PlatformLayerDefinition[] = [
             {
                 label: 'Experiment Track',
                 status: 'implemented',
-                summary: 'Run telemetry, calibration, adversarial metrics, and comparisons are present.',
+                summary: 'Dataset versions, hyperparameter records, model lineage, and comparisons now operate as one reproducible AI research stack.',
                 href: '/experiments',
             },
             {
@@ -193,6 +193,7 @@ export const moatCards: MoatCardDefinition[] = [
         claim: 'The network gets smarter every case.',
         availableNow: [
             'Inference -> outcome -> dataset -> benchmark -> promotion loops are implemented.',
+            'Experiment Track now stores dataset versions, hyperparameters, model lineage, and comparison evidence so published results can be independently reproduced.',
             'Outcome-linked learning cycles, calibration, adversarial evaluation, registry promotion, and a public learning snapshot are live.',
             'Federation memberships, tenant snapshot publishing, and weighted aggregation rounds now exist as real infrastructure.',
         ],

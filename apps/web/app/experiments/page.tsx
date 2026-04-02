@@ -1,9 +1,15 @@
+import type { Metadata } from 'next';
 import { ExperimentTrackingClient } from '@/components/ExperimentTrackingClient';
 import { getExperimentDashboardSnapshot } from '@/lib/experiments/service';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
 export const dynamic = 'force-dynamic';
+
+export const metadata: Metadata = {
+    title: 'Experiment Track',
+    description: 'VetIOS Experiment Track is the reproducible AI research stack for veterinary institutions, preserving the dataset versions, hyperparameters, model lineage, and comparisons behind every published result.',
+};
 
 export default async function ExperimentsPage() {
     const session = await resolveSessionTenant();
