@@ -1,4 +1,5 @@
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
+import { getFederationPublicSummary } from '@/lib/federation/service';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { resolvePublicCatalogTenant, type PublicCatalogSource } from '@/lib/platform/publicTenant';
 
@@ -16,6 +17,20 @@ export interface PublicNetworkLearningSnapshot {
         latest_dataset_version: string | null;
         latest_benchmark_pass_status: string | null;
         latest_calibration_ece: number | null;
+    };
+    federation: {
+        active: boolean;
+        federation_key: string | null;
+        participant_count: number;
+        recent_rounds: number;
+        latest_snapshot_at: string | null;
+        latest_round_status: string | null;
+        latest_round_completed_at: string | null;
+        aggregate_dataset_rows: number;
+        benchmark_pass_rate: number | null;
+        calibration_avg_ece: number | null;
+        diagnosis_candidate_version: string | null;
+        severity_candidate_version: string | null;
     };
     recent_datasets: Array<{
         dataset_version: string;
@@ -62,6 +77,20 @@ export async function getPublicNetworkLearningSnapshot(): Promise<PublicNetworkL
                 latest_benchmark_pass_status: null,
                 latest_calibration_ece: null,
             },
+            federation: {
+                active: false,
+                federation_key: null,
+                participant_count: 0,
+                recent_rounds: 0,
+                latest_snapshot_at: null,
+                latest_round_status: null,
+                latest_round_completed_at: null,
+                aggregate_dataset_rows: 0,
+                benchmark_pass_rate: null,
+                calibration_avg_ece: null,
+                diagnosis_candidate_version: null,
+                severity_candidate_version: null,
+            },
             recent_datasets: [],
             recent_benchmarks: [],
             recent_calibrations: [],
@@ -70,11 +99,12 @@ export async function getPublicNetworkLearningSnapshot(): Promise<PublicNetworkL
     }
 
     const store = createSupabaseExperimentTrackingStore(getSupabaseServer());
-    const [datasets, benchmarks, calibrations, audits] = await Promise.all([
+    const [datasets, benchmarks, calibrations, audits, federation] = await Promise.all([
         store.listLearningDatasetVersions(target.tenantId, 12),
         store.listLearningBenchmarkReports(target.tenantId, 12),
         store.listLearningCalibrationReports(target.tenantId, 12),
         store.listLearningAuditEvents(target.tenantId, 12),
+        getFederationPublicSummary(getSupabaseServer(), target.tenantId),
     ]);
 
     return {
@@ -92,6 +122,7 @@ export async function getPublicNetworkLearningSnapshot(): Promise<PublicNetworkL
             latest_benchmark_pass_status: benchmarks[0]?.pass_status ?? null,
             latest_calibration_ece: calibrations[0]?.ece_score ?? null,
         },
+        federation,
         recent_datasets: datasets.map((row) => ({
             dataset_version: row.dataset_version,
             dataset_kind: row.dataset_kind,

@@ -190,10 +190,11 @@ export const moatCards: MoatCardDefinition[] = [
         availableNow: [
             'Inference -> outcome -> dataset -> benchmark -> promotion loops are implemented.',
             'Outcome-linked learning cycles, calibration, adversarial evaluation, registry promotion, and a public learning snapshot are live.',
+            'Federation memberships, tenant snapshot publishing, and weighted aggregation rounds now exist as real infrastructure.',
         ],
         missingNow: [
-            'Learning is still scoped by tenant in the codebase rather than truly federated across clinics.',
-            'There is no privacy-preserving cross-clinic parameter aggregation or federation coordinator yet.',
+            'The current federation layer is coordinator-driven rather than privacy-preserving secure aggregation.',
+            'Automated clinic enrollment, round scheduling, and hardened governance over cross-clinic participation still need productization.',
         ],
         links: [
             { label: 'Network Learning', href: '/platform/network-learning' },

@@ -18,7 +18,7 @@ export default async function NetworkLearningPage() {
         <PlatformShell
             badge="NETWORK LEARNING"
             title="Show the flywheel, not just the slogan."
-            description="This surface exposes the learning-loop evidence behind VetIOS: dataset versions, benchmark reports, calibration reports, and audit activity. It is a public proof layer for the compounding-data moat, even while true cross-clinic federation remains future work."
+            description="This surface exposes the learning-loop evidence behind VetIOS: dataset versions, benchmark reports, calibration reports, audit activity, and now the first live federation layer for participating clinics."
             actions={(
                 <>
                     <Link
@@ -43,6 +43,13 @@ export default async function NetworkLearningPage() {
                 <StatCard label="Dataset versions" value={String(snapshot.summary.dataset_versions)} />
                 <StatCard label="Benchmark reports" value={String(snapshot.summary.benchmark_reports)} />
                 <StatCard label="Calibration reports" value={String(snapshot.summary.calibration_reports)} />
+            </div>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-4">
+                <StatCard label="Federation" value={snapshot.federation.active ? 'LIVE' : 'OFF'} />
+                <StatCard label="Participants" value={String(snapshot.federation.participant_count)} />
+                <StatCard label="Federation rounds" value={String(snapshot.federation.recent_rounds)} />
+                <StatCard label="Aggregate rows" value={snapshot.federation.aggregate_dataset_rows.toLocaleString('en-US')} />
             </div>
 
             {!snapshot.configured ? (
@@ -76,10 +83,33 @@ export default async function NetworkLearningPage() {
                                     This page makes that loop inspectable outside the operator console.
                                 </p>
                                 <p>
-                                    What it does not yet prove is true federated learning across independent clinics. Today the loop is visible and real, but still tenant-scoped in the implementation.
+                                    The federation substrate now supports tenant memberships, site snapshots, and weighted aggregation rounds. The next frontier is stronger privacy-preserving exchange and automated multi-clinic enrollment.
                                 </p>
                             </div>
                         </div>
+                    </section>
+
+                    <section className="mt-10 grid gap-6 xl:grid-cols-2">
+                        <Panel title="Federation Status">
+                            <MetricRow label="Federation key" value={snapshot.federation.federation_key ?? 'NO DATA'} />
+                            <MetricRow label="Latest round" value={snapshot.federation.latest_round_status?.toUpperCase() ?? 'NO DATA'} />
+                            <MetricRow label="Latest snapshot" value={snapshot.federation.latest_snapshot_at ? formatDateTime(snapshot.federation.latest_snapshot_at) : 'NO DATA'} />
+                            <MetricRow label="Benchmark pass rate" value={formatPercent(snapshot.federation.benchmark_pass_rate)} />
+                            <MetricRow label="Calibration avg ECE" value={formatPercent(snapshot.federation.calibration_avg_ece)} />
+                            <MetricRow label="Diagnosis candidate" value={snapshot.federation.diagnosis_candidate_version ?? 'NO DATA'} />
+                            <MetricRow label="Severity candidate" value={snapshot.federation.severity_candidate_version ?? 'NO DATA'} />
+                        </Panel>
+
+                        <Panel title="What The Federation Means">
+                            <div className="space-y-4 text-sm leading-7 text-slate-300">
+                                <p>
+                                    Participating clinics can now publish site snapshots and run weighted federation rounds that aggregate champion artifact structure into a network candidate.
+                                </p>
+                                <p>
+                                    This still does not replace deeper privacy-preserving secure aggregation, but it moves VetIOS from a tenant-only loop into a real federation control plane.
+                                </p>
+                            </div>
+                        </Panel>
                     </section>
 
                     <section className="mt-10 grid gap-6 xl:grid-cols-2">

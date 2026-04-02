@@ -1134,6 +1134,87 @@ export const LEARNING_AUDIT_EVENTS = {
     },
 } as const;
 
+export const FEDERATION_MEMBERSHIPS = {
+    TABLE: 'federation_memberships',
+    COLUMNS: {
+        id: 'id',
+        federation_key: 'federation_key',
+        tenant_id: 'tenant_id',
+        coordinator_tenant_id: 'coordinator_tenant_id',
+        status: 'status',
+        participation_mode: 'participation_mode',
+        weight: 'weight',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        last_snapshot_at: 'last_snapshot_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const FEDERATED_SITE_SNAPSHOTS = {
+    TABLE: 'federated_site_snapshots',
+    COLUMNS: {
+        id: 'id',
+        federation_key: 'federation_key',
+        tenant_id: 'tenant_id',
+        coordinator_tenant_id: 'coordinator_tenant_id',
+        snapshot_window_start: 'snapshot_window_start',
+        snapshot_window_end: 'snapshot_window_end',
+        dataset_version: 'dataset_version',
+        dataset_versions: 'dataset_versions',
+        total_dataset_rows: 'total_dataset_rows',
+        benchmark_reports: 'benchmark_reports',
+        calibration_reports: 'calibration_reports',
+        audit_events: 'audit_events',
+        champion_models: 'champion_models',
+        support_summary: 'support_summary',
+        quality_summary: 'quality_summary',
+        snapshot_payload: 'snapshot_payload',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const FEDERATION_ROUNDS = {
+    TABLE: 'federation_rounds',
+    COLUMNS: {
+        id: 'id',
+        federation_key: 'federation_key',
+        coordinator_tenant_id: 'coordinator_tenant_id',
+        round_key: 'round_key',
+        status: 'status',
+        aggregation_strategy: 'aggregation_strategy',
+        snapshot_cutoff_at: 'snapshot_cutoff_at',
+        participant_count: 'participant_count',
+        aggregate_payload: 'aggregate_payload',
+        candidate_artifact_payload: 'candidate_artifact_payload',
+        notes: 'notes',
+        started_at: 'started_at',
+        completed_at: 'completed_at',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const MODEL_DELTA_ARTIFACTS = {
+    TABLE: 'model_delta_artifacts',
+    COLUMNS: {
+        id: 'id',
+        federation_round_id: 'federation_round_id',
+        federation_key: 'federation_key',
+        coordinator_tenant_id: 'coordinator_tenant_id',
+        tenant_id: 'tenant_id',
+        artifact_role: 'artifact_role',
+        task_type: 'task_type',
+        model_version: 'model_version',
+        dataset_version: 'dataset_version',
+        artifact_payload: 'artifact_payload',
+        summary: 'summary',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const EXPERIMENT_RUNS = {
     TABLE: 'experiment_runs',
     COLUMNS: {
