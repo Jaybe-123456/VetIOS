@@ -131,8 +131,9 @@ export const platformLayers: PlatformLayerDefinition[] = [
             },
             {
                 label: 'Edge Box (offline)',
-                status: 'missing',
-                summary: 'There is no offline edge appliance or sync layer in this repo yet.',
+                status: 'partial',
+                summary: 'Edge boxes now have a registry, sync jobs, and staged artifacts, though full field deployment and device auth still need hardening.',
+                href: '/platform/edge-box',
             },
         ],
     },
@@ -149,14 +150,16 @@ export const moatCards: MoatCardDefinition[] = [
         claim: 'PIMS vendors build on it.',
         availableNow: [
             'Authenticated API routes already exist for inference, outcomes, simulation, evaluation, and passive connector ingest.',
-            'A public developer portal and endpoint catalog now document the integration surface.',
+            'A public developer portal, published API products, and endpoint catalog now document the integration surface.',
+            'Self-serve onboarding intake and admin-issued partner machine credentials now exist in the control plane.',
         ],
         missingNow: [
-            'No self-serve API keys, partner onboarding flow, or durable versioned public docs contract yet.',
-            'Routes are still operator-first rather than productized for third-party vendors.',
+            'Partner billing, quotas, and stronger lifecycle analytics are still not implemented.',
+            'Public docs are still catalog-first rather than a fully versioned external developer contract.',
         ],
         links: [
             { label: 'Developer Portal', href: '/platform/developers' },
+            { label: 'Developer Ops', href: '/settings/developer-platform' },
             { label: 'Inference Console', href: '/inference' },
         ],
     },
@@ -252,12 +255,14 @@ export const moatCards: MoatCardDefinition[] = [
         availableNow: [
             'Registry governance, gate status, blockers, and lineage already exist internally.',
             'A public read-only model card surface is added in this change so the registry can be shared externally.',
+            'Publication records, certifications, and attestations now exist behind the trust surface.',
         ],
         missingNow: [
-            'Formal certification, external attestations, and publication workflows are still not implemented.',
+            'Third-party signed attestations and automated evidence ingestion are still not implemented.',
         ],
         links: [
             { label: 'Public Model Cards', href: '/platform/model-cards' },
+            { label: 'Trust Ops', href: '/settings/model-trust' },
             { label: 'Registry Control Plane', href: '/models' },
         ],
     },

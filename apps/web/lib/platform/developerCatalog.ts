@@ -2,7 +2,7 @@ export interface DeveloperEndpointDefinition {
     id: string;
     method: 'GET' | 'POST';
     path: string;
-    auth: 'session' | 'connector_key' | 'public';
+    auth: 'session' | 'service_account' | 'connector_key' | 'public';
     readiness: 'live' | 'internal_only' | 'public';
     purpose: string;
     notes: string[];
@@ -14,12 +14,12 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         id: 'inference',
         method: 'POST',
         path: '/api/inference',
-        auth: 'session',
+        auth: 'service_account',
         readiness: 'live',
         purpose: 'Execute routed veterinary inference and return differentials, uncertainty, telemetry, and lineage.',
         notes: [
             'Registry-aware route planning and telemetry are already applied in the request path.',
-            'Currently authenticated tenant scope rather than partner-issued API keys.',
+            'Supports scoped machine credentials for partner or server-to-server inference.',
         ],
         samplePayload: {
             model: { name: 'VetIOS Diagnostics', version: 'latest' },
@@ -37,7 +37,7 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         id: 'outcome',
         method: 'POST',
         path: '/api/outcome',
-        auth: 'session',
+        auth: 'service_account',
         readiness: 'live',
         purpose: 'Attach clinician-grounded outcomes to prior inference events and feed the learning loop.',
         notes: [
@@ -59,7 +59,7 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         id: 'simulate',
         method: 'POST',
         path: '/api/simulate',
-        auth: 'session',
+        auth: 'service_account',
         readiness: 'live',
         purpose: 'Run adversarial or boundary-condition simulations through the inference pipeline.',
         notes: [
@@ -83,7 +83,7 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         id: 'evaluation',
         method: 'POST',
         path: '/api/evaluation',
-        auth: 'session',
+        auth: 'service_account',
         readiness: 'live',
         purpose: 'Create evaluation events for confidence calibration and model review.',
         notes: [
@@ -106,7 +106,7 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         purpose: 'Normalize passive vendor connector payloads and attach them to episodes.',
         notes: [
             'Supports lab results, refills, rechecks, referrals, and imaging reports today.',
-            'Uses the shared passive connector secret rather than self-serve partner credentials.',
+            'Supports connector installations and machine credentials, with the older shared-secret path still present for legacy traffic.',
         ],
         samplePayload: {
             connector: {

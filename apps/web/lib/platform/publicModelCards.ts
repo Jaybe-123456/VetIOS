@@ -1,6 +1,7 @@
 import { getModelRegistryControlPlaneSnapshot } from '@/lib/experiments/service';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
 import type { GateStatus, ModelFamily, ModelRegistryControlPlaneEntry } from '@/lib/experiments/types';
+import { getPublicModelTrustMap, type PublicModelTrustProfile } from '@/lib/modelTrust/service';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { resolvePublicCatalogTenant, type PublicCatalogSource } from '@/lib/platform/publicTenant';
 
@@ -34,6 +35,20 @@ export interface PublicModelCard {
     dataset_version: string | null;
     feature_schema_version: string | null;
     label_policy_version: string | null;
+    publication: {
+        status: string | null;
+        public_slug: string | null;
+        summary_override: string | null;
+        intended_use: string | null;
+        limitations: string | null;
+    };
+    trust_signals: {
+        active_certifications: number;
+        accepted_attestations: number;
+        pending_reviews: number;
+        issuers: string[];
+        attestors: string[];
+    };
     updated_at: string;
 }
 
@@ -69,6 +84,7 @@ export async function getPublicModelCardsCatalog(): Promise<PublicModelCardsCata
         target.tenantId,
         { readOnly: true },
     );
+    const trustMap = await getPublicModelTrustMap(getSupabaseServer(), target.tenantId);
 
     return {
         configured: true,
@@ -79,7 +95,7 @@ export async function getPublicModelCardsCatalog(): Promise<PublicModelCardsCata
             model_family: family.model_family,
             active_model_version: family.active_model?.model_version ?? null,
             last_stable_model_version: family.last_stable_model?.model_version ?? null,
-            cards: selectPublicEntries(family.entries).map(mapPublicCard),
+            cards: selectPublicEntries(family.entries).map((entry) => mapPublicCard(entry, trustMap)),
         })),
     };
 }
@@ -118,7 +134,12 @@ function rankPublicEntry(entry: ModelRegistryControlPlaneEntry): number {
     return score;
 }
 
-function mapPublicCard(entry: ModelRegistryControlPlaneEntry): PublicModelCard {
+function mapPublicCard(
+    entry: ModelRegistryControlPlaneEntry,
+    trustMap: Record<string, PublicModelTrustProfile>,
+): PublicModelCard {
+    const trust = trustMap[entry.registry.registry_id] ?? null;
+
     return {
         registry_id: entry.registry.registry_id,
         model_family: entry.registry.model_family,
@@ -143,6 +164,26 @@ function mapPublicCard(entry: ModelRegistryControlPlaneEntry): PublicModelCard {
         dataset_version: entry.registry.dataset_version,
         feature_schema_version: entry.registry.feature_schema_version,
         label_policy_version: entry.registry.label_policy_version,
+        publication: {
+            status: trust?.publication?.publication_status ?? null,
+            public_slug: trust?.publication?.public_slug ?? null,
+            summary_override: trust?.publication?.summary_override ?? null,
+            intended_use: trust?.publication?.intended_use ?? null,
+            limitations: trust?.publication?.limitations ?? null,
+        },
+        trust_signals: {
+            active_certifications: trust?.certifications.filter((certification) => certification.status === 'active').length ?? 0,
+            accepted_attestations: trust?.attestations.filter((attestation) => attestation.status === 'accepted').length ?? 0,
+            pending_reviews: (trust?.certifications.filter((certification) => certification.status === 'pending').length ?? 0)
+                + (trust?.attestations.filter((attestation) => attestation.status === 'pending').length ?? 0)
+                + (trust?.publication?.publication_status === 'draft' ? 1 : 0),
+            issuers: uniqueStrings(trust?.certifications.map((certification) => certification.issuer_name) ?? []),
+            attestors: uniqueStrings(trust?.attestations.map((attestation) => attestation.attestor_name) ?? []),
+        },
         updated_at: entry.registry.updated_at,
     };
+}
+
+function uniqueStrings(values: string[]): string[] {
+    return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
 }

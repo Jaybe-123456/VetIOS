@@ -10,6 +10,7 @@ const navItems = [
     { href: '/platform/passive-signals', label: 'Passive Signals' },
     { href: '/platform/network-learning', label: 'Network Learning' },
     { href: '/platform/petpass', label: 'PetPass' },
+    { href: '/platform/edge-box', label: 'Edge Box' },
 ];
 
 export function PlatformNav() {
