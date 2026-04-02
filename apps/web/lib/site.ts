@@ -1,6 +1,7 @@
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth/callback'];
 const PUBLIC_MARKETING_PATH_PREFIXES = ['/platform'];
+const PUBLIC_METADATA_PATHS = ['/robots.txt', '/sitemap.xml', '/manifest.webmanifest', '/icon.svg'];
 
 function normalizeConfiguredOrigin(value: string | null | undefined): string | null {
     const trimmed = value?.trim();
@@ -55,8 +56,12 @@ export function isPublicMarketingPath(pathname: string): boolean {
     );
 }
 
+export function isPublicMetadataPath(pathname: string): boolean {
+    return PUBLIC_METADATA_PATHS.includes(pathname);
+}
+
 export function isPublicRoutePath(pathname: string): boolean {
-    return isPublicAuthPath(pathname) || isPublicMarketingPath(pathname);
+    return isPublicAuthPath(pathname) || isPublicMarketingPath(pathname) || isPublicMetadataPath(pathname);
 }
 
 export function isShelllessPublicPath(pathname: string): boolean {
