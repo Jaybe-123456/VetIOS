@@ -140,7 +140,7 @@ export default function PlatformPage() {
 
             <section className="mt-16 rounded-[28px] border border-white/10 bg-white/[0.04] p-8">
                 <div className="grid gap-8 lg:grid-cols-2">
-                    <GapRow title="Consumer pull" body="PetPass and owner-side network effects are now represented by a real preview surface, but they are not yet production-backed clinic-consumer workflows." />
+                    <GapRow title="Consumer pull" body="PetPass now has real owner-network infrastructure behind it, but the full consumer distribution and app adoption loop still need productization." />
                     <GapRow title="True federation" body="Learning loops exist and the new public network-learning surface exposes them, but cross-clinic privacy-preserving federation is still future work." />
                     <GapRow title="Partner platforming" body="The new developer portal and public endpoint catalog make the API legible, but self-serve partner keys and vendor onboarding still need to be built." />
                     <GapRow title="Trust publishing" body="Public model cards are now live, but certification and third-party attestations remain future trust layers." />

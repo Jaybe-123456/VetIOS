@@ -43,18 +43,18 @@ export const platformLayers: PlatformLayerDefinition[] = [
             {
                 label: 'PetPass (pet owner app)',
                 status: 'partial',
-                summary: 'A PetPass preview surface now exists, but it is not yet a production-backed consumer application.',
+                summary: 'PetPass now has real owner accounts, pet links, timeline entries, and notification deliveries behind the preview surface.',
                 href: '/platform/petpass',
             },
             {
                 label: 'Clinic PetPass integration',
-                status: 'missing',
-                summary: 'No clinic-to-consumer identity or owner-sync integration is wired yet.',
+                status: 'partial',
+                summary: 'Clinic-owner links, consent capture, and owner-pet relationships are now wired as network infrastructure.',
             },
             {
                 label: 'Health history & alerts',
                 status: 'partial',
-                summary: 'Owner-facing timeline and alerts are now previewed, but not yet backed by a live clinic-consumer sync.',
+                summary: 'Owner-facing timeline and alerts now have database-backed timeline and notification records, though full mobile distribution still needs productization.',
                 href: '/platform/petpass',
             },
         ],
@@ -170,10 +170,11 @@ export const moatCards: MoatCardDefinition[] = [
         claim: 'Pet owners pull clinics toward VetIOS.',
         availableNow: [
             'A PetPass preview app now exists with owner alerts, history timeline, and clinic-linked care actions.',
+            'Owner accounts, pet links, clinic-owner links, consent records, timeline entries, and notification deliveries now exist as real infrastructure.',
         ],
         missingNow: [
-            'Owner accounts, invitation flows, and production clinic sync are still not implemented.',
-            'The preview is a product shell, not yet a fully backed consumer network.',
+            'Invitation flows, consumer authentication, and mobile-grade owner distribution are still not implemented.',
+            'The network substrate is real now, but the end-user app experience is still early rather than mass-market ready.',
         ],
         links: [
             { label: 'PetPass Preview', href: '/platform/petpass' },

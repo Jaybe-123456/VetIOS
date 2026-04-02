@@ -1215,6 +1215,162 @@ export const MODEL_DELTA_ARTIFACTS = {
     },
 } as const;
 
+export const OWNER_ACCOUNTS = {
+    TABLE: 'owner_accounts',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        external_owner_ref: 'external_owner_ref',
+        full_name: 'full_name',
+        preferred_name: 'preferred_name',
+        email: 'email',
+        phone: 'phone',
+        status: 'status',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        last_active_at: 'last_active_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PETPASS_PET_PROFILES = {
+    TABLE: 'petpass_pet_profiles',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        patient_id: 'patient_id',
+        pet_name: 'pet_name',
+        species: 'species',
+        breed: 'breed',
+        age_display: 'age_display',
+        sex: 'sex',
+        risk_state: 'risk_state',
+        clinic_id: 'clinic_id',
+        clinic_name: 'clinic_name',
+        latest_case_id: 'latest_case_id',
+        latest_episode_id: 'latest_episode_id',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const OWNER_PET_LINKS = {
+    TABLE: 'owner_pet_links',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        owner_account_id: 'owner_account_id',
+        pet_profile_id: 'pet_profile_id',
+        relationship_type: 'relationship_type',
+        primary_owner: 'primary_owner',
+        status: 'status',
+        linked_at: 'linked_at',
+        metadata: 'metadata',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const CLINIC_OWNER_LINKS = {
+    TABLE: 'clinic_owner_links',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        owner_account_id: 'owner_account_id',
+        clinic_id: 'clinic_id',
+        clinic_name: 'clinic_name',
+        status: 'status',
+        invite_token: 'invite_token',
+        invite_expires_at: 'invite_expires_at',
+        linked_by: 'linked_by',
+        linked_at: 'linked_at',
+        metadata: 'metadata',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PETPASS_CONSENTS = {
+    TABLE: 'petpass_consents',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        owner_account_id: 'owner_account_id',
+        pet_profile_id: 'pet_profile_id',
+        consent_type: 'consent_type',
+        status: 'status',
+        granted_at: 'granted_at',
+        revoked_at: 'revoked_at',
+        expires_at: 'expires_at',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PETPASS_NOTIFICATION_PREFERENCES = {
+    TABLE: 'petpass_notification_preferences',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        owner_account_id: 'owner_account_id',
+        pet_profile_id: 'pet_profile_id',
+        channel: 'channel',
+        notification_type: 'notification_type',
+        enabled: 'enabled',
+        quiet_hours: 'quiet_hours',
+        metadata: 'metadata',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PETPASS_TIMELINE_ENTRIES = {
+    TABLE: 'petpass_timeline_entries',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        owner_account_id: 'owner_account_id',
+        pet_profile_id: 'pet_profile_id',
+        clinic_owner_link_id: 'clinic_owner_link_id',
+        entry_type: 'entry_type',
+        title: 'title',
+        detail: 'detail',
+        occurred_at: 'occurred_at',
+        visibility: 'visibility',
+        source_module: 'source_module',
+        source_record_id: 'source_record_id',
+        metadata: 'metadata',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const PETPASS_NOTIFICATION_DELIVERIES = {
+    TABLE: 'petpass_notification_deliveries',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        owner_account_id: 'owner_account_id',
+        pet_profile_id: 'pet_profile_id',
+        timeline_entry_id: 'timeline_entry_id',
+        channel: 'channel',
+        notification_type: 'notification_type',
+        title: 'title',
+        body: 'body',
+        delivery_status: 'delivery_status',
+        scheduled_at: 'scheduled_at',
+        delivered_at: 'delivered_at',
+        error_message: 'error_message',
+        metadata: 'metadata',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
 export const EXPERIMENT_RUNS = {
     TABLE: 'experiment_runs',
     COLUMNS: {
