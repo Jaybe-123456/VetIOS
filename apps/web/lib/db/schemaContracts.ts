@@ -1676,3 +1676,192 @@ export const SUBGROUP_METRICS = {
         created_at: 'created_at',
     },
 } as const;
+
+export const PARTNER_ORGANIZATIONS = {
+    TABLE: 'partner_organizations',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        legal_name: 'legal_name',
+        display_name: 'display_name',
+        website_url: 'website_url',
+        contact_name: 'contact_name',
+        contact_email: 'contact_email',
+        status: 'status',
+        partner_tier: 'partner_tier',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PARTNER_API_PRODUCTS = {
+    TABLE: 'partner_api_products',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        product_key: 'product_key',
+        title: 'title',
+        summary: 'summary',
+        access_tier: 'access_tier',
+        status: 'status',
+        documentation_url: 'documentation_url',
+        default_scopes: 'default_scopes',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PARTNER_ONBOARDING_REQUESTS = {
+    TABLE: 'partner_onboarding_requests',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        partner_organization_id: 'partner_organization_id',
+        company_name: 'company_name',
+        contact_name: 'contact_name',
+        contact_email: 'contact_email',
+        use_case: 'use_case',
+        requested_products: 'requested_products',
+        requested_scopes: 'requested_scopes',
+        status: 'status',
+        notes: 'notes',
+        reviewed_by: 'reviewed_by',
+        reviewed_at: 'reviewed_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PARTNER_SERVICE_ACCOUNT_LINKS = {
+    TABLE: 'partner_service_account_links',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        partner_organization_id: 'partner_organization_id',
+        service_account_id: 'service_account_id',
+        onboarding_request_id: 'onboarding_request_id',
+        environment: 'environment',
+        created_by: 'created_by',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const MODEL_CARD_PUBLICATIONS = {
+    TABLE: 'model_card_publications',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        registry_id: 'registry_id',
+        publication_status: 'publication_status',
+        public_slug: 'public_slug',
+        summary_override: 'summary_override',
+        intended_use: 'intended_use',
+        limitations: 'limitations',
+        review_notes: 'review_notes',
+        published_by: 'published_by',
+        published_at: 'published_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const MODEL_CERTIFICATIONS = {
+    TABLE: 'model_certifications',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        registry_id: 'registry_id',
+        publication_id: 'publication_id',
+        certification_name: 'certification_name',
+        issuer_name: 'issuer_name',
+        status: 'status',
+        certificate_ref: 'certificate_ref',
+        valid_from: 'valid_from',
+        valid_until: 'valid_until',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const MODEL_ATTESTATIONS = {
+    TABLE: 'model_attestations',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        registry_id: 'registry_id',
+        publication_id: 'publication_id',
+        attestation_type: 'attestation_type',
+        attestor_name: 'attestor_name',
+        status: 'status',
+        evidence_uri: 'evidence_uri',
+        summary: 'summary',
+        attested_at: 'attested_at',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const EDGE_BOXES = {
+    TABLE: 'edge_boxes',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        node_name: 'node_name',
+        site_label: 'site_label',
+        hardware_class: 'hardware_class',
+        status: 'status',
+        software_version: 'software_version',
+        last_heartbeat_at: 'last_heartbeat_at',
+        last_sync_at: 'last_sync_at',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const EDGE_SYNC_JOBS = {
+    TABLE: 'edge_sync_jobs',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        edge_box_id: 'edge_box_id',
+        job_type: 'job_type',
+        direction: 'direction',
+        status: 'status',
+        payload: 'payload',
+        scheduled_at: 'scheduled_at',
+        started_at: 'started_at',
+        completed_at: 'completed_at',
+        error_message: 'error_message',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const EDGE_SYNC_ARTIFACTS = {
+    TABLE: 'edge_sync_artifacts',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        edge_box_id: 'edge_box_id',
+        artifact_type: 'artifact_type',
+        artifact_ref: 'artifact_ref',
+        content_hash: 'content_hash',
+        size_bytes: 'size_bytes',
+        status: 'status',
+        metadata: 'metadata',
+        created_at: 'created_at',
+        synced_at: 'synced_at',
+        updated_at: 'updated_at',
+    },
+} as const;

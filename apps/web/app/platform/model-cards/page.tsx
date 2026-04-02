@@ -101,6 +101,8 @@ function ModelCardPanel({ card }: { card: PublicModelCard }) {
             <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <MetricTile label="Registry role" value={card.registry_role.toUpperCase()} />
                 <MetricTile label="Lifecycle" value={card.lifecycle_status.toUpperCase()} />
+                <MetricTile label="Publication" value={(card.publication.status ?? 'NO DATA').toUpperCase()} />
+                <MetricTile label="Public slug" value={card.publication.public_slug ?? 'NO DATA'} />
                 <MetricTile label="Macro F1" value={formatPercent(card.clinical_scorecard.macro_f1)} />
                 <MetricTile label="Critical recall" value={formatPercent(card.clinical_scorecard.critical_recall)} />
                 <MetricTile label="ECE" value={formatPercent(card.clinical_scorecard.ece)} />
@@ -129,6 +131,28 @@ function ModelCardPanel({ card }: { card: PublicModelCard }) {
                     <MetricRow label="Label policy" value={card.label_policy_version ?? 'NO DATA'} />
                     <MetricRow label="Updated" value={formatDateTime(card.updated_at)} />
                 </div>
+            </div>
+
+            <div className="mt-5 rounded-2xl border border-white/8 bg-black/20 p-4">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Trust evidence</div>
+                <div className="mt-3 grid gap-2 text-sm text-slate-300">
+                    <MetricRow label="Active certifications" value={String(card.trust_signals.active_certifications)} />
+                    <MetricRow label="Accepted attestations" value={String(card.trust_signals.accepted_attestations)} />
+                    <MetricRow label="Pending trust reviews" value={String(card.trust_signals.pending_reviews)} />
+                    <MetricRow label="Issuers" value={card.trust_signals.issuers.join(', ') || 'NO DATA'} />
+                    <MetricRow label="Attestors" value={card.trust_signals.attestors.join(', ') || 'NO DATA'} />
+                    <MetricRow label="Intended use" value={card.publication.intended_use ?? 'NO DATA'} />
+                </div>
+                {card.publication.summary_override ? (
+                    <div className="mt-4 rounded-xl border border-white/6 bg-white/[0.03] px-3 py-3 text-sm leading-6 text-slate-200">
+                        {card.publication.summary_override}
+                    </div>
+                ) : null}
+                {card.publication.limitations ? (
+                    <div className="mt-3 rounded-xl border border-amber-400/15 bg-amber-400/10 px-3 py-3 text-sm leading-6 text-amber-100">
+                        Limitations: {card.publication.limitations}
+                    </div>
+                ) : null}
             </div>
 
             <div className="mt-5 rounded-2xl border border-white/8 bg-black/20 p-4">

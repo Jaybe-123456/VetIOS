@@ -390,6 +390,27 @@ export default function SettingsControlPlaneClient() {
                             PetPass Ops
                             <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
+                        <Link
+                            href="/settings/developer-platform"
+                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
+                        >
+                            Partner Ops
+                            <ArrowRight className="ml-2 h-3 w-3" />
+                        </Link>
+                        <Link
+                            href="/settings/model-trust"
+                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
+                        >
+                            Trust Ops
+                            <ArrowRight className="ml-2 h-3 w-3" />
+                        </Link>
+                        <Link
+                            href="/settings/edge-box"
+                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
+                        >
+                            Edge Ops
+                            <ArrowRight className="ml-2 h-3 w-3" />
+                        </Link>
                         <TerminalButton variant="secondary" onClick={() => void runAction({ action: 'run_system_diagnostic' })}>
                             <ShieldCheck className="w-3 h-3 mr-2" />
                             Run System Diagnostic

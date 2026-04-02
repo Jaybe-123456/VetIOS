@@ -142,8 +142,8 @@ export default function PlatformPage() {
                 <div className="grid gap-8 lg:grid-cols-2">
                     <GapRow title="Consumer pull" body="PetPass now has real owner-network infrastructure behind it, but the full consumer distribution and app adoption loop still need productization." />
                     <GapRow title="True federation" body="Learning loops exist and the new public network-learning surface exposes them, but cross-clinic privacy-preserving federation is still future work." />
-                    <GapRow title="Partner platforming" body="The new developer portal and public endpoint catalog make the API legible, but self-serve partner keys and vendor onboarding still need to be built." />
-                    <GapRow title="Trust publishing" body="Public model cards are now live, but certification and third-party attestations remain future trust layers." />
+                    <GapRow title="Partner platforming" body="Self-serve onboarding and partner keys are now built, but quotas, billing, and richer partner lifecycle analytics still need productization." />
+                    <GapRow title="Trust publishing" body="Publication, certification, and attestation records now exist, but signed external evidence ingestion still needs hardening." />
                 </div>
             </section>
         </PlatformShell>

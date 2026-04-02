@@ -2,19 +2,24 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, Braces, Code2 } from 'lucide-react';
 import { PlatformShell } from '@/components/platform/PlatformShell';
-import { developerEndpoints } from '@/lib/platform/developerCatalog';
+import { PublicDeveloperOnboardingForm } from '@/components/platform/PublicDeveloperOnboardingForm';
+import { getPublicDeveloperPlatformSnapshot } from '@/lib/developerPlatform/service';
 
 export const metadata: Metadata = {
     title: 'Developers',
     description: 'VetIOS developer API catalog and integration surface.',
 };
 
-export default function DevelopersPage() {
+export const dynamic = 'force-dynamic';
+
+export default async function DevelopersPage() {
+    const snapshot = await getPublicDeveloperPlatformSnapshot();
+
     return (
         <PlatformShell
             badge="DEVELOPER API"
-            title="A real integration surface, not just an internal button panel."
-            description="The core VetIOS APIs already exist. This page turns them into a public-facing integration catalog so the developer moat is visible and usable, even before full partner credentialing and onboarding are in place."
+            title="A partner platform, not just an internal endpoint list."
+            description="The core VetIOS APIs already exist. This surface now adds published API products and self-serve onboarding intake so partner integration can move from internal-only to productized."
             actions={(
                 <>
                     <Link
@@ -35,13 +40,55 @@ export default function DevelopersPage() {
             )}
         >
             <div className="grid gap-4 md:grid-cols-3">
-                <SummaryCard label="Documented endpoints" value={String(developerEndpoints.length)} />
-                <SummaryCard label="Public endpoints" value={String(developerEndpoints.filter((endpoint) => endpoint.readiness === 'public').length)} />
-                <SummaryCard label="Partner gap" value="API keys + onboarding still missing" />
+                <SummaryCard label="Documented endpoints" value={String(snapshot.endpoints.length)} />
+                <SummaryCard label="Published products" value={String(snapshot.summary.published_products)} />
+                <SummaryCard label="Active partners" value={String(snapshot.summary.active_partners)} />
             </div>
 
-            <section className="mt-10 grid gap-6 xl:grid-cols-2">
-                {developerEndpoints.map((endpoint) => (
+            {!snapshot.configured ? (
+                <section className="mt-8 rounded-[24px] border border-amber-400/20 bg-amber-400/10 p-6 text-amber-100">
+                    <div className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-200">Configuration needed</div>
+                    <p className="mt-3 max-w-3xl text-sm leading-7">
+                        Set <code className="rounded bg-black/20 px-1.5 py-0.5">VETIOS_PUBLIC_TENANT_ID</code> to publish partner products and accept public onboarding requests from the canonical tenant.
+                    </p>
+                </section>
+            ) : null}
+
+            <section className="mt-10 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+                <div className="space-y-6">
+                    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-6">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Published products</div>
+                        {snapshot.api_products.length > 0 ? (
+                            <div className="mt-4 grid gap-4">
+                                {snapshot.api_products.map((product) => (
+                                    <div key={product.id} className="rounded-2xl border border-white/8 bg-black/20 p-4">
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <div>
+                                                <div className="font-mono text-sm text-white">{product.title}</div>
+                                                <div className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">{product.product_key}</div>
+                                            </div>
+                                            <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-slate-200">
+                                                {product.access_tier}
+                                            </div>
+                                        </div>
+                                        <p className="mt-3 text-sm leading-6 text-slate-300">{product.summary}</p>
+                                        <div className="mt-3 text-xs text-slate-400">
+                                            Default scopes: {product.default_scopes.join(', ') || 'NO DATA'}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="mt-4 rounded-2xl border border-white/8 bg-black/20 p-4 text-sm text-slate-300">
+                                No partner API products have been published yet.
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="rounded-[24px] border border-white/10 bg-white/[0.04] p-6">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Endpoint catalog</div>
+                        <div className="mt-4 grid gap-6 xl:grid-cols-2">
+                            {snapshot.endpoints.map((endpoint) => (
                     <article key={endpoint.id} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-6">
                         <div className="flex flex-wrap items-start justify-between gap-4">
                             <div>
@@ -85,7 +132,16 @@ export default function DevelopersPage() {
                             </div>
                         ) : null}
                     </article>
-                ))}
+                            ))}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="space-y-6">
+                    <PublicDeveloperOnboardingForm />
+                    <SummaryCard label="Open requests" value={String(snapshot.summary.pending_requests)} />
+                    <SummaryCard label="Tenant source" value={snapshot.tenant_id ?? 'NOT CONFIGURED'} />
+                </div>
             </section>
         </PlatformShell>
     );
