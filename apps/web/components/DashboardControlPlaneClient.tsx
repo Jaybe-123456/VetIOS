@@ -207,7 +207,9 @@ export default function DashboardControlPlaneClient() {
                         tone={routingOverview.routingShiftCount > 0 ? 'warning' : 'accent'}
                         icon={<Route className="w-3 h-3" />}
                     />
-                    {/* ── Control Plane Operations HUD ── */}
+                </div>
+
+                {/* ── Control Plane Operations HUD ── */}
                 <ConsoleCard title="Control Plane Core Operations" className="mt-4 border-accent shadow-[0_0_15px_rgba(0,255,65,0.15)] bg-black/40 backdrop-blur-md" collapsible defaultCollapsed={false}>
                     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
                         <button type="button" onClick={() => void refreshSnapshot(false)} className="col-span-2 xl:col-span-1 border border-accent/60 shadow-[0_0_10px_rgba(0,255,65,0.2)] bg-accent/5 hover:bg-accent hover:text-black text-accent flex flex-col items-center justify-center gap-2 h-full py-5 transition-all text-[10px] sm:text-xs font-mono uppercase tracking-widest disabled:opacity-50">
@@ -259,10 +261,6 @@ export default function DashboardControlPlaneClient() {
                         </div>
                     </div>
                 </ConsoleCard>
-            </div>
-            
-            <div className="mb-4 sm:mb-6 flex flex-col gap-3">
-
                 {requestError ? (
                     <div className="border border-danger bg-danger/5 p-3 font-mono text-xs text-danger">
                         {requestError}
