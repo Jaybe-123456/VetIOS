@@ -81,11 +81,8 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(loginUrl);
     }
 
-    if (hasAuthCookie && (pathname === '/login' || pathname === '/signup')) {
-        const appUrl = request.nextUrl.clone();
-        appUrl.pathname = '/inference';
-        return NextResponse.redirect(appUrl);
-    }
+    // Removed hasAuthCookie redirection to prevent infinite loop on invalid sessions.
+    // The actual /login route will rely on its client/server auth guards to verify session validity.
 
     return response;
 }
