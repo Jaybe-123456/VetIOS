@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { materializeLearningCycleTelemetry } from '@/lib/experiments/learningCycleTelemetry';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
+import { publishFederatedSiteSnapshots } from '@/lib/federation/service';
 import { runLearningCycle } from '@/lib/learningEngine/engine';
 import { createSupabaseLearningEngineStore } from '@/lib/learningEngine/supabaseStore';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -73,6 +74,13 @@ export async function POST(req: Request) {
             status: 'skipped',
             run_ids: [],
         };
+    let federation:
+        | { status: 'published'; snapshot_ids: string[] }
+        | { status: 'skipped'; snapshot_ids: string[] }
+        | { status: 'failed'; error: string; snapshot_ids: string[] } = {
+            status: 'skipped',
+            snapshot_ids: [],
+        };
 
     try {
         experimentTracking = await materializeLearningCycleTelemetry(
@@ -91,9 +99,32 @@ export async function POST(req: Request) {
         };
     }
 
+    try {
+        const snapshots = await publishFederatedSiteSnapshots(supabase, {
+            tenantId: actor.tenantId,
+            actor: actor.userId,
+        });
+        federation = snapshots.length > 0
+            ? {
+                status: 'published',
+                snapshot_ids: snapshots.map((snapshot) => snapshot.id),
+            }
+            : {
+                status: 'skipped',
+                snapshot_ids: [],
+            };
+    } catch (error) {
+        federation = {
+            status: 'failed',
+            error: error instanceof Error ? error.message : 'Unknown federation publish error',
+            snapshot_ids: [],
+        };
+    }
+
     const response = NextResponse.json({
         result,
         experiment_tracking: experimentTracking,
+        federation,
         authenticated_user_id: actor.userId,
         request_id: requestId,
     });
