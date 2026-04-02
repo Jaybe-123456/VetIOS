@@ -166,3 +166,42 @@ export function ConsoleCard({
 
     return cardContent;
 }
+
+/* ── TerminalTabs ─────────────────────────────────────────────────────────── */
+
+export function TerminalTabs<T extends string>({
+    tabs,
+    activeTab,
+    onTabChange,
+    className = '',
+}: {
+    tabs: Array<{ id: T; label: string; icon?: React.ReactNode }>;
+    activeTab: T;
+    onTabChange: (id: T) => void;
+    className?: string;
+}) {
+    return (
+        <div className={`flex flex-wrap gap-2 mb-6 sm:mb-8 ${className}`}>
+            {tabs.map((tab) => {
+                const isActive = activeTab === tab.id;
+                return (
+                    <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => onTabChange(tab.id)}
+                        className={`
+                            px-4 py-2 sm:px-6 sm:py-3 border font-mono text-[10px] sm:text-xs uppercase tracking-[0.2em] transition-all flex items-center gap-2
+                            ${isActive
+                                ? 'border-accent text-accent bg-accent/10 shadow-[0_0_10px_rgba(0,255,157,0.1)]'
+                                : 'border-grid text-muted hover:border-muted hover:text-foreground bg-dim/50'
+                            }
+                        `}
+                    >
+                        {tab.icon && <span className={isActive ? 'text-accent' : 'text-muted'}>{tab.icon}</span>}
+                        {tab.label}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}

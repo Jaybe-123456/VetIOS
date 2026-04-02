@@ -1,13 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Container, PageHeader, ConsoleCard, DataRow } from '@/components/ui/terminal';
+import { Container, PageHeader, ConsoleCard, DataRow, TerminalTabs } from '@/components/ui/terminal';
 import { OutcomeAttachForm } from '@/components/OutcomeAttachForm';
-import { ArrowRight, ArrowDown, BrainCircuit, Activity, Database, GitMerge, CheckCircle2 } from 'lucide-react';
+import { ArrowRight, ArrowDown, BrainCircuit, Activity, Database, GitMerge, CheckCircle2, FlaskConical, MonitorDot } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type PipelineStage = 'idle' | 'prediction' | 'outcome_injected' | 'weights_updated' | 'telemetry_logged';
+type OutcomeTab = 'injection' | 'monitor';
 
 interface EvalResult {
     id: string;
@@ -31,6 +32,7 @@ interface OutcomeState {
 // ── Page Component ───────────────────────────────────────────────────────────
 
 export default function OutcomeLearning() {
+    const [activeTab, setActiveTab] = useState<OutcomeTab>('injection');
     const [state, setState] = useState<OutcomeState>({
         status: 'idle',
         pipelineStage: 'idle',
@@ -53,6 +55,7 @@ export default function OutcomeLearning() {
         };
 
         // Stage 1: Prediction acknowledged
+        setActiveTab('monitor'); // Auto-switch to monitor tab
         setState({ status: 'submitting', pipelineStage: 'prediction' });
         await delay(400);
 
@@ -101,111 +104,127 @@ export default function OutcomeLearning() {
                 description="Attach ground truth to inference events to calculate calibration curves and reinforce the base model parameters."
             />
 
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8 xl:gap-12 mb-8 sm:mb-12">
-                <div className="xl:border-r xl:border-grid xl:pr-12">
-                    <ConsoleCard title="Inject Ground Truth" className="border-transparent p-0 bg-transparent">
+            <TerminalTabs
+                tabs={[
+                    { id: 'injection', label: 'Injection', icon: <FlaskConical className="w-4 h-4" /> },
+                    { id: 'monitor', label: 'Monitor', icon: <MonitorDot className="w-4 h-4" /> },
+                ]}
+                activeTab={activeTab}
+                onTabChange={setActiveTab}
+            />
+
+            {activeTab === 'injection' ? (
+                <div className="max-w-3xl mx-auto animate-scale-in">
+                    <ConsoleCard title="Inject Ground Truth" className="border-accent/30 shadow-[0_4px_20px_rgba(0,0,0,0.4)]">
                         <OutcomeAttachForm onSubmit={handleSubmit} isSubmitting={state.status === 'submitting'} />
                     </ConsoleCard>
                 </div>
-
-                <div className="space-y-4 sm:space-y-6">
-                    <ConsoleCard title="Reinforcement Pipeline Activity">
-                        {state.status === 'idle' && (
-                            <div className="text-muted font-mono text-xs sm:text-sm grid place-items-center h-24 sm:h-32 border border-dashed border-grid">
-                                AWAITING GROUND TRUTH INJECTION DOCK
-                            </div>
-                        )}
-                        {state.status === 'submitting' && (
-                            <div className="text-accent font-mono text-xs sm:text-sm flex items-center justify-center gap-3 h-24 sm:h-32 border border-accent bg-accent/5 p-4 animate-pulse">
-                                <Activity className="w-5 h-5 animate-spin" />
-                                {state.pipelineStage === 'prediction' && 'VALIDATING INFERENCE EVENT...'}
-                                {state.pipelineStage === 'outcome_injected' && 'INJECTING OUTCOME & COMPUTING METRICS...'}
-                                {state.pipelineStage === 'weights_updated' && 'UPDATING WEIGHT GRADIENTS...'}
-                            </div>
-                        )}
-                        {state.status === 'success' && state.evaluation && (
-                            <div className="space-y-4 animate-scale-in">
-                                <div className="p-4 border border-accent bg-accent/5 font-mono">
-                                    <div className="text-accent mb-2 font-bold tracking-widest uppercase flex items-center gap-2 text-xs sm:text-sm">
-                                        <div className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
-                                        Signal Accepted — Evaluation Complete
-                                    </div>
-                                    <div className="grid grid-cols-2 gap-3 sm:gap-4 text-[10px] sm:text-xs mt-4">
-                                        <MetricCell
-                                            label="Calibration Error"
-                                            value={state.evaluation.calibration_error != null
-                                                ? `${(state.evaluation.calibration_error * 100).toFixed(2)}%`
-                                                : 'N/A'}
-                                            accent={state.evaluation.calibration_error != null && state.evaluation.calibration_error > 0.15 ? 'danger' : 'accent'}
-                                        />
-                                        <MetricCell
-                                            label="Drift Score"
-                                            value={state.evaluation.drift_score != null
-                                                ? state.evaluation.drift_score.toFixed(3)
-                                                : 'Insufficient data'}
-                                            accent={state.evaluation.drift_score != null && state.evaluation.drift_score > 0.5 ? 'danger' : 'muted'}
-                                        />
-                                        <MetricCell
-                                            label="Outcome Alignment"
-                                            value={state.evaluation.outcome_alignment_delta != null
-                                                ? `Δ ${(state.evaluation.outcome_alignment_delta * 100).toFixed(1)}%`
-                                                : 'N/A'}
-                                            accent="accent"
-                                        />
-                                        <MetricCell
-                                            label="Calibrated Confidence"
-                                            value={state.evaluation.calibrated_confidence != null
-                                                ? `${(state.evaluation.calibrated_confidence * 100).toFixed(1)}%`
-                                                : 'N/A'}
-                                            accent="accent"
-                                        />
+            ) : (
+                <div className="space-y-6 sm:space-y-8 animate-scale-in">
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
+                        <ConsoleCard title="Reinforcement Pipeline Activity">
+                            {state.status === 'idle' && (
+                                <div className="text-muted font-mono text-xs sm:text-sm grid place-items-center h-24 sm:h-32 border border-dashed border-grid">
+                                    AWAITING GROUND TRUTH INJECTION DOCK
+                                </div>
+                            )}
+                            {state.status === 'submitting' && (
+                                <div className="text-accent font-mono text-xs sm:text-sm flex items-center justify-center gap-3 h-24 sm:h-32 border border-accent bg-accent/5 p-4 animate-pulse">
+                                    <Activity className="w-5 h-5 animate-spin" />
+                                    {state.pipelineStage === 'prediction' && 'VALIDATING INFERENCE EVENT...'}
+                                    {state.pipelineStage === 'outcome_injected' && 'INJECTING OUTCOME & COMPUTING METRICS...'}
+                                    {state.pipelineStage === 'weights_updated' && 'UPDATING WEIGHT GRADIENTS...'}
+                                </div>
+                            )}
+                            {state.status === 'success' && state.evaluation && (
+                                <div className="space-y-4">
+                                    <div className="p-4 border border-accent bg-accent/5 font-mono">
+                                        <div className="text-accent mb-2 font-bold tracking-widest uppercase flex items-center gap-2 text-xs sm:text-sm">
+                                            <div className="w-1.5 h-1.5 bg-accent rounded-full animate-pulse" />
+                                            Signal Accepted — Evaluation Complete
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3 sm:gap-4 text-[10px] sm:text-xs mt-4">
+                                            <MetricCell
+                                                label="Calibration Error"
+                                                value={state.evaluation.calibration_error != null
+                                                    ? `${(state.evaluation.calibration_error * 100).toFixed(2)}%`
+                                                    : 'N/A'}
+                                                accent={state.evaluation.calibration_error != null && state.evaluation.calibration_error > 0.15 ? 'danger' : 'accent'}
+                                            />
+                                            <MetricCell
+                                                label="Drift Score"
+                                                value={state.evaluation.drift_score != null
+                                                    ? state.evaluation.drift_score.toFixed(3)
+                                                    : 'Insufficient data'}
+                                                accent={state.evaluation.drift_score != null && state.evaluation.drift_score > 0.5 ? 'danger' : 'muted'}
+                                            />
+                                            <MetricCell
+                                                label="Outcome Alignment"
+                                                value={state.evaluation.outcome_alignment_delta != null
+                                                    ? `Δ ${(state.evaluation.outcome_alignment_delta * 100).toFixed(1)}%`
+                                                    : 'N/A'}
+                                                accent="accent"
+                                            />
+                                            <MetricCell
+                                                label="Calibrated Confidence"
+                                                value={state.evaluation.calibrated_confidence != null
+                                                    ? `${(state.evaluation.calibrated_confidence * 100).toFixed(1)}%`
+                                                    : 'N/A'}
+                                                accent="accent"
+                                            />
+                                        </div>
                                     </div>
                                 </div>
-
-                                {/* Uncertainty decomposition */}
-                                {(state.evaluation.epistemic_uncertainty != null || state.evaluation.aleatoric_uncertainty != null) && (
-                                    <ConsoleCard title="Uncertainty Decomposition" className="border-grid">
-                                        <div className="grid grid-cols-2 gap-4 font-mono text-xs">
-                                            <div>
-                                                <div className="text-muted uppercase text-[10px] mb-1">Epistemic (Knowledge Gap)</div>
-                                                <UncertaintyBar value={state.evaluation.epistemic_uncertainty ?? 0} />
-                                            </div>
-                                            <div>
-                                                <div className="text-muted uppercase text-[10px] mb-1">Aleatoric (Inherent Noise)</div>
-                                                <UncertaintyBar value={state.evaluation.aleatoric_uncertainty ?? 0} />
-                                            </div>
-                                        </div>
-                                    </ConsoleCard>
-                                )}
-
-                                {/* Event IDs */}
-                                <ConsoleCard title="Event References" className="border-grid">
+                            )}
+                            {state.status === 'success' && !state.evaluation && (
+                                <div className="space-y-3">
+                                    <div className="p-4 border border-accent bg-accent/5 font-mono text-xs sm:text-sm text-accent">
+                                        Outcome attached successfully. Evaluation metrics require a matching inference record in the database.
+                                    </div>
                                     <DataRow label="Outcome Event" value={<span className="text-accent">{state.outcomeEventId}</span>} />
                                     <DataRow label="Linked Inference" value={<span className="text-muted">{state.linkedInferenceId}</span>} />
-                                    <DataRow label="Evaluation ID" value={<span className="text-muted">{state.evaluation.id}</span>} />
-                                </ConsoleCard>
-                            </div>
-                        )}
-                        {state.status === 'success' && !state.evaluation && (
-                            <div className="space-y-3 animate-scale-in">
-                                <div className="p-4 border border-accent bg-accent/5 font-mono text-xs sm:text-sm text-accent">
-                                    Outcome attached successfully. Evaluation metrics require a matching inference record in the database.
                                 </div>
-                                <DataRow label="Outcome Event" value={<span className="text-accent">{state.outcomeEventId}</span>} />
-                                <DataRow label="Linked Inference" value={<span className="text-muted">{state.linkedInferenceId}</span>} />
-                            </div>
-                        )}
-                        {state.status === 'error' && (
-                            <div className="text-danger font-mono text-xs sm:text-sm border border-danger p-4 bg-danger/5">
-                                ERR: {state.errorMessage}
-                            </div>
-                        )}
-                    </ConsoleCard>
-                </div>
-            </div>
+                            )}
+                            {state.status === 'error' && (
+                                <div className="text-danger font-mono text-xs sm:text-sm border border-danger p-4 bg-danger/5">
+                                    ERR: {state.errorMessage}
+                                </div>
+                            )}
+                        </ConsoleCard>
 
-            {/* ── Pipeline Visual ─────────────────────────────────────────────── */}
-            <PipelineVisual stage={state.pipelineStage} />
+                        {/* Event references / Uncertainty shown side-by-side on desktop */}
+                        <div className="space-y-6">
+                            {state.status === 'success' && state.evaluation && (
+                                <>
+                                    {(state.evaluation.epistemic_uncertainty != null || state.evaluation.aleatoric_uncertainty != null) && (
+                                        <ConsoleCard title="Uncertainty Decomposition" className="border-grid">
+                                            <div className="grid grid-cols-2 gap-4 font-mono text-xs">
+                                                <div>
+                                                    <div className="text-muted uppercase text-[10px] mb-1">Epistemic (Knowledge Gap)</div>
+                                                    <UncertaintyBar value={state.evaluation.epistemic_uncertainty ?? 0} />
+                                                </div>
+                                                <div>
+                                                    <div className="text-muted uppercase text-[10px] mb-1">Aleatoric (Inherent Noise)</div>
+                                                    <UncertaintyBar value={state.evaluation.aleatoric_uncertainty ?? 0} />
+                                                </div>
+                                            </div>
+                                        </ConsoleCard>
+                                    )}
+
+                                    <ConsoleCard title="Event References" className="border-grid">
+                                        <DataRow label="Outcome Event" value={<span className="text-accent">{state.outcomeEventId}</span>} />
+                                        <DataRow label="Linked Inference" value={<span className="text-muted">{state.linkedInferenceId}</span>} />
+                                        <DataRow label="Evaluation ID" value={<span className="text-muted">{state.evaluation.id}</span>} />
+                                    </ConsoleCard>
+                                </>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* Pipeline Visual is now part of Monitor tab */}
+                    <PipelineVisual stage={state.pipelineStage} />
+                </div>
+            )}
         </Container>
     );
 }
