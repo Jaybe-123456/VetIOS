@@ -112,9 +112,31 @@ export function ExperimentTrackingClient({
     return (
         <Container className="max-w-[96rem]">
             <PageHeader
-                title="EXPERIMENT TRACKING"
-                description="Operate telemetry, calibration, adversarial gates, clinical safety metrics, and deployment governance from one clinical MLOps surface."
+                title="EXPERIMENT TRACK"
+                description="VetIOS Experiment Track is the reproducible AI research stack for veterinary institutions, capturing dataset versions, hyperparameters, model lineage, and comparisons behind every result."
             />
+
+            <div className="mb-8">
+                <ConsoleCard title="Reproducible AI Research Stack">
+                    <div className="grid gap-4 xl:grid-cols-3">
+                        <ResearchPositionCard
+                            eyebrow="VERIFIABLE SCIENCE"
+                            title="Turn result claims into evidence"
+                            body="If a paper reports 94% sensitivity for feline hyperthyroidism, peer reviewers can inspect the exact dataset version, hyperparameters, metrics, and model lineage behind that number."
+                        />
+                        <ResearchPositionCard
+                            eyebrow="WHY IT IS A STACK"
+                            title="Every layer depends on the next"
+                            body="Dataset versioning, hyperparameter logging, model registry lineage, and the comparison interface work as one system. Each record gives the others scientific meaning."
+                        />
+                        <ResearchPositionCard
+                            eyebrow="RESEARCH INSTITUTIONS"
+                            title="Built for independently reproducible work"
+                            body="For institutions such as UoN Nairobi, ILRI, Cornell, and RVC, reproducibility is what turns a published result into something another lab can verify, trust, and cite."
+                        />
+                    </div>
+                </ConsoleCard>
+            </div>
 
             <div className="mb-8 flex flex-col gap-4">
                 <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8">
@@ -1431,6 +1453,24 @@ function SummaryCard({
         <div className="border border-grid bg-black/20 p-3 font-mono" title={tooltip}>
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
             <div className={`mt-2 text-2xl ${toneClass}`}>{value}</div>
+        </div>
+    );
+}
+
+function ResearchPositionCard({
+    eyebrow,
+    title,
+    body,
+}: {
+    eyebrow: string;
+    title: string;
+    body: string;
+}) {
+    return (
+        <div className="border border-grid bg-black/20 p-4">
+            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent">{eyebrow}</div>
+            <div className="mt-3 text-sm font-semibold text-foreground">{title}</div>
+            <div className="mt-2 font-mono text-xs leading-6 text-muted">{body}</div>
         </div>
     );
 }
