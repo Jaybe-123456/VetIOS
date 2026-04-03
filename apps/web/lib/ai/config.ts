@@ -1,0 +1,21 @@
+export function getAiProviderApiKey(): string {
+    const key = process.env.OPENAI_API_KEY || process.env.AI_PROVIDER_API_KEY;
+    if (!key) {
+        throw new Error('Missing AI provider key: set OPENAI_API_KEY or AI_PROVIDER_API_KEY.');
+    }
+    return key;
+}
+
+export function getAiProviderBaseUrl(): string {
+    return process.env.AI_PROVIDER_BASE_URL || 'https://api.openai.com/v1';
+}
+
+export function getAiProviderDefaultModel(fallback = 'gpt-4o-mini'): string {
+    return process.env.AI_PROVIDER_DEFAULT_MODEL || fallback;
+}
+
+export function shouldUseAiHeuristicFallback(): boolean {
+    return process.env.VETIOS_DEV_BYPASS === 'true'
+        || process.env.VETIOS_LOCAL_REASONER === 'true'
+        || process.env.NODE_ENV === 'test';
+}

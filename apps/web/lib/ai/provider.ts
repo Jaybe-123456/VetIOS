@@ -1,6 +1,12 @@
 import { detectContradictions, type ContradictionResult } from '@/lib/ai/contradictionEngine';
 import { createHeuristicInferencePayload } from '@/lib/ai/diagnosticSafety';
 import { getClosedWorldDiseasePromptBlock } from '@/lib/ai/diseaseOntology';
+import {
+    getAiProviderApiKey,
+    getAiProviderBaseUrl,
+    getAiProviderDefaultModel,
+    shouldUseAiHeuristicFallback,
+} from '@/lib/ai/config';
 
 export interface InferenceInput {
     model?: string;
@@ -18,43 +24,21 @@ export interface InferenceOutput {
     raw_content: string;
 }
 
-function getApiKey(): string {
-    const key = process.env.OPENAI_API_KEY || process.env.AI_PROVIDER_API_KEY;
-    if (!key) {
-        throw new Error('Missing AI provider key: set OPENAI_API_KEY or AI_PROVIDER_API_KEY.');
-    }
-    return key;
-}
-
-function getBaseUrl(): string {
-    return process.env.AI_PROVIDER_BASE_URL || 'https://api.openai.com/v1';
-}
-
-function getDefaultModel(): string {
-    return process.env.AI_PROVIDER_DEFAULT_MODEL || 'gpt-4o-mini';
-}
-
-function shouldUseHeuristicFallback(): boolean {
-    return process.env.VETIOS_DEV_BYPASS === 'true' ||
-        process.env.VETIOS_LOCAL_REASONER === 'true' ||
-        process.env.NODE_ENV === 'test';
-}
-
 export async function runInference(input: InferenceInput): Promise<InferenceOutput> {
-    const model = input.model || getDefaultModel();
+    const model = input.model || getAiProviderDefaultModel();
     const contradictionResult = detectContradictions(input.input_signature);
 
     let apiKey: string;
     try {
-        apiKey = getApiKey();
+        apiKey = getAiProviderApiKey();
     } catch (error) {
-        if (shouldUseHeuristicFallback()) {
+        if (shouldUseAiHeuristicFallback()) {
             return buildFallbackInference(input, contradictionResult, model, error instanceof Error ? error.message : 'Missing API key');
         }
         throw error;
     }
 
-    const baseUrl = getBaseUrl();
+    const baseUrl = getAiProviderBaseUrl();
     const signatureOriginal = { ...input.input_signature };
 
     const contradictionBlock = contradictionResult.contradiction_reasons.length > 0
@@ -184,7 +168,7 @@ RULES:
             }),
         });
     } catch (error) {
-        if (shouldUseHeuristicFallback()) {
+        if (shouldUseAiHeuristicFallback()) {
             return buildFallbackInference(input, contradictionResult, model, error instanceof Error ? error.message : 'Provider connection failure');
         }
         throw new Error(`AI provider connection failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -192,7 +176,7 @@ RULES:
 
     if (!response.ok) {
         const errorBody = await response.text();
-        if (shouldUseHeuristicFallback()) {
+        if (shouldUseAiHeuristicFallback()) {
             return buildFallbackInference(input, contradictionResult, model, `Provider returned ${response.status}: ${errorBody}`);
         }
 
@@ -214,14 +198,14 @@ RULES:
     try {
         parsed = JSON.parse(rawContent);
     } catch {
-        if (shouldUseHeuristicFallback()) {
+        if (shouldUseAiHeuristicFallback()) {
             return buildFallbackInference(input, contradictionResult, model, 'Provider returned non-JSON output');
         }
         parsed = { raw: rawContent, parse_error: true };
     }
 
     if (!parsed.diagnosis || typeof parsed.diagnosis !== 'object') {
-        if (shouldUseHeuristicFallback()) {
+        if (shouldUseAiHeuristicFallback()) {
             return buildFallbackInference(input, contradictionResult, model, 'Provider response missing diagnosis block');
         }
         parsed.diagnosis = {};
