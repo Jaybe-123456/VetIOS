@@ -62,6 +62,9 @@ export default function VetiosGuide() {
     const progressPercent = onboarding.totalCount > 0
         ? Math.round((onboarding.visitedCount / onboarding.totalCount) * 100)
         : 0;
+    const latestAssistantMessage = [...messages].reverse().find((message) => message.role === 'assistant') ?? null;
+    const activeMode = latestAssistantMessage?.mode ?? 'fallback';
+    const welcomeMessage = buildWelcomeMessage(routeContext, onboarding);
 
     async function handleSubmit(promptOverride?: string) {
         const message = (promptOverride ?? draft).trim();
@@ -183,15 +186,23 @@ export default function VetiosGuide() {
                     />
                     <aside className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[460px] flex-col border-l border-grid bg-background shadow-2xl">
                         <div className="flex items-center justify-between border-b border-grid px-4 py-4">
-                            <div className="flex items-center gap-3">
-                                <div className="flex h-10 w-10 items-center justify-center rounded-sm border border-accent/30 bg-accent/10 text-accent">
-                                    <Sparkles className="h-4 w-4" />
+                                <div className="flex items-center gap-3">
+                                    <div className="flex h-10 w-10 items-center justify-center rounded-sm border border-accent/30 bg-accent/10 text-accent">
+                                        <Sparkles className="h-4 w-4" />
+                                    </div>
+                                    <div>
+                                        <div className="font-mono text-xs uppercase tracking-[0.24em] text-accent">VetIOS Guide</div>
+                                        <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                                            <span>{routeContext.title}</span>
+                                            <span className={`border px-2 py-0.5 ${activeMode === 'ai'
+                                                ? 'border-accent/30 text-accent'
+                                                : 'border-grid text-muted'
+                                                }`}>
+                                                {activeMode === 'ai' ? 'AI mode' : 'Guide mode'}
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div>
-                                    <div className="font-mono text-xs uppercase tracking-[0.24em] text-accent">VetIOS Guide</div>
-                                    <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">{routeContext.title}</div>
-                                </div>
-                            </div>
                             <button
                                 type="button"
                                 onClick={() => setIsOpen(false)}
@@ -208,6 +219,11 @@ export default function VetiosGuide() {
                                     <p className="font-mono text-xs leading-relaxed text-foreground">{routeContext.summary}</p>
                                     <div className="mt-3 text-[10px] font-mono uppercase tracking-[0.18em] text-muted">
                                         Primary goal: <span className="text-accent">{routeContext.primary_goal}</span>
+                                    </div>
+                                    <div className="mt-3 border border-grid bg-dim/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-muted">
+                                        {activeMode === 'ai'
+                                            ? 'Live AI assistance is active for this session.'
+                                            : 'Route-aware guide mode is active, so responses stay useful even without the model layer.'}
                                     </div>
                                 </ConsoleCard>
 
@@ -248,8 +264,33 @@ export default function VetiosGuide() {
                                 <ConsoleCard title="Conversation" className="p-4">
                                     <div ref={scrollRef} className="max-h-[32vh] space-y-3 overflow-y-auto pr-1">
                                         {messages.length === 0 && !loading && (
-                                            <div className="border border-dashed border-grid px-4 py-5 font-mono text-xs leading-relaxed text-muted">
-                                                Ask for an explanation of this page, the next best action, or the right workspace for the job you are trying to complete.
+                                            <div className="border border-accent/20 bg-accent/5 px-3 py-3">
+                                                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                                                    VetIOS Guide
+                                                </div>
+                                                <div className="font-mono text-xs leading-relaxed text-foreground">
+                                                    {welcomeMessage.content}
+                                                </div>
+                                                <div className="mt-3 space-y-2">
+                                                    {welcomeMessage.nextSteps.map((step) => (
+                                                        <div key={step} className="flex items-start gap-2 font-mono text-[11px] text-muted">
+                                                            <span className="mt-1 h-1.5 w-1.5 shrink-0 bg-accent" />
+                                                            <span>{step}</span>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <div className="mt-3 flex flex-wrap gap-2">
+                                                    {welcomeMessage.actions.map((action) => (
+                                                        <button
+                                                            key={`welcome-${action.label}`}
+                                                            type="button"
+                                                            onClick={() => handleAction(action)}
+                                                            className="border border-grid px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted transition-colors hover:border-accent/30 hover:text-accent"
+                                                        >
+                                                            {action.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             </div>
                                         )}
 
@@ -342,6 +383,38 @@ export default function VetiosGuide() {
             )}
         </>
     );
+}
+
+function buildWelcomeMessage(
+    routeContext: ReturnType<typeof resolveAssistantRouteContext>,
+    onboarding: ReturnType<typeof getAssistantOnboardingProgress>,
+): {
+    content: string;
+    nextSteps: string[];
+    actions: AssistantAction[];
+} {
+    const content = onboarding.nextRoute && onboarding.nextRoute.href !== routeContext.href
+        ? `You are on ${routeContext.title}. I can explain this page, map the next best action, or move you into ${onboarding.nextRoute.title} if you want to continue the guided onboarding path.`
+        : `You are on ${routeContext.title}. I can explain what this page does, help you complete a first workflow, or point you to the right workspace for the job you want to do.`;
+
+    const nextSteps = routeContext.recommended_steps.slice(0, 3);
+    const actions = [
+        ...routeContext.suggested_actions,
+        ...(onboarding.nextRoute && onboarding.nextRoute.href !== routeContext.href
+            ? [{
+                type: 'navigate' as const,
+                label: `Next: ${onboarding.nextRoute.title}`,
+                description: 'Continue the onboarding path.',
+                href: onboarding.nextRoute.href,
+            }]
+            : []),
+    ].slice(0, 3);
+
+    return {
+        content,
+        nextSteps,
+        actions,
+    };
 }
 
 function safeParseVisitedPaths(raw: string | null): string[] {
