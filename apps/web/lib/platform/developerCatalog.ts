@@ -106,7 +106,7 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         purpose: 'Normalize passive vendor connector payloads and attach them to episodes.',
         notes: [
             'Supports lab results, refills, rechecks, referrals, and imaging reports today.',
-            'Supports connector installations and machine credentials, with the older shared-secret path still present for legacy traffic.',
+            'Supports connector marketplace installations and installation-scoped credentials, with the older shared-secret path still present only for legacy traffic.',
         ],
         samplePayload: {
             connector: {

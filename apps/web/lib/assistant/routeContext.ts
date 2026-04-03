@@ -246,8 +246,8 @@ const ASSISTANT_ROUTE_CONTEXTS: AssistantRouteContext[] = [
         title: 'Settings',
         href: '/settings',
         summary: 'Settings is the administrative control plane for identity, credentials, policy, infrastructure controls, and platform operations.',
-        matchers: ['/settings', '/settings/petpass', '/settings/federation', '/settings/edge-box', '/settings/model-trust', '/settings/developer-platform', '/settings/outbox'],
-        keywords: ['settings', 'admin', 'permissions', 'credentials', 'petpass', 'federation', 'edge box', 'model trust', 'developer platform', 'outbox'],
+        matchers: ['/settings', '/settings/petpass', '/settings/federation', '/settings/edge-box', '/settings/model-trust', '/settings/developer-platform', '/settings/outbox', '/settings/passive-signals'],
+        keywords: ['settings', 'admin', 'permissions', 'credentials', 'petpass', 'federation', 'edge box', 'model trust', 'developer platform', 'outbox', 'passive signals', 'connectors'],
         primary_goal: 'Manage access, control-plane configuration, and operational subsystems safely.',
         recommended_steps: [
             'Confirm which operational subsystem you are changing before making any control-plane update.',
@@ -262,6 +262,7 @@ const ASSISTANT_ROUTE_CONTEXTS: AssistantRouteContext[] = [
         suggested_actions: [
             { type: 'prompt', label: 'Explain Settings', description: 'Get a guided tour of the control plane.', prompt: 'Explain the main areas of Settings for a new operator.' },
             { type: 'navigate', label: 'Open PetPass Ops', description: 'Provision owner, pet, consent, and notification records.', href: '/settings/petpass' },
+            { type: 'navigate', label: 'Open Passive Ops', description: 'Install and schedule passive connector syncs.', href: '/settings/passive-signals' },
             { type: 'navigate', label: 'Open Developer Platform', description: 'Manage partner onboarding and machine credentials.', href: '/settings/developer-platform' },
         ],
     },

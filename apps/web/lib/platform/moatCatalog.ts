@@ -236,10 +236,10 @@ export const moatCards: MoatCardDefinition[] = [
         availableNow: [
             'Passive connector normalization exists for lab results, rechecks, referrals, imaging, and medication refill signals.',
             'Episode reconciliation, a clinic workflow signal dock, and a published connector catalog are already built.',
+            'Connector marketplace packs, installation-scoped connector credentials, and scheduled passive sync execution are now live.',
         ],
         missingNow: [
-            'Most connector ingestion is still manual or shared-secret based, not turnkey vendor sync at fleet scale.',
-            'There is no connector marketplace, scheduler, or broad EHR/PIMS sync coverage yet.',
+            'Direct native OAuth-style vendor adapters for every EHR/PIMS are still expanding beyond the current connector-pack coverage.',
         ],
         links: [
             { label: 'Passive Signals', href: '/platform/passive-signals' },
