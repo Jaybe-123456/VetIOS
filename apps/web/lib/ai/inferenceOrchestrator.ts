@@ -131,6 +131,7 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     payload.clinical_signal = antigravitySignal;
     payload.signal_quality_score = antigravitySignal.signal_quality_score;
     payload.signal_weight_profile = signalWeightProfile;
+    payload.pathophysiology_prioritization = signalWeightProfile.system_dominance;
     payload.priority_signals = signalWeightProfile.weighted_signals.slice(0, 6);
     payload.reasoning_alignment = buildClinicalReasoningAlignmentSnapshot({
         inputSignature: normalizedSig,
@@ -185,6 +186,7 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
             applied_overrides: signalWeightProfile.applied_overrides,
             emergency_overrides: signalWeightProfile.emergency_overrides,
             category_totals: signalWeightProfile.category_totals,
+            system_dominance: signalWeightProfile.system_dominance,
         },
         mechanism_class: payload.mechanism_class ?? null,
         risk_model_output: payload.risk_model_output ?? null,

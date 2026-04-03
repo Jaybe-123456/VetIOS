@@ -22,6 +22,7 @@ import {
     type MechanismClassOutput,
 } from '@/lib/ai/abdominalEmergency';
 import {
+    getOrganSystemDisplayLabel,
     getMasterDiseaseOntology,
     normalizeOntologyDiseaseName,
     scoreClosedWorldDiseases,
@@ -84,6 +85,11 @@ interface CandidateScore {
     conditionClass: ConditionClass;
     rawScore: number;
     probability: number;
+    organSystems: string[];
+    dominantSystemAligned: boolean;
+    dominantSystemSupport: number;
+    genericSymptomDownweight: number;
+    crossSystemMismatch: number;
     drivers: DifferentialDriver[];
 }
 
@@ -470,6 +476,7 @@ export function applyDiagnosticSafetyLayer(params: {
     const mergedDifferentials = mergeDifferentials({
         contradictionScore,
         heuristicScores,
+        signalHierarchy: heuristicScoring.signalHierarchy,
         existingDifferentials,
         emergencyEval: params.emergencyEval,
         signals,
@@ -530,7 +537,13 @@ export function applyDiagnosticSafetyLayer(params: {
         signalHierarchy: heuristicScoring.signalHierarchy,
     });
     const primaryConditionClass = pickPrimaryConditionClass(mergedDifferentials, params.diagnosis.primary_condition_class, signals);
-    const diagnosisAnalysis = buildAnalysisText(params.diagnosis.analysis, mergedDifferentials, contradictionScore, params.emergencyEval);
+    const diagnosisAnalysis = buildAnalysisText(
+        params.diagnosis.analysis,
+        mergedDifferentials,
+        contradictionScore,
+        params.emergencyEval,
+        heuristicScoring.signalHierarchy,
+    );
 
     const diagnosis: Record<string, unknown> = {
         ...params.diagnosis,
@@ -660,6 +673,11 @@ function scoreCandidates(
             conditionClass: candidate.conditionClass,
             rawScore: Math.max(0.01, Number(candidate.rawScore.toFixed(3))),
             probability: 0,
+            organSystems: candidate.organSystems,
+            dominantSystemAligned: candidate.dominantSystemAligned,
+            dominantSystemSupport: candidate.dominantSystemSupport,
+            genericSymptomDownweight: candidate.penalties.generic_symptom_downweight,
+            crossSystemMismatch: candidate.penalties.cross_system_mismatch,
             drivers: candidate.drivers
                 .map((driver) => ({
                     feature: driver.feature,
@@ -744,6 +762,7 @@ function buildOntologyObservationHints(signals: ClinicalSignals): string[] {
 function mergeDifferentials(params: {
     contradictionScore: number;
     heuristicScores: CandidateScore[];
+    signalHierarchy: CandidateScoringResult['signalHierarchy'];
     existingDifferentials: DifferentialEntry[];
     emergencyEval: EmergencyRuleResult;
     signals: ClinicalSignals;
@@ -793,6 +812,7 @@ function mergeDifferentials(params: {
     applyAnchorFeatureProtection(combined, params.signals);
     applyConditionClassStabilization(combined, params.signals);
     applyEndocrineDifferentialLogic(combined, params.signals);
+    applyOrganSystemDominanceReranking(combined, params);
     enforceDominantClusterConsistency(combined, params.signals);
     applyClassicGdvDominance(combined, params.signals);
     normalizeProbabilities(combined);
@@ -1036,6 +1056,48 @@ function applyEndocrineDifferentialLogic(
     }
 }
 
+function applyOrganSystemDominanceReranking(
+    combined: Map<string, DifferentialEntry>,
+    params: {
+        heuristicScores: CandidateScore[];
+        signalHierarchy: CandidateScoringResult['signalHierarchy'];
+    },
+) {
+    if (!params.signalHierarchy.dominant_system || !params.signalHierarchy.cross_system_penalties_active) {
+        return;
+    }
+
+    const heuristicLookup = new Map(params.heuristicScores.map((score) => [score.name, score]));
+    for (const entry of combined.values()) {
+        const heuristic = heuristicLookup.get(entry.name);
+        if (!heuristic) continue;
+
+        if (heuristic.dominantSystemAligned) {
+            const boost = heuristic.dominantSystemSupport >= 0.22
+                ? 0.08
+                : heuristic.dominantSystemSupport > 0
+                    ? 0.04
+                    : 0;
+            entry.probability += boost;
+            continue;
+        }
+
+        if (heuristic.crossSystemMismatch > 0) {
+            const penaltyFactor = heuristic.dominantSystemSupport >= 0.14
+                ? 0.88
+                : heuristic.rawScore >= 0.3
+                    ? 0.74
+                    : 0.6;
+            entry.probability *= penaltyFactor;
+            continue;
+        }
+
+        if (heuristic.genericSymptomDownweight > 0) {
+            entry.probability *= 0.92;
+        }
+    }
+}
+
 function applyClassicGdvDominance(
     combined: Map<string, DifferentialEntry>,
     signals: ClinicalSignals,
@@ -1189,8 +1251,18 @@ function buildUncertaintyNotes(params: {
     if (params.signalHierarchy.anchor_locks.length > 0) {
         notes.add('High-specificity signal anchors were protected from generic-noise dilution during differential ranking.');
     }
+    if (params.signalHierarchy.dominant_system && params.signalHierarchy.organ_specific_signals.length > 0) {
+        notes.add(
+            `Dominant ${getOrganSystemDisplayLabel(params.signalHierarchy.dominant_system)} pathophysiology signals were elevated above shared surface symptoms during final ranking.`,
+        );
+    }
     if (params.signalHierarchy.generic_noise_score >= 0.4) {
         notes.add('Low-specificity generic features were down-weighted so they could widen the differential without hijacking the primary diagnostic direction.');
+    }
+    if (params.signalHierarchy.cross_system_penalties_active && params.signalHierarchy.generic_signals_downweighted.length > 0) {
+        notes.add(
+            `Generic symptoms (${params.signalHierarchy.generic_signals_downweighted.map((term) => term.replace(/_/g, ' ')).join(', ')}) were explicitly prevented from overriding the dominant organ-system pattern.`,
+        );
     }
     if (params.signalHierarchy.abstain_recommended) {
         notes.add('Signal hierarchy flagged the case as too weakly anchored for an aggressive single-diagnosis commitment.');
@@ -1261,10 +1333,14 @@ function buildAnalysisText(
     differentials: DifferentialEntry[],
     contradictionScore: number,
     emergencyEval: EmergencyRuleResult,
+    signalHierarchy: CandidateScoringResult['signalHierarchy'],
 ): string {
     const topNames = differentials.slice(0, 3).map((differential) => differential.name).join(', ');
     const preservedEmergency = emergencyEval.emergency_rule_reasons.some((reason) => reason.toLowerCase().includes('persistence'));
-    const summary = `Deterministic safety layer preserved the leading syndrome pattern and re-ranked the differential as: ${topNames}.`;
+    const dominanceClause = signalHierarchy.dominant_system
+        ? ` Dominant ${getOrganSystemDisplayLabel(signalHierarchy.dominant_system)} pathophysiology was used to prioritize organ-aligned diseases over generic symptom mimics.`
+        : '';
+    const summary = `Deterministic safety layer preserved the leading syndrome pattern and re-ranked the differential as: ${topNames}.${dominanceClause}`;
 
     if (typeof existingAnalysis !== 'string' || existingAnalysis.trim().length === 0) {
         return preservedEmergency && contradictionScore > 0

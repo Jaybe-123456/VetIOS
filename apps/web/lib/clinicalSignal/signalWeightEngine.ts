@@ -7,6 +7,11 @@ import {
     getClinicalVocabularyEntry,
     normalizeClinicalTermArray,
 } from '@/lib/clinicalSignal/clinicalVocabulary';
+import {
+    analyzeOrganSystemSignals,
+    extractOntologyObservations,
+    getOrganSystemDisplayLabel,
+} from '@/lib/ai/diseaseOntology';
 
 export type SignalWeightCategory =
     | 'red_flag'
@@ -37,6 +42,14 @@ export interface SignalWeightProfile {
         weak_signal_penalty: number;
         emergency_signal_bonus: number;
         suggested_confidence_cap: number;
+    };
+    system_dominance: {
+        dominant_system: string | null;
+        dominant_system_label: string | null;
+        dominant_system_score: number;
+        organ_specific_signals: string[];
+        generic_signals_downweighted: string[];
+        cross_system_penalties_active: boolean;
     };
 }
 
@@ -123,6 +136,11 @@ export function buildSignalWeightProfile(
         addSource(sourcesByTerm, term, 'antigravity_derived');
     }
 
+    for (const term of extractOntologyObservations(input)) {
+        terms.add(term);
+        addSource(sourcesByTerm, term, 'ontology_extraction');
+    }
+
     const weightedSignals = new Map<string, WeightedSignal>();
     for (const term of terms) {
         const entry = baselineByTerm.get(term);
@@ -168,6 +186,8 @@ export function buildSignalWeightProfile(
     }
 
     applyAcuteAbdominalSuppression(weightedSignals, terms);
+    const systemDominance = analyzeOrganSystemSignals(terms);
+    applyOrganSystemDominance(weightedSignals, systemDominance);
 
     const weighted = [...weightedSignals.values()]
         .sort((left, right) => right.weight - left.weight)
@@ -213,6 +233,14 @@ export function buildSignalWeightProfile(
             weak_signal_penalty: weakSignalPenalty,
             emergency_signal_bonus: emergencySignalBonus,
             suggested_confidence_cap: suggestedConfidenceCap,
+        },
+        system_dominance: {
+            dominant_system: systemDominance.dominantSystem,
+            dominant_system_label: getOrganSystemDisplayLabel(systemDominance.dominantSystem),
+            dominant_system_score: systemDominance.dominantSystemScore,
+            organ_specific_signals: systemDominance.organSpecificSignals,
+            generic_signals_downweighted: systemDominance.genericSignalsDownweighted,
+            cross_system_penalties_active: systemDominance.crossSystemPenaltiesActive,
         },
     };
 }
@@ -367,6 +395,40 @@ function applyAcuteAbdominalSuppression(
         existing.weight = Number(Math.min(existing.weight, 0.08).toFixed(3));
         existing.category = 'contextual_signal';
         existing.rationale.push('Suppressed during acute abdominal emergency clustering because chronic endocrine context should not dominate catastrophic abdominal triage.');
+    }
+}
+
+function applyOrganSystemDominance(
+    weightedSignals: Map<string, WeightedSignal>,
+    systemDominance: ReturnType<typeof analyzeOrganSystemSignals>,
+): void {
+    if (!systemDominance.dominantSystem || systemDominance.organSpecificSignals.length === 0) {
+        return;
+    }
+
+    const dominantDetails = systemDominance.organSystemScores.find((entry) => entry.system === systemDominance.dominantSystem);
+    for (const term of dominantDetails?.matchedTerms ?? []) {
+        const existing = weightedSignals.get(term);
+        if (!existing) continue;
+        existing.weight = Number(clamp(existing.weight + 0.12, 0, 1).toFixed(3));
+        if (existing.category === 'weak_signal') {
+            existing.category = 'primary_signal';
+        }
+        existing.rationale.push(
+            `Boosted because ${getOrganSystemDisplayLabel(systemDominance.dominantSystem)} pathophysiology is dominating the case.`,
+        );
+    }
+
+    for (const term of systemDominance.genericSignalsDownweighted) {
+        const existing = weightedSignals.get(term);
+        if (!existing) continue;
+        existing.weight = Number(Math.min(existing.weight, systemDominance.crossSystemPenaltiesActive ? 0.08 : 0.12).toFixed(3));
+        if (existing.category === 'primary_signal') {
+            existing.category = 'contextual_signal';
+        }
+        existing.rationale.push(
+            `Down-weighted because shared surface symptoms should not outrank dominant ${getOrganSystemDisplayLabel(systemDominance.dominantSystem)} evidence.`,
+        );
     }
 }
 

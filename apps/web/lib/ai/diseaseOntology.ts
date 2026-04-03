@@ -21,6 +21,25 @@ export type DiseaseConditionClass =
     | 'Degenerative'
     | 'Idiopathic / Unknown';
 
+export type OrganSystem =
+    | 'hepatic'
+    | 'gastrointestinal'
+    | 'neurologic'
+    | 'endocrine_metabolic'
+    | 'renal_urinary'
+    | 'hematologic'
+    | 'respiratory'
+    | 'reproductive'
+    | 'skeletal';
+
+export interface OrganSystemScore {
+    system: OrganSystem;
+    score: number;
+    matchedTerms: string[];
+    genericSupportTerms: string[];
+    mappedCategories: DiseaseDomain[];
+}
+
 export interface DiseaseFeatureWeight {
     term: string;
     weight: number;
@@ -82,6 +101,12 @@ export interface ClosedWorldSignalHierarchy {
     contradiction_score: number;
     generic_noise_score: number;
     missing_data_score: number;
+    dominant_system: OrganSystem | null;
+    dominant_system_score: number;
+    organ_system_scores: OrganSystemScore[];
+    organ_specific_signals: string[];
+    generic_signals_downweighted: string[];
+    cross_system_penalties_active: boolean;
     abstain_recommended: boolean;
 }
 
@@ -106,8 +131,13 @@ export interface ClosedWorldCandidateScore {
         generic_dominance: number;
         missing_support: number;
         ontology_mismatch: number;
+        generic_symptom_downweight: number;
+        cross_system_mismatch: number;
     };
     anchorLocked: boolean;
+    organSystems: OrganSystem[];
+    dominantSystemAligned: boolean;
+    dominantSystemSupport: number;
     drivers: Array<{ feature: string; weight: number }>;
 }
 
@@ -194,6 +224,7 @@ export const ONTOLOGY_OBSERVATION_DICTIONARY: OntologyObservationDefinition[] = 
     { term: 'lymphadenopathy', aliases: ['swollen lymph nodes'], category: 'exam' },
     { term: 'icterus', aliases: ['jaundice'], category: 'exam' },
     { term: 'ascites', aliases: ['fluid belly'], category: 'exam' },
+    { term: 'hepatic_dysfunction', aliases: ['liver failure', 'hepatic dysfunction', 'liver dysfunction'], category: 'exam' },
     { term: 'petechiae', aliases: ['small red spots'], category: 'exam' },
     { term: 'ecchymosis', aliases: ['bruising'], category: 'exam' },
     { term: 'pruritus', aliases: ['itching', 'itchy'], category: 'symptom' },
@@ -218,6 +249,9 @@ export const ONTOLOGY_OBSERVATION_DICTIONARY: OntologyObservationDefinition[] = 
     { term: 'thrombocytopenia', aliases: ['low platelets'], category: 'lab' },
     { term: 'hemoglobinuria', aliases: ['red urine from hemoglobin'], category: 'lab' },
     { term: 'azotemia', aliases: ['creatinine elevated', 'bun elevated'], category: 'lab' },
+    { term: 'alt_elevation', aliases: ['alt elevated', 'elevated alt', 'alanine aminotransferase elevated'], category: 'lab' },
+    { term: 'ast_elevation', aliases: ['ast elevated', 'elevated ast', 'aspartate aminotransferase elevated'], category: 'lab' },
+    { term: 'bilirubin_elevation', aliases: ['bilirubin elevated', 'elevated bilirubin', 'hyperbilirubinemia'], category: 'lab' },
     { term: 'marked_alp_elevation', aliases: ['marked elevated alp'], category: 'lab' },
     { term: 'hypercholesterolemia', aliases: ['high cholesterol'], category: 'lab' },
     { term: 'supportive_acth_stimulation_test', aliases: ['positive acth stimulation test'], category: 'lab' },
@@ -412,9 +446,9 @@ export const MASTER_DISEASE_ONTOLOGY: DiseaseOntologyEntry[] = [
         subcategory: 'Toxic-metabolic',
         condition_class: 'Metabolic / Endocrine',
         key_clinical_features: [f('mentation_change', 0.24), f('seizures', 0.18), f('head_pressing', 0.14)],
-        supporting_features: [f('circling', 0.12), f('icterus', 0.14), f('ascites', 0.1)],
+        supporting_features: [f('circling', 0.12), f('icterus', 0.14), f('ascites', 0.1), f('hepatic_dysfunction', 0.14)],
         exclusion_features: [f('neck_pain', 0.08)],
-        lab_signatures: [f('icterus', 0.12)],
+        lab_signatures: [f('icterus', 0.12), f('bilirubin_elevation', 0.18), f('alt_elevation', 0.12), f('ast_elevation', 0.12)],
         progression_pattern: ['acute', 'chronic'],
         species_relevance: ['dog', 'cat'],
         zoonotic: false,
@@ -697,9 +731,9 @@ export const MASTER_DISEASE_ONTOLOGY: DiseaseOntologyEntry[] = [
         subcategory: 'Hepatotoxic',
         condition_class: 'Toxic',
         key_clinical_features: [f('vomiting', 0.14), f('diarrhea', 0.12), f('icterus', 0.18)],
-        supporting_features: [f('aflatoxin_exposure', 0.18), f('weakness', 0.12), f('bleeding', 0.1)],
+        supporting_features: [f('aflatoxin_exposure', 0.18), f('weakness', 0.12), f('bleeding', 0.1), f('hepatic_dysfunction', 0.14)],
         exclusion_features: [f('pruritus', 0.04)],
-        lab_signatures: [f('coagulopathy', 0.14), f('icterus', 0.12)],
+        lab_signatures: [f('coagulopathy', 0.14), f('icterus', 0.12), f('bilirubin_elevation', 0.18), f('alt_elevation', 0.18), f('ast_elevation', 0.14)],
         progression_pattern: ['acute', 'subacute'],
         species_relevance: ['dog', 'cow'],
         zoonotic: false,
@@ -742,9 +776,9 @@ export const MASTER_DISEASE_ONTOLOGY: DiseaseOntologyEntry[] = [
         subcategory: 'Hepatotoxic',
         condition_class: 'Toxic',
         key_clinical_features: [f('vomiting', 0.14), f('diarrhea', 0.12), f('hypersalivation', 0.12)],
-        supporting_features: [f('plant_toxin_exposure', 0.2), f('weakness', 0.1), f('icterus', 0.08)],
+        supporting_features: [f('plant_toxin_exposure', 0.2), f('weakness', 0.1), f('icterus', 0.08), f('hepatic_dysfunction', 0.1)],
         exclusion_features: [f('chronic_duration', 0.08)],
-        lab_signatures: [],
+        lab_signatures: [f('alt_elevation', 0.12), f('bilirubin_elevation', 0.1)],
         progression_pattern: ['acute'],
         species_relevance: ['dog', 'cat', 'cow', 'horse'],
         zoonotic: false,
@@ -1156,6 +1190,10 @@ const ANCHOR_SIGNAL_OVERRIDES = new Set<string>([
     'ketonuria',
     'significant_hyperglycemia',
     'diabetic_metabolic_profile',
+    'alt_elevation',
+    'ast_elevation',
+    'bilirubin_elevation',
+    'hepatic_dysfunction',
     'supportive_acth_stimulation_test',
     'marked_alp_elevation',
     'coagulopathy',
@@ -1298,13 +1336,456 @@ const CATEGORY_TRIGGER_TERMS: Record<DiseaseDomain, string[]> = {
     Neurological: ['seizures', 'myoclonus', 'tremors', 'ataxia', 'head_tilt', 'circling', 'paresis', 'paralysis', 'disorientation', 'mentation_change', 'nystagmus', 'proprioceptive_deficits', 'aggression', 'neck_pain', 'spinal_pain', 'spinal_cord_deficits', 'disc_extrusion', 'muscle_rigidity', 'jaw_rigidity', 'head_pressing'],
     Hemoparasitic: ['tick_exposure', 'tick_infestation', 'fever', 'anemia', 'thrombocytopenia', 'icterus', 'petechiae', 'ecchymosis', 'hemoglobinuria', 'lymphadenopathy'],
     Parasitic: ['worms_in_stool', 'scooting', 'pruritus', 'alopecia', 'skin_crusting', 'flea_infestation', 'tick_infestation', 'diarrhea', 'weight_loss'],
-    Toxicology: ['toxin_exposure_possible', 'rodenticide_exposure', 'medication_exposure', 'nsaid_exposure', 'ivermectin_exposure', 'plant_toxin_exposure', 'organophosphate_exposure', 'carbamate_exposure', 'heavy_metal_exposure', 'aflatoxin_exposure', 'hypersalivation', 'miosis', 'bleeding', 'coagulopathy', 'tremors'],
+    Toxicology: ['toxin_exposure_possible', 'rodenticide_exposure', 'medication_exposure', 'nsaid_exposure', 'ivermectin_exposure', 'plant_toxin_exposure', 'organophosphate_exposure', 'carbamate_exposure', 'heavy_metal_exposure', 'aflatoxin_exposure', 'hypersalivation', 'miosis', 'bleeding', 'coagulopathy', 'tremors', 'icterus', 'bilirubin_elevation', 'alt_elevation', 'ast_elevation', 'hepatic_dysfunction'],
     Endocrine: ['polyuria', 'polydipsia', 'polyphagia', 'glucosuria', 'significant_hyperglycemia', 'ketonuria', 'diabetic_metabolic_profile', 'panting', 'alopecia', 'pot_bellied_appearance', 'marked_alp_elevation', 'supportive_acth_stimulation_test', 'dilute_urine'],
     Gastrointestinal: ['vomiting', 'diarrhea', 'hemorrhagic_diarrhea', 'melena', 'hematemesis', 'abdominal_distension', 'abdominal_pain', 'retching_unproductive', 'foreign_body_exposure', 'garbage_ingestion'],
     Cardiopulmonary: ['cough', 'honking_cough', 'dyspnea', 'respiratory_distress', 'tachypnea', 'orthopnea', 'open_mouth_breathing', 'exercise_intolerance', 'syncope', 'heart_murmur', 'arrhythmia', 'pneumonia', 'pulmonary_edema'],
     Renal: ['stranguria', 'dysuria', 'pollakiuria', 'hematuria', 'oliguria', 'anuria', 'pyuria', 'azotemia'],
     Reproductive: ['intact_female', 'pregnant', 'postpartum', 'recent_estrus', 'vaginal_discharge', 'mammary_swelling', 'mammary_pain', 'labor_not_progressing'],
 };
+
+interface OrganSystemRule {
+    mappedCategories: DiseaseDomain[];
+    anchorTerms: Array<{ term: string; weight: number }>;
+    contextualTerms: Array<{ term: string; weight: number }>;
+}
+
+export interface OrganSystemAnalysis {
+    dominantSystem: OrganSystem | null;
+    dominantSystemScore: number;
+    organSystemScores: OrganSystemScore[];
+    organSpecificSignals: string[];
+    genericSignalsDownweighted: string[];
+    crossSystemPenaltiesActive: boolean;
+}
+
+interface DiseaseOrganSystemProfile {
+    systems: OrganSystem[];
+    primarySystem: OrganSystem | null;
+    systemScores: Record<OrganSystem, number>;
+    termsBySystem: Partial<Record<OrganSystem, string[]>>;
+}
+
+const GENERIC_SYSTEM_DISTRACTOR_TERMS = new Set<string>([
+    'vomiting',
+    'diarrhea',
+    'lethargy',
+    'weakness',
+    'anorexia',
+    'fever',
+]);
+
+const ORGAN_SYSTEM_DISPLAY_LABELS: Record<OrganSystem, string> = {
+    hepatic: 'hepatic',
+    gastrointestinal: 'gastrointestinal',
+    neurologic: 'neurologic',
+    endocrine_metabolic: 'endocrine/metabolic',
+    renal_urinary: 'renal/urinary',
+    hematologic: 'hematologic',
+    respiratory: 'respiratory',
+    reproductive: 'reproductive',
+    skeletal: 'skeletal',
+};
+
+const DEFAULT_CATEGORY_SYSTEMS: Record<DiseaseDomain, OrganSystem[]> = {
+    Neurological: ['neurologic'],
+    Hemoparasitic: ['hematologic'],
+    Parasitic: ['gastrointestinal'],
+    Toxicology: ['hepatic', 'neurologic', 'hematologic'],
+    Endocrine: ['endocrine_metabolic'],
+    Gastrointestinal: ['gastrointestinal'],
+    Cardiopulmonary: ['respiratory'],
+    Renal: ['renal_urinary'],
+    Reproductive: ['reproductive'],
+};
+
+const ORGAN_SYSTEM_RULES: Record<OrganSystem, OrganSystemRule> = {
+    hepatic: {
+        mappedCategories: ['Toxicology', 'Neurological'],
+        anchorTerms: [
+            { term: 'icterus', weight: 0.36 },
+            { term: 'bilirubin_elevation', weight: 0.34 },
+            { term: 'alt_elevation', weight: 0.26 },
+            { term: 'ast_elevation', weight: 0.22 },
+            { term: 'hepatic_dysfunction', weight: 0.3 },
+            { term: 'aflatoxin_exposure', weight: 0.26 },
+            { term: 'ascites', weight: 0.18 },
+            { term: 'coagulopathy', weight: 0.16 },
+            { term: 'head_pressing', weight: 0.14 },
+        ],
+        contextualTerms: [
+            { term: 'bleeding', weight: 0.12 },
+            { term: 'mentation_change', weight: 0.1 },
+            { term: 'weakness', weight: 0.06 },
+            { term: 'vomiting', weight: 0.04 },
+            { term: 'diarrhea', weight: 0.04 },
+        ],
+    },
+    gastrointestinal: {
+        mappedCategories: ['Gastrointestinal', 'Parasitic'],
+        anchorTerms: [
+            { term: 'abdominal_distension', weight: 0.34 },
+            { term: 'retching_unproductive', weight: 0.34 },
+            { term: 'abdominal_pain', weight: 0.22 },
+            { term: 'foreign_body_exposure', weight: 0.24 },
+            { term: 'garbage_ingestion', weight: 0.16 },
+            { term: 'hematemesis', weight: 0.16 },
+            { term: 'melena', weight: 0.14 },
+            { term: 'hemorrhagic_diarrhea', weight: 0.16 },
+        ],
+        contextualTerms: [
+            { term: 'vomiting', weight: 0.08 },
+            { term: 'diarrhea', weight: 0.08 },
+            { term: 'anorexia', weight: 0.05 },
+            { term: 'dehydration', weight: 0.05 },
+        ],
+    },
+    neurologic: {
+        mappedCategories: ['Neurological', 'Toxicology'],
+        anchorTerms: [
+            { term: 'seizures', weight: 0.22 },
+            { term: 'myoclonus', weight: 0.28 },
+            { term: 'ataxia', weight: 0.22 },
+            { term: 'head_tilt', weight: 0.2 },
+            { term: 'circling', weight: 0.18 },
+            { term: 'paresis', weight: 0.22 },
+            { term: 'paralysis', weight: 0.24 },
+            { term: 'nystagmus', weight: 0.18 },
+            { term: 'spinal_cord_deficits', weight: 0.26 },
+            { term: 'disc_extrusion', weight: 0.28 },
+            { term: 'head_pressing', weight: 0.2 },
+            { term: 'neck_pain', weight: 0.18 },
+            { term: 'spinal_pain', weight: 0.18 },
+        ],
+        contextualTerms: [
+            { term: 'mentation_change', weight: 0.12 },
+            { term: 'disorientation', weight: 0.1 },
+            { term: 'weakness', weight: 0.05 },
+            { term: 'vomiting', weight: 0.03 },
+        ],
+    },
+    endocrine_metabolic: {
+        mappedCategories: ['Endocrine'],
+        anchorTerms: [
+            { term: 'significant_hyperglycemia', weight: 0.3 },
+            { term: 'glucosuria', weight: 0.32 },
+            { term: 'ketonuria', weight: 0.24 },
+            { term: 'diabetic_metabolic_profile', weight: 0.26 },
+            { term: 'supportive_acth_stimulation_test', weight: 0.3 },
+            { term: 'marked_alp_elevation', weight: 0.18 },
+            { term: 'dilute_urine', weight: 0.12 },
+        ],
+        contextualTerms: [
+            { term: 'polyuria', weight: 0.08 },
+            { term: 'polydipsia', weight: 0.08 },
+            { term: 'polyphagia', weight: 0.06 },
+            { term: 'pot_bellied_appearance', weight: 0.08 },
+            { term: 'panting', weight: 0.06 },
+            { term: 'alopecia', weight: 0.08 },
+            { term: 'weight_loss', weight: 0.05 },
+            { term: 'vomiting', weight: 0.03 },
+            { term: 'lethargy', weight: 0.03 },
+        ],
+    },
+    renal_urinary: {
+        mappedCategories: ['Renal'],
+        anchorTerms: [
+            { term: 'azotemia', weight: 0.28 },
+            { term: 'anuria', weight: 0.26 },
+            { term: 'oliguria', weight: 0.22 },
+            { term: 'hematuria', weight: 0.18 },
+            { term: 'stranguria', weight: 0.18 },
+            { term: 'dysuria', weight: 0.18 },
+            { term: 'pollakiuria', weight: 0.16 },
+            { term: 'pyuria', weight: 0.16 },
+        ],
+        contextualTerms: [
+            { term: 'vomiting', weight: 0.04 },
+            { term: 'lethargy', weight: 0.04 },
+            { term: 'weakness', weight: 0.04 },
+            { term: 'anorexia', weight: 0.04 },
+        ],
+    },
+    hematologic: {
+        mappedCategories: ['Hemoparasitic', 'Toxicology'],
+        anchorTerms: [
+            { term: 'coagulopathy', weight: 0.28 },
+            { term: 'anemia', weight: 0.22 },
+            { term: 'thrombocytopenia', weight: 0.22 },
+            { term: 'hemoglobinuria', weight: 0.24 },
+            { term: 'petechiae', weight: 0.18 },
+            { term: 'ecchymosis', weight: 0.18 },
+            { term: 'bleeding', weight: 0.16 },
+        ],
+        contextualTerms: [
+            { term: 'pale_mucous_membranes', weight: 0.12 },
+            { term: 'collapse', weight: 0.08 },
+            { term: 'weakness', weight: 0.05 },
+            { term: 'icterus', weight: 0.08 },
+        ],
+    },
+    respiratory: {
+        mappedCategories: ['Cardiopulmonary'],
+        anchorTerms: [
+            { term: 'dyspnea', weight: 0.22 },
+            { term: 'respiratory_distress', weight: 0.24 },
+            { term: 'tachypnea', weight: 0.18 },
+            { term: 'honking_cough', weight: 0.2 },
+            { term: 'pneumonia', weight: 0.24 },
+            { term: 'pulmonary_edema', weight: 0.24 },
+            { term: 'pleural_effusion', weight: 0.2 },
+            { term: 'cyanosis', weight: 0.18 },
+        ],
+        contextualTerms: [
+            { term: 'cough', weight: 0.08 },
+            { term: 'exercise_intolerance', weight: 0.08 },
+            { term: 'syncope', weight: 0.08 },
+        ],
+    },
+    reproductive: {
+        mappedCategories: ['Reproductive'],
+        anchorTerms: [
+            { term: 'vaginal_discharge', weight: 0.24 },
+            { term: 'labor_not_progressing', weight: 0.26 },
+            { term: 'mammary_swelling', weight: 0.18 },
+            { term: 'mammary_pain', weight: 0.18 },
+            { term: 'pregnant', weight: 0.14 },
+            { term: 'postpartum', weight: 0.14 },
+            { term: 'recent_estrus', weight: 0.14 },
+        ],
+        contextualTerms: [
+            { term: 'intact_female', weight: 0.1 },
+            { term: 'vomiting', weight: 0.03 },
+            { term: 'lethargy', weight: 0.03 },
+            { term: 'polydipsia', weight: 0.03 },
+        ],
+    },
+    skeletal: {
+        mappedCategories: [],
+        anchorTerms: [],
+        contextualTerms: [],
+    },
+};
+
+const OBSERVATION_SYSTEM_LOOKUP = buildObservationSystemLookup();
+const DISEASE_ORGAN_SYSTEM_LOOKUP = buildDiseaseOrganSystemLookup();
+
+function buildObservationSystemLookup() {
+    const lookup = new Map<string, OrganSystem[]>();
+    for (const [system, rule] of Object.entries(ORGAN_SYSTEM_RULES) as Array<[OrganSystem, OrganSystemRule]>) {
+        for (const entry of [...rule.anchorTerms, ...rule.contextualTerms]) {
+            const existing = lookup.get(entry.term) ?? [];
+            if (!existing.includes(system)) {
+                existing.push(system);
+                lookup.set(entry.term, existing);
+            }
+        }
+    }
+    return lookup;
+}
+
+function createEmptyOrganSystemScoreRecord(): Record<OrganSystem, number> {
+    return {
+        hepatic: 0,
+        gastrointestinal: 0,
+        neurologic: 0,
+        endocrine_metabolic: 0,
+        renal_urinary: 0,
+        hematologic: 0,
+        respiratory: 0,
+        reproductive: 0,
+        skeletal: 0,
+    };
+}
+
+function buildDiseaseOrganSystemLookup() {
+    const lookup = new Map<string, DiseaseOrganSystemProfile>();
+
+    for (const disease of MASTER_DISEASE_ONTOLOGY) {
+        const featureWeights = new Map<string, number>();
+        const addFeatureTerms = (features: DiseaseFeatureWeight[], multiplier: number) => {
+            for (const feature of features) {
+                featureWeights.set(
+                    feature.term,
+                    Math.max(featureWeights.get(feature.term) ?? 0, Number((feature.weight * multiplier).toFixed(3))),
+                );
+            }
+        };
+
+        addFeatureTerms(disease.key_clinical_features, 1.35);
+        addFeatureTerms(disease.supporting_features, 1);
+        addFeatureTerms(disease.lab_signatures, 1.25);
+
+        const systemScores = createEmptyOrganSystemScoreRecord();
+        const termsBySystem: Partial<Record<OrganSystem, string[]>> = {};
+
+        for (const [system, rule] of Object.entries(ORGAN_SYSTEM_RULES) as Array<[OrganSystem, OrganSystemRule]>) {
+            const matchedTerms = new Set<string>();
+            let score = 0;
+
+            for (const termWeight of rule.anchorTerms) {
+                const diseaseWeight = featureWeights.get(termWeight.term);
+                if (diseaseWeight == null) continue;
+                matchedTerms.add(termWeight.term);
+                score += termWeight.weight * diseaseWeight;
+            }
+
+            for (const termWeight of rule.contextualTerms) {
+                const diseaseWeight = featureWeights.get(termWeight.term);
+                if (diseaseWeight == null) continue;
+                matchedTerms.add(termWeight.term);
+                const contextualMultiplier = GENERIC_SYSTEM_DISTRACTOR_TERMS.has(termWeight.term) ? 0.45 : 0.7;
+                score += termWeight.weight * diseaseWeight * contextualMultiplier;
+            }
+
+            if (rule.mappedCategories.includes(disease.category)) {
+                score += 0.08;
+            }
+
+            systemScores[system] = Number(score.toFixed(3));
+            if (matchedTerms.size > 0) {
+                termsBySystem[system] = [...matchedTerms];
+            }
+        }
+
+        const scoredSystems = (Object.entries(systemScores) as Array<[OrganSystem, number]>)
+            .filter(([, score]) => score > 0)
+            .sort((left, right) => right[1] - left[1]);
+        const primarySystem = scoredSystems[0]?.[0] ?? DEFAULT_CATEGORY_SYSTEMS[disease.category]?.[0] ?? null;
+        const topScore = scoredSystems[0]?.[1] ?? 0;
+        const selectedSystems = new Set<OrganSystem>(DEFAULT_CATEGORY_SYSTEMS[disease.category] ?? []);
+
+        for (const [system, score] of scoredSystems) {
+            if (score >= Math.max(0.12, topScore * 0.55)) {
+                selectedSystems.add(system);
+            }
+        }
+
+        if (primarySystem) {
+            selectedSystems.add(primarySystem);
+        }
+
+        lookup.set(disease.name, {
+            systems: [...selectedSystems],
+            primarySystem,
+            systemScores,
+            termsBySystem,
+        });
+    }
+
+    return lookup;
+}
+
+function computeDiseaseSystemSupport(
+    profile: DiseaseOrganSystemProfile,
+    observations: Set<string>,
+    system: OrganSystem,
+): number {
+    const relevantTerms = new Set(profile.termsBySystem[system] ?? []);
+    if (relevantTerms.size === 0) {
+        return 0;
+    }
+
+    const rule = ORGAN_SYSTEM_RULES[system];
+    let support = 0;
+
+    for (const termWeight of rule.anchorTerms) {
+        if (relevantTerms.has(termWeight.term) && observations.has(termWeight.term)) {
+            support += termWeight.weight;
+        }
+    }
+
+    for (const termWeight of rule.contextualTerms) {
+        if (!relevantTerms.has(termWeight.term) || !observations.has(termWeight.term)) continue;
+        support += termWeight.weight * (GENERIC_SYSTEM_DISTRACTOR_TERMS.has(termWeight.term) ? 0.35 : 0.72);
+    }
+
+    return Number(support.toFixed(3));
+}
+
+function getDiseaseObservedFeatureTerms(disease: DiseaseOntologyEntry, observations: Set<string>, candidateTerms: Set<string>) {
+    const matches = new Set<string>();
+    for (const feature of [...disease.key_clinical_features, ...disease.supporting_features, ...disease.lab_signatures]) {
+        if (candidateTerms.has(feature.term) && observations.has(feature.term)) {
+            matches.add(feature.term);
+        }
+    }
+    return [...matches];
+}
+
+export function analyzeOrganSystemSignals(
+    observedTerms: Iterable<string>,
+    activeCategories: DiseaseDomain[] = [],
+): OrganSystemAnalysis {
+    const observations = observedTerms instanceof Set ? observedTerms : new Set<string>(observedTerms);
+    const organSpecificSignals = new Set<string>();
+    const organSystemScores = (Object.entries(ORGAN_SYSTEM_RULES) as Array<[OrganSystem, OrganSystemRule]>)
+        .map(([system, rule]) => {
+            const matchedTerms = new Set<string>();
+            const genericSupportTerms = new Set<string>();
+            let score = 0;
+
+            for (const termWeight of rule.anchorTerms) {
+                if (!observations.has(termWeight.term)) continue;
+                matchedTerms.add(termWeight.term);
+                organSpecificSignals.add(termWeight.term);
+                score += termWeight.weight;
+            }
+
+            for (const termWeight of rule.contextualTerms) {
+                if (!observations.has(termWeight.term)) continue;
+                if (GENERIC_SYSTEM_DISTRACTOR_TERMS.has(termWeight.term)) {
+                    genericSupportTerms.add(termWeight.term);
+                } else {
+                    matchedTerms.add(termWeight.term);
+                    organSpecificSignals.add(termWeight.term);
+                }
+                score += termWeight.weight;
+            }
+
+            const categoryMatches = activeCategories.filter((category) => rule.mappedCategories.includes(category)).length;
+            if (categoryMatches > 0) {
+                score += categoryMatches * 0.04;
+            }
+
+            return {
+                system,
+                score: Number(score.toFixed(3)),
+                matchedTerms: [...matchedTerms],
+                genericSupportTerms: [...genericSupportTerms],
+                mappedCategories: [...rule.mappedCategories],
+            };
+        })
+        .filter((entry) => entry.score > 0)
+        .sort((left, right) => right.score - left.score);
+
+    const topSystem = organSystemScores[0] ?? null;
+    const secondScore = organSystemScores[1]?.score ?? 0;
+    const dominantSystem = topSystem && topSystem.matchedTerms.length > 0 && topSystem.score >= 0.16
+        ? topSystem.system
+        : null;
+    const crossSystemPenaltiesActive = dominantSystem !== null
+        && topSystem !== null
+        && topSystem.score >= 0.24
+        && (topSystem.matchedTerms.length >= 2 || (topSystem.score - secondScore) >= 0.08);
+    const genericSignalsDownweighted = dominantSystem !== null && organSpecificSignals.size > 0
+        ? [...GENERIC_SYSTEM_DISTRACTOR_TERMS].filter((term) => observations.has(term))
+        : [];
+
+    return {
+        dominantSystem,
+        dominantSystemScore: dominantSystem !== null ? Number((topSystem?.score ?? 0).toFixed(3)) : 0,
+        organSystemScores,
+        organSpecificSignals: [...organSpecificSignals].sort(),
+        genericSignalsDownweighted,
+        crossSystemPenaltiesActive,
+    };
+}
+
+export function getOrganSystemDisplayLabel(system: OrganSystem | null | undefined): string | null {
+    if (!system) return null;
+    return ORGAN_SYSTEM_DISPLAY_LABELS[system] ?? system;
+}
 
 function buildObservationTermMetadata() {
     const metadata = new Map<string, {
@@ -1421,6 +1902,7 @@ function buildSignalHierarchy(
         .map((observation) => observation.term);
 
     const contradictionScore = computeSignalContradictionScore(observations, contradictorySignals);
+    const organSystemAnalysis = analyzeOrganSystemSignals(observations, activeCategories);
     const anchorLocks = ANCHOR_LOCK_RULES
         .map((rule) => evaluateAnchorLockRule(rule, observations))
         .filter((lock): lock is SignalAnchorLock => lock !== null);
@@ -1434,6 +1916,15 @@ function buildSignalHierarchy(
         if (observation.classification !== 'anchor_signal') continue;
         if (observation.supportingCategories.length === 1) {
             protectedCategories.add(observation.supportingCategories[0]);
+        }
+    }
+
+    if (organSystemAnalysis.crossSystemPenaltiesActive && organSystemAnalysis.dominantSystem) {
+        const mappedCategories = organSystemAnalysis.organSystemScores
+            .find((score) => score.system === organSystemAnalysis.dominantSystem)
+            ?.mappedCategories ?? [];
+        for (const category of mappedCategories) {
+            protectedCategories.add(category);
         }
     }
 
@@ -1468,6 +1959,12 @@ function buildSignalHierarchy(
         contradiction_score: contradictionScore,
         generic_noise_score: genericNoiseScore,
         missing_data_score: missingDataScore,
+        dominant_system: organSystemAnalysis.dominantSystem,
+        dominant_system_score: organSystemAnalysis.dominantSystemScore,
+        organ_system_scores: organSystemAnalysis.organSystemScores,
+        organ_specific_signals: organSystemAnalysis.organSpecificSignals,
+        generic_signals_downweighted: organSystemAnalysis.genericSignalsDownweighted,
+        cross_system_penalties_active: organSystemAnalysis.crossSystemPenaltiesActive,
         abstain_recommended: contradictionScore >= 0.55 && anchorLocks.length === 0 && anchorSignals.length < 2,
     };
 }
@@ -1688,26 +2185,55 @@ function scoreDisease(
     let genericDominancePenalty = 0;
     let missingSupportPenalty = 0;
     let ontologyMismatchPenalty = 0;
+    let genericSymptomDownweightPenalty = 0;
+    let crossSystemMismatchPenalty = 0;
+    let genericMatchedWeightTotal = 0;
+    let downweightedGenericWeightTotal = 0;
+    const diseaseOrganProfile = DISEASE_ORGAN_SYSTEM_LOOKUP.get(disease.name) ?? {
+        systems: DEFAULT_CATEGORY_SYSTEMS[disease.category] ?? [],
+        primarySystem: DEFAULT_CATEGORY_SYSTEMS[disease.category]?.[0] ?? null,
+        systemScores: createEmptyOrganSystemScoreRecord(),
+        termsBySystem: {},
+    };
+    const downweightedGenericSignals = new Set(signalHierarchy.generic_signals_downweighted);
 
     keyMatchCount += addFeatureWeights(observations, disease.key_clinical_features, drivers, matchedObservations, (featureWeight, classification, weightedValue) => {
         rawScore += weightedValue;
         if (classification === 'anchor_signal') anchorMatchCount += 1;
         else if (classification === 'contextual_signal') contextualMatchCount += 1;
-        else if (classification === 'generic_signal') genericMatchCount += 1;
+        else if (classification === 'generic_signal') {
+            genericMatchCount += 1;
+            genericMatchedWeightTotal += weightedValue;
+            if (downweightedGenericSignals.has(featureWeight.term)) {
+                downweightedGenericWeightTotal += weightedValue;
+            }
+        }
         else contradictoryMatchCount += 1;
     });
     supportingMatchCount += addFeatureWeights(observations, disease.supporting_features, drivers, matchedObservations, (featureWeight, classification, weightedValue) => {
         rawScore += weightedValue;
         if (classification === 'anchor_signal') anchorMatchCount += 1;
         else if (classification === 'contextual_signal') contextualMatchCount += 1;
-        else if (classification === 'generic_signal') genericMatchCount += 1;
+        else if (classification === 'generic_signal') {
+            genericMatchCount += 1;
+            genericMatchedWeightTotal += weightedValue;
+            if (downweightedGenericSignals.has(featureWeight.term)) {
+                downweightedGenericWeightTotal += weightedValue;
+            }
+        }
         else contradictoryMatchCount += 1;
     });
     labMatchCount += addFeatureWeights(observations, disease.lab_signatures, drivers, matchedObservations, (featureWeight, classification, weightedValue) => {
         rawScore += weightedValue;
         if (classification === 'anchor_signal') anchorMatchCount += 1;
         else if (classification === 'contextual_signal') contextualMatchCount += 1;
-        else if (classification === 'generic_signal') genericMatchCount += 1;
+        else if (classification === 'generic_signal') {
+            genericMatchCount += 1;
+            genericMatchedWeightTotal += weightedValue;
+            if (downweightedGenericSignals.has(featureWeight.term)) {
+                downweightedGenericWeightTotal += weightedValue;
+            }
+        }
         else contradictoryMatchCount += 1;
     });
 
@@ -1744,11 +2270,60 @@ function scoreDisease(
         rawScore += 0.05;
     }
 
+    const dominantSystemAligned =
+        signalHierarchy.dominant_system != null
+        && diseaseOrganProfile.systems.includes(signalHierarchy.dominant_system);
+    const dominantSystemSupport = signalHierarchy.dominant_system
+        ? computeDiseaseSystemSupport(diseaseOrganProfile, observations, signalHierarchy.dominant_system)
+        : 0;
+    const bestOwnSystemSupport = diseaseOrganProfile.systems.reduce(
+        (best, system) => Math.max(best, computeDiseaseSystemSupport(diseaseOrganProfile, observations, system)),
+        0,
+    );
+    const hasOwnCounterAnchors =
+        matchingAnchorLocks.length > 0
+        || bestOwnSystemSupport >= 0.18
+        || (anchorMatchCount >= 2 && contextualMatchCount >= 1);
+
+    if (signalHierarchy.dominant_system && dominantSystemAligned && dominantSystemSupport > 0) {
+        const dominanceBoost = signalHierarchy.cross_system_penalties_active
+            ? 0.08 + (dominantSystemSupport * 0.42) + Math.min(0.06, (anchorMatchCount + labMatchCount) * 0.015)
+            : 0.04 + (dominantSystemSupport * 0.28);
+        rawScore += dominanceBoost;
+    } else if (
+        signalHierarchy.dominant_system
+        && !dominantSystemAligned
+        && signalHierarchy.cross_system_penalties_active
+    ) {
+        const mismatchReduction = hasOwnCounterAnchors
+            ? 0.88
+            : (bestOwnSystemSupport > 0.08 || anchorMatchCount >= 1 || contextualMatchCount >= 2)
+                ? 0.68
+                : 0.46;
+        rawScore *= mismatchReduction;
+        crossSystemMismatchPenalty += 1 - mismatchReduction;
+    }
+
     rawScore += disease.progression_pattern.filter((pattern) => observations.has(patternToObservation(pattern))).length * 0.03;
+
+    const matchedDownweightedGenerics = getDiseaseObservedFeatureTerms(disease, observations, downweightedGenericSignals);
+    if (signalHierarchy.organ_specific_signals.length > 0 && matchedDownweightedGenerics.length > 0) {
+        const relianceRatio = matchedDownweightedGenerics.length / Math.max(1, keyMatchCount + supportingMatchCount + labMatchCount);
+        const penaltyFactor = dominantSystemAligned && dominantSystemSupport >= 0.12
+            ? 0.22
+            : dominantSystemAligned
+                ? 0.32
+                : 0.74 + (hasOwnCounterAnchors ? 0 : 0.12);
+        genericSymptomDownweightPenalty = Math.min(
+            0.48,
+            (downweightedGenericWeightTotal * penaltyFactor) + (relianceRatio * 0.04),
+        );
+        rawScore -= genericSymptomDownweightPenalty;
+    }
 
     if (genericMatchCount > 0 && anchorMatchCount === 0 && contextualMatchCount === 0) {
         const anchoredCase = signalHierarchy.anchor_signals.length > 0 || signalHierarchy.contextual_signals.length > 0;
-        genericDominancePenalty += anchoredCase ? 0.24 : 0.02;
+        genericDominancePenalty += (anchoredCase ? 0.24 : 0.02) + Math.min(0.06, genericMatchedWeightTotal * 0.08);
         if (anchoredCase && disease.condition_class === 'Idiopathic / Unknown') {
             genericDominancePenalty += 0.12;
         }
@@ -1756,7 +2331,7 @@ function scoreDisease(
             genericDominancePenalty += 0.24;
         }
     } else if (genericMatchCount > anchorMatchCount + contextualMatchCount && signalHierarchy.anchor_signals.length > 0) {
-        genericDominancePenalty += 0.1;
+        genericDominancePenalty += 0.1 + Math.min(0.04, genericMatchedWeightTotal * 0.06);
     }
 
     if (contradictoryMatchCount > 0 || signalHierarchy.contradiction_score > 0) {
@@ -1809,8 +2384,13 @@ function scoreDisease(
             generic_dominance: Number(genericDominancePenalty.toFixed(3)),
             missing_support: Number(missingSupportPenalty.toFixed(3)),
             ontology_mismatch: Number(ontologyMismatchPenalty.toFixed(3)),
+            generic_symptom_downweight: Number(genericSymptomDownweightPenalty.toFixed(3)),
+            cross_system_mismatch: Number(crossSystemMismatchPenalty.toFixed(3)),
         },
         anchorLocked: matchingAnchorLocks.length > 0,
+        organSystems: diseaseOrganProfile.systems,
+        dominantSystemAligned,
+        dominantSystemSupport: Number(dominantSystemSupport.toFixed(3)),
         drivers: drivers.sort((left, right) => right.weight - left.weight).slice(0, 5),
     };
 }
@@ -1837,8 +2417,13 @@ function emptyScore(disease: DiseaseOntologyEntry): ClosedWorldCandidateScore {
             generic_dominance: 0,
             missing_support: 0,
             ontology_mismatch: 0,
+            generic_symptom_downweight: 0,
+            cross_system_mismatch: 0,
         },
         anchorLocked: false,
+        organSystems: DEFAULT_CATEGORY_SYSTEMS[disease.category] ?? [],
+        dominantSystemAligned: false,
+        dominantSystemSupport: 0,
         drivers: [],
     };
 }
@@ -1999,6 +2584,18 @@ function applyNumericHeuristic(key: string, value: number, observations: Set<str
 
     if ((normalizedKey.includes('creatinine') || normalizedKey.includes('bun') || normalizedKey.includes('urea')) && value > 2.2) {
         observations.add('azotemia');
+    }
+
+    if ((normalizedKey.includes('alanine aminotransferase') || normalizedKey === 'alt' || normalizedKey.includes('alt ')) && value >= 180) {
+        observations.add('alt_elevation');
+    }
+
+    if ((normalizedKey.includes('aspartate aminotransferase') || normalizedKey === 'ast' || normalizedKey.includes('ast ')) && value >= 100) {
+        observations.add('ast_elevation');
+    }
+
+    if (normalizedKey.includes('bilirubin') && value >= 1.2) {
+        observations.add('bilirubin_elevation');
     }
 
     if (normalizedKey.includes('platelet') && value > 0 && value < 150000) {

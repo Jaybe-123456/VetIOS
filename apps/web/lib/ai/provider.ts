@@ -88,7 +88,9 @@ RULES:
 14. If glucosuria is absent, explicitly lower Diabetes Mellitus ranking even if polyuria, polydipsia, or mild hyperglycemia are present.
 15. Hyperadrenocorticism should be boosted by marked ALP elevation, pot-bellied appearance, panting, alopecia, chronic gradual onset, hypercholesterolemia, supportive ACTH stimulation testing, or dilute urine without glucosuria.
 16. If a classic GDV pattern is present, strongly favor GDV above simple gastric dilatation and above benign vomiting syndromes.
-17. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
+17. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.
+18. If input_signature.metadata.signal_weight_profile.system_dominance identifies a dominant organ system, prioritize diseases affecting that system and actively suppress unrelated categories that only share vomiting, diarrhea, lethargy, or other generic symptoms unless those competing categories have their own strong anchor signals.
+19. Example rule: jaundice, bilirubin/ALT/AST elevation, or hepatic dysfunction must push hepatotoxic and hepatic encephalopathy differentials above simple gastroenteritis or uncomplicated obstruction unless a true GI emergency anchor cluster is also present.${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];
