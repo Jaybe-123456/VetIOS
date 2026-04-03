@@ -146,6 +146,64 @@ export async function listConnectorInstallations(
     return (data ?? []).map((row) => mapConnectorInstallation(row as Record<string, unknown>));
 }
 
+export async function getConnectorInstallation(
+    client: SupabaseClient,
+    tenantId: string,
+    id: string,
+): Promise<ConnectorInstallationRecord | null> {
+    return getConnectorInstallationById(client, tenantId, id);
+}
+
+export async function updateConnectorInstallation(input: {
+    client: SupabaseClient;
+    tenantId: string;
+    connectorInstallationId: string;
+    patch: Partial<{
+        installation_name: string;
+        vendor_name: string | null;
+        vendor_account_ref: string | null;
+        status: ConnectorInstallationRecord['status'];
+        metadata: Record<string, unknown>;
+    }>;
+}): Promise<ConnectorInstallationRecord> {
+    const existing = await getConnectorInstallationById(input.client, input.tenantId, input.connectorInstallationId);
+    if (!existing) {
+        throw new Error('Connector installation was not found.');
+    }
+
+    const C = CONNECTOR_INSTALLATIONS.COLUMNS;
+    const updatePayload: Record<string, unknown> = {};
+    if (typeof input.patch.installation_name === 'string' && input.patch.installation_name.trim().length > 0) {
+        updatePayload[C.installation_name] = input.patch.installation_name.trim();
+    }
+    if (input.patch.vendor_name !== undefined) {
+        updatePayload[C.vendor_name] = normalizeOptionalText(input.patch.vendor_name);
+    }
+    if (input.patch.vendor_account_ref !== undefined) {
+        updatePayload[C.vendor_account_ref] = normalizeOptionalText(input.patch.vendor_account_ref);
+    }
+    if (input.patch.status) {
+        updatePayload[C.status] = input.patch.status;
+    }
+    if (input.patch.metadata) {
+        updatePayload[C.metadata] = mergeRecords(existing.metadata, input.patch.metadata);
+    }
+
+    const { data, error } = await input.client
+        .from(CONNECTOR_INSTALLATIONS.TABLE)
+        .update(updatePayload)
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.id, input.connectorInstallationId)
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to update connector installation: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    return mapConnectorInstallation(data as Record<string, unknown>);
+}
+
 export async function listApiCredentials(
     client: SupabaseClient,
     tenantId: string,
@@ -861,10 +919,27 @@ function normalizeCredentialStatus(value: unknown): ApiCredentialRecord['status'
     return value === 'revoked' ? 'revoked' : 'active';
 }
 
+function mergeRecords(left: Record<string, unknown>, right: Record<string, unknown>): Record<string, unknown> {
+    const merged: Record<string, unknown> = { ...left };
+    for (const [key, value] of Object.entries(right)) {
+        if (value === undefined) {
+            continue;
+        }
+        if (isRecord(value) && isRecord(merged[key])) {
+            merged[key] = mergeRecords(merged[key] as Record<string, unknown>, value);
+            continue;
+        }
+        merged[key] = value;
+    }
+    return merged;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : {};
+    return isRecord(value) ? value : {};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function asStringArray(value: unknown): string[] {
