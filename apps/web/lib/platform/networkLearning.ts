@@ -31,6 +31,13 @@ export interface PublicNetworkLearningSnapshot {
         calibration_avg_ece: number | null;
         diagnosis_candidate_version: string | null;
         severity_candidate_version: string | null;
+        enrollment_mode: string | null;
+        auto_run_rounds: boolean;
+        round_interval_hours: number | null;
+        next_round_due_at: string | null;
+        minimum_participants: number | null;
+        minimum_benchmark_pass_rate: number | null;
+        maximum_calibration_avg_ece: number | null;
     };
     recent_datasets: Array<{
         dataset_version: string;
@@ -90,6 +97,13 @@ export async function getPublicNetworkLearningSnapshot(): Promise<PublicNetworkL
                 calibration_avg_ece: null,
                 diagnosis_candidate_version: null,
                 severity_candidate_version: null,
+                enrollment_mode: null,
+                auto_run_rounds: false,
+                round_interval_hours: null,
+                next_round_due_at: null,
+                minimum_participants: null,
+                minimum_benchmark_pass_rate: null,
+                maximum_calibration_avg_ece: null,
             },
             recent_datasets: [],
             recent_benchmarks: [],
