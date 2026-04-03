@@ -8,19 +8,9 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { LEARNING_REINFORCEMENTS } from '@/lib/db/schemaContracts';
+import { getMasterDiseaseOntology, normalizeOntologyDiseaseName } from '@/lib/ai/diseaseOntology';
 
-// The verified condition taxonomy map (simplified for router)
-export const VALID_TAXONOMY_MAP: Record<string, string> = {
-    'gdv': 'Mechanical',
-    'parvovirus': 'Infectious',
-    'toxin_ingestion': 'Toxic',
-    'lymphoma': 'Neoplastic',
-    'imhap': 'Autoimmune / Immune-Mediated',
-    'cushings': 'Metabolic / Endocrine',
-    'fracture': 'Traumatic',
-    'osteoarthritis': 'Degenerative'
-    // This exists to catch glaring mismatch errors during learning
-};
+export const VALID_TAXONOMY_MAP: Record<string, string> = buildVerifiedTaxonomyMap();
 
 export interface ReinforcementResult {
     diagnostic_updates_applied: number;
@@ -62,7 +52,7 @@ export async function routeReinforcement(
 
     // 2. Taxonomy Alignment Validation
     if (input.actual_diagnosis) {
-        const strictClass = VALID_TAXONOMY_MAP[input.actual_diagnosis.toLowerCase()];
+        const strictClass = resolveStrictConditionClass(input.actual_diagnosis);
         if (strictClass && input.actual_class && input.actual_class !== strictClass) {
             // "Cannot reinforce a GDV as an Infectious pathogen"
             res.aborted_due_to_taxonomy = true;
@@ -150,4 +140,35 @@ export async function routeReinforcement(
     }
 
     return res;
+}
+
+function buildVerifiedTaxonomyMap(): Record<string, string> {
+    const map: Record<string, string> = {};
+
+    for (const disease of getMasterDiseaseOntology()) {
+        map[normalizeKey(disease.name)] = disease.condition_class;
+        for (const alias of disease.aliases) {
+            map[normalizeKey(alias)] = disease.condition_class;
+        }
+        map[normalizeKey(disease.id)] = disease.condition_class;
+    }
+
+    return map;
+}
+
+function resolveStrictConditionClass(value: string) {
+    const ontologyName = normalizeOntologyDiseaseName(value);
+    if (ontologyName) {
+        return VALID_TAXONOMY_MAP[normalizeKey(ontologyName)] ?? null;
+    }
+    return VALID_TAXONOMY_MAP[normalizeKey(value)] ?? null;
+}
+
+function normalizeKey(value: string) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replace(/['\u2019]/g, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
 }

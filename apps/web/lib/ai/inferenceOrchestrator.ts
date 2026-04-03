@@ -11,6 +11,7 @@ import {
     severityFloorFromAbdominalSignals,
 } from '@/lib/ai/abdominalEmergency';
 import { mlPredict } from '@/lib/ml/mlClient';
+import { buildClinicalReasoningAlignmentSnapshot } from '@/lib/intelligence/clinicalAlignment';
 
 export interface OrchestratorParams {
     model: string;
@@ -131,6 +132,10 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     payload.signal_quality_score = antigravitySignal.signal_quality_score;
     payload.signal_weight_profile = signalWeightProfile;
     payload.priority_signals = signalWeightProfile.weighted_signals.slice(0, 6);
+    payload.reasoning_alignment = buildClinicalReasoningAlignmentSnapshot({
+        inputSignature: normalizedSig,
+        outputPayload: payload,
+    });
     const finalDiagnosis = payload.diagnosis as Record<string, unknown>;
     finalDiagnosis.primary_condition_class = resolveConditionClass(finalDiagnosis);
     const resolvedSeverityScore = resolveSeverityScore(risk);
@@ -183,6 +188,7 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
         },
         mechanism_class: payload.mechanism_class ?? null,
         risk_model_output: payload.risk_model_output ?? null,
+        reasoning_alignment: payload.reasoning_alignment ?? null,
     };
 
     return {
