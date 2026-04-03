@@ -455,6 +455,7 @@ export function buildOutcomeFailureEvent(
             confidence: input.confidence,
             top3Labels,
             contradictionScore: input.contradictionScore,
+            outputPayload: input.outputPayload,
         }),
         confidence: clampNumber(input.confidence),
         contradiction_score: input.contradictionScore,
@@ -466,6 +467,7 @@ export function buildOutcomeFailureEvent(
             contradiction_score: input.contradictionScore,
             diagnosis_feature_importance: asRecord(input.outputPayload.diagnosis_feature_importance),
             severity_feature_importance: asRecord(input.outputPayload.severity_feature_importance),
+            reasoning_alignment: asRecord(input.outputPayload.reasoning_alignment),
             feature_mismatch: buildFeatureMismatch(input.outputPayload, input.actual),
         },
         created_at: input.observedAt,
@@ -501,6 +503,7 @@ export function buildAbstentionFailureEvent(
             contradiction_score: input.contradictionScore,
             diagnosis_feature_importance: asRecord(input.outputPayload.diagnosis_feature_importance),
             severity_feature_importance: asRecord(input.outputPayload.severity_feature_importance),
+            reasoning_alignment: asRecord(input.outputPayload.reasoning_alignment),
         },
         created_at: input.observedAt,
     };
@@ -975,12 +978,31 @@ function classifyFailure(input: {
     confidence: number | null;
     top3Labels: string[];
     contradictionScore: number | null;
+    outputPayload: Record<string, unknown>;
 }): FailureClassification {
+    const reasoningAlignment = asRecord(input.outputPayload.reasoning_alignment);
+    const missingDomains = Array.isArray(reasoningAlignment.missing_domains)
+        ? reasoningAlignment.missing_domains
+        : [];
+    const genericFallbackBias = reasoningAlignment.generic_fallback_bias === true;
+    const hallucinationRisk = reasoningAlignment.hallucination_risk === true;
+    const contradictionMismatchRisk = reasoningAlignment.contradiction_mismatch_risk === true;
+
     if (input.errorType === 'abstention_trigger') return 'abstention';
-    if (!input.prediction || /unknown|syndrome|mechanical emergency/i.test(input.prediction)) {
+    if (
+        hallucinationRisk
+        || missingDomains.length > 0
+        || !input.prediction
+        || /unknown|syndrome|mechanical emergency/i.test(input.prediction)
+    ) {
         return 'ontology_violation';
     }
-    if ((input.contradictionScore ?? 0) >= 0.65 || input.top3Labels.includes(normalizeLabel(input.actual) ?? '__no_actual__')) {
+    if (
+        genericFallbackBias
+        || contradictionMismatchRisk
+        || (input.contradictionScore ?? 0) >= 0.65
+        || input.top3Labels.includes(normalizeLabel(input.actual) ?? '__no_actual__')
+    ) {
         return 'feature_weighting_error';
     }
     if ((input.confidence ?? 0) <= LOW_CONFIDENCE_THRESHOLD || input.top3Labels.length < 2) {

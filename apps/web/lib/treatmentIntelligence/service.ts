@@ -10,6 +10,7 @@ import {
     buildTreatmentRecommendationBundle,
     validateTreatmentBundle,
 } from '@/lib/treatmentIntelligence/engine';
+import { buildTreatmentOutcomeReasoningFeedback } from '@/lib/intelligence/clinicalAlignment';
 import type {
     TreatmentCandidateRecord,
     TreatmentOutcomeStatus,
@@ -161,7 +162,17 @@ export async function recordTreatmentDecisionAndOutcome(
         ? await upsertTreatmentOutcome(client, {
             tenantId: input.tenantId,
             treatmentEventId: treatmentEventId!,
-            outcome: input.body.outcome,
+            outcome: {
+                ...input.body.outcome,
+                outcome_json: {
+                    ...(input.body.outcome.outcome_json ?? {}),
+                    reasoning_feedback: buildTreatmentOutcomeReasoningFeedback({
+                        disease: input.body.selection.disease,
+                        treatmentPathway: input.body.selection.treatment_pathway,
+                        outcomeStatus: input.body.outcome.outcome_status,
+                    }),
+                },
+            },
         })
         : null;
 
@@ -172,6 +183,13 @@ export async function recordTreatmentDecisionAndOutcome(
             tenantId: input.tenantId,
             disease: input.body.selection.disease,
         }),
+        reasoning_feedback: treatmentOutcome
+            ? buildTreatmentOutcomeReasoningFeedback({
+                disease: input.body.selection.disease,
+                treatmentPathway: input.body.selection.treatment_pathway,
+                outcomeStatus: input.body.outcome?.outcome_status ?? null,
+            })
+            : null,
     };
 }
 

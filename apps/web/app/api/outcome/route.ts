@@ -60,6 +60,10 @@ import {
 import { recordOutcomeObservability } from '@/lib/telemetry/observability';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { attachRoutingOutcomeFeedback } from '@/lib/routingEngine/service';
+import {
+    buildClinicalReasoningEnforcementPlan,
+    type ClinicalReasoningAlignmentSnapshot,
+} from '@/lib/intelligence/clinicalAlignment';
 
 const NON_CRITICAL_EFFECT_TIMEOUT_MS = 1_500;
 
@@ -528,9 +532,25 @@ export async function POST(req: Request) {
                     signal_weight_profile: asRecord(inf.output_payload?.signal_weight_profile),
                     clinical_signal: asRecord(inf.output_payload?.clinical_signal),
                 });
+                pipelineResult.alignment_enforcement = buildClinicalReasoningEnforcementPlan({
+                    alignment: asReasoningAlignmentSnapshot(inf.output_payload?.reasoning_alignment),
+                    predictedDiagnosis: predictedDiagnosis ?? null,
+                    actualDiagnosis: actualDiagnosis ?? null,
+                    predictedConditionClass: predictedClass ?? null,
+                    actualConditionClass: actualClass ?? null,
+                    confidenceScore: inf.confidence_score,
+                    contradictionScore,
+                    treatmentOutcomeStatus:
+                        typeof actualOutcome.treatment_outcome_status === 'string'
+                            ? actualOutcome.treatment_outcome_status
+                            : typeof actualOutcome.outcome_status === 'string'
+                                ? actualOutcome.outcome_status
+                                : null,
+                });
                 const reinforcementFeatures = mergeNumericFeatures(
                     diagnosisFeatureImportance,
                     buildFailureCorrectionFeatureVector(pipelineResult.failure_correction),
+                    asNumericRecord(pipelineResult.alignment_enforcement?.reinforcement_features),
                 );
 
                 pipelineResult.reinforcement = await routeReinforcement(supabase, {
@@ -1811,6 +1831,40 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function asReasoningAlignmentSnapshot(value: unknown): ClinicalReasoningAlignmentSnapshot {
+    const record = asRecord(value);
+    return {
+        ontology_version: typeof record.ontology_version === 'string' ? record.ontology_version : 'closed-world-v2',
+        closed_world_enforced: record.closed_world_enforced === true,
+        required_domains: Array.isArray(record.required_domains) ? record.required_domains as ClinicalReasoningAlignmentSnapshot['required_domains'] : [],
+        active_ontology_categories: Array.isArray(record.active_ontology_categories)
+            ? record.active_ontology_categories as ClinicalReasoningAlignmentSnapshot['active_ontology_categories']
+            : [],
+        observed_terms: Array.isArray(record.observed_terms)
+            ? record.observed_terms.filter((entry): entry is string => typeof entry === 'string')
+            : [],
+        domain_coverage: Array.isArray(record.domain_coverage)
+            ? record.domain_coverage as ClinicalReasoningAlignmentSnapshot['domain_coverage']
+            : [],
+        missing_domains: Array.isArray(record.missing_domains)
+            ? record.missing_domains as ClinicalReasoningAlignmentSnapshot['missing_domains']
+            : [],
+        anchor_signal_count: readNumber(record.anchor_signal_count) ?? 0,
+        contextual_signal_count: readNumber(record.contextual_signal_count) ?? 0,
+        generic_signal_count: readNumber(record.generic_signal_count) ?? 0,
+        anchor_signal_dominance: record.anchor_signal_dominance === true,
+        generic_fallback_bias: record.generic_fallback_bias === true,
+        hallucination_risk: record.hallucination_risk === true,
+        contradiction_mismatch_risk: record.contradiction_mismatch_risk === true,
+        top_differentials: Array.isArray(record.top_differentials)
+            ? record.top_differentials.filter((entry): entry is string => typeof entry === 'string')
+            : [],
+        priority_corrections: Array.isArray(record.priority_corrections)
+            ? record.priority_corrections.filter((entry): entry is string => typeof entry === 'string')
+            : [],
+    };
 }
 
 function asNumericRecord(value: unknown): Record<string, number> {

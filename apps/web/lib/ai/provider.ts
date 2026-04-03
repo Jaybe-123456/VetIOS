@@ -73,21 +73,22 @@ RULES:
 2. Diagnosis confidence and severity must remain independent.
 3. Contradictions lower confidence and widen uncertainty; they do not overwrite symptom truth.
 4. CLOSED-WORLD DISEASE LIBRARY: diagnosis.top_differentials MUST contain ONLY exact disease names from the following canonical library. If the evidence is weak, choose the closest supported names from this library rather than inventing or paraphrasing a disease.\n${closedWorldDiseaseLibrary}
-5. Tier 1 features MUST outrank generic distractors:
+5. Before finalizing the differential, explicitly review these clinical domains whenever the evidence suggests them: nutritional, infectious, endocrine, neurologic, toxic, metabolic, and parasitic. If the library lacks a precise nutritional match, say so in uncertainty_notes instead of collapsing by default into endocrine or metabolic disease.
+6. Tier 1 features MUST outrank generic distractors:
    - Tier 1: unproductive retching, abdominal distension, myoclonus, honking cough, ocular+nasal discharge clusters, collapse with a strong emergency pattern.
    - Tier 2: dyspnea, tachycardia, pale mucous membranes, vomiting, diarrhea, fever.
    - Tier 3: lethargy, anorexia, weakness if isolated.
-6. Generic distractors must not erase structural emergencies like GDV.
-7. If multiple high-risk abdominal emergency signals cluster, retain GDV or another named abdominal emergency in the leading differential set.
-8. NEVER place generic mechanism labels such as "Acute Mechanical Emergency" inside diagnosis.top_differentials. Those belong only in mechanism_class.
-9. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
-10. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.
-11. Endocrine overlap rule: shared PU/PD/polyphagia or lethargy must NOT by themselves decide between Hyperadrenocorticism and Diabetes Mellitus.
-12. Diabetes Mellitus should be strongly favored only when significant hyperglycemia clusters with glucosuria; ketonuria or weight loss further strengthen it.
-13. If glucosuria is absent, explicitly lower Diabetes Mellitus ranking even if polyuria, polydipsia, or mild hyperglycemia are present.
-14. Hyperadrenocorticism should be boosted by marked ALP elevation, pot-bellied appearance, panting, alopecia, chronic gradual onset, hypercholesterolemia, supportive ACTH stimulation testing, or dilute urine without glucosuria.
-15. If a classic GDV pattern is present, strongly favor GDV above simple gastric dilatation and above benign vomiting syndromes.
-16. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
+7. Generic distractors must not erase structural emergencies like GDV.
+8. If multiple high-risk abdominal emergency signals cluster, retain GDV or another named abdominal emergency in the leading differential set.
+9. NEVER place generic mechanism labels such as "Acute Mechanical Emergency" inside diagnosis.top_differentials. Those belong only in mechanism_class.
+10. If honking cough or upper-airway infectious anchors are present, retain clinically dominant airway diagnoses in the leading differential set.
+11. It is acceptable to keep emergency_level=CRITICAL even when diagnosis confidence is low.
+12. Endocrine overlap rule: shared PU/PD/polyphagia or lethargy must NOT by themselves decide between Hyperadrenocorticism and Diabetes Mellitus.
+13. Diabetes Mellitus should be strongly favored only when significant hyperglycemia clusters with glucosuria; ketonuria or weight loss further strengthen it.
+14. If glucosuria is absent, explicitly lower Diabetes Mellitus ranking even if polyuria, polydipsia, or mild hyperglycemia are present.
+15. Hyperadrenocorticism should be boosted by marked ALP elevation, pot-bellied appearance, panting, alopecia, chronic gradual onset, hypercholesterolemia, supportive ACTH stimulation testing, or dilute urine without glucosuria.
+16. If a classic GDV pattern is present, strongly favor GDV above simple gastric dilatation and above benign vomiting syndromes.
+17. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];

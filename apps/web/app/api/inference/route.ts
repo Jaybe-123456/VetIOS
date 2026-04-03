@@ -162,6 +162,7 @@ export async function POST(req: Request) {
             resolveTelemetryRunCandidate(body.input.input_signature),
         );
         const contradictionAnalysis = asRecord(inferenceResult.contradiction_analysis);
+        const reasoningAlignment = asRecord(inferenceResult.output_payload.reasoning_alignment);
 
         const telemetry = inferenceResult.output_payload.telemetry && typeof inferenceResult.output_payload.telemetry === 'object'
             ? (inferenceResult.output_payload.telemetry as Record<string, unknown>)
@@ -348,6 +349,11 @@ export async function POST(req: Request) {
                             persistence_rule_triggers: Array.isArray(inferenceResult.uncertainty_metrics?.persistence_rule_triggers)
                                 ? inferenceResult.uncertainty_metrics?.persistence_rule_triggers
                                 : [],
+                            reasoning_missing_domains: Array.isArray(reasoningAlignment.missing_domains)
+                                ? reasoningAlignment.missing_domains
+                                : [],
+                            reasoning_generic_fallback_bias: reasoningAlignment.generic_fallback_bias === true,
+                            reasoning_hallucination_risk: reasoningAlignment.hallucination_risk === true,
                             pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
                                 ? inferenceResult.output_payload.pipeline_trace
                                 : [],
@@ -382,6 +388,11 @@ export async function POST(req: Request) {
                             contradiction_triggers: Array.isArray(contradictionAnalysis.contradiction_reasons)
                                 ? contradictionAnalysis.contradiction_reasons
                                 : [],
+                            reasoning_missing_domains: Array.isArray(reasoningAlignment.missing_domains)
+                                ? reasoningAlignment.missing_domains
+                                : [],
+                            reasoning_generic_fallback_bias: reasoningAlignment.generic_fallback_bias === true,
+                            reasoning_hallucination_risk: reasoningAlignment.hallucination_risk === true,
                             pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
                                 ? inferenceResult.output_payload.pipeline_trace
                                 : [],
