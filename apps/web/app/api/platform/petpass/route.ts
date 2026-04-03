@@ -10,6 +10,10 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import {
+    dispatchOutboxBatch,
+    enqueueOutboxEvent,
+} from '@/lib/eventPlane/outbox';
+import {
     createClinicOwnerLink,
     createNotificationDelivery,
     createOwnerAccount,
@@ -309,23 +313,58 @@ export async function POST(req: Request) {
             };
         } else if (action === 'create_notification_delivery') {
             const deliveryBody = body.data as Extract<PetPassAction, { action: 'create_notification_delivery' }>;
-            result = {
-                notification_delivery: await createNotificationDelivery(adminClient, {
+            const notificationDelivery = await createNotificationDelivery(adminClient, {
+                tenantId: authContext.tenantId,
+                ownerAccountId: requireText(deliveryBody.owner_account_id, 'owner_account_id'),
+                petProfileId: normalizeOptionalText(deliveryBody.pet_profile_id),
+                timelineEntryId: normalizeOptionalText(deliveryBody.timeline_entry_id),
+                channel: normalizeChannel(deliveryBody.channel) ?? 'push',
+                notificationType: requireText(deliveryBody.notification_type, 'notification_type'),
+                title: requireText(deliveryBody.title, 'title'),
+                body: requireText(deliveryBody.body, 'body'),
+                deliveryStatus: normalizeDeliveryStatus(deliveryBody.delivery_status) ?? 'queued',
+                scheduledAt: normalizeOptionalText(deliveryBody.scheduled_at),
+                deliveredAt: normalizeOptionalText(deliveryBody.delivered_at),
+                errorMessage: normalizeOptionalText(deliveryBody.error_message),
+                metadata: asRecord(deliveryBody.metadata),
+            });
+
+            if (notificationDelivery.delivery_status === 'queued') {
+                const outboxEvent = await enqueueOutboxEvent(adminClient, {
                     tenantId: authContext.tenantId,
-                    ownerAccountId: requireText(deliveryBody.owner_account_id, 'owner_account_id'),
-                    petProfileId: normalizeOptionalText(deliveryBody.pet_profile_id),
-                    timelineEntryId: normalizeOptionalText(deliveryBody.timeline_entry_id),
-                    channel: normalizeChannel(deliveryBody.channel) ?? 'push',
-                    notificationType: requireText(deliveryBody.notification_type, 'notification_type'),
-                    title: requireText(deliveryBody.title, 'title'),
-                    body: requireText(deliveryBody.body, 'body'),
-                    deliveryStatus: normalizeDeliveryStatus(deliveryBody.delivery_status) ?? 'queued',
-                    scheduledAt: normalizeOptionalText(deliveryBody.scheduled_at),
-                    deliveredAt: normalizeOptionalText(deliveryBody.delivered_at),
-                    errorMessage: normalizeOptionalText(deliveryBody.error_message),
-                    metadata: asRecord(deliveryBody.metadata),
-                }),
-            };
+                    topic: 'petpass.notification_delivery_requested',
+                    handlerKey: 'petpass_notification_delivery',
+                    targetType: 'internal_task',
+                    targetRef: notificationDelivery.id,
+                    idempotencyKey: `petpass_delivery:${notificationDelivery.id}`,
+                    payload: {
+                        notification_delivery_id: notificationDelivery.id,
+                        owner_account_id: notificationDelivery.owner_account_id,
+                        pet_profile_id: notificationDelivery.pet_profile_id,
+                        channel: notificationDelivery.channel,
+                        notification_type: notificationDelivery.notification_type,
+                    },
+                });
+
+                const dispatch = await dispatchOutboxBatch(adminClient, {
+                    workerId: authContext.userId
+                        ? `petpass-delivery:${authContext.userId}`
+                        : `petpass-delivery:${Date.now()}`,
+                    tenantId: authContext.tenantId,
+                    batchSize: 5,
+                    topics: ['petpass.notification_delivery_requested'],
+                });
+
+                result = {
+                    notification_delivery: notificationDelivery,
+                    outbox_event: outboxEvent.event,
+                    dispatch,
+                };
+            } else {
+                result = {
+                    notification_delivery: notificationDelivery,
+                };
+            }
         } else {
             return NextResponse.json({ error: 'Unsupported PetPass action.', request_id: requestId }, { status: 400 });
         }

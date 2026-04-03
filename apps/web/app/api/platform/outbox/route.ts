@@ -277,7 +277,7 @@ function normalizeAttemptStatusFilter(value: unknown): ConnectorDeliveryAttemptS
 }
 
 function normalizeHandlerFilter(value: unknown): OutboxHandlerKey | null {
-    return value === 'connector_webhook' || value === 'passive_signal_reconcile'
+    return value === 'connector_webhook' || value === 'passive_signal_reconcile' || value === 'petpass_notification_delivery'
         ? value
         : null;
 }
