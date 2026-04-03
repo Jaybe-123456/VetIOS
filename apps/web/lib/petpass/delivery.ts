@@ -112,6 +112,8 @@ async function sendPetPassEmail(
     const apiKey = normalizeOptionalText(process.env.RESEND_API_KEY);
     const from = normalizeOptionalText(process.env.PETPASS_EMAIL_FROM)
         ?? normalizeOptionalText(process.env.VETIOS_EMAIL_FROM);
+    const replyTo = normalizeOptionalText(process.env.PETPASS_EMAIL_REPLY_TO)
+        ?? normalizeOptionalText(process.env.VETIOS_EMAIL_REPLY_TO);
     if (!apiKey || !from) {
         return {
             status: 'dead_letter',
@@ -128,6 +130,7 @@ async function sendPetPassEmail(
         body: JSON.stringify({
             from,
             to: [to],
+            ...(replyTo ? { reply_to: replyTo } : {}),
             subject: delivery.title,
             text: buildEmailText(delivery, owner),
         }),
