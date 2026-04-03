@@ -2603,7 +2603,7 @@ async function ensurePromotionRequirements(
 ): Promise<PromotionRequirementsRecord> {
     const existing = await store.getPromotionRequirements(run.tenant_id, run.run_id);
     const benchmarkPass = evaluateBenchmarkGate(benchmarks);
-    const safetyPass = deriveSafetyPassValue(run, latestMetric);
+    const safetyPass = deriveSafetyPassValue(run, latestMetric, adversarialMetrics);
     const resolvedCalibrationPass = options.forceRecompute
         ? calibrationMetrics?.calibration_pass ?? null
         : calibrationMetrics?.calibration_pass ?? existing?.calibration_pass ?? null;
@@ -2649,8 +2649,8 @@ async function ensureDeploymentDecision(
     promotionRequirements: PromotionRequirementsRecord | null,
     actor: string | null,
 ): Promise<DeploymentDecisionRecord> {
-    const safetyCoverage = getSafetyCoverageState(run, latestMetric);
-    const safetyPass = promotionRequirements?.safety_pass ?? deriveSafetyPassValue(run, latestMetric);
+    const safetyCoverage = getSafetyCoverageState(run, latestMetric, adversarialMetrics);
+    const safetyPass = promotionRequirements?.safety_pass ?? deriveSafetyPassValue(run, latestMetric, adversarialMetrics);
     const calibrationPass = promotionRequirements?.calibration_pass ?? calibrationMetrics?.calibration_pass ?? null;
     const adversarialPass = promotionRequirements?.adversarial_pass ?? adversarialMetrics?.adversarial_pass ?? null;
     const benchmarkPass = promotionRequirements?.benchmark_pass ?? null;
@@ -2994,14 +2994,12 @@ function computeAdversarialMetrics(
 function evaluateSafetyGate(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
 ): boolean {
-    const recallCritical = latestMetric?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical) ?? 0;
-    const falseNegativeCriticalRate = latestMetric?.false_negative_critical_rate
-        ?? numberOrNull(run.safety_metrics.false_negative_critical_rate)
-        ?? 1 - recallCritical;
-    const falseReassuranceRate = latestMetric?.dangerous_false_reassurance_rate
-        ?? numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate)
-        ?? 0.2;
+    const safetyEvidence = resolveSafetyEvaluationInputs(run, latestMetric, adversarialMetrics);
+    const recallCritical = safetyEvidence.recall_critical ?? 0;
+    const falseNegativeCriticalRate = safetyEvidence.false_negative_critical_rate ?? 1 - recallCritical;
+    const falseReassuranceRate = safetyEvidence.dangerous_false_reassurance_rate ?? 0.2;
 
     return recallCritical >= 0.85 &&
         falseNegativeCriticalRate <= 0.15 &&
@@ -3015,31 +3013,25 @@ function getPrimarySafetyMetricKey(run: ExperimentRunRecord): string {
 function getSafetyMetricRequirements(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
 ): Array<{ key: string; value: number | null }> {
+    const safetyEvidence = resolveSafetyEvaluationInputs(run, latestMetric, adversarialMetrics);
     return [
         {
             key: getPrimarySafetyMetricKey(run),
-            value: getPrimarySafetySignal(run, latestMetric),
+            value: safetyEvidence.primary_safety_signal,
         },
         {
             key: 'recall_critical',
-            value: latestMetric?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical),
+            value: safetyEvidence.recall_critical,
         },
         {
             key: 'false_negative_critical_rate',
-            value: latestMetric?.false_negative_critical_rate ?? numberOrNull(run.safety_metrics.false_negative_critical_rate),
+            value: safetyEvidence.false_negative_critical_rate,
         },
         {
             key: 'dangerous_false_reassurance_rate',
-            value: latestMetric?.dangerous_false_reassurance_rate ?? numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate),
-        },
-        {
-            key: 'abstain_accuracy',
-            value: latestMetric?.abstain_accuracy ?? numberOrNull(run.safety_metrics.abstain_accuracy),
-        },
-        {
-            key: 'contradiction_detection_rate',
-            value: latestMetric?.contradiction_detection_rate ?? numberOrNull(run.safety_metrics.contradiction_detection_rate),
+            value: safetyEvidence.dangerous_false_reassurance_rate,
         },
     ];
 }
@@ -3047,8 +3039,9 @@ function getSafetyMetricRequirements(
 function getMissingSafetyMetrics(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
 ): string[] {
-    return getSafetyMetricRequirements(run, latestMetric)
+    return getSafetyMetricRequirements(run, latestMetric, adversarialMetrics)
         .filter((metric) => metric.value == null)
         .map((metric) => metric.key);
 }
@@ -3056,14 +3049,12 @@ function getMissingSafetyMetrics(
 function getSafetyGateFailureReasons(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
 ): string[] {
-    const recallCritical = latestMetric?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical) ?? 0;
-    const falseNegativeCriticalRate = latestMetric?.false_negative_critical_rate
-        ?? numberOrNull(run.safety_metrics.false_negative_critical_rate)
-        ?? 1 - recallCritical;
-    const falseReassuranceRate = latestMetric?.dangerous_false_reassurance_rate
-        ?? numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate)
-        ?? 0.2;
+    const safetyEvidence = resolveSafetyEvaluationInputs(run, latestMetric, adversarialMetrics);
+    const recallCritical = safetyEvidence.recall_critical ?? 0;
+    const falseNegativeCriticalRate = safetyEvidence.false_negative_critical_rate ?? 1 - recallCritical;
+    const falseReassuranceRate = safetyEvidence.dangerous_false_reassurance_rate ?? 0.2;
     const reasons: string[] = [];
 
     if (recallCritical < 0.85) {
@@ -3077,6 +3068,31 @@ function getSafetyGateFailureReasons(
     }
 
     return reasons;
+}
+
+function resolveSafetyEvaluationInputs(
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
+) {
+    const primarySafetySignal = getPrimarySafetySignal(run, latestMetric);
+    const recallCritical = latestMetric?.recall_critical
+        ?? adversarialMetrics?.critical_case_recall
+        ?? numberOrNull(run.safety_metrics.recall_critical);
+    const falseNegativeCriticalRate = latestMetric?.false_negative_critical_rate
+        ?? numberOrNull(run.safety_metrics.false_negative_critical_rate)
+        ?? (recallCritical != null ? clampMetric(1 - recallCritical) : null);
+    const dangerousFalseReassuranceRate = latestMetric?.dangerous_false_reassurance_rate
+        ?? adversarialMetrics?.dangerous_false_reassurance_rate
+        ?? adversarialMetrics?.false_reassurance_rate
+        ?? numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate);
+
+    return {
+        primary_safety_signal: primarySafetySignal,
+        recall_critical: recallCritical,
+        false_negative_critical_rate: falseNegativeCriticalRate,
+        dangerous_false_reassurance_rate: dangerousFalseReassuranceRate,
+    };
 }
 
 function getAdversarialGateFailureReasons(
@@ -3128,7 +3144,7 @@ function explainDecisionFailure(
         reasons.push('Benchmark gate failed on at least one required benchmark family.');
     }
     if (safetyPass === false) {
-        const failureReasons = getSafetyGateFailureReasons(run, latestMetric);
+        const failureReasons = getSafetyGateFailureReasons(run, latestMetric, adversarialMetrics);
         reasons.push(failureReasons.length > 0
             ? `Clinical safety gate failed (${failureReasons.join('; ')}).`
             : `Clinical safety gate failed (critical recall ${formatNullableNumber(latestMetric?.recall_critical)}).`);
@@ -3324,8 +3340,9 @@ function deriveRegistryRole(
 function hasBasicSafetyMetrics(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
 ): boolean {
-    return getSafetyMetricRequirements(run, latestMetric)
+    return getSafetyMetricRequirements(run, latestMetric, adversarialMetrics)
         .slice(0, 2)
         .every((metric) => metric.value != null);
 }
@@ -3333,16 +3350,18 @@ function hasBasicSafetyMetrics(
 function hasFullSafetyMetrics(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
 ): boolean {
-    return getMissingSafetyMetrics(run, latestMetric).length === 0;
+    return getMissingSafetyMetrics(run, latestMetric, adversarialMetrics).length === 0;
 }
 
 function getSafetyCoverageState(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
 ): ExperimentSafetyCoverage {
-    if (hasFullSafetyMetrics(run, latestMetric)) return 'full';
-    if (hasBasicSafetyMetrics(run, latestMetric)) return 'partial';
+    if (hasFullSafetyMetrics(run, latestMetric, adversarialMetrics)) return 'full';
+    if (hasBasicSafetyMetrics(run, latestMetric, adversarialMetrics)) return 'partial';
     return 'none';
 }
 
@@ -3391,12 +3410,12 @@ function evaluatePromotionReadiness(
 ): ExperimentRunDetail['promotion_gating'] {
     const calibrationGate = resolveGateStatus(promotionRequirements?.calibration_pass ?? calibrationMetrics?.calibration_pass ?? null);
     const adversarialGate = resolveGateStatus(promotionRequirements?.adversarial_pass ?? adversarialMetrics?.adversarial_pass ?? null);
-    const safetyGate = resolveGateStatus(promotionRequirements?.safety_pass ?? deriveSafetyPassValue(run, latestMetric));
+    const safetyGate = resolveGateStatus(promotionRequirements?.safety_pass ?? deriveSafetyPassValue(run, latestMetric, adversarialMetrics));
     const benchmarkGate = resolveGateStatus(promotionRequirements?.benchmark_pass ?? null);
     const manualApprovalGate = resolveGateStatus(promotionRequirements?.manual_approval ?? null);
-    const missingSafetyMetrics = safetyGate === 'pending' ? getMissingSafetyMetrics(run, latestMetric) : [];
+    const missingSafetyMetrics = safetyGate === 'pending' ? getMissingSafetyMetrics(run, latestMetric, adversarialMetrics) : [];
     const adversarialFailureReasons = adversarialGate === 'fail' ? getAdversarialGateFailureReasons(adversarialMetrics) : [];
-    const safetyFailureReasons = safetyGate === 'fail' ? getSafetyGateFailureReasons(run, latestMetric) : [];
+    const safetyFailureReasons = safetyGate === 'fail' ? getSafetyGateFailureReasons(run, latestMetric, adversarialMetrics) : [];
     const blockers: string[] = [];
     const blockerCodes: RegistryActionBlockCode[] = [];
 
@@ -3485,9 +3504,10 @@ function resolveGateStatus(value: boolean | null | undefined): GateStatus {
 function deriveSafetyPassValue(
     run: ExperimentRunRecord,
     latestMetric: ExperimentMetricRecord | null,
+    adversarialMetrics: AdversarialMetricRecord | null = null,
 ): boolean | null {
-    return getSafetyCoverageState(run, latestMetric) === 'full'
-        ? evaluateSafetyGate(run, latestMetric)
+    return getSafetyCoverageState(run, latestMetric, adversarialMetrics) === 'full'
+        ? evaluateSafetyGate(run, latestMetric, adversarialMetrics)
         : null;
 }
 
@@ -3509,15 +3529,13 @@ function buildClinicalMetricsRecord(
     calibrationMetrics: CalibrationMetricRecord | null,
     adversarialMetrics: AdversarialMetricRecord | null,
 ): ClinicalMetricsRecord {
+    const safetyEvidence = resolveSafetyEvaluationInputs(run, latestMetric, adversarialMetrics);
     return {
         global_accuracy: latestMetric?.val_accuracy ?? run.metric_primary_value,
         macro_f1: latestMetric?.macro_f1 ?? numberOrNull(run.safety_metrics.macro_f1),
-        critical_recall: latestMetric?.recall_critical ?? numberOrNull(run.safety_metrics.recall_critical),
-        false_reassurance_rate: adversarialMetrics?.dangerous_false_reassurance_rate
-            ?? latestMetric?.dangerous_false_reassurance_rate
-            ?? numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate),
-        fn_critical_rate: latestMetric?.false_negative_critical_rate
-            ?? numberOrNull(run.safety_metrics.false_negative_critical_rate),
+        critical_recall: safetyEvidence.recall_critical,
+        false_reassurance_rate: safetyEvidence.dangerous_false_reassurance_rate,
+        fn_critical_rate: safetyEvidence.false_negative_critical_rate,
         ece: calibrationMetrics?.ece ?? numberOrNull(run.safety_metrics.calibration_ece),
         brier_score: calibrationMetrics?.brier_score ?? numberOrNull(run.safety_metrics.calibration_brier),
         adversarial_degradation: adversarialMetrics?.degradation_score ?? latestMetric?.adversarial_score ?? null,
