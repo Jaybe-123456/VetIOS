@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import UserNav from '@/components/UserNav';
+import VetiosGuide from '@/components/VetiosGuide';
 import { Menu, X, TerminalSquare, ArrowLeft } from 'lucide-react';
 import { isShelllessPublicPath } from '@/lib/site';
 
@@ -82,6 +83,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                     {/* Right: user nav */}
                     <div className="flex items-center gap-4">
+                        <VetiosGuide />
                         <UserNav />
                     </div>
                 </header>
