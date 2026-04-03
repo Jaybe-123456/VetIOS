@@ -55,6 +55,11 @@ export async function resolveSessionTenant(): Promise<{
     userId: string;
     email: string;
 } | null> {
+    const cookieStore = await cookies();
+    if (!hasSupabaseAuthCookies(cookieStore.getAll())) {
+        return null;
+    }
+
     const supabase = await createSupabaseServerClient();
     const { data: { user }, error } = await supabase.auth.getUser();
 
@@ -66,4 +71,12 @@ export async function resolveSessionTenant(): Promise<{
         userId: user.id,
         email: user.email ?? '',
     };
+}
+
+function hasSupabaseAuthCookies(cookieEntries: Array<{ name: string }>): boolean {
+    return cookieEntries.some(({ name }) => (
+        (name.startsWith('sb-') && name.includes('-auth-token'))
+        || name === 'supabase-auth-token'
+        || name.startsWith('supabase-auth-token.')
+    ));
 }

@@ -65,16 +65,18 @@ export async function resolveSessionTenant(): Promise<{
     userId: string;
 } | null> {
     const cookieStore = await cookies();
+    const authCookies = cookieStore.getAll();
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!url || !anonKey) return null;
+    if (!hasSupabaseAuthCookies(authCookies)) return null;
 
     const supabase = createServerClient(url, anonKey, {
         cookies: {
             getAll() {
-                return cookieStore.getAll();
+                return authCookies;
             },
             setAll(cookiesToSet) {
                 try {
@@ -97,4 +99,12 @@ export async function resolveSessionTenant(): Promise<{
         tenantId: user.id, // V1: tenant_id = auth.uid()
         userId: user.id,
     };
+}
+
+function hasSupabaseAuthCookies(cookieEntries: Array<{ name: string }>): boolean {
+    return cookieEntries.some(({ name }) => (
+        (name.startsWith('sb-') && name.includes('-auth-token'))
+        || name === 'supabase-auth-token'
+        || name.startsWith('supabase-auth-token.')
+    ));
 }
