@@ -196,10 +196,10 @@ export const moatCards: MoatCardDefinition[] = [
             'Experiment Track now stores dataset versions, hyperparameters, model lineage, and comparison evidence so published results can be independently reproduced.',
             'Outcome-linked learning cycles, calibration, adversarial evaluation, registry promotion, and a public learning snapshot are live.',
             'Federation memberships, tenant snapshot publishing, and weighted aggregation rounds now exist as real infrastructure.',
+            'Coordinator governance now enforces allow-list enrollment, benchmark and calibration gates, and automated federation round scheduling.',
         ],
         missingNow: [
             'The current federation layer is coordinator-driven rather than privacy-preserving secure aggregation.',
-            'Automated clinic enrollment, round scheduling, and hardened governance over cross-clinic participation still need productization.',
         ],
         links: [
             { label: 'Network Learning', href: '/platform/network-learning' },

@@ -83,7 +83,7 @@ export default async function NetworkLearningPage() {
                                     This page makes that loop inspectable outside the operator console.
                                 </p>
                                 <p>
-                                    The federation substrate now supports tenant memberships, site snapshots, and weighted aggregation rounds. The next frontier is stronger privacy-preserving exchange and automated multi-clinic enrollment.
+                                    The federation substrate now supports tenant memberships, coordinator governance, automated allow-list enrollment, scheduled rounds, and weighted aggregation. The next frontier is stronger privacy-preserving exchange.
                                 </p>
                             </div>
                         </div>
@@ -92,21 +92,23 @@ export default async function NetworkLearningPage() {
                     <section className="mt-10 grid gap-6 xl:grid-cols-2">
                         <Panel title="Federation Status">
                             <MetricRow label="Federation key" value={snapshot.federation.federation_key ?? 'NO DATA'} />
-                            <MetricRow label="Latest round" value={snapshot.federation.latest_round_status?.toUpperCase() ?? 'NO DATA'} />
-                            <MetricRow label="Latest snapshot" value={snapshot.federation.latest_snapshot_at ? formatDateTime(snapshot.federation.latest_snapshot_at) : 'NO DATA'} />
-                            <MetricRow label="Benchmark pass rate" value={formatPercent(snapshot.federation.benchmark_pass_rate)} />
-                            <MetricRow label="Calibration avg ECE" value={formatPercent(snapshot.federation.calibration_avg_ece)} />
-                            <MetricRow label="Diagnosis candidate" value={snapshot.federation.diagnosis_candidate_version ?? 'NO DATA'} />
-                            <MetricRow label="Severity candidate" value={snapshot.federation.severity_candidate_version ?? 'NO DATA'} />
-                        </Panel>
+                                <MetricRow label="Latest round" value={snapshot.federation.latest_round_status?.toUpperCase() ?? 'NO DATA'} />
+                                <MetricRow label="Latest snapshot" value={snapshot.federation.latest_snapshot_at ? formatDateTime(snapshot.federation.latest_snapshot_at) : 'NO DATA'} />
+                                <MetricRow label="Enrollment mode" value={snapshot.federation.enrollment_mode?.toUpperCase() ?? 'NO DATA'} />
+                                <MetricRow label="Next scheduled round" value={snapshot.federation.next_round_due_at ? formatDateTime(snapshot.federation.next_round_due_at) : 'NO DATA'} />
+                                <MetricRow label="Benchmark pass rate" value={formatPercent(snapshot.federation.benchmark_pass_rate)} />
+                                <MetricRow label="Calibration avg ECE" value={formatPercent(snapshot.federation.calibration_avg_ece)} />
+                                <MetricRow label="Diagnosis candidate" value={snapshot.federation.diagnosis_candidate_version ?? 'NO DATA'} />
+                                <MetricRow label="Severity candidate" value={snapshot.federation.severity_candidate_version ?? 'NO DATA'} />
+                            </Panel>
 
                         <Panel title="What The Federation Means">
                             <div className="space-y-4 text-sm leading-7 text-slate-300">
                                 <p>
-                                    Participating clinics can now publish site snapshots and run weighted federation rounds that aggregate champion artifact structure into a network candidate.
+                                    Participating clinics can now publish site snapshots, enroll through coordinator governance, and run weighted federation rounds that aggregate champion artifact structure into a network candidate.
                                 </p>
                                 <p>
-                                    This still does not replace deeper privacy-preserving secure aggregation, but it moves VetIOS from a tenant-only loop into a real federation control plane.
+                                    Automated round scheduling, allow-list enrollment, and benchmark-calibration gates are now live. This still does not replace deeper privacy-preserving secure aggregation, but it moves VetIOS from a tenant-only loop into a real federation control plane.
                                 </p>
                             </div>
                         </Panel>

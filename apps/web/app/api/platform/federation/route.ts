@@ -10,13 +10,18 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import {
+    enrollFederationTenant,
     getFederationControlPlaneSnapshot,
     publishFederatedSiteSnapshots,
+    runDueFederationAutomation,
+    runFederationAutomation,
     runFederationRound,
+    setFederationGovernancePolicy,
     upsertFederationMembership,
     type FederationMembershipStatus,
     type FederationParticipationMode,
 } from '@/lib/federation/service';
+import type { FederationGovernancePolicy } from '@/lib/federation/policy';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
 type FederationAction =
@@ -37,6 +42,39 @@ type FederationAction =
         action: 'run_round';
         federation_key?: string | null;
         snapshot_max_age_hours?: number | string | null;
+    }
+    | {
+        action: 'enroll_tenant';
+        federation_key?: string | null;
+        target_tenant_id?: string | null;
+        participation_mode?: FederationParticipationMode | null;
+        status?: FederationMembershipStatus | null;
+        weight?: number | string | null;
+        metadata?: Record<string, unknown>;
+    }
+    | {
+        action: 'set_governance';
+        federation_key?: string | null;
+        enrollment_mode?: string | null;
+        auto_enroll_enabled?: boolean | string | null;
+        approved_tenant_ids?: string[] | string | null;
+        auto_publish_snapshots?: boolean | string | null;
+        auto_run_rounds?: boolean | string | null;
+        round_interval_hours?: number | string | null;
+        snapshot_max_age_hours?: number | string | null;
+        minimum_participants?: number | string | null;
+        minimum_benchmark_pass_rate?: number | string | null;
+        maximum_calibration_avg_ece?: number | string | null;
+        allow_shadow_participants?: boolean | string | null;
+    }
+    | {
+        action: 'run_automation';
+        federation_key?: string | null;
+        force?: boolean | string | null;
+    }
+    | {
+        action: 'run_due_automation';
+        federation_key?: string | null;
     };
 
 export const runtime = 'nodejs';
@@ -145,6 +183,52 @@ export async function POST(req: Request) {
                 actor: authContext.userId,
                 snapshotMaxAgeHours: normalizePositiveNumber(roundBody.snapshot_max_age_hours) ?? 24,
             });
+        } else if (action === 'enroll_tenant') {
+            const enrollmentBody = body.data as Extract<FederationAction, { action: 'enroll_tenant' }>;
+            const targetTenantId = normalizeTenantId(enrollmentBody.target_tenant_id);
+            if (!targetTenantId) {
+                throw new Error('target_tenant_id is required for federation enrollment.');
+            }
+            result = {
+                membership: await enrollFederationTenant(adminClient, {
+                    federationKey,
+                    actorTenantId: authContext.tenantId,
+                    actor: authContext.userId,
+                    targetTenantId,
+                    participationMode: normalizeParticipationMode(enrollmentBody.participation_mode) ?? 'full',
+                    status: normalizeMembershipStatus(enrollmentBody.status) ?? 'active',
+                    weight: normalizePositiveNumber(enrollmentBody.weight) ?? 1,
+                    metadata: asRecord(enrollmentBody.metadata),
+                }),
+            };
+        } else if (action === 'set_governance') {
+            const governanceBody = body.data as Extract<FederationAction, { action: 'set_governance' }>;
+            result = {
+                membership: await setFederationGovernancePolicy(adminClient, {
+                    federationKey,
+                    actorTenantId: authContext.tenantId,
+                    actor: authContext.userId,
+                    policy: buildGovernancePolicyPatch(governanceBody),
+                }),
+            };
+        } else if (action === 'run_automation') {
+            const automationBody = body.data as Extract<FederationAction, { action: 'run_automation' }>;
+            result = {
+                automation: await runFederationAutomation(adminClient, {
+                    federationKey,
+                    actorTenantId: authContext.authMode === 'internal_token' ? null : authContext.tenantId,
+                    actor: authContext.userId,
+                    force: normalizeBoolean(automationBody.force) ?? false,
+                }),
+            };
+        } else if (action === 'run_due_automation') {
+            result = {
+                automations: await runDueFederationAutomation(adminClient, {
+                    tenantId: authContext.authMode === 'internal_token' ? null : authContext.tenantId,
+                    federationKey,
+                    actor: authContext.userId,
+                }),
+            };
         } else {
             return NextResponse.json({ error: 'Unsupported federation action.', request_id: requestId }, { status: 400 });
         }
@@ -230,6 +314,83 @@ function normalizeMembershipStatus(value: unknown): FederationMembershipStatus |
     return value === 'active' || value === 'paused' || value === 'revoked' ? value : null;
 }
 
+function buildGovernancePolicyPatch(
+    body: Extract<FederationAction, { action: 'set_governance' }>,
+): Partial<FederationGovernancePolicy> {
+    const policy: Partial<FederationGovernancePolicy> = {};
+
+    const enrollmentMode = normalizeEnrollmentMode(body.enrollment_mode);
+    if (enrollmentMode) {
+        policy.enrollment_mode = enrollmentMode;
+    }
+
+    const autoEnrollEnabled = normalizeBoolean(body.auto_enroll_enabled);
+    if (autoEnrollEnabled != null) {
+        policy.auto_enroll_enabled = autoEnrollEnabled;
+    }
+
+    if (body.approved_tenant_ids != null) {
+        policy.approved_tenant_ids = normalizeTenantIdList(body.approved_tenant_ids);
+    }
+
+    const autoPublishSnapshots = normalizeBoolean(body.auto_publish_snapshots);
+    if (autoPublishSnapshots != null) {
+        policy.auto_publish_snapshots = autoPublishSnapshots;
+    }
+
+    const autoRunRounds = normalizeBoolean(body.auto_run_rounds);
+    if (autoRunRounds != null) {
+        policy.auto_run_rounds = autoRunRounds;
+    }
+
+    const roundIntervalHours = normalizePositiveNumber(body.round_interval_hours);
+    if (roundIntervalHours != null) {
+        policy.round_interval_hours = roundIntervalHours;
+    }
+
+    const snapshotMaxAgeHours = normalizePositiveNumber(body.snapshot_max_age_hours);
+    if (snapshotMaxAgeHours != null) {
+        policy.snapshot_max_age_hours = snapshotMaxAgeHours;
+    }
+
+    const minimumParticipants = normalizePositiveNumber(body.minimum_participants);
+    if (minimumParticipants != null) {
+        policy.minimum_participants = minimumParticipants;
+    }
+
+    if (body.minimum_benchmark_pass_rate != null) {
+        policy.minimum_benchmark_pass_rate = normalizeFractionalNumber(body.minimum_benchmark_pass_rate);
+    }
+
+    if (body.maximum_calibration_avg_ece != null) {
+        policy.maximum_calibration_avg_ece = normalizeFractionalNumber(body.maximum_calibration_avg_ece);
+    }
+
+    const allowShadowParticipants = normalizeBoolean(body.allow_shadow_participants);
+    if (allowShadowParticipants != null) {
+        policy.allow_shadow_participants = allowShadowParticipants;
+    }
+
+    return policy;
+}
+
+function normalizeEnrollmentMode(value: unknown): FederationGovernancePolicy['enrollment_mode'] | null {
+    return value === 'coordinator_only' || value === 'allow_list' || value === 'open'
+        ? value
+        : null;
+}
+
+function normalizeBoolean(value: unknown): boolean | null {
+    if (typeof value === 'boolean') {
+        return value;
+    }
+    if (typeof value === 'string') {
+        if (value === 'true') return true;
+        if (value === 'false') return false;
+    }
+    return null;
+}
+
 function normalizePositiveNumber(value: unknown): number | null {
     if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
         return value;
@@ -239,6 +400,40 @@ function normalizePositiveNumber(value: unknown): number | null {
         return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
     }
     return null;
+}
+
+function normalizeFractionalNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        if (value < 0) return null;
+        if (value > 1 && value <= 100) return value / 100;
+        return value <= 1 ? value : null;
+    }
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed) || parsed < 0) {
+            return null;
+        }
+        if (parsed > 1 && parsed <= 100) {
+            return parsed / 100;
+        }
+        return parsed <= 1 ? parsed : null;
+    }
+    return null;
+}
+
+function normalizeTenantIdList(value: unknown): string[] {
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => normalizeTenantId(entry))
+            .filter((entry): entry is string => entry != null);
+    }
+    if (typeof value === 'string') {
+        return value
+            .split(/[\s,]+/)
+            .map((entry) => normalizeTenantId(entry))
+            .filter((entry): entry is string => entry != null);
+    }
+    return [];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

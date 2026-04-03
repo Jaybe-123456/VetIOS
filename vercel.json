@@ -6,6 +6,10 @@
         {
             "path": "/api/cron/outbox-dispatch",
             "schedule": "*/1 * * * *"
+        },
+        {
+            "path": "/api/cron/federation-rounds",
+            "schedule": "0 * * * *"
         }
     ]
 }

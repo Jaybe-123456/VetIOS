@@ -6,6 +6,14 @@ import {
     MODEL_DELTA_ARTIFACTS,
 } from '@/lib/db/schemaContracts';
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
+import {
+    computeNextFederationRoundDueAt,
+    isFederationRoundDue,
+    patchFederationGovernanceMetadata,
+    readFederationGovernanceState,
+    type FederationAutomationState,
+    type FederationGovernancePolicy,
+} from '@/lib/federation/policy';
 import { decodeDiagnosisArtifact, decodeSeverityArtifact } from '@/lib/learningEngine/modelRegistryConnector';
 import { createSupabaseLearningEngineStore } from '@/lib/learningEngine/supabaseStore';
 import type {
@@ -119,6 +127,25 @@ export interface FederatedPublicSummary {
     calibration_avg_ece: number | null;
     diagnosis_candidate_version: string | null;
     severity_candidate_version: string | null;
+    enrollment_mode: string | null;
+    auto_run_rounds: boolean;
+    round_interval_hours: number | null;
+    next_round_due_at: string | null;
+    minimum_participants: number | null;
+    minimum_benchmark_pass_rate: number | null;
+    maximum_calibration_avg_ece: number | null;
+}
+
+export interface FederationAutomationExecution {
+    federation_key: string;
+    coordinator_tenant_id: string;
+    governance: FederationGovernancePolicy;
+    automation: FederationAutomationState;
+    auto_enrolled_memberships: FederationMembershipRecord[];
+    published_snapshots: FederatedSiteSnapshotRecord[];
+    round: FederationRoundRecord | null;
+    artifacts: ModelDeltaArtifactRecord[];
+    skipped_reason: string | null;
 }
 
 export async function getFederationControlPlaneSnapshot(
@@ -178,6 +205,7 @@ export async function upsertFederationMembership(
     },
 ): Promise<FederationMembershipRecord> {
     const C = FEDERATION_MEMBERSHIPS.COLUMNS;
+    const existing = await getFederationMembership(client, input.federationKey, input.tenantId);
     const payload = {
         [C.federation_key]: input.federationKey,
         [C.tenant_id]: input.tenantId,
@@ -185,8 +213,8 @@ export async function upsertFederationMembership(
         [C.status]: input.status ?? 'active',
         [C.participation_mode]: input.participationMode ?? 'full',
         [C.weight]: input.weight ?? 1,
-        [C.metadata]: input.metadata ?? {},
-        [C.created_by]: input.actor,
+        [C.metadata]: mergeRecords(existing?.metadata ?? {}, input.metadata ?? {}),
+        [C.created_by]: existing?.created_by ?? input.actor,
     };
 
     const { data, error } = await client
@@ -202,6 +230,210 @@ export async function upsertFederationMembership(
     }
 
     return mapFederationMembership(asRecord(data));
+}
+
+export async function setFederationGovernancePolicy(
+    client: SupabaseClient,
+    input: {
+        federationKey: string;
+        actorTenantId: string;
+        actor: string | null;
+        policy: Partial<FederationGovernancePolicy>;
+    },
+): Promise<FederationMembershipRecord> {
+    const coordinatorMembership = await requireCoordinatorMembership(client, input.federationKey, input.actorTenantId, input.actor);
+    const governanceState = readFederationGovernanceState(coordinatorMembership.metadata);
+    const nextPolicy = {
+        ...governanceState.policy,
+        ...input.policy,
+        approved_tenant_ids: input.policy.approved_tenant_ids ?? governanceState.policy.approved_tenant_ids,
+    };
+    const nextAutomation = shouldAdvanceAutomationSchedule(input.policy)
+        ? {
+            next_round_due_at: computeNextFederationRoundDueAt(governanceState.automation.last_round_started_at, nextPolicy),
+        }
+        : {};
+
+    return upsertFederationMembership(client, {
+        federationKey: coordinatorMembership.federation_key,
+        tenantId: coordinatorMembership.tenant_id,
+        coordinatorTenantId: coordinatorMembership.coordinator_tenant_id,
+        actor: input.actor,
+        participationMode: coordinatorMembership.participation_mode,
+        status: coordinatorMembership.status,
+        weight: coordinatorMembership.weight,
+        metadata: patchFederationGovernanceMetadata(coordinatorMembership.metadata, {
+            policy: nextPolicy,
+            automation: nextAutomation,
+        }),
+    });
+}
+
+export async function enrollFederationTenant(
+    client: SupabaseClient,
+    input: {
+        federationKey: string;
+        actorTenantId: string;
+        actor: string | null;
+        targetTenantId: string;
+        participationMode?: FederationParticipationMode;
+        status?: FederationMembershipStatus;
+        weight?: number;
+        metadata?: Record<string, unknown>;
+    },
+): Promise<FederationMembershipRecord> {
+    const coordinatorMembership = await requireCoordinatorMembership(client, input.federationKey, input.actorTenantId, input.actor);
+    const governance = readFederationGovernanceState(coordinatorMembership.metadata).policy;
+    if (
+        governance.enrollment_mode === 'allow_list'
+        && input.targetTenantId !== coordinatorMembership.tenant_id
+        && governance.approved_tenant_ids.length > 0
+        && !governance.approved_tenant_ids.includes(input.targetTenantId)
+    ) {
+        throw new Error('This tenant is not approved by the federation allow-list policy.');
+    }
+
+    return upsertFederationMembership(client, {
+        federationKey: input.federationKey,
+        tenantId: input.targetTenantId,
+        coordinatorTenantId: coordinatorMembership.coordinator_tenant_id,
+        actor: input.actor,
+        participationMode: input.participationMode ?? 'full',
+        status: input.status ?? 'active',
+        weight: input.weight ?? 1,
+        metadata: mergeRecords(input.metadata ?? {}, {
+            enrollment: {
+                enrolled_at: new Date().toISOString(),
+                enrolled_by: input.actor,
+                enrolled_via: 'coordinator_control_plane',
+            },
+        }),
+    });
+}
+
+export async function runFederationAutomation(
+    client: SupabaseClient,
+    input: {
+        federationKey: string;
+        actorTenantId: string | null;
+        actor: string | null;
+        force?: boolean;
+        now?: Date;
+    },
+): Promise<FederationAutomationExecution> {
+    const coordinatorMembership = input.actorTenantId
+        ? await requireCoordinatorMembership(client, input.federationKey, input.actorTenantId, input.actor)
+        : await getCoordinatorMembershipForFederation(client, input.federationKey);
+    if (!coordinatorMembership) {
+        throw new Error('No coordinator membership exists for this federation key.');
+    }
+
+    const now = input.now ?? new Date();
+    const governanceState = readFederationGovernanceState(coordinatorMembership.metadata);
+    const governance = governanceState.policy;
+    const autoEnrolledMemberships = governance.auto_enroll_enabled
+        ? await autoEnrollFederationApprovedTenants(client, coordinatorMembership, governance, input.actor)
+        : [];
+    const shouldRunRound = input.force === true || (
+        governance.auto_run_rounds
+        && isFederationRoundDue(governanceState.automation, now)
+    );
+
+    if (!shouldRunRound) {
+        await persistFederationAutomationState(client, coordinatorMembership, {
+            last_automation_run_at: now.toISOString(),
+            last_automation_error: null,
+        });
+
+        return {
+            federation_key: coordinatorMembership.federation_key,
+            coordinator_tenant_id: coordinatorMembership.coordinator_tenant_id,
+            governance,
+            automation: {
+                ...governanceState.automation,
+                last_automation_run_at: now.toISOString(),
+            },
+            auto_enrolled_memberships: autoEnrolledMemberships,
+            published_snapshots: [],
+            round: null,
+            artifacts: [],
+            skipped_reason: governance.auto_run_rounds
+                ? 'Federation round is not due yet for this schedule.'
+                : 'Automatic federation rounds are disabled for this federation.',
+        };
+    }
+
+    try {
+        const result = await runFederationRound(client, {
+            federationKey: input.federationKey,
+            actorTenantId: coordinatorMembership.tenant_id,
+            actor: input.actor,
+            snapshotMaxAgeHours: governance.snapshot_max_age_hours,
+        });
+        const refreshedCoordinator = await getCoordinatorMembershipForFederation(client, input.federationKey);
+        const refreshedGovernance = readFederationGovernanceState(refreshedCoordinator?.metadata ?? coordinatorMembership.metadata);
+
+        await persistFederationAutomationState(client, refreshedCoordinator ?? coordinatorMembership, {
+            last_automation_run_at: now.toISOString(),
+            last_automation_error: null,
+        });
+
+        return {
+            federation_key: input.federationKey,
+            coordinator_tenant_id: coordinatorMembership.coordinator_tenant_id,
+            governance: refreshedGovernance.policy,
+            automation: {
+                ...refreshedGovernance.automation,
+                last_automation_run_at: now.toISOString(),
+                last_automation_error: null,
+            },
+            auto_enrolled_memberships: autoEnrolledMemberships,
+            published_snapshots: result.published_snapshots,
+            round: result.round,
+            artifacts: result.artifacts,
+            skipped_reason: null,
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown federation automation error';
+        await persistFederationAutomationState(client, coordinatorMembership, {
+            last_automation_run_at: now.toISOString(),
+            last_automation_error: message,
+        });
+        throw error;
+    }
+}
+
+export async function runDueFederationAutomation(
+    client: SupabaseClient,
+    input: {
+        tenantId?: string | null;
+        federationKey?: string | null;
+        actor: string | null;
+        now?: Date;
+    },
+): Promise<FederationAutomationExecution[]> {
+    const coordinatorMemberships = await listCoordinatorMemberships(client, input.tenantId ?? null, input.federationKey ?? null);
+    const now = input.now ?? new Date();
+    const executions: FederationAutomationExecution[] = [];
+
+    for (const membership of coordinatorMemberships) {
+        const governanceState = readFederationGovernanceState(membership.metadata);
+        if (!governanceState.policy.auto_run_rounds) {
+            continue;
+        }
+        if (!isFederationRoundDue(governanceState.automation, now)) {
+            continue;
+        }
+
+        executions.push(await runFederationAutomation(client, {
+            federationKey: membership.federation_key,
+            actorTenantId: membership.tenant_id,
+            actor: input.actor,
+            now,
+        }));
+    }
+
+    return executions;
 }
 
 export async function publishFederatedSiteSnapshots(
@@ -322,23 +554,35 @@ export async function runFederationRound(
         snapshotMaxAgeHours?: number;
     },
 ): Promise<{
-        round: FederationRoundRecord;
-        published_snapshots: FederatedSiteSnapshotRecord[];
-        artifacts: ModelDeltaArtifactRecord[];
-    }> {
-    const memberships = await listActiveMembershipsByFederation(client, input.federationKey);
+    round: FederationRoundRecord;
+    published_snapshots: FederatedSiteSnapshotRecord[];
+    artifacts: ModelDeltaArtifactRecord[];
+}> {
+    let memberships = await listActiveMembershipsByFederation(client, input.federationKey);
     if (memberships.length === 0) {
         throw new Error('No active federation members were found for this federation key.');
     }
 
-    const coordinatorTenantId = memberships[0]?.coordinator_tenant_id ?? null;
+    const coordinatorMembership = await getCoordinatorMembershipForFederation(client, input.federationKey);
+    const coordinatorTenantId = coordinatorMembership?.coordinator_tenant_id ?? memberships[0]?.coordinator_tenant_id ?? null;
     if (input.actorTenantId && coordinatorTenantId && input.actorTenantId !== coordinatorTenantId) {
         throw new Error('Only the coordinator tenant can run federation rounds for this key.');
     }
 
-    const snapshotMaxAgeHours = input.snapshotMaxAgeHours ?? 24;
+    const governance = readFederationGovernanceState(coordinatorMembership?.metadata).policy;
+    if (governance.auto_enroll_enabled && coordinatorMembership) {
+        await autoEnrollFederationApprovedTenants(client, coordinatorMembership, governance, input.actor);
+        memberships = await listActiveMembershipsByFederation(client, input.federationKey);
+    }
+
+    const governedMemberships = filterMembershipsForGovernance(memberships, coordinatorTenantId, governance);
+    if (governedMemberships.length < governance.minimum_participants) {
+        throw new Error(`Federation governance requires at least ${governance.minimum_participants} eligible members before a round can start.`);
+    }
+
+    const snapshotMaxAgeHours = input.snapshotMaxAgeHours ?? governance.snapshot_max_age_hours ?? 24;
     const latestSnapshotsBeforePublish = await listLatestSnapshotsForFederation(client, input.federationKey);
-    const staleTenants = memberships
+    const staleTenants = governedMemberships
         .filter((membership) => {
             const snapshot = latestSnapshotsBeforePublish.find((candidate) => candidate.tenant_id === membership.tenant_id);
             return !snapshot || isStaleTimestamp(snapshot.created_at, snapshotMaxAgeHours);
@@ -354,7 +598,7 @@ export async function runFederationRound(
         : [];
 
     const latestSnapshots = await listLatestSnapshotsForFederation(client, input.federationKey);
-    const participantSnapshots = latestSnapshots.filter((snapshot) => memberships.some((membership) => membership.tenant_id === snapshot.tenant_id));
+    const participantSnapshots = latestSnapshots.filter((snapshot) => governedMemberships.some((membership) => membership.tenant_id === snapshot.tenant_id));
     if (participantSnapshots.length === 0) {
         throw new Error('No tenant snapshots are available to aggregate for this federation round.');
     }
@@ -379,7 +623,7 @@ export async function runFederationRound(
     try {
         const learningStore = createSupabaseLearningEngineStore(client);
         const participants = await Promise.all(participantSnapshots.map(async (snapshot) => {
-            const membership = memberships.find((candidate) => candidate.tenant_id === snapshot.tenant_id) ?? null;
+            const membership = governedMemberships.find((candidate) => candidate.tenant_id === snapshot.tenant_id) ?? null;
             const entries = await learningStore.listModelRegistryEntries(snapshot.tenant_id);
             const diagnosisChampion = entries.find((entry) => entry.task_type === 'diagnosis' && entry.is_champion) ?? null;
             const severityChampion = entries.find((entry) => entry.task_type === 'severity' && entry.is_champion) ?? null;
@@ -396,9 +640,29 @@ export async function runFederationRound(
             };
         }));
 
-        const diagnosisCandidate = aggregateDiagnosisArtifacts(input.federationKey, roundKey, participants, new Date().toISOString());
-        const severityCandidate = aggregateSeverityArtifacts(input.federationKey, roundKey, participants, new Date().toISOString());
-        const aggregatePayload = buildFederationAggregatePayload(participants, diagnosisCandidate, severityCandidate);
+        const evaluatedParticipants = participants.map((participant) => ({
+            participant,
+            reasons: evaluateParticipantGovernanceReasons(participant.snapshot, participant.membership, governance),
+        }));
+        const eligibleParticipants = evaluatedParticipants
+            .filter((candidate) => candidate.reasons.length === 0)
+            .map((candidate) => candidate.participant);
+        const excludedParticipants = evaluatedParticipants
+            .filter((candidate) => candidate.reasons.length > 0)
+            .map((candidate) => ({
+                tenant_id: candidate.participant.snapshot.tenant_id,
+                reasons: candidate.reasons,
+            }));
+
+        if (eligibleParticipants.length < governance.minimum_participants) {
+            throw new Error(
+                `Federation governance left only ${eligibleParticipants.length} eligible participant(s); at least ${governance.minimum_participants} are required.`,
+            );
+        }
+
+        const diagnosisCandidate = aggregateDiagnosisArtifacts(input.federationKey, roundKey, eligibleParticipants, new Date().toISOString());
+        const severityCandidate = aggregateSeverityArtifacts(input.federationKey, roundKey, eligibleParticipants, new Date().toISOString());
+        const aggregatePayload = buildFederationAggregatePayload(eligibleParticipants, diagnosisCandidate, severityCandidate);
         const candidateArtifactPayload = {
             diagnosis: diagnosisCandidate,
             severity: severityCandidate,
@@ -406,13 +670,24 @@ export async function runFederationRound(
 
         const completedRound = await updateFederationRound(client, round.id, {
             status: 'completed',
-            participant_count: participantSnapshots.length,
-            aggregate_payload: aggregatePayload,
+            participant_count: eligibleParticipants.length,
+            aggregate_payload: {
+                ...aggregatePayload,
+                governance: {
+                    enrollment_mode: governance.enrollment_mode,
+                    minimum_participants: governance.minimum_participants,
+                    minimum_benchmark_pass_rate: governance.minimum_benchmark_pass_rate,
+                    maximum_calibration_avg_ece: governance.maximum_calibration_avg_ece,
+                    allow_shadow_participants: governance.allow_shadow_participants,
+                    snapshot_max_age_hours: snapshotMaxAgeHours,
+                },
+                excluded_participants: excludedParticipants,
+            },
             candidate_artifact_payload: candidateArtifactPayload,
             completed_at: new Date().toISOString(),
         });
 
-        const siteArtifacts = participants.flatMap((participant) => {
+        const siteArtifacts = eligibleParticipants.flatMap((participant) => {
             const artifacts: Array<Omit<ModelDeltaArtifactRecord, 'id' | 'created_at'>> = [];
             if (participant.diagnosisChampion) {
                 artifacts.push(buildSiteDeltaArtifactRecord({
@@ -485,6 +760,14 @@ export async function runFederationRound(
             ...aggregateArtifacts,
         ]);
 
+        if (coordinatorMembership) {
+            await persistFederationAutomationState(client, coordinatorMembership, {
+                last_round_started_at: completedRound.started_at,
+                next_round_due_at: computeNextFederationRoundDueAt(completedRound.started_at, governance),
+                last_automation_error: null,
+            });
+        }
+
         return {
             round: completedRound,
             published_snapshots: publishedSnapshots,
@@ -520,6 +803,13 @@ export async function getFederationPublicSummary(
             calibration_avg_ece: null,
             diagnosis_candidate_version: null,
             severity_candidate_version: null,
+            enrollment_mode: null,
+            auto_run_rounds: false,
+            round_interval_hours: null,
+            next_round_due_at: null,
+            minimum_participants: null,
+            minimum_benchmark_pass_rate: null,
+            maximum_calibration_avg_ece: null,
         };
     }
 
@@ -532,6 +822,8 @@ export async function getFederationPublicSummary(
     const latestRound = rounds[0] ?? null;
     const diagnosisCandidate = readArtifactVersion(latestRound?.candidate_artifact_payload?.diagnosis);
     const severityCandidate = readArtifactVersion(latestRound?.candidate_artifact_payload?.severity);
+    const coordinatorMembership = await getCoordinatorMembershipForFederation(client, activeMembership.federation_key);
+    const governance = readFederationGovernanceState(coordinatorMembership?.metadata ?? activeMembership.metadata);
     const aggregateDatasetRows = latestRound
         ? readNumber(latestRound.aggregate_payload.aggregate_dataset_rows) ?? 0
         : latestSnapshots.reduce((sum, snapshot) => sum + snapshot.total_dataset_rows, 0);
@@ -549,7 +841,248 @@ export async function getFederationPublicSummary(
         calibration_avg_ece: latestRound ? readNumber(latestRound.aggregate_payload.calibration_avg_ece) : null,
         diagnosis_candidate_version: diagnosisCandidate,
         severity_candidate_version: severityCandidate,
+        enrollment_mode: governance.policy.enrollment_mode,
+        auto_run_rounds: governance.policy.auto_run_rounds,
+        round_interval_hours: governance.policy.round_interval_hours,
+        next_round_due_at: governance.automation.next_round_due_at,
+        minimum_participants: governance.policy.minimum_participants,
+        minimum_benchmark_pass_rate: governance.policy.minimum_benchmark_pass_rate,
+        maximum_calibration_avg_ece: governance.policy.maximum_calibration_avg_ece,
     };
+}
+
+async function getFederationMembership(
+    client: SupabaseClient,
+    federationKey: string,
+    tenantId: string,
+): Promise<FederationMembershipRecord | null> {
+    const { data, error } = await client
+        .from(FEDERATION_MEMBERSHIPS.TABLE)
+        .select('*')
+        .eq(FEDERATION_MEMBERSHIPS.COLUMNS.federation_key, federationKey)
+        .eq(FEDERATION_MEMBERSHIPS.COLUMNS.tenant_id, tenantId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to read federation membership: ${error.message}`);
+    }
+
+    return data ? mapFederationMembership(asRecord(data)) : null;
+}
+
+async function listMembershipsByFederation(
+    client: SupabaseClient,
+    federationKey: string,
+): Promise<FederationMembershipRecord[]> {
+    const { data, error } = await client
+        .from(FEDERATION_MEMBERSHIPS.TABLE)
+        .select('*')
+        .eq(FEDERATION_MEMBERSHIPS.COLUMNS.federation_key, federationKey)
+        .order(FEDERATION_MEMBERSHIPS.COLUMNS.updated_at, { ascending: false });
+
+    if (error) {
+        throw new Error(`Failed to list federation memberships by key: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapFederationMembership(asRecord(row)));
+}
+
+async function getCoordinatorMembershipForFederation(
+    client: SupabaseClient,
+    federationKey: string,
+): Promise<FederationMembershipRecord | null> {
+    const memberships = await listMembershipsByFederation(client, federationKey);
+    const directCoordinator = memberships.find((membership) => membership.tenant_id === membership.coordinator_tenant_id) ?? null;
+    if (directCoordinator) {
+        return directCoordinator;
+    }
+
+    const coordinatorTenantId = memberships[0]?.coordinator_tenant_id ?? null;
+    if (!coordinatorTenantId) {
+        return null;
+    }
+
+    return memberships.find((membership) => membership.tenant_id === coordinatorTenantId) ?? null;
+}
+
+async function requireCoordinatorMembership(
+    client: SupabaseClient,
+    federationKey: string,
+    actorTenantId: string,
+    actor: string | null,
+): Promise<FederationMembershipRecord> {
+    const existing = await getCoordinatorMembershipForFederation(client, federationKey);
+    if (!existing) {
+        return upsertFederationMembership(client, {
+            federationKey,
+            tenantId: actorTenantId,
+            coordinatorTenantId: actorTenantId,
+            actor,
+            participationMode: 'full',
+            status: 'active',
+            weight: 1,
+            metadata: patchFederationGovernanceMetadata({}, {
+                automation: {
+                    next_round_due_at: computeNextFederationRoundDueAt(null, readFederationGovernanceState({}).policy),
+                },
+            }),
+        });
+    }
+
+    if (existing.coordinator_tenant_id !== actorTenantId && existing.tenant_id !== actorTenantId) {
+        throw new Error('Only the federation coordinator tenant can manage enrollment, governance, or scheduling.');
+    }
+
+    return existing;
+}
+
+async function listCoordinatorMemberships(
+    client: SupabaseClient,
+    tenantId: string | null,
+    federationKey: string | null,
+): Promise<FederationMembershipRecord[]> {
+    let query = client
+        .from(FEDERATION_MEMBERSHIPS.TABLE)
+        .select('*')
+        .order(FEDERATION_MEMBERSHIPS.COLUMNS.updated_at, { ascending: false });
+
+    if (tenantId) {
+        query = query.eq(FEDERATION_MEMBERSHIPS.COLUMNS.tenant_id, tenantId);
+    }
+
+    if (federationKey) {
+        query = query.eq(FEDERATION_MEMBERSHIPS.COLUMNS.federation_key, federationKey);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+        throw new Error(`Failed to list coordinator federation memberships: ${error.message}`);
+    }
+
+    return (data ?? [])
+        .map((row) => mapFederationMembership(asRecord(row)))
+        .filter((membership) => membership.tenant_id === membership.coordinator_tenant_id && membership.status === 'active');
+}
+
+async function autoEnrollFederationApprovedTenants(
+    client: SupabaseClient,
+    coordinatorMembership: FederationMembershipRecord,
+    governance: FederationGovernancePolicy,
+    actor: string | null,
+): Promise<FederationMembershipRecord[]> {
+    if (!governance.auto_enroll_enabled || governance.approved_tenant_ids.length === 0) {
+        return [];
+    }
+
+    const memberships = await listMembershipsByFederation(client, coordinatorMembership.federation_key);
+    const existingByTenant = new Map(memberships.map((membership) => [membership.tenant_id, membership]));
+    const autoEnrolled: FederationMembershipRecord[] = [];
+
+    for (const tenantId of governance.approved_tenant_ids) {
+        if (tenantId === coordinatorMembership.tenant_id) {
+            continue;
+        }
+        const existing = existingByTenant.get(tenantId) ?? null;
+        if (existing?.status === 'active') {
+            continue;
+        }
+
+        autoEnrolled.push(await upsertFederationMembership(client, {
+            federationKey: coordinatorMembership.federation_key,
+            tenantId,
+            coordinatorTenantId: coordinatorMembership.coordinator_tenant_id,
+            actor,
+            participationMode: 'full',
+            status: 'active',
+            weight: 1,
+            metadata: {
+                enrollment: {
+                    enrolled_at: new Date().toISOString(),
+                    enrolled_by: actor,
+                    enrolled_via: 'automation_allow_list',
+                },
+            },
+        }));
+    }
+
+    return autoEnrolled;
+}
+
+async function persistFederationAutomationState(
+    client: SupabaseClient,
+    membership: FederationMembershipRecord,
+    automation: Partial<FederationAutomationState>,
+): Promise<FederationMembershipRecord> {
+    return upsertFederationMembership(client, {
+        federationKey: membership.federation_key,
+        tenantId: membership.tenant_id,
+        coordinatorTenantId: membership.coordinator_tenant_id,
+        actor: membership.created_by,
+        participationMode: membership.participation_mode,
+        status: membership.status,
+        weight: membership.weight,
+        metadata: patchFederationGovernanceMetadata(membership.metadata, {
+            automation,
+        }),
+    });
+}
+
+function filterMembershipsForGovernance(
+    memberships: FederationMembershipRecord[],
+    coordinatorTenantId: string | null,
+    governance: FederationGovernancePolicy,
+): FederationMembershipRecord[] {
+    return memberships.filter((membership) => {
+        if (membership.status !== 'active') {
+            return false;
+        }
+        if (!governance.allow_shadow_participants && membership.participation_mode === 'shadow') {
+            return false;
+        }
+        if (
+            governance.enrollment_mode === 'allow_list'
+            && membership.tenant_id !== coordinatorTenantId
+            && governance.approved_tenant_ids.length > 0
+            && !governance.approved_tenant_ids.includes(membership.tenant_id)
+        ) {
+            return false;
+        }
+        return true;
+    });
+}
+
+function evaluateParticipantGovernanceReasons(
+    snapshot: FederatedSiteSnapshotRecord,
+    membership: FederationMembershipRecord | null,
+    governance: FederationGovernancePolicy,
+): string[] {
+    const reasons: string[] = [];
+    if (!governance.allow_shadow_participants && membership?.participation_mode === 'shadow') {
+        reasons.push('shadow participation disabled');
+    }
+
+    const benchmarkPassRate = readNumber(snapshot.support_summary.benchmark_pass_rate);
+    if (
+        governance.minimum_benchmark_pass_rate != null
+        && (benchmarkPassRate == null || benchmarkPassRate < governance.minimum_benchmark_pass_rate)
+    ) {
+        reasons.push('benchmark pass rate below threshold');
+    }
+
+    const calibrationAvgEce = readNumber(snapshot.quality_summary.calibration_avg_ece)
+        ?? readNumber(snapshot.support_summary.average_calibration_ece);
+    if (
+        governance.maximum_calibration_avg_ece != null
+        && (calibrationAvgEce == null || calibrationAvgEce > governance.maximum_calibration_avg_ece)
+    ) {
+        reasons.push('calibration ECE above threshold');
+    }
+
+    return reasons;
+}
+
+function shouldAdvanceAutomationSchedule(policyPatch: Partial<FederationGovernancePolicy>): boolean {
+    return policyPatch.auto_run_rounds !== undefined || policyPatch.round_interval_hours !== undefined;
 }
 
 async function listVisibleFederationMemberships(
@@ -1192,10 +1725,34 @@ function roundMetric(value: number): number {
     return Math.round(value * 10_000) / 10_000;
 }
 
+function mergeRecords(
+    left: Record<string, unknown>,
+    right: Record<string, unknown>,
+): Record<string, unknown> {
+    const merged: Record<string, unknown> = { ...left };
+    for (const [key, value] of Object.entries(right)) {
+        if (value === undefined) {
+            continue;
+        }
+        if (Array.isArray(value)) {
+            merged[key] = value.slice();
+            continue;
+        }
+        if (isPlainRecord(value) && isPlainRecord(merged[key])) {
+            merged[key] = mergeRecords(merged[key] as Record<string, unknown>, value);
+            continue;
+        }
+        merged[key] = value;
+    }
+    return merged;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : {};
+    return isPlainRecord(value) ? value : {};
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readString(value: unknown): string | null {
