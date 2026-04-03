@@ -66,7 +66,7 @@ export default function PetPassOperationsClient({
     const [notificationDraft, setNotificationDraft] = useState({
         owner_account_id: initialSnapshot.owners[0]?.id ?? '',
         pet_profile_id: initialSnapshot.pet_profiles[0]?.id ?? '',
-        channel: 'push',
+        channel: 'email',
         notification_type: 'follow_up_reminder',
         title: 'Follow-up reminder',
         body: 'Recheck timing and escalation guidance are now available in PetPass.',
@@ -295,6 +295,31 @@ export default function PetPassOperationsClient({
                         <TerminalLabel>Detail</TerminalLabel>
                         <TerminalTextarea value={timelineDraft.detail} onChange={(event) => setTimelineDraft((current) => ({ ...current, detail: event.target.value }))} />
                     </div>
+                    <div className="mt-6 grid gap-4 md:grid-cols-2">
+                        <FormField label="Notification Owner ID" value={notificationDraft.owner_account_id} onChange={(value) => setNotificationDraft((current) => ({ ...current, owner_account_id: value }))} />
+                        <FormField label="Notification Pet ID" value={notificationDraft.pet_profile_id} onChange={(value) => setNotificationDraft((current) => ({ ...current, pet_profile_id: value }))} />
+                        <div>
+                            <TerminalLabel>Notification Channel</TerminalLabel>
+                            <select
+                                value={notificationDraft.channel}
+                                onChange={(event) => setNotificationDraft((current) => ({ ...current, channel: event.target.value }))}
+                                className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
+                            >
+                                <option value="email">email</option>
+                                <option value="sms">sms</option>
+                                <option value="push">push</option>
+                            </select>
+                        </div>
+                        <FormField label="Notification Type" value={notificationDraft.notification_type} onChange={(value) => setNotificationDraft((current) => ({ ...current, notification_type: value }))} />
+                        <FormField label="Notification Title" value={notificationDraft.title} onChange={(value) => setNotificationDraft((current) => ({ ...current, title: value }))} />
+                    </div>
+                    <div className="mt-4">
+                        <TerminalLabel>Notification Body</TerminalLabel>
+                        <TerminalTextarea value={notificationDraft.body} onChange={(event) => setNotificationDraft((current) => ({ ...current, body: event.target.value }))} />
+                    </div>
+                    <div className="mt-2 font-mono text-[11px] text-muted">
+                        Email sends to the owner email on file. SMS sends to the owner phone number on file and works best with E.164 numbers or a configured PETPASS_DEFAULT_COUNTRY_CODE. Push remains a placeholder until a device-token pipeline is added.
+                    </div>
                     <div className="mt-4 flex flex-wrap gap-2">
                         <TerminalButton
                             onClick={() => void runAction({
@@ -310,9 +335,9 @@ export default function PetPassOperationsClient({
                             onClick={() => void runAction({
                                 action: 'create_notification_delivery',
                                 ...notificationDraft,
-                            }, 'Notification delivery queued.', false)}
+                            }, 'Notification submitted for delivery.', false)}
                         >
-                            Queue Notification
+                            Send Notification
                         </TerminalButton>
                     </div>
                 </ConsoleCard>
@@ -461,6 +486,11 @@ function DeliveryRow({ delivery }: { delivery: PetPassNotificationDeliveryRecord
                 {delivery.channel} · {delivery.delivery_status} · {formatTimestamp(delivery.scheduled_at)}
             </div>
             <div className="mt-2 text-sm text-muted">{delivery.body}</div>
+            {delivery.error_message ? (
+                <div className="mt-3 font-mono text-[11px] text-danger">
+                    ERR: {delivery.error_message}
+                </div>
+            ) : null}
         </div>
     );
 }

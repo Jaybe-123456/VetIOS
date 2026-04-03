@@ -8,12 +8,13 @@ import {
     createOutcomeNetworkRepository,
     reconcileEpisodeMembership,
 } from '@/lib/outcomeNetwork/service';
+import { dispatchPetPassNotificationDelivery } from '@/lib/petpass/delivery';
 
 type JsonObject = Record<string, unknown>;
 
 export type OutboxStatus = 'pending' | 'processing' | 'retryable' | 'delivered' | 'dead_letter';
 export type OutboxTargetType = 'internal_task' | 'connector_webhook';
-export type OutboxHandlerKey = 'passive_signal_reconcile' | 'connector_webhook';
+export type OutboxHandlerKey = 'passive_signal_reconcile' | 'connector_webhook' | 'petpass_notification_delivery';
 export type ConnectorDeliveryAttemptStatus = 'processing' | 'succeeded' | 'retryable' | 'dead_letter';
 
 export interface OutboxEventRecord {
@@ -474,6 +475,10 @@ async function executeOutboxHandler(
         return handleConnectorWebhook(client, event);
     }
 
+    if (event.handler_key === 'petpass_notification_delivery') {
+        return handlePetPassNotificationDelivery(client, event);
+    }
+
     return {
         status: 'dead_letter',
         errorMessage: `Unsupported outbox handler: ${event.handler_key}`,
@@ -591,6 +596,34 @@ async function handleConnectorWebhook(
             connectorInstallationId: installation?.id ?? null,
         };
     }
+}
+
+async function handlePetPassNotificationDelivery(
+    client: SupabaseClient,
+    event: OutboxEventRecord,
+): Promise<HandlerResult> {
+    const notificationDeliveryId = normalizeOptionalText(event.payload.notification_delivery_id)
+        ?? normalizeOptionalText(event.target_ref);
+    if (!notificationDeliveryId) {
+        return {
+            status: 'dead_letter',
+            errorMessage: 'petpass_notification_delivery requires notification_delivery_id.',
+        };
+    }
+
+    const result = await dispatchPetPassNotificationDelivery(client, {
+        tenantId: event.tenant_id,
+        notificationDeliveryId,
+    });
+
+    return {
+        status: result.status,
+        responsePayload: {
+            ...(result.responsePayload ?? {}),
+            notification_delivery_id: notificationDeliveryId,
+        },
+        errorMessage: result.errorMessage ?? null,
+    };
 }
 
 async function beginConnectorDeliveryAttempt(
@@ -860,7 +893,7 @@ function normalizeSnapshotAttemptStatusFilter(
 function normalizeSnapshotHandlerFilter(
     value: OutboxQueueSnapshotOptions['handlerKey'],
 ): OutboxHandlerKey | null {
-    return value === 'connector_webhook' || value === 'passive_signal_reconcile'
+    return value === 'connector_webhook' || value === 'passive_signal_reconcile' || value === 'petpass_notification_delivery'
         ? value
         : null;
 }
@@ -870,7 +903,11 @@ function normalizeTargetType(value: unknown): OutboxTargetType {
 }
 
 function normalizeHandlerKey(value: unknown): OutboxHandlerKey {
-    return value === 'connector_webhook' ? 'connector_webhook' : 'passive_signal_reconcile';
+    return value === 'connector_webhook'
+        ? 'connector_webhook'
+        : value === 'petpass_notification_delivery'
+            ? 'petpass_notification_delivery'
+            : 'passive_signal_reconcile';
 }
 
 function normalizeAttemptStatus(value: unknown): ConnectorDeliveryAttemptStatus {

@@ -647,6 +647,76 @@ export async function createNotificationDelivery(
     return mapNotificationDelivery(asRecord(data));
 }
 
+export async function getOwnerAccount(
+    client: SupabaseClient,
+    tenantId: string,
+    ownerAccountId: string,
+): Promise<OwnerAccountRecord | null> {
+    const { data, error } = await client
+        .from(OWNER_ACCOUNTS.TABLE)
+        .select('*')
+        .eq(OWNER_ACCOUNTS.COLUMNS.tenant_id, tenantId)
+        .eq(OWNER_ACCOUNTS.COLUMNS.id, ownerAccountId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to load owner account: ${error.message}`);
+    }
+
+    return data ? mapOwnerAccount(asRecord(data)) : null;
+}
+
+export async function getNotificationDelivery(
+    client: SupabaseClient,
+    tenantId: string,
+    deliveryId: string,
+): Promise<PetPassNotificationDeliveryRecord | null> {
+    const { data, error } = await client
+        .from(PETPASS_NOTIFICATION_DELIVERIES.TABLE)
+        .select('*')
+        .eq(PETPASS_NOTIFICATION_DELIVERIES.COLUMNS.tenant_id, tenantId)
+        .eq(PETPASS_NOTIFICATION_DELIVERIES.COLUMNS.id, deliveryId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to load PetPass notification delivery: ${error.message}`);
+    }
+
+    return data ? mapNotificationDelivery(asRecord(data)) : null;
+}
+
+export async function updateNotificationDeliveryStatus(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        deliveryId: string;
+        deliveryStatus: PetPassDeliveryStatus;
+        deliveredAt?: string | null;
+        errorMessage?: string | null;
+    },
+): Promise<PetPassNotificationDeliveryRecord> {
+    const C = PETPASS_NOTIFICATION_DELIVERIES.COLUMNS;
+    const { data, error } = await client
+        .from(PETPASS_NOTIFICATION_DELIVERIES.TABLE)
+        .update({
+            [C.delivery_status]: input.deliveryStatus,
+            [C.delivered_at]: input.deliveryStatus === 'sent'
+                ? normalizeOptionalText(input.deliveredAt) ?? new Date().toISOString()
+                : null,
+            [C.error_message]: normalizeOptionalText(input.errorMessage),
+        })
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.id, input.deliveryId)
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to update PetPass notification delivery: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    return mapNotificationDelivery(asRecord(data));
+}
+
 async function listOwnerAccounts(
     client: SupabaseClient,
     tenantId: string,
@@ -1052,4 +1122,8 @@ function readString(value: unknown): string | null {
     }
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+    return readString(value);
 }
