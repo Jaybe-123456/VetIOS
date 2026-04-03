@@ -15,6 +15,7 @@ import {
     TerminalTextarea,
 } from '@/components/ui/terminal';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
+import { extractUuidFromText } from '@/lib/utils/uuid';
 import type {
     ControlPlaneAlertSensitivity,
     ControlPlaneLogRecord,
@@ -1016,6 +1017,7 @@ function renderDebugTab(
     isAdmin: boolean,
 ) {
     const latestInferenceEventId = snapshot.debug.latest_inference_event_id;
+    const normalizedLatestInferenceEventId = extractUuidFromText(latestInferenceEventId);
 
     return (
         <div className="space-y-4">
@@ -1054,12 +1056,12 @@ function renderDebugTab(
                     />
                     <ControlActionButton
                         label="Test Outcome Creation"
-                        disabled={!latestInferenceEventId}
+                        disabled={!normalizedLatestInferenceEventId}
                         onClick={() => void onRunProbe('Outcome creation', '/api/outcome', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                inference_event_id: latestInferenceEventId,
+                                inference_event_id: normalizedLatestInferenceEventId,
                                 outcome: {
                                     type: 'confirmed_diagnosis',
                                     payload: {
@@ -1082,11 +1084,12 @@ function renderDebugTab(
                     />
                     <ControlActionButton
                         label="Test Evaluation Creation"
+                        disabled={!normalizedLatestInferenceEventId}
                         onClick={() => void onRunProbe('Evaluation creation', '/api/evaluation', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
-                                inference_event_id: latestInferenceEventId ?? undefined,
+                                inference_event_id: normalizedLatestInferenceEventId ?? undefined,
                                 model_name: 'VetIOS Diagnostics',
                                 model_version: '1.0.0',
                                 predicted_confidence: 0.82,
@@ -1103,6 +1106,11 @@ function renderDebugTab(
                         )}
                     />
                 </div>
+                {latestInferenceEventId && !normalizedLatestInferenceEventId && (
+                    <div className="mt-4 border border-yellow-500/30 bg-yellow-500/10 p-3 font-mono text-[11px] text-yellow-300">
+                        The latest inference reference is not a canonical UUID. Outcome and evaluation probes stay disabled until a fresh inference event is generated.
+                    </div>
+                )}
             </ConsoleCard>
 
             <ConsoleCard title="Developer API Explorer">

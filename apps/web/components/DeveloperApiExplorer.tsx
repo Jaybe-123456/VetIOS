@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ConsoleCard, TerminalLabel } from '@/components/ui/terminal';
+import { extractUuidFromText } from '@/lib/utils/uuid';
 import { Activity, AlertTriangle, Code, Play, ShieldCheck } from 'lucide-react';
 
 type ExplorerEndpoint = '/api/inference' | '/api/outcome' | '/api/simulate' | '/api/evaluation';
@@ -18,6 +19,11 @@ export default function DeveloperApiExplorer({
 }: {
     latestInferenceEventId?: string | null;
 }) {
+    const normalizedLatestInferenceEventId = useMemo(
+        () => extractUuidFromText(latestInferenceEventId),
+        [latestInferenceEventId],
+    );
+
     const defaultPayloads = useMemo<Record<ExplorerEndpoint, string>>(() => ({
         '/api/inference': JSON.stringify({
             model: { name: 'gpt-4o-mini', version: '1.0.0' },
@@ -31,7 +37,7 @@ export default function DeveloperApiExplorer({
             },
         }, null, 2),
         '/api/outcome': JSON.stringify({
-            inference_event_id: latestInferenceEventId ?? '00000000-0000-0000-0000-000000000000',
+            inference_event_id: normalizedLatestInferenceEventId ?? '00000000-0000-0000-0000-000000000000',
             outcome: {
                 type: 'confirmed_diagnosis',
                 payload: {
@@ -57,13 +63,13 @@ export default function DeveloperApiExplorer({
             },
         }, null, 2),
         '/api/evaluation': JSON.stringify({
-            inference_event_id: latestInferenceEventId ?? undefined,
+            inference_event_id: normalizedLatestInferenceEventId ?? undefined,
             model_name: 'VetIOS Diagnostics',
             model_version: '1.0.0',
             predicted_confidence: 0.82,
             trigger_type: 'inference',
         }, null, 2),
-    }), [latestInferenceEventId]);
+    }), [normalizedLatestInferenceEventId]);
 
     const [endpoint, setEndpoint] = useState<ExplorerEndpoint>('/api/inference');
     const [payload, setPayload] = useState(defaultPayloads['/api/inference']);
@@ -153,7 +159,7 @@ export default function DeveloperApiExplorer({
                             <input
                                 type="text"
                                 disabled
-                                value={latestInferenceEventId ?? 'No inference event available yet'}
+                                value={normalizedLatestInferenceEventId ?? latestInferenceEventId ?? 'No inference event available yet'}
                                 className="w-full bg-dim border border-grid p-2 font-mono text-[10px] text-muted outline-none cursor-not-allowed"
                             />
                         </div>
@@ -168,9 +174,9 @@ export default function DeveloperApiExplorer({
                     </span>
                     <button
                         onClick={handleExecute}
-                        disabled={loading || ((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !latestInferenceEventId)}
+                        disabled={loading || ((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !normalizedLatestInferenceEventId)}
                         className={`px-4 py-1.5 font-mono text-[10px] tracking-widest uppercase flex items-center gap-2 transition-colors border ${
-                            loading || ((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !latestInferenceEventId)
+                            loading || ((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !normalizedLatestInferenceEventId)
                                 ? 'border-grid text-muted cursor-not-allowed'
                                 : endpoint === '/api/simulate'
                                     ? 'border-danger text-danger hover:bg-danger hover:text-white'
@@ -181,11 +187,11 @@ export default function DeveloperApiExplorer({
                         Execute
                     </button>
                 </div>
-                {((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !latestInferenceEventId) && (
+                {((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !normalizedLatestInferenceEventId) && (
                     <div className="bg-danger/10 border-b border-danger/30 p-3 flex items-center gap-3">
                         <AlertTriangle className="w-4 h-4 text-danger shrink-0" />
                         <span className="font-mono text-[10px] text-danger uppercase tracking-tight">
-                            Critical Dependency Missing: No inference event ID found. Please run a <span className="font-bold">POST /api/inference</span> first to generate a valid target.
+                            Critical Dependency Missing: No canonical inference UUID found. Run <span className="font-bold">POST /api/inference</span> first, or use a value that contains the real inference UUID.
                         </span>
                     </div>
                 )}

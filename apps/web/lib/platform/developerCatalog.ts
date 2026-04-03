@@ -44,7 +44,7 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             'This is the core data-flywheel closeout surface.',
         ],
         samplePayload: {
-            inference_event_id: 'uuid-of-prior-inference',
+            inference_event_id: '11111111-1111-4111-8111-111111111111',
             outcome: {
                 type: 'confirmed_diagnosis',
                 payload: {
@@ -90,7 +90,7 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             'Feeds model assessment and governance review workflows.',
         ],
         samplePayload: {
-            inference_event_id: 'uuid-of-prior-inference',
+            inference_event_id: '11111111-1111-4111-8111-111111111111',
             model_name: 'VetIOS Diagnostics',
             model_version: 'latest',
             predicted_confidence: 0.82,

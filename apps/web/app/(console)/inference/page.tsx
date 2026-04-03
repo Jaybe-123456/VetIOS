@@ -11,6 +11,7 @@ import { TreatmentPathwaysPanel } from '@/components/TreatmentPathwaysPanel';
 import { InferenceForm } from '@/components/InferenceForm';
 import { NormalizedPreview } from '@/components/NormalizedPreview';
 import { normalizeInferenceInput, type InputMode, type NormalizedInput } from '@/lib/input/inputNormalizer';
+import { extractUuidFromText } from '@/lib/utils/uuid';
 import { ShieldCheck, Activity, AlertTriangle, Brain, CheckCircle2, ChevronDown, ChevronUp, BarChart3, Binary, HeartPulse, Workflow } from 'lucide-react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel, TerminalInput, TerminalTextarea, TerminalButton, TerminalTabs } from '@/components/ui/terminal';
 
@@ -247,11 +248,9 @@ export default function InferenceConsole() {
                 throw new Error((result.error || `Inference computation failed (HTTP ${res.status})`) + requestIdSuffix);
             }
 
-            const inferenceEventId = typeof result.inference_event_id === 'string' && result.inference_event_id.trim().length > 0
-                ? result.inference_event_id
-                : null;
+            const inferenceEventId = extractUuidFromText(result.inference_event_id);
             if (!inferenceEventId) {
-                throw new Error('Inference succeeded but no inference_event_id was returned.');
+                throw new Error('Inference succeeded but returned an invalid inference_event_id.');
             }
 
             const output = (result.output ?? result.prediction) as Record<string, unknown> | undefined;
