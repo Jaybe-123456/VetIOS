@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, ShieldAlert } from 'lucide-react';
 import { ConsoleCard, TerminalButton, TerminalInput, TerminalLabel, TerminalTextarea } from '@/components/ui/terminal';
+import { extractUuidFromText } from '@/lib/utils/uuid';
 import type {
     TreatmentCandidateRecord,
     TreatmentPerformanceSummary,
@@ -24,6 +25,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
     const [resourceProfile, setResourceProfile] = useState<TreatmentResourceProfile>('advanced');
     const [regulatoryRegion, setRegulatoryRegion] = useState('US');
     const [careEnvironment, setCareEnvironment] = useState('general practice');
+    const normalizedInferenceEventId = useMemo(() => extractUuidFromText(inferenceEventId), [inferenceEventId]);
     const [loadState, setLoadState] = useState<LoadState>({ status: 'idle' });
     const [formState, setFormState] = useState({
         pathway: 'gold_standard',
@@ -40,6 +42,14 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
     });
 
     const loadRecommendations = useCallback(async () => {
+        if (!normalizedInferenceEventId) {
+            setLoadState({
+                status: 'error',
+                message: 'Treatment pathways require a valid inference UUID. Run a fresh inference or use the canonical UUID instead of a raw telemetry event ID.',
+            });
+            return;
+        }
+
         setLoadState((current) => current.status === 'ready'
             ? { status: 'ready', bundle: current.bundle, message: current.message ?? null }
             : { status: 'loading' });
@@ -51,7 +61,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                 credentials: 'same-origin',
                 cache: 'no-store',
                 body: JSON.stringify({
-                    inference_event_id: inferenceEventId,
+                    inference_event_id: normalizedInferenceEventId,
                     context: {
                         resource_profile: resourceProfile,
                         regulatory_region: regulatoryRegion,
@@ -71,7 +81,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                 message: error instanceof Error ? error.message : 'Failed to load treatment pathways.',
             });
         }
-    }, [careEnvironment, inferenceEventId, regulatoryRegion, resourceProfile]);
+    }, [careEnvironment, normalizedInferenceEventId, regulatoryRegion, resourceProfile]);
 
     useEffect(() => {
         void loadRecommendations();
@@ -84,6 +94,14 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
     async function handleLogTreatment(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (loadState.status !== 'ready') return;
+        if (!normalizedInferenceEventId) {
+            setFormState((current) => ({
+                ...current,
+                error: 'Treatment logging requires a valid inference UUID. Run a fresh inference and retry.',
+                message: '',
+            }));
+            return;
+        }
         const selectedOption = loadState.bundle.options.find((option) => option.treatment_pathway === formState.pathway);
         if (!selectedOption) {
             setFormState((current) => ({ ...current, error: 'Select a valid treatment pathway.', message: '' }));
@@ -99,7 +117,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                 credentials: 'same-origin',
                 cache: 'no-store',
                 body: JSON.stringify({
-                    inference_event_id: inferenceEventId,
+                    inference_event_id: normalizedInferenceEventId,
                     treatment_candidate_id: selectedOption.id,
                     selection: {
                         disease: loadState.bundle.disease,

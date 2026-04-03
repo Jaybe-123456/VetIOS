@@ -11,8 +11,17 @@ export function OutcomeAttachForm({ onSubmit, isSubmitting }: OutcomeAttachFormP
     return (
         <form onSubmit={onSubmit} className="space-y-6">
             <div>
-                <TerminalLabel htmlFor="eventId">Inference Event ID Hash</TerminalLabel>
-                <TerminalInput id="eventId" name="eventId" placeholder="e.g. evt_98f4jd82" required />
+                <TerminalLabel htmlFor="eventId">Inference Event ID (UUID)</TerminalLabel>
+                <TerminalInput
+                    id="eventId"
+                    name="eventId"
+                    placeholder="e.g. 6f1f7d2c-90d4-4c29-a53a-7c59f3b5c81a"
+                    required
+                />
+                <p className="mt-2 font-mono text-[11px] text-muted">
+                    Paste the canonical inference UUID. If you copied a telemetry ID like `evt_inference_...`,
+                    VetIOS will extract the UUID automatically.
+                </p>
             </div>
 
             <div>

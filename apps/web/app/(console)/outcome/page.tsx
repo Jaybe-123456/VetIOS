@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalTabs } from '@/components/ui/terminal';
 import { OutcomeAttachForm } from '@/components/OutcomeAttachForm';
+import { extractUuidFromText } from '@/lib/utils/uuid';
 import { ArrowRight, ArrowDown, BrainCircuit, Activity, Database, GitMerge, CheckCircle2, FlaskConical, MonitorDot } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -42,8 +43,18 @@ export default function OutcomeLearning() {
         e.preventDefault();
 
         const formData = new FormData(e.currentTarget);
+        const inferenceEventId = extractUuidFromText(formData.get('eventId'));
+        if (!inferenceEventId) {
+            setState({
+                status: 'error',
+                pipelineStage: 'idle',
+                errorMessage: 'Inference Event ID must be a valid UUID. Paste the canonical inference ID or an evt_inference_<uuid> value so VetIOS can extract it.',
+            });
+            return;
+        }
+
         const data = {
-            inference_event_id: formData.get('eventId'),
+            inference_event_id: inferenceEventId,
             outcome: {
                 type: 'clinical_diagnosis',
                 payload: {
@@ -54,7 +65,6 @@ export default function OutcomeLearning() {
             }
         };
 
-        // Stage 1: Prediction acknowledged
         setActiveTab('monitor'); // Auto-switch to monitor tab
         setState({ status: 'submitting', pipelineStage: 'prediction' });
         await delay(400);

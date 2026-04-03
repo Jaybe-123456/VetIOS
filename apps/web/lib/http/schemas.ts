@@ -11,6 +11,18 @@
  */
 
 import { z } from 'zod';
+import { extractUuidFromText } from '@/lib/utils/uuid';
+
+const UuidLikeSchema = z.preprocess(
+    (value) => extractUuidFromText(value) ?? value,
+    z.uuid(),
+);
+
+const OptionalUuidLikeSchema = z.preprocess((value) => {
+    if (value == null) return undefined;
+    if (typeof value === 'string' && value.trim().length === 0) return undefined;
+    return extractUuidFromText(value) ?? value;
+}, z.uuid().optional());
 
 // ── /api/inference ───────────────────────────────────────────────────────────
 
@@ -43,7 +55,7 @@ export type InferenceRequest = z.infer<typeof InferenceRequestSchema>;
 // ── /api/outcome ─────────────────────────────────────────────────────────────
 
 export const OutcomeRequestSchema = z.object({
-    inference_event_id: z.uuid(),
+    inference_event_id: UuidLikeSchema,
     clinic_id: z.string().optional(),
     case_id: z.string().optional(),
     outcome: z.object({
@@ -82,7 +94,7 @@ export type SimulateRequest = z.infer<typeof SimulateRequestSchema>;
 // ── /api/evaluation ──────────────────────────────────────────────────────────
 
 export const EvaluationRequestSchema = z.object({
-    inference_event_id: z.uuid().optional(),
+    inference_event_id: OptionalUuidLikeSchema,
     model_name: z.string().min(1),
     model_version: z.string().min(1),
     predicted_confidence: z.number().min(0).max(1).optional(),
@@ -193,7 +205,7 @@ export type EpisodeReconcileRequest = z.infer<typeof EpisodeReconcileRequestSche
  * Format Zod errors into a clean, client-friendly message.
  */
 export const TreatmentRecommendRequestSchema = z.object({
-    inference_event_id: z.uuid(),
+    inference_event_id: UuidLikeSchema,
     context: z.object({
         resource_profile: z.enum(['advanced', 'low_resource']).optional().default('advanced'),
         regulatory_region: z.string().min(1).optional(),
@@ -210,7 +222,7 @@ export const TreatmentRecommendRequestSchema = z.object({
 export type TreatmentRecommendRequest = z.infer<typeof TreatmentRecommendRequestSchema>;
 
 export const TreatmentOutcomeRequestSchema = z.object({
-    inference_event_id: z.uuid(),
+    inference_event_id: UuidLikeSchema,
     treatment_candidate_id: z.uuid().optional(),
     treatment_event_id: z.uuid().optional(),
     selection: z.object({
