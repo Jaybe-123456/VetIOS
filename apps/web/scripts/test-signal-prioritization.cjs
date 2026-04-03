@@ -63,6 +63,28 @@ function runScenario(mod, scenario) {
         );
     }
 
+    if (scenario.expectedDominantSystem) {
+        assert(
+            result.signalHierarchy.dominant_system === scenario.expectedDominantSystem,
+            `Scenario "${scenario.name}" expected dominant system "${scenario.expectedDominantSystem}" but got "${result.signalHierarchy.dominant_system}".`,
+        );
+    }
+
+    if (scenario.forbidTop3) {
+        const top3 = result.ranked.slice(0, 3).map((entry) => entry.name);
+        assert(
+            !top3.includes(scenario.forbidTop3),
+            `Scenario "${scenario.name}" unexpectedly ranked "${scenario.forbidTop3}" in the top-3 (${top3.join(', ')}).`,
+        );
+    }
+
+    if (scenario.requiredDownweightedGenericSignal) {
+        assert(
+            result.signalHierarchy.generic_signals_downweighted.includes(scenario.requiredDownweightedGenericSignal),
+            `Scenario "${scenario.name}" expected generic signal "${scenario.requiredDownweightedGenericSignal}" to be down-weighted but got [${result.signalHierarchy.generic_signals_downweighted.join(', ')}].`,
+        );
+    }
+
     if (scenario.maxTopProbability != null) {
         assert(
             (result.ranked[0]?.probability ?? 0) <= scenario.maxTopProbability,
@@ -77,12 +99,39 @@ function main() {
     const mod = compileModule();
     const scenarios = [
         {
+            name: 'hepatic tox anchors defeat generic gastroenteritis overlap',
+            species: 'dog',
+            expectedTop: 'Aflatoxicosis',
+            expectedProtectedCategory: 'Toxicology',
+            expectedDominantSystem: 'hepatic',
+            forbidTop3: 'Acute Gastroenteritis',
+            requiredDownweightedGenericSignal: 'vomiting',
+            minimumMargin: 0.05,
+            inputSignature: {
+                species: 'dog',
+                symptoms: ['vomiting', 'diarrhea', 'lethargy', 'weakness'],
+                history: 'Feed-associated toxicosis with progressive jaundice and hepatic failure concerns.',
+                exposure: 'Possible aflatoxin exposure.',
+                exam: {
+                    jaundice: true,
+                    hepatic_dysfunction: true,
+                },
+                labs: {
+                    alt_u_l: 340,
+                    ast_u_l: 162,
+                    total_bilirubin_mg_dl: 2.8,
+                    coagulopathy: true,
+                },
+            },
+        },
+        {
             name: 'neurologic infection anchor defeats epilepsy fallback',
             species: 'dog',
             expectedTop: 'Infectious Meningoencephalitis',
             forbidTop: 'Idiopathic Epilepsy',
             requiredAnchorLock: 'infectious-neuro-anchor',
             expectedProtectedCategory: 'Neurological',
+            expectedDominantSystem: 'neurologic',
             minimumMargin: 0.08,
             inputSignature: {
                 species: 'dog',
@@ -142,6 +191,7 @@ function main() {
             expectedTop: 'Gastric Dilatation-Volvulus (GDV)',
             requiredAnchorLock: 'gdv-anchor',
             expectedProtectedCategory: 'Gastrointestinal',
+            expectedDominantSystem: 'gastrointestinal',
             minimumMargin: 0.16,
             inputSignature: {
                 species: 'dog',

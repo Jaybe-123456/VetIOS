@@ -55,12 +55,28 @@ function runCase(mod, scenario) {
     if (scenario.expectedCategory) {
         assert(result.activeCategories.includes(scenario.expectedCategory), `Scenario "${scenario.name}" expected active category "${scenario.expectedCategory}" but got ${result.activeCategories.join(', ')}.`);
     }
+    if (scenario.expectedDominantSystem) {
+        assert(
+            result.signalHierarchy.dominant_system === scenario.expectedDominantSystem,
+            `Scenario "${scenario.name}" expected dominant system "${scenario.expectedDominantSystem}" but got "${result.signalHierarchy.dominant_system}".`,
+        );
+    }
     if (scenario.minTopMargin != null) {
         const margin = (result.ranked[0]?.probability ?? 0) - (result.ranked[1]?.probability ?? 0);
         assert(margin >= scenario.minTopMargin, `Scenario "${scenario.name}" expected top-margin >= ${scenario.minTopMargin} but got ${margin.toFixed(3)}.`);
     }
     if (scenario.forbidTop) {
         assert(topName(result) !== scenario.forbidTop, `Scenario "${scenario.name}" unexpectedly ranked forbidden diagnosis "${scenario.forbidTop}" first.`);
+    }
+    if (scenario.forbidTop3) {
+        const top3 = result.ranked.slice(0, 3).map((entry) => entry.name);
+        assert(!top3.includes(scenario.forbidTop3), `Scenario "${scenario.name}" unexpectedly ranked forbidden diagnosis "${scenario.forbidTop3}" inside top-3 (${top3.join(', ')}).`);
+    }
+    if (scenario.requiredDownweightedGenericSignal) {
+        assert(
+            result.signalHierarchy.generic_signals_downweighted.includes(scenario.requiredDownweightedGenericSignal),
+            `Scenario "${scenario.name}" expected generic signal "${scenario.requiredDownweightedGenericSignal}" to be down-weighted but got [${result.signalHierarchy.generic_signals_downweighted.join(', ')}].`,
+        );
     }
 
     return result;
@@ -78,10 +94,36 @@ function main() {
 
     const scenarios = [
         {
+            name: 'aflatoxicosis hepatic dominance suppresses gi mimics',
+            species: 'dog',
+            expectedTop: 'Aflatoxicosis',
+            expectedCategory: 'Toxicology',
+            expectedDominantSystem: 'hepatic',
+            forbidTop3: 'Acute Gastroenteritis',
+            requiredDownweightedGenericSignal: 'vomiting',
+            minTopMargin: 0.06,
+            inputSignature: {
+                species: 'dog',
+                symptoms: ['vomiting', 'diarrhea', 'lethargy', 'weakness'],
+                exposure: 'Possible aflatoxin-contaminated feed exposure with progressive jaundice.',
+                exam: {
+                    jaundice: true,
+                    hepatic_dysfunction: true,
+                },
+                labs: {
+                    alt_u_l: 356,
+                    ast_u_l: 188,
+                    total_bilirubin_mg_dl: 3.4,
+                    coagulopathy: true,
+                },
+            },
+        },
+        {
             name: 'classic gdv',
             species: 'dog',
             expectedTop: 'Gastric Dilatation-Volvulus (GDV)',
             expectedCategory: 'Gastrointestinal',
+            expectedDominantSystem: 'gastrointestinal',
             minTopMargin: 0.1,
             inputSignature: {
                 species: 'dog',
@@ -95,6 +137,8 @@ function main() {
             species: 'dog',
             expectedTop: 'Rabies',
             expectedCategory: 'Neurological',
+            expectedDominantSystem: 'neurologic',
+            forbidTop3: 'Acute Gastroenteritis',
             inputSignature: {
                 species: 'dog',
                 symptoms: ['aggression', 'difficulty swallowing', 'drooling'],
