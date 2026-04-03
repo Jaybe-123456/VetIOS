@@ -81,6 +81,7 @@ interface InferenceState {
 export default function InferenceConsole() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<InferenceTab>('analysis');
+    const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
     const [state, setState] = useState<InferenceState>({
         status: 'idle',
         eventId: null,
@@ -312,6 +313,18 @@ export default function InferenceConsole() {
         setState(prev => ({ ...prev, status: 'idle', normalizedInput: null }));
     }
 
+    async function handleCopyEventId() {
+        if (!state.eventId) return;
+        try {
+            await navigator.clipboard.writeText(state.eventId);
+            setCopyStatus('copied');
+            window.setTimeout(() => setCopyStatus('idle'), 2000);
+        } catch {
+            setCopyStatus('error');
+            window.setTimeout(() => setCopyStatus('idle'), 2000);
+        }
+    }
+
     async function loadEpisodeWorkflow(episodeId: string): Promise<WorkflowEpisodeDetail> {
         const response = await fetch(`/api/episodes/${episodeId}?limit=20`, {
             credentials: 'same-origin',
@@ -507,12 +520,19 @@ export default function InferenceConsole() {
                             <>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <ConsoleCard title="Event Identity">
-                                        <div className="font-mono text-2xl text-accent tracking-wider font-bold truncate">
+                                        <div className="font-mono text-sm sm:text-lg md:text-xl text-accent tracking-wide font-bold break-all leading-relaxed select-all">
                                             {state.eventId}
                                         </div>
                                         <p className="text-[10px] text-muted uppercase mt-2 font-mono">
-                                            Immutable Reference Hash.
+                                            Inference Event UUID. Use this exact value when attaching outcomes or treatment feedback.
                                         </p>
+                                        <button
+                                            type="button"
+                                            onClick={handleCopyEventId}
+                                            className="mt-3 border border-accent/40 bg-accent/10 px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-accent transition-colors hover:bg-accent/20"
+                                        >
+                                            {copyStatus === 'copied' ? 'Copied UUID' : copyStatus === 'error' ? 'Copy Failed' : 'Copy UUID'}
+                                        </button>
                                     </ConsoleCard>
 
                                     <div className="flex flex-col gap-3">
