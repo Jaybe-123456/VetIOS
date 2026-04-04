@@ -322,11 +322,15 @@ function AttemptRow({ attempt }: { attempt: PassiveSignalOperationsSnapshot['rec
             <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
                 {attempt.status} / attempt {attempt.attempt_no}
             </div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
+            <div className="mt-3 grid gap-x-6 gap-y-1 grid-cols-1 md:grid-cols-2 min-w-0">
                 <DataRow label="Started" value={formatTimestamp(attempt.started_at)} />
                 <DataRow label="Finished" value={formatTimestamp(attempt.finished_at)} />
-                <DataRow label="Handler" value={attempt.handler_key} />
-                <DataRow label="Error" value={attempt.error_message ?? 'NO ERROR'} />
+                <div className="md:col-span-2 border-t border-muted/10 pt-1">
+                    <DataRow label="Handler" value={attempt.handler_key} />
+                </div>
+                <div className="md:col-span-2">
+                    <DataRow label="Error" value={attempt.error_message ?? 'NO ERROR'} />
+                </div>
             </div>
         </div>
     );
