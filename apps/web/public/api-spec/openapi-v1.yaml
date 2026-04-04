@@ -1,0 +1,560 @@
+openapi: 3.1.0
+info:
+  title: VetIOS Clinical Intelligence API
+  version: 1.0.0
+  description: |
+    The VetIOS API provides clinical inference, outcome contribution,
+    federated learning, and PetPass integration for veterinary software.
+    Base URL: https://api.vetios.tech/v1
+  contact:
+    name: VetIOS Developer Support
+    email: api@vetios.tech
+    url: https://www.vetios.tech/developer
+  x-changelog: https://www.vetios.tech/developer/changelog
+servers:
+  - url: https://api.vetios.tech/v1
+    description: Production
+  - url: https://sandbox.vetios.tech/v1
+    description: Sandbox (no billing, limited quota)
+security:
+  - BearerAuth: []
+tags:
+  - name: Inference
+  - name: Outcomes
+  - name: Dataset
+  - name: Models
+  - name: PetPass
+  - name: Usage
+paths:
+  /inference/differential:
+    post:
+      tags: [Inference]
+      summary: Ranked clinical differential diagnosis
+      x-scope: inference
+      x-plan-required: sandbox
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InferenceRequest'
+            examples:
+              default:
+                value:
+                  model:
+                    name: VetIOS Diagnostics
+                    version: latest
+                  input:
+                    input_signature:
+                      species: canine
+                      breed: German Shepherd
+                      symptoms:
+                        - vomiting
+                        - jaundice
+                        - lethargy
+                      metadata:
+                        age_years: 3
+      responses:
+        '200':
+          description: Differential generated successfully
+          headers:
+            API-Version: { $ref: '#/components/headers/APIVersion' }
+            X-RateLimit-Limit: { $ref: '#/components/headers/XRateLimitLimit' }
+            X-Quota-Limit: { $ref: '#/components/headers/XQuotaLimit' }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InferenceResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /inference/drug-check:
+    post:
+      tags: [Inference]
+      summary: Species-specific drug interaction and dosing review
+      x-scope: inference
+      x-plan-required: clinic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DrugCheckRequest'
+            examples:
+              default:
+                value:
+                  inference_event_id: 11111111-1111-4111-8111-111111111111
+                  context:
+                    resource_profile: advanced
+                    regulatory_region: KE
+                    care_environment: specialty
+                    comorbidities: [hepatic dysfunction]
+                    lab_flags: [ALT_high, bilirubin_high]
+      responses:
+        '200':
+          description: Drug check returned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DrugCheckResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /inference/adversarial:
+    post:
+      tags: [Inference]
+      summary: Adversarial simulation for edge-case failure analysis
+      x-scope: simulation
+      x-plan-required: research
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdversarialRequest'
+      responses:
+        '200':
+          description: Adversarial sweep generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdversarialResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /outcomes/contribute:
+    post:
+      tags: [Outcomes]
+      summary: Federated outcome contribution
+      x-scope: outcomes
+      x-plan-required: clinic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OutcomeContributionRequest'
+      responses:
+        '200':
+          description: Outcome contribution accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutcomeContributionResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /dataset/prevalence:
+    get:
+      tags: [Dataset]
+      summary: Regional disease prevalence queries
+      x-scope: dataset
+      x-plan-required: research
+      parameters:
+        - in: query
+          name: species
+          schema: { type: string }
+        - in: query
+          name: region
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 500, minimum: 50, maximum: 1000 }
+      responses:
+        '200':
+          description: Dataset prevalence summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DatasetPrevalenceResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /models/card:
+    get:
+      tags: [Models]
+      summary: Live model performance metrics
+      x-scope: inference
+      x-plan-required: clinic
+      responses:
+        '200':
+          description: Model registry summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelCardResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /petpass/sync:
+    post:
+      tags: [PetPass]
+      summary: Push visit record to PetPass
+      x-scope: petpass
+      x-plan-required: clinic
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PetPassSyncRequest'
+      responses:
+        '201':
+          description: Visit sync staged successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PetPassSyncResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /petpass/history/{pet_id}:
+    get:
+      tags: [PetPass]
+      summary: Retrieve pet health history
+      x-scope: petpass
+      x-plan-required: clinic
+      parameters:
+        - in: path
+          name: pet_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: PetPass history payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PetPassHistoryResponse'
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /usage/quota:
+    get:
+      tags: [Usage]
+      summary: Current quota status
+      x-scope: inference
+      x-plan-required: sandbox
+      responses:
+        '200':
+          description: Current quota usage
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageQuotaResponse'
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /usage/analytics:
+    get:
+      tags: [Usage]
+      summary: Usage analytics summary
+      x-scope: inference
+      x-plan-required: sandbox
+      parameters:
+        - in: query
+          name: days
+          schema: { type: integer, default: 30, minimum: 1, maximum: 365 }
+      responses:
+        '200':
+          description: Usage analytics overview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UsageAnalyticsResponse'
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+        '429': { $ref: '#/components/responses/RateLimitError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: API key issued from developer.vetios.tech. Format: vios_k1_...
+  headers:
+    APIVersion:
+      schema: { type: string, example: 1.0.0 }
+    XRateLimitLimit:
+      schema: { type: integer, example: 60 }
+    XQuotaLimit:
+      schema: { type: integer, example: 10000 }
+  responses:
+    ValidationError:
+      description: Request validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            invalid:
+              value:
+                error: input.input_signature.symptoms: Expected array
+    AuthError:
+      description: Invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            invalid:
+              value:
+                error: Invalid API key
+    ScopeError:
+      description: Insufficient scope or suspended partner
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimitError:
+      description: Rate limit or quota exceeded
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/RateLimitErrorResponse'
+              - $ref: '#/components/schemas/QuotaExceededErrorResponse'
+    InternalError:
+      description: Internal platform error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+    RateLimitErrorResponse:
+      type: object
+      properties:
+        error: { type: string, enum: [rate_limit_exceeded] }
+        message: { type: string }
+        retry_after: { type: integer }
+        docs: { type: string, format: uri }
+      required: [error, message, retry_after, docs]
+    QuotaExceededErrorResponse:
+      type: object
+      properties:
+        error: { type: string, enum: [monthly_quota_exceeded] }
+        message: { type: string }
+        quota_resets_at: { type: string, format: date-time, nullable: true }
+        upgrade_url: { type: string, format: uri }
+      required: [error, message, upgrade_url]
+    InferenceRequest:
+      type: object
+      required: [model, input]
+      properties:
+        clinic_id: { type: string, nullable: true }
+        case_id: { type: string, nullable: true }
+        model:
+          type: object
+          required: [name, version]
+          properties:
+            name: { type: string }
+            version: { type: string }
+        input:
+          type: object
+          required: [input_signature]
+          properties:
+            input_signature:
+              type: object
+              properties:
+                species: { type: string, nullable: true }
+                breed: { type: string, nullable: true }
+                symptoms:
+                  type: array
+                  items: { type: string }
+                metadata:
+                  type: object
+                  additionalProperties: true
+    InferenceResponse:
+      type: object
+      properties:
+        request_id: { type: string }
+        inference_event_id: { type: string, format: uuid }
+        confidence_score: { type: number, nullable: true }
+        output_payload:
+          type: object
+          additionalProperties: true
+      additionalProperties: true
+    DrugCheckRequest:
+      type: object
+      required: [inference_event_id]
+      properties:
+        inference_event_id: { type: string, format: uuid }
+        context:
+          type: object
+          properties:
+            resource_profile: { type: string, enum: [advanced, low_resource] }
+            regulatory_region: { type: string }
+            care_environment: { type: string }
+            comorbidities:
+              type: array
+              items: { type: string }
+            lab_flags:
+              type: array
+              items: { type: string }
+    DrugCheckResponse:
+      type: object
+      properties:
+        request_id: { type: string }
+        case_id: { type: string, nullable: true }
+        episode_id: { type: string, nullable: true }
+      additionalProperties: true
+    AdversarialRequest:
+      type: object
+      properties:
+        base_case:
+          type: object
+          additionalProperties: true
+        steps: { type: integer, minimum: 5, maximum: 15, default: 10 }
+        mode: { type: string, enum: [linear, adaptive], default: adaptive }
+        simulation:
+          type: object
+          properties:
+            type: { type: string }
+            parameters:
+              type: object
+              additionalProperties: true
+        inference:
+          type: object
+          properties:
+            model: { type: string }
+            model_version: { type: string }
+    AdversarialResponse:
+      type: object
+      additionalProperties: true
+    OutcomeContributionRequest:
+      type: object
+      required: [inference_event_id, outcome]
+      properties:
+        inference_event_id: { type: string, format: uuid }
+        clinic_id: { type: string, nullable: true }
+        case_id: { type: string, nullable: true }
+        outcome:
+          type: object
+          required: [type, payload, timestamp]
+          properties:
+            type: { type: string }
+            payload:
+              type: object
+              additionalProperties: true
+            timestamp: { type: string, format: date-time }
+    OutcomeContributionResponse:
+      type: object
+      additionalProperties: true
+    DatasetPrevalenceResponse:
+      type: object
+      properties:
+        species: { type: string, nullable: true }
+        region: { type: string, nullable: true }
+        cases_analyzed: { type: integer }
+        conditions:
+          type: array
+          items:
+            type: object
+            properties:
+              condition: { type: string }
+              count: { type: integer }
+              prevalence_pct: { type: number }
+    ModelCardResponse:
+      type: object
+      properties:
+        tenant_id: { type: string }
+        refreshed_at: { type: string, format: date-time }
+        cards:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    PetPassSyncRequest:
+      type: object
+      required: [owner_account_id, pet_id, visit_date]
+      properties:
+        owner_account_id: { type: string, format: uuid }
+        pet_id: { type: string, format: uuid }
+        clinic_id: { type: string, nullable: true }
+        clinic_name: { type: string, nullable: true }
+        visit_date: { type: string, format: date-time }
+        diagnoses:
+          type: array
+          items: { type: string }
+        prescriptions:
+          type: array
+          items: { type: string }
+        weight_kg: { type: number, nullable: true }
+        next_appointment: { type: string, nullable: true }
+        summary: { type: string, nullable: true }
+        channel: { type: string, enum: [sms, email, push] }
+        send_notification: { type: boolean }
+    PetPassSyncResponse:
+      type: object
+      properties:
+        synced: { type: boolean }
+        timeline_entry_id: { type: string, format: uuid }
+        notification_delivery_id: { type: string, format: uuid, nullable: true }
+      required: [synced, timeline_entry_id]
+    PetPassHistoryResponse:
+      type: object
+      properties:
+        pet:
+          type: object
+          additionalProperties: true
+        timeline:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        notifications:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    UsageQuotaResponse:
+      type: object
+      properties:
+        plan: { type: string }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        requests_used: { type: integer }
+        requests_limit: { type: integer }
+        pct_used: { type: number }
+        projected_month_end: { type: integer }
+        on_track: { type: boolean }
+    UsageAnalyticsResponse:
+      type: object
+      properties:
+        total_requests: { type: integer }
+        successful_requests: { type: integer }
+        failed_requests: { type: integer }
+        avg_response_time_ms: { type: number }
+        p95_response_time_ms: { type: number }
+        requests_by_day:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string }
+              count: { type: integer }
+        quota_used_pct: { type: number }
+        billable_requests: { type: integer }
+        estimated_cost_usd: { type: number }
