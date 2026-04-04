@@ -99,6 +99,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     pipelineTrace.push({ stage: 'contradiction_scoring', status: 'completed' });
 
     payload.diagnosis = safetyLayer.diagnosis;
+    payload.inference_explanation = safetyLayer.inference_explanation ?? null;
+    payload.differentials = (safetyLayer.diagnosis.top_differentials as unknown[]) ?? [];
     payload.mechanism_class = safetyLayer.mechanism_class;
     payload.diagnosis_feature_importance = safetyLayer.diagnosis_feature_importance;
     payload.suppressed_signals = safetyLayer.suppressed_signals;
