@@ -27,6 +27,8 @@ import {
     normalizeOntologyDiseaseName,
     scoreClosedWorldDiseases,
 } from '@/lib/ai/diseaseOntology';
+import { runClinicalInferenceEngine } from '@/lib/inference/engine';
+import type { InferenceExplanation } from '@/lib/inference/types';
 
 type ConditionClass =
     | 'Mechanical'
@@ -48,6 +50,19 @@ export interface DifferentialEntry {
     name: string;
     probability: number;
     key_drivers?: DifferentialDriver[];
+    rank?: number;
+    condition?: string;
+    confidence?: 'high' | 'moderate' | 'low';
+    determination_basis?: 'pathognomonic_test' | 'syndrome_pattern' | 'symptom_scoring' | 'exclusion_reasoning';
+    supporting_evidence?: Array<{ finding: string; weight: 'definitive' | 'strong' | 'supportive' | 'minor' }>;
+    contradicting_evidence?: Array<{ finding: string; weight: 'excludes' | 'weakens' }>;
+    relationship_to_primary?: {
+        type: 'secondary' | 'complication' | 'co-morbidity' | 'differential';
+        primary_condition: string;
+    };
+    clinical_urgency?: 'immediate' | 'urgent' | 'routine';
+    recommended_confirmatory_tests?: string[];
+    recommended_next_steps?: string[];
 }
 
 export interface DifferentialSpread {
@@ -59,6 +74,7 @@ export interface DifferentialSpread {
 
 export interface SafetyLayerResult {
     diagnosis: Record<string, unknown>;
+    inference_explanation?: InferenceExplanation;
     mechanism_class: MechanismClassOutput;
     diagnosis_feature_importance: Record<string, number>;
     suppressed_signals: string[];
@@ -472,29 +488,34 @@ export function applyDiagnosticSafetyLayer(params: {
     const signalWeightProfile = buildSignalWeightProfile(params.inputSignature, { contradiction: params.contradiction });
     const heuristicScoring = scoreCandidates(signals, params.inputSignature);
     const heuristicScores = heuristicScoring.scores;
+    const evidenceInference = runClinicalInferenceEngine(params.inputSignature);
     const existingDifferentials = normalizeExistingDifferentials(params.diagnosis.top_differentials);
-    const mergedDifferentials = mergeDifferentials({
-        contradictionScore,
-        heuristicScores,
-        signalHierarchy: heuristicScoring.signalHierarchy,
-        existingDifferentials,
-        emergencyEval: params.emergencyEval,
-        signals,
-    });
+    const mergedDifferentials = evidenceInference.differentials.length > 0
+        ? normalizeExistingDifferentials(evidenceInference.diagnosis.top_differentials)
+        : mergeDifferentials({
+            contradictionScore,
+            heuristicScores,
+            signalHierarchy: heuristicScoring.signalHierarchy,
+            existingDifferentials,
+            emergencyEval: params.emergencyEval,
+            signals,
+        });
     const mechanismClass = buildMechanismClassOutput({
         signals,
         differentials: mergedDifferentials,
         emergencyEval: params.emergencyEval,
     });
-    const differentialSpread = computeDifferentialSpread(mergedDifferentials);
-    const conditionClassProbabilities = buildConditionClassProbabilities(mergedDifferentials);
+    const differentialSpread = evidenceInference.differential_spread ?? computeDifferentialSpread(mergedDifferentials);
+    const conditionClassProbabilities = evidenceInference.diagnosis.condition_class_probabilities ?? buildConditionClassProbabilities(mergedDifferentials);
     const primaryClassMass = Math.max(...Object.values(conditionClassProbabilities));
     const preservedEmergency = params.emergencyEval.emergency_rule_reasons.some((reason) => reason.toLowerCase().includes('persistence'));
     const syndromeStable = (preservedEmergency && primaryClassMass >= 0.72) || primaryClassMass >= 0.82;
 
-    const providedConfidence = typeof params.diagnosis.confidence_score === 'number'
-        ? params.diagnosis.confidence_score
-        : null;
+    const providedConfidence = typeof evidenceInference.diagnosis.confidence_score === 'number'
+        ? evidenceInference.diagnosis.confidence_score
+        : typeof params.diagnosis.confidence_score === 'number'
+            ? params.diagnosis.confidence_score
+            : null;
     const leadingProbability = mergedDifferentials[0]?.probability ?? 0.3;
     const margin = differentialSpread?.spread ?? 0;
     const derivedConfidence = 0.36 + (leadingProbability * 0.45) + Math.min(0.12, margin * 0.5) + (syndromeStable ? 0.16 : 0);
@@ -524,25 +545,32 @@ export function applyDiagnosticSafetyLayer(params: {
             ? 'Contradictory clinical context exceeds safe diagnosis-confidence threshold while emergency severity remains high'
             : 'Differential remains too broad for a safe high-confidence diagnosis; clinician review is recommended';
 
-    const diagnosisFeatureImportance = buildDiagnosisFeatureImportance(signals, mergedDifferentials, heuristicScores, signalWeightProfile);
+    const diagnosisFeatureImportance = Object.keys(evidenceInference.diagnosis_feature_importance).length > 0
+        ? evidenceInference.diagnosis_feature_importance
+        : buildDiagnosisFeatureImportance(signals, mergedDifferentials, heuristicScores, signalWeightProfile);
     const suppressedSignals = getSuppressedAcuteAbdominalFeatures(signals);
-    const uncertaintyNotes = buildUncertaintyNotes({
-        contradiction: params.contradiction,
-        contradictionScore,
-        emergencyEval: params.emergencyEval,
-        isUnstable,
-        postCapConfidence,
-        existingNotes: params.existingUncertaintyNotes,
-        signals,
-        signalHierarchy: heuristicScoring.signalHierarchy,
-    });
-    const primaryConditionClass = pickPrimaryConditionClass(mergedDifferentials, params.diagnosis.primary_condition_class, signals);
-    const diagnosisAnalysis = buildAnalysisText(
-        params.diagnosis.analysis,
-        mergedDifferentials,
-        contradictionScore,
-        params.emergencyEval,
-        heuristicScoring.signalHierarchy,
+    const uncertaintyNotes = mergeNoteSets(
+        buildUncertaintyNotes({
+            contradiction: params.contradiction,
+            contradictionScore,
+            emergencyEval: params.emergencyEval,
+            isUnstable,
+            postCapConfidence,
+            existingNotes: params.existingUncertaintyNotes,
+            signals,
+            signalHierarchy: heuristicScoring.signalHierarchy,
+        }),
+        evidenceInference.uncertainty_notes,
+    );
+    const primaryConditionClass = evidenceInference.diagnosis.primary_condition_class ?? pickPrimaryConditionClass(mergedDifferentials, params.diagnosis.primary_condition_class, signals);
+    const diagnosisAnalysis = typeof evidenceInference.diagnosis.analysis === 'string' && evidenceInference.diagnosis.analysis.trim().length > 0
+        ? evidenceInference.diagnosis.analysis
+        : buildAnalysisText(
+            params.diagnosis.analysis,
+            mergedDifferentials,
+            contradictionScore,
+            params.emergencyEval,
+            heuristicScoring.signalHierarchy,
     );
 
     const diagnosis: Record<string, unknown> = {
@@ -556,6 +584,7 @@ export function applyDiagnosticSafetyLayer(params: {
 
     return {
         diagnosis,
+        inference_explanation: evidenceInference.inference_explanation,
         mechanism_class: mechanismClass,
         diagnosis_feature_importance: diagnosisFeatureImportance,
         suppressed_signals: suppressedSignals,
@@ -580,6 +609,8 @@ export function applyDiagnosticSafetyLayer(params: {
             mechanism_class: mechanismClass,
             signal_hierarchy: heuristicScoring.signalHierarchy,
             ontology_active_categories: heuristicScoring.activeCategories,
+            inference_engine_primary_basis: evidenceInference.inference_explanation?.primary_determination ?? null,
+            inference_engine_key_finding: evidenceInference.inference_explanation?.key_finding ?? null,
         },
     };
 }
@@ -1389,7 +1420,40 @@ function normalizeExistingDifferentials(raw: unknown): DifferentialEntry[] {
             const probability = typeof candidate.probability === 'number' ? candidate.probability : 0.1;
             return {
                 name: canonicalName,
+                condition: typeof candidate.condition === 'string' ? candidate.condition : canonicalName,
+                rank: typeof candidate.rank === 'number' ? candidate.rank : undefined,
                 probability,
+                confidence:
+                    candidate.confidence === 'high' || candidate.confidence === 'moderate' || candidate.confidence === 'low'
+                        ? candidate.confidence
+                        : undefined,
+                determination_basis:
+                    candidate.determination_basis === 'pathognomonic_test'
+                    || candidate.determination_basis === 'syndrome_pattern'
+                    || candidate.determination_basis === 'symptom_scoring'
+                    || candidate.determination_basis === 'exclusion_reasoning'
+                        ? candidate.determination_basis
+                        : undefined,
+                supporting_evidence: Array.isArray(candidate.supporting_evidence)
+                    ? candidate.supporting_evidence as Array<{ finding: string; weight: 'definitive' | 'strong' | 'supportive' | 'minor' }>
+                    : undefined,
+                contradicting_evidence: Array.isArray(candidate.contradicting_evidence)
+                    ? candidate.contradicting_evidence as Array<{ finding: string; weight: 'excludes' | 'weakens' }>
+                    : undefined,
+                relationship_to_primary:
+                    candidate.relationship_to_primary && typeof candidate.relationship_to_primary === 'object'
+                        ? candidate.relationship_to_primary as DifferentialEntry['relationship_to_primary']
+                        : undefined,
+                clinical_urgency:
+                    candidate.clinical_urgency === 'immediate' || candidate.clinical_urgency === 'urgent' || candidate.clinical_urgency === 'routine'
+                        ? candidate.clinical_urgency
+                        : undefined,
+                recommended_confirmatory_tests: Array.isArray(candidate.recommended_confirmatory_tests)
+                    ? candidate.recommended_confirmatory_tests.filter((entry): entry is string => typeof entry === 'string')
+                    : undefined,
+                recommended_next_steps: Array.isArray(candidate.recommended_next_steps)
+                    ? candidate.recommended_next_steps.filter((entry): entry is string => typeof entry === 'string')
+                    : undefined,
                 key_drivers: Array.isArray(candidate.key_drivers)
                     ? (candidate.key_drivers as DifferentialDriver[])
                     : undefined,
@@ -1432,6 +1496,19 @@ function normalizeProbabilities(combined: Map<string, DifferentialEntry>): void 
     for (const entry of combined.values()) {
         entry.probability = Math.max(0, entry.probability) / total;
     }
+}
+
+function mergeNoteSets(...noteSets: unknown[]): string[] {
+    const merged = new Set<string>();
+    for (const value of noteSets) {
+        if (!Array.isArray(value)) continue;
+        for (const note of value) {
+            if (typeof note === 'string' && note.trim().length > 0) {
+                merged.add(note.trim());
+            }
+        }
+    }
+    return [...merged];
 }
 
 function clamp(value: number, min: number, max: number): number {
