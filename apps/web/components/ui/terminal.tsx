@@ -85,9 +85,9 @@ export function PageHeader({ title, description }: { title: string, description?
 
 export function DataRow({ label, value }: { label: string, value: React.ReactNode }) {
     return (
-        <div className="flex justify-between items-start gap-2 py-2 border-b border-muted/30">
-            <span className="font-mono text-[10px] sm:text-xs text-muted uppercase shrink-0">{label}</span>
-            <span className="font-mono text-xs sm:text-sm text-right">{value}</span>
+        <div className="flex justify-between items-start gap-4 py-2 border-b border-muted/30 min-w-0">
+            <span className="font-mono text-[10px] sm:text-xs text-muted uppercase shrink-0 mt-0.5">{label}</span>
+            <span className="font-mono text-xs sm:text-sm text-right break-all sm:break-words min-w-0 flex-1">{value}</span>
         </div>
     );
 }

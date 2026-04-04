@@ -473,11 +473,15 @@ function EventRow({
                                                     {attempt.success ? 'success' : 'failed'}
                                                 </div>
                                             </div>
-                                            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                                            <div className="mt-2 grid gap-x-6 gap-y-1 grid-cols-1 md:grid-cols-2">
                                                 <DataRow label="Status Code" value={attempt.statusCode ?? 'n/a'} />
                                                 <DataRow label="Duration" value={attempt.durationMs != null ? `${attempt.durationMs} ms` : 'n/a'} />
-                                                <DataRow label="Error" value={attempt.errorDetail ?? 'none'} />
-                                                <DataRow label="Response" value={attempt.responseBody ?? 'none'} />
+                                                <div className="md:col-span-2 border-t border-muted/10 pt-1">
+                                                    <DataRow label="Error" value={attempt.errorDetail ?? 'none'} />
+                                                </div>
+                                                <div className="md:col-span-2">
+                                                    <DataRow label="Response" value={attempt.responseBody ?? 'none'} />
+                                                </div>
                                             </div>
                                         </div>
                                     ))}
