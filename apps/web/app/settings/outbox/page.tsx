@@ -1,7 +1,8 @@
 import OutboxOperationsClient from '@/components/OutboxOperationsClient';
-import { getOutboxQueueSnapshot, type OutboxQueueSnapshot } from '@/lib/eventPlane/outbox';
+import { getEvents, getSnapshot } from '@/lib/outbox/outbox-service';
+import type { OutboxSnapshot } from '@/lib/outbox/types';
 import { buildControlPlanePermissionSet, resolveControlPlaneRole } from '@/lib/settings/permissions';
-import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
+import { resolveSessionTenant } from '@/lib/supabaseServer';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,15 +25,15 @@ export default async function OutboxOperationsPage() {
         );
     }
 
-    const tenantId = session?.tenantId ?? resolveDevTenantId();
-    const initialSnapshot = tenantId
-        ? await getOutboxQueueSnapshot(getSupabaseServer(), tenantId, { limit: 60 })
-        : createEmptyOutboxSnapshot();
+    const [initialSnapshot, initialEvents] = await Promise.all([
+        getSnapshot().catch(() => createEmptyOutboxSnapshot()),
+        getEvents({ limit: 50 }).then((result) => result.events).catch(() => []),
+    ]);
 
     return (
         <OutboxOperationsClient
             initialSnapshot={initialSnapshot}
-            tenantId={tenantId ?? 'dev_tenant_001'}
+            initialEvents={initialEvents}
             scheduler={{
                 cronPath: '/api/cron/outbox-dispatch',
                 cronSchedule: '*/1 * * * *',
@@ -44,27 +45,15 @@ export default async function OutboxOperationsPage() {
     );
 }
 
-function createEmptyOutboxSnapshot(): OutboxQueueSnapshot {
+function createEmptyOutboxSnapshot(): OutboxSnapshot {
     return {
-        counts: {
-            pending: 0,
-            processing: 0,
-            retryable: 0,
-            delivered: 0,
-            dead_letter: 0,
-        },
-        recent_events: [],
-        recent_attempts: [],
+        pending: 0,
+        processing: 0,
+        retryable: 0,
+        deadLetter: 0,
+        delivered: 0,
+        total: 0,
     };
-}
-
-function resolveDevTenantId(): string | null {
-    if (process.env.VETIOS_DEV_BYPASS !== 'true') {
-        return null;
-    }
-
-    const configuredTenantId = process.env.VETIOS_DEV_TENANT_ID?.trim();
-    return configuredTenantId || null;
 }
 
 function resolvePositiveInteger(value: string | undefined, fallback: number): number {

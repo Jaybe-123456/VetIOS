@@ -1,108 +1,105 @@
+import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
-import { dispatchOutboxBatch } from '@/lib/eventPlane/outbox';
+import { dispatchBatch, releaseStaleLeases } from '@/lib/outbox/outbox-service';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
-import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const DEFAULT_BATCH_SIZE = 25;
 const DEFAULT_MAX_BATCHES = 4;
+const DEFAULT_TIME_BUDGET_MS = 8_500;
 
 export async function GET(req: Request) {
+    return runCronDispatch(req);
+}
+
+export async function POST(req: Request) {
+    return runCronDispatch(req);
+}
+
+async function runCronDispatch(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 10, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    if (!isAuthorizedScheduledDispatcherRequest(req)) {
-        const response = NextResponse.json(
-            { error: 'Unauthorized', request_id: requestId },
-            { status: 401 },
-        );
+    if (!isAuthorizedCronRequest(req)) {
+        const response = NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     }
 
-    const batchSize = readPositiveInteger(
-        new URL(req.url).searchParams.get('batch_size'),
-        readPositiveInteger(process.env.VETIOS_OUTBOX_BATCH_SIZE, DEFAULT_BATCH_SIZE),
+    const url = new URL(req.url);
+    const batchSize = readPositiveInteger(url.searchParams.get('batch_size'), DEFAULT_BATCH_SIZE);
+    const maxBatches = readPositiveInteger(url.searchParams.get('max_batches'), DEFAULT_MAX_BATCHES);
+    const timeBudgetMs = readPositiveInteger(
+        url.searchParams.get('time_budget_ms') ?? process.env.VETIOS_OUTBOX_CRON_TIME_BUDGET_MS,
+        DEFAULT_TIME_BUDGET_MS,
     );
-    const maxBatches = readPositiveInteger(
-        new URL(req.url).searchParams.get('max_batches'),
-        readPositiveInteger(process.env.VETIOS_OUTBOX_CRON_MAX_BATCHES, DEFAULT_MAX_BATCHES),
-    );
-    const tenantId = normalizeOptionalText(new URL(req.url).searchParams.get('tenant_id'));
-    const workerId = [
-        'cron-outbox',
-        req.headers.get('x-vercel-cron')?.trim() || 'manual',
-        Date.now().toString(36),
-    ].join(':');
+    const workerIdBase = `cron-outbox:${req.headers.get('x-vercel-cron')?.trim() || 'manual'}:${randomUUID()}`;
+    const startedAt = Date.now();
 
-    const client = getSupabaseServer();
-    const runs: Array<Awaited<ReturnType<typeof dispatchOutboxBatch>>> = [];
-    for (let index = 0; index < maxBatches; index += 1) {
-        const result = await dispatchOutboxBatch(client, {
-            workerId: `${workerId}:${index + 1}`,
-            batchSize,
-            tenantId,
-        });
-        runs.push(result);
-        if (result.leased_count < batchSize) {
-            break;
+    try {
+        const released = await releaseStaleLeases();
+        const batches: Array<Awaited<ReturnType<typeof dispatchBatch>> & { batchIndex: number }> = [];
+
+        for (let batchIndex = 0; batchIndex < maxBatches; batchIndex += 1) {
+            if (Date.now() - startedAt >= timeBudgetMs) {
+                break;
+            }
+
+            const result = await dispatchBatch({
+                batchSize,
+                workerId: `${workerIdBase}:${batchIndex + 1}`,
+            });
+
+            batches.push({ ...result, batchIndex: batchIndex + 1 });
+            console.log(JSON.stringify({
+                ts: new Date().toISOString(),
+                workerId: result.workerId,
+                batch: batchIndex + 1,
+                dispatched: result.dispatched,
+                delivered: result.delivered,
+                failed: result.failed,
+                deadLettered: result.deadLettered,
+                durationMs: result.durationMs,
+            }));
+
+            if (result.dispatched < batchSize) {
+                break;
+            }
         }
+
+        const response = NextResponse.json({
+            releasedStaleLeases: released,
+            batches: batches.length,
+            totalDispatched: batches.reduce((sum, batch) => sum + batch.dispatched, 0),
+            totalDelivered: batches.reduce((sum, batch) => sum + batch.delivered, 0),
+            totalFailed: batches.reduce((sum, batch) => sum + batch.failed, 0),
+            totalDeadLettered: batches.reduce((sum, batch) => sum + batch.deadLettered, 0),
+            durationMs: Date.now() - startedAt,
+            request_id: requestId,
+        });
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
+    } catch (error) {
+        const response = NextResponse.json(
+            { error: error instanceof Error ? error.message : 'Outbox cron dispatch failed.', request_id: requestId },
+            { status: 500 },
+        );
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
     }
-
-    const response = NextResponse.json({
-        cron: {
-            schedule: '*/1 * * * *',
-            authorized_by: resolveSchedulerAuthLabel(req),
-            tenant_id: tenantId,
-            batch_size: batchSize,
-            max_batches: maxBatches,
-        },
-        summary: {
-            batches_run: runs.length,
-            leased_count: runs.reduce((sum, run) => sum + run.leased_count, 0),
-            delivered_count: runs.reduce((sum, run) => sum + run.delivered_count, 0),
-            retryable_count: runs.reduce((sum, run) => sum + run.retryable_count, 0),
-            dead_letter_count: runs.reduce((sum, run) => sum + run.dead_letter_count, 0),
-        },
-        runs,
-        request_id: requestId,
-    });
-    withRequestHeaders(response.headers, requestId, startTime);
-    return response;
 }
 
-function isAuthorizedScheduledDispatcherRequest(req: Request): boolean {
-    const token = extractBearerToken(req.headers.get('authorization'));
-    const cronSecret = normalizeOptionalText(process.env.CRON_SECRET);
-    const internalToken = normalizeOptionalText(process.env.VETIOS_INTERNAL_API_TOKEN);
-
-    if (cronSecret && token === cronSecret) {
-        return true;
+function isAuthorizedCronRequest(req: Request): boolean {
+    const cronSecret = process.env.CRON_SECRET?.trim();
+    const authHeader = req.headers.get('authorization');
+    if (!cronSecret) {
+        return false;
     }
-
-    return Boolean(internalToken && token === internalToken);
-}
-
-function resolveSchedulerAuthLabel(req: Request): string {
-    const token = extractBearerToken(req.headers.get('authorization'));
-    const cronSecret = normalizeOptionalText(process.env.CRON_SECRET);
-    if (cronSecret && token === cronSecret) {
-        return 'cron_secret';
-    }
-    return 'internal_token';
-}
-
-function extractBearerToken(authorization: string | null): string | null {
-    const match = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
-    return match && match.length > 0 ? match : null;
-}
-
-function normalizeOptionalText(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+    return authHeader === `Bearer ${cronSecret}`;
 }
 
 function readPositiveInteger(value: unknown, fallback: number): number {
