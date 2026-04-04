@@ -825,6 +825,9 @@ export const OUTBOX_EVENTS = {
     COLUMNS: {
         id: 'id',
         tenant_id: 'tenant_id',
+        aggregate_type: 'aggregate_type',
+        aggregate_id: 'aggregate_id',
+        event_name: 'event_name',
         topic: 'topic',
         handler_key: 'handler_key',
         target_type: 'target_type',
@@ -836,9 +839,14 @@ export const OUTBOX_EVENTS = {
         status: 'status',
         attempt_count: 'attempt_count',
         max_attempts: 'max_attempts',
+        last_attempted_at: 'last_attempted_at',
+        next_retry_at: 'next_retry_at',
+        leased_until: 'leased_until',
+        leased_by: 'leased_by',
         available_at: 'available_at',
         locked_at: 'locked_at',
         locked_by: 'locked_by',
+        error_detail: 'error_detail',
         last_error: 'last_error',
         delivered_at: 'delivered_at',
         created_at: 'created_at',
@@ -863,6 +871,20 @@ export const CONNECTOR_DELIVERY_ATTEMPTS = {
         started_at: 'started_at',
         finished_at: 'finished_at',
         created_at: 'created_at',
+    },
+} as const;
+
+export const OUTBOX_DELIVERY_ATTEMPTS = {
+    TABLE: 'outbox_delivery_attempts',
+    COLUMNS: {
+        id: 'id',
+        event_id: 'event_id',
+        attempted_at: 'attempted_at',
+        success: 'success',
+        status_code: 'status_code',
+        response_body: 'response_body',
+        error_detail: 'error_detail',
+        duration_ms: 'duration_ms',
     },
 } as const;
 
