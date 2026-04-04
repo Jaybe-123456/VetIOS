@@ -1,0 +1,6 @@
+-- VetIOS repo note:
+-- The live migration for this feature set is versioned as
+-- infra/supabase/migrations/039_partner_billing_quotas_analytics.sql
+-- to preserve the repository's existing migration sequence.
+--
+-- Use that canonical migration file when applying schema changes.
