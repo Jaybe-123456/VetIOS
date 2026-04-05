@@ -2,10 +2,9 @@ import type { InferenceRequest } from './types';
 import type { ScoreAdjustment } from './haematological-priors';
 
 export interface SyndromeScore {
-    condition: string;
-    prior_boost: number;
+    condition_id: string;
+    prior_boost?: number;
     prior_penalty?: number;
-    incompatible_conditions?: string[];
 }
 
 export interface SyndromeRule {
@@ -26,10 +25,11 @@ export const SYNDROME_RULES: SyndromeRule[] = [
             'Right-sided cardiomegaly on thoracic radiograph',
         ],
         scores: [
-            { condition: 'Dirofilariosis', prior_boost: 0.35 },
-            { condition: 'Pulmonary Hypertension', prior_boost: 0.20 },
-            { condition: 'Tracheal Collapse', prior_boost: 0, prior_penalty: 0.40, incompatible_conditions: ['Tracheal Collapse'] },
-            { condition: 'Primary Bronchitis', prior_boost: 0, prior_penalty: 0.30, incompatible_conditions: ['Primary Bronchitis'] },
+            { condition_id: 'dirofilariosis_canine', prior_boost: 0.35 },
+            { condition_id: 'pulmonary_hypertension', prior_boost: 0.20 },
+            { condition_id: 'tracheal_collapse', prior_penalty: 0.40 },
+            { condition_id: 'chronic_bronchitis_canine', prior_penalty: 0.30 },
+            { condition_id: 'mitral_valve_disease_canine', prior_penalty: 0.18 },
         ],
     },
     {
@@ -37,75 +37,73 @@ export const SYNDROME_RULES: SyndromeRule[] = [
         trigger: (request) => request.diagnostic_tests?.echocardiography?.worms_visualised === 'present',
         evidence: ['Echocardiographic worm visualisation'],
         scores: [
-            { condition: 'Dirofilariosis', prior_boost: 0.45 },
-            { condition: 'Pulmonary Hypertension', prior_boost: 0.10 },
+            { condition_id: 'dirofilariosis_canine', prior_boost: 0.45 },
+            { condition_id: 'pulmonary_hypertension', prior_boost: 0.10 },
         ],
     },
     {
-        name: 'Bilateral renal disease pattern',
+        name: 'Bilateral renal immune-complex pattern',
         trigger: (request) =>
             request.diagnostic_tests?.urinalysis?.proteinuria === 'present'
             && request.diagnostic_tests?.biochemistry?.albumin === 'hypoalbuminemia'
             && request.diagnostic_tests?.biochemistry?.globulins === 'hyperglobulinemia',
-        evidence: ['Proteinuria with hypoalbuminemia and hyperglobulinemia'],
+        evidence: ['Proteinuria with hypoalbuminaemia and hyperglobulinaemia'],
         scores: [
-            { condition: 'Leishmaniosis', prior_boost: 0.30 },
-            { condition: 'Immune-mediated glomerulonephritis', prior_boost: 0.15 },
+            { condition_id: 'leishmaniosis_canine', prior_boost: 0.30 },
+            { condition_id: 'renal_disease_chronic', prior_boost: 0.12 },
         ],
     },
     {
-        name: 'Alveolar-bronchial pattern with lymphadenopathy',
+        name: 'Alveolar pattern with lymphadenopathy',
         trigger: (request) =>
             request.diagnostic_tests?.thoracic_radiograph?.pulmonary_pattern === 'alveolar'
             && request.physical_exam?.lymph_nodes === 'generalised_lymphadenopathy',
-        evidence: [
-            'Alveolar pulmonary pattern on thoracic radiograph',
-            'Generalised lymphadenopathy on physical examination',
-        ],
+        evidence: ['Alveolar pulmonary pattern', 'Generalised lymphadenopathy'],
         scores: [
-            { condition: 'Pneumonia (bacterial)', prior_boost: 0.25 },
-            { condition: 'Fungal pneumonia', prior_boost: 0.15 },
-            { condition: 'Neoplasia', prior_boost: 0.12 },
+            { condition_id: 'pneumonia_bacterial', prior_boost: 0.25 },
+            { condition_id: 'lymphoma', prior_boost: 0.12 },
         ],
     },
     {
         name: 'Right-sided cardiac complication pattern',
         trigger: (request) =>
             request.diagnostic_tests?.echocardiography?.right_heart_enlargement === 'present'
-            && request.diagnostic_tests?.echocardiography?.pulmonary_hypertension === 'present',
-        evidence: [
-            'Right heart enlargement on echocardiography',
-            'Pulmonary hypertension on echocardiography',
-        ],
+            && (
+                request.diagnostic_tests?.echocardiography?.pulmonary_hypertension === 'present'
+                || request.diagnostic_tests?.thoracic_radiograph?.pulmonary_artery_enlargement === 'present'
+            ),
+        evidence: ['Right heart enlargement', 'Pulmonary vascular disease pattern'],
         scores: [
-            { condition: 'Pulmonary Hypertension', prior_boost: 0.22 },
-            { condition: 'Congestive Heart Failure', prior_boost: 0.16 },
-            { condition: 'Dirofilariosis', prior_boost: 0.12 },
-            { condition: 'Left-sided degenerative valve disease', prior_boost: 0, prior_penalty: 0.30, incompatible_conditions: ['Left-sided degenerative valve disease'] },
+            { condition_id: 'pulmonary_hypertension', prior_boost: 0.22 },
+            { condition_id: 'right_sided_chf_secondary', prior_boost: 0.16 },
+            { condition_id: 'dirofilariosis_canine', prior_boost: 0.12 },
+            { condition_id: 'tracheal_collapse', prior_penalty: 0.25 },
         ],
     },
 ];
 
-export function applySyndromeRecogniser(request: InferenceRequest): ScoreAdjustment[] {
+export function applySyndromePatterns(request: InferenceRequest): ScoreAdjustment[] {
     const adjustments: ScoreAdjustment[] = [];
 
     for (const rule of SYNDROME_RULES) {
         if (!rule.trigger(request)) continue;
 
         for (const score of rule.scores) {
-            if (score.prior_boost > 0) {
+            if ((score.prior_boost ?? 0) > 0) {
                 adjustments.push({
-                    condition: score.condition,
-                    delta: score.prior_boost,
+                    condition_id: score.condition_id,
+                    delta: score.prior_boost ?? 0,
                     finding: rule.evidence.join('; '),
-                    weight: score.prior_boost >= 0.3 ? 'strong' : 'supportive',
+                    weight: (score.prior_boost ?? 0) >= 0.3 ? 'strong' : 'supportive',
+                    determination_basis: 'syndrome_pattern',
                 });
             }
+
             if ((score.prior_penalty ?? 0) > 0) {
                 adjustments.push({
-                    condition: score.condition,
+                    condition_id: score.condition_id,
                     delta: -(score.prior_penalty ?? 0),
-                    finding: `${rule.name} is inconsistent with ${score.condition} as the primary diagnosis`,
+                    finding: `${rule.name} is inconsistent with this condition as the primary diagnosis`,
                     weight: 'minor',
                     penalty: true,
                 });

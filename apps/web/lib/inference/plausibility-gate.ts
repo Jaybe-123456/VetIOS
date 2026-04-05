@@ -10,16 +10,7 @@ export interface PlausibilityGateResult {
     excluded_conditions: ExcludedCondition[];
 }
 
-const DIROFILARIOSIS_EXCLUSIONS = [
-    'Tracheal Collapse',
-    'Primary Bronchitis',
-    'Diabetes Mellitus',
-    'Hypothyroidism',
-    'Megaesophagus',
-    'Laryngeal Paralysis',
-];
-
-function hasPositiveInfectiousTest(request: InferenceRequest) {
+function hasPositiveInfectiousTest(request: InferenceRequest): boolean {
     const serology = request.diagnostic_tests?.serology;
     const pcr = request.diagnostic_tests?.pcr;
     const parasitology = request.diagnostic_tests?.parasitology;
@@ -32,89 +23,94 @@ function hasPositiveInfectiousTest(request: InferenceRequest) {
 
 export function applyEtiologicalPlausibilityGate(
     differentials: DifferentialEntry[],
-    confirmedOrHighProbability: string[],
     request: InferenceRequest,
 ): PlausibilityGateResult {
     const excluded: ExcludedCondition[] = [];
-    let filtered = [...differentials];
-
+    const hasHeartworm = differentials.some((entry) => entry.condition_id === 'dirofilariosis_canine' && entry.probability >= 0.6)
+        || request.diagnostic_tests?.serology?.dirofilaria_immitis_antigen === 'positive';
     const eosinophiliaPresent = request.diagnostic_tests?.cbc?.eosinophilia != null
         && request.diagnostic_tests?.cbc?.eosinophilia !== 'absent';
     const pulmonaryVascularPattern =
         request.diagnostic_tests?.thoracic_radiograph?.pulmonary_artery_enlargement === 'present'
-        && request.diagnostic_tests?.echocardiography?.right_heart_enlargement === 'present';
+        && (
+            request.diagnostic_tests?.echocardiography?.right_heart_enlargement === 'present'
+            || request.diagnostic_tests?.thoracic_radiograph?.cardiomegaly === 'right_sided'
+        );
+    const trachealCollapseSeen = request.diagnostic_tests?.thoracic_radiograph?.tracheal_collapse_seen === 'present';
 
-    if (confirmedOrHighProbability.includes('Dirofilariosis')) {
-        filtered = filtered.flatMap((entry) => {
-            if (entry.condition === 'Congestive Heart Failure') {
-                return [{
-                    ...entry,
-                    supporting_evidence: [
-                        ...entry.supporting_evidence,
-                        { finding: 'Right-sided cardiac changes are interpreted as secondary to heartworm disease', weight: 'strong' },
-                    ],
-                    relationship_to_primary: {
-                        type: 'secondary',
-                        primary_condition: 'Dirofilariosis',
-                    },
-                }];
-            }
+    const filtered: DifferentialEntry[] = [];
 
-            if (entry.condition === 'Tracheal Collapse' && request.diagnostic_tests?.thoracic_radiograph?.tracheal_collapse_seen === 'present') {
-                return [{
-                    ...entry,
-                    relationship_to_primary: {
-                        type: 'co-morbidity',
-                        primary_condition: 'Dirofilariosis',
-                    },
-                    probability: Math.min(entry.probability, 0.04),
-                }];
-            }
-
-            if (DIROFILARIOSIS_EXCLUSIONS.includes(entry.condition)) {
+    for (const entry of differentials) {
+        if (entry.condition_id === 'diabetes_mellitus_canine') {
+            const hyperglycemia = request.diagnostic_tests?.biochemistry?.glucose === 'hyperglycemia';
+            const glucosuria = request.diagnostic_tests?.urinalysis?.glucose_in_urine === 'present';
+            if (!hyperglycemia || !glucosuria) {
                 excluded.push({
                     condition: entry.condition,
-                    reason: entry.condition === 'Tracheal Collapse'
-                        ? 'Excluded: pulmonary vascular pattern is inconsistent with tracheal collapse as the primary diagnosis'
-                        : entry.condition === 'Primary Bronchitis'
-                            ? 'Excluded: pathognomonic parasitic evidence fully explains the chronic respiratory syndrome'
-                            : entry.condition === 'Diabetes Mellitus'
-                                ? 'Excluded: no shared pathophysiology or diabetic laboratory evidence supports this as the primary diagnosis'
-                                : `Excluded: confirmed parasitic cardiopulmonary disease makes ${entry.condition} implausible as the primary diagnosis`,
+                    reason: 'Excluded: diabetes mellitus cannot be primary without persistent hyperglycaemia and glucosuria',
                 });
-                return [];
+                continue;
+            }
+        }
+
+        if (hasHeartworm) {
+            if (entry.condition_id === 'tracheal_collapse') {
+                if (trachealCollapseSeen) {
+                    filtered.push({
+                        ...entry,
+                        probability: Math.min(entry.probability, 0.04),
+                        relationship_to_primary: {
+                            type: 'co-morbidity',
+                            primary_condition: 'Dirofilariosis (Heartworm disease)',
+                        },
+                    });
+                    continue;
+                }
+                excluded.push({
+                    condition: entry.condition,
+                    reason: 'Excluded: pulmonary vascular pattern and confirmatory heartworm evidence are inconsistent with tracheal collapse as the primary diagnosis',
+                });
+                continue;
             }
 
-            return [entry];
-        });
-    }
+            if (entry.condition_id === 'chronic_bronchitis_canine') {
+                excluded.push({
+                    condition: entry.condition,
+                    reason: 'Excluded: pathognomonic parasitic evidence fully explains the chronic respiratory signs',
+                });
+                continue;
+            }
 
-    if (hasPositiveInfectiousTest(request)) {
-        const infectionIncompatible = new Set([
-            'Hypothyroidism',
-            'Hyperadrenocorticism',
-            'Stress hyperglycaemia alone',
-        ]);
-        filtered = filtered.filter((entry) => {
-            if (!infectionIncompatible.has(entry.condition)) return true;
-            excluded.push({
-                condition: entry.condition,
-                reason: 'Excluded: positive infectious or parasitic testing makes a sterile non-infectious explanation implausible as the primary diagnosis',
-            });
-            return false;
-        });
-    }
+            if (entry.condition_id === 'hypothyroidism_canine' || entry.condition_id === 'megaesophagus' || entry.condition_id === 'laryngeal_paralysis') {
+                excluded.push({
+                    condition: entry.condition,
+                    reason: `Excluded: confirmed cardiopulmonary parasitic disease makes ${entry.condition} implausible as the primary diagnosis`,
+                });
+                continue;
+            }
 
-    filtered = filtered.map((entry) => {
+            if (entry.condition_id === 'right_sided_chf_secondary') {
+                filtered.push({
+                    ...entry,
+                    condition: 'Right-sided CHF (secondary to dirofilariosis)',
+                    relationship_to_primary: {
+                        type: 'secondary',
+                        primary_condition: 'Dirofilariosis (Heartworm disease)',
+                    },
+                });
+                continue;
+            }
+        }
+
         let probability = entry.probability;
         const contradicting = [...entry.contradicting_evidence];
 
         if (
             eosinophiliaPresent
-            && confirmedOrHighProbability.some((condition) => ['Dirofilariosis', 'Leishmaniosis', 'Intestinal parasitism'].includes(condition))
-            && !['Dirofilariosis', 'Leishmaniosis', 'Intestinal parasitism', 'Eosinophilic bronchopneumopathy'].includes(entry.condition)
+            && hasHeartworm
+            && !['dirofilariosis_canine', 'pulmonary_hypertension', 'right_sided_chf_secondary', 'tracheal_collapse'].includes(entry.condition_id ?? '')
         ) {
-            probability = Math.max(0, probability - 0.10);
+            probability = Math.max(0, probability - 0.1);
             contradicting.push({
                 finding: 'Eosinophilia weakens a non-parasitic primary diagnosis',
                 weight: 'weakens',
@@ -122,48 +118,43 @@ export function applyEtiologicalPlausibilityGate(
         }
 
         if (pulmonaryVascularPattern) {
-            if (entry.condition === 'Left-sided degenerative valve disease') {
-                probability = Math.max(0, probability - 0.30);
+            if (entry.condition_id === 'mitral_valve_disease_canine' || entry.condition_id === 'dilated_cardiomyopathy_canine') {
+                probability = Math.max(0, probability - 0.3);
                 contradicting.push({
-                    finding: 'Pulmonary artery enlargement with right-heart changes weakens left-sided cardiac disease',
+                    finding: 'Pulmonary artery enlargement with right-heart changes weakens left-sided primary cardiac disease',
                     weight: 'weakens',
                 });
             }
-            if (entry.condition === 'Tracheal Collapse') {
-                probability = Math.max(0, probability - 0.40);
+            if (entry.condition_id === 'tracheal_collapse') {
+                probability = Math.max(0, probability - 0.4);
                 contradicting.push({
                     finding: 'Pulmonary vascular pattern is inconsistent with tracheal collapse as the primary diagnosis',
                     weight: 'excludes',
                 });
             }
-            if (entry.condition === 'Primary Bronchitis') {
+            if (entry.condition_id === 'chronic_bronchitis_canine') {
                 probability = Math.max(0, probability - 0.25);
                 contradicting.push({
-                    finding: 'Pulmonary artery enlargement and right-heart enlargement weaken primary bronchitis',
+                    finding: 'Pulmonary vascular enlargement and right-heart changes weaken primary bronchitis',
                     weight: 'weakens',
                 });
             }
         }
 
-        return {
+        if (hasPositiveInfectiousTest(request) && ['hypothyroidism_canine', 'hyperadrenocorticism_canine'].includes(entry.condition_id ?? '')) {
+            excluded.push({
+                condition: entry.condition,
+                reason: 'Excluded: positive infectious or parasitic testing makes a sterile endocrine explanation implausible as the primary diagnosis',
+            });
+            continue;
+        }
+
+        filtered.push({
             ...entry,
             probability,
             contradicting_evidence: contradicting,
-        };
-    });
-
-    const positiveTotal = filtered.reduce((sum, entry) => sum + Math.max(0, entry.probability), 0) || 1;
-    filtered = filtered
-        .map((entry) => ({
-            ...entry,
-            probability: Math.max(0, entry.probability) / positiveTotal,
-        }))
-        .filter((entry) => entry.probability > 0)
-        .sort((left, right) => right.probability - left.probability)
-        .map((entry, index) => ({
-            ...entry,
-            rank: index + 1,
-        }));
+        });
+    }
 
     return {
         differentials: filtered,

@@ -101,6 +101,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     payload.diagnosis = safetyLayer.diagnosis;
     payload.inference_explanation = safetyLayer.inference_explanation ?? null;
     payload.differentials = (safetyLayer.diagnosis.top_differentials as unknown[]) ?? [];
+    payload.treatment_plans = safetyLayer.treatment_plans ?? {};
+    payload.ground_truth_summary = safetyLayer.ground_truth_summary ?? null;
     payload.mechanism_class = safetyLayer.mechanism_class;
     payload.diagnosis_feature_importance = safetyLayer.diagnosis_feature_importance;
     payload.suppressed_signals = safetyLayer.suppressed_signals;

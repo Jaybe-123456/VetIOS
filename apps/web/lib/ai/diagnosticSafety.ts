@@ -52,6 +52,7 @@ export interface DifferentialEntry {
     key_drivers?: DifferentialDriver[];
     rank?: number;
     condition?: string;
+    condition_id?: string;
     confidence?: 'high' | 'moderate' | 'low';
     determination_basis?: 'pathognomonic_test' | 'syndrome_pattern' | 'symptom_scoring' | 'exclusion_reasoning';
     supporting_evidence?: Array<{ finding: string; weight: 'definitive' | 'strong' | 'supportive' | 'minor' }>;
@@ -63,6 +64,16 @@ export interface DifferentialEntry {
     clinical_urgency?: 'immediate' | 'urgent' | 'routine';
     recommended_confirmatory_tests?: string[];
     recommended_next_steps?: string[];
+    ground_truth_explanation?: {
+        condition: string;
+        pre_confirmation_probability: number;
+        post_confirmation_probability: number;
+        criteria_source: string;
+        supporting_criteria: string[];
+        missing_criteria: string[];
+        contradicting_findings: string[];
+        confirmation_status: 'confirmed' | 'highly_supported' | 'supported' | 'unconfirmed' | 'unlikely' | 'excluded';
+    };
 }
 
 export interface DifferentialSpread {
@@ -75,6 +86,8 @@ export interface DifferentialSpread {
 export interface SafetyLayerResult {
     diagnosis: Record<string, unknown>;
     inference_explanation?: InferenceExplanation;
+    treatment_plans?: Record<string, unknown>;
+    ground_truth_summary?: Record<string, unknown>;
     mechanism_class: MechanismClassOutput;
     diagnosis_feature_importance: Record<string, number>;
     suppressed_signals: string[];
@@ -585,6 +598,8 @@ export function applyDiagnosticSafetyLayer(params: {
     return {
         diagnosis,
         inference_explanation: evidenceInference.inference_explanation,
+        treatment_plans: evidenceInference.treatment_plans,
+        ground_truth_summary: evidenceInference.ground_truth_summary,
         mechanism_class: mechanismClass,
         diagnosis_feature_importance: diagnosisFeatureImportance,
         suppressed_signals: suppressedSignals,
@@ -645,6 +660,8 @@ export function createHeuristicInferencePayload(params: {
 
     return {
         diagnosis: safetyLayer.diagnosis,
+        treatment_plans: safetyLayer.treatment_plans ?? {},
+        ground_truth_summary: safetyLayer.ground_truth_summary ?? null,
         mechanism_class: safetyLayer.mechanism_class,
         risk_assessment: {
             severity_score: baseSeverity.score,
@@ -1415,12 +1432,12 @@ function normalizeExistingDifferentials(raw: unknown): DifferentialEntry[] {
                     : null;
             if (!name) return null;
             if (isGenericMechanismDiagnosis(name)) return null;
-            const canonicalName = toCanonicalName(name);
-            if (!canonicalName) return null;
+            const canonicalName = toCanonicalName(name) ?? name;
             const probability = typeof candidate.probability === 'number' ? candidate.probability : 0.1;
             return {
                 name: canonicalName,
                 condition: typeof candidate.condition === 'string' ? candidate.condition : canonicalName,
+                condition_id: typeof candidate.condition_id === 'string' ? candidate.condition_id : undefined,
                 rank: typeof candidate.rank === 'number' ? candidate.rank : undefined,
                 probability,
                 confidence:
@@ -1454,6 +1471,10 @@ function normalizeExistingDifferentials(raw: unknown): DifferentialEntry[] {
                 recommended_next_steps: Array.isArray(candidate.recommended_next_steps)
                     ? candidate.recommended_next_steps.filter((entry): entry is string => typeof entry === 'string')
                     : undefined,
+                ground_truth_explanation:
+                    candidate.ground_truth_explanation && typeof candidate.ground_truth_explanation === 'object'
+                        ? candidate.ground_truth_explanation as DifferentialEntry['ground_truth_explanation']
+                        : undefined,
                 key_drivers: Array.isArray(candidate.key_drivers)
                     ? (candidate.key_drivers as DifferentialDriver[])
                     : undefined,

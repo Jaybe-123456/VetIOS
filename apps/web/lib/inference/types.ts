@@ -49,6 +49,209 @@ export type ConditionClass =
     | 'Traumatic'
     | 'Degenerative'
     | 'Idiopathic / Unknown';
+export type Species = 'canine' | 'feline' | 'bovine' | 'ovine' | 'caprine' | 'equine';
+export type EtiologicalClass =
+    | 'parasitic_helminth'
+    | 'parasitic_protozoan'
+    | 'parasitic_ectoparasite'
+    | 'bacterial'
+    | 'viral'
+    | 'fungal'
+    | 'immune_mediated'
+    | 'metabolic_endocrine'
+    | 'neoplastic'
+    | 'cardiovascular_structural'
+    | 'respiratory_structural'
+    | 'gastrointestinal_structural'
+    | 'neurological'
+    | 'nutritional'
+    | 'toxic'
+    | 'traumatic'
+    | 'congenital'
+    | 'idiopathic';
+export type TreatmentCategory =
+    | 'pharmacological_antiparasitic'
+    | 'pharmacological_antibiotic'
+    | 'pharmacological_antifungal'
+    | 'pharmacological_antiviral'
+    | 'pharmacological_immunosuppressive'
+    | 'pharmacological_cardiac'
+    | 'pharmacological_hormonal'
+    | 'pharmacological_analgesic'
+    | 'pharmacological_supportive'
+    | 'pharmacological_antiemetic'
+    | 'pharmacological_antidiarrheal'
+    | 'pharmacological_bronchodilator'
+    | 'pharmacological_diuretic'
+    | 'surgical'
+    | 'interventional_procedure'
+    | 'dietary_nutritional'
+    | 'vector_control'
+    | 'vaccination'
+    | 'nursing_supportive'
+    | 'environmental_management'
+    | 'physical_rehabilitation'
+    | 'monitoring'
+    | 'owner_education';
+export type EvidenceLevel = 'ia' | 'ib' | 'iia' | 'iib' | 'iii' | 'iv';
+export type RecommendationGrade = 'A' | 'B' | 'C' | 'D';
+export type TreatmentPhase =
+    | 'acute_stabilisation'
+    | 'pre_treatment_preparation'
+    | 'definitive_treatment'
+    | 'adjunctive'
+    | 'secondary_prevention'
+    | 'long_term_management'
+    | 'palliative'
+    | 'prophylactic';
+export type ProtocolPriority = 'essential' | 'recommended' | 'optional' | 'consider_if';
+export type RouteOfAdministration = 'PO' | 'SC' | 'IM' | 'IV' | 'Topical' | 'Inhaled' | 'Procedure' | 'Environmental';
+export type GroundTruthStatus =
+    | 'confirmed'
+    | 'highly_supported'
+    | 'supported'
+    | 'unconfirmed'
+    | 'unlikely'
+    | 'excluded';
+
+export interface PathognomicTestRule {
+    test: string;
+    result: string;
+    probability_if_positive: number;
+    probability_if_negative?: number;
+    evidence_label?: string;
+    required_for_confirmation?: boolean;
+}
+
+export interface SupportingTestRule {
+    test: string;
+    result?: string;
+    boost: number;
+    evidence_label: string;
+}
+
+export interface ExclusionRule {
+    field: string;
+    explanation: string;
+    exclude?: boolean;
+    penalty?: number;
+    expected_value?: string | string[];
+}
+
+export interface ImagingPattern {
+    finding: string;
+    result: string;
+    boost: number;
+    evidence_label: string;
+}
+
+export interface HaematologicalPattern {
+    finding: string;
+    result: string;
+    boost: number;
+    evidence_label: string;
+}
+
+export interface SeverityClass {
+    class: string;
+    label: string;
+    criteria?: string[];
+}
+
+export interface DoseRegimen {
+    amount_per_kg?: number;
+    amount_per_kg_high?: number;
+    unit?: 'mg' | 'mcg' | 'IU';
+    route: RouteOfAdministration;
+    frequency: string;
+    duration: string;
+    notes?: string;
+    severity_scope?: string[];
+    fixed_text?: string;
+}
+
+export interface TreatmentDrugDetails {
+    name: string;
+    trade_names?: string[];
+    drug_class: string;
+    mechanism: string;
+    species: Species[];
+    dosing: DoseRegimen[];
+    route: RouteOfAdministration[];
+    contraindications: string[];
+    precautions: string[];
+    drug_interactions: string[];
+    adverse_effects: string[];
+    monitoring_required: string[];
+    availability: {
+        africa_east?: boolean;
+        africa_south?: boolean;
+        europe?: boolean;
+        usa?: boolean;
+        global?: boolean;
+    };
+    cost_tier: 'low' | 'moderate' | 'high' | 'very_high';
+}
+
+export interface SurgicalProtocolDetails {
+    procedure_name: string;
+    technique: string;
+    specialist_required: boolean;
+    anesthesia_considerations: string[];
+    perioperative_management: string[];
+    expected_outcomes: string;
+    complications: string[];
+    recovery_protocol: string;
+}
+
+export interface TreatmentProtocol {
+    condition_id: string;
+    condition_name: string;
+    severity_scope: string[];
+    protocol_id: string;
+    protocol_name: string;
+    category: TreatmentCategory;
+    evidence_level: EvidenceLevel;
+    guideline_source: string[];
+    recommendation_grade: RecommendationGrade;
+    drug?: TreatmentDrugDetails;
+    surgery?: SurgicalProtocolDetails;
+    treatment_phase: TreatmentPhase;
+    treatment_duration?: string;
+    follow_up_protocol?: string[];
+    priority: ProtocolPriority;
+    condition_for_use?: string;
+    expected_outcomes: string;
+    treatment_failure_indicators: string[];
+    alternative_if_fails: string[];
+    details?: string;
+}
+
+export interface VeterinaryCondition {
+    id: string;
+    canonical_name: string;
+    aliases: string[];
+    icd_vet_code?: string;
+    species_affected: Species[];
+    etiological_class: EtiologicalClass;
+    causative_agent?: string;
+    vector?: string[];
+    transmission_route?: string[];
+    geographic_distribution: string[];
+    regional_prevalence: Record<string, number>;
+    pathognomonic_tests: PathognomicTestRule[];
+    supporting_tests: SupportingTestRule[];
+    exclusion_criteria: ExclusionRule[];
+    cardinal_signs: string[];
+    common_signs: string[];
+    rare_signs: string[];
+    signs_that_exclude: string[];
+    imaging_patterns: ImagingPattern[];
+    haematological_patterns: HaematologicalPattern[];
+    severity_classification?: SeverityClass[];
+    treatments: TreatmentProtocol[];
+    references: string[];
+}
 
 export interface VectorExposureHistory {
     mosquito_endemic?: boolean;
@@ -231,6 +434,7 @@ export interface DifferentialRelationship {
 export interface DifferentialEntry {
     rank: number;
     condition: string;
+    condition_id?: string;
     name?: string;
     icd_vet_code?: string;
     probability: number;
@@ -242,6 +446,16 @@ export interface DifferentialEntry {
     clinical_urgency: ClinicalUrgency;
     recommended_confirmatory_tests?: string[];
     recommended_next_steps?: string[];
+    ground_truth_explanation?: {
+        condition: string;
+        pre_confirmation_probability: number;
+        post_confirmation_probability: number;
+        criteria_source: string;
+        supporting_criteria: string[];
+        missing_criteria: string[];
+        contradicting_findings: string[];
+        confirmation_status: GroundTruthStatus;
+    };
 }
 
 export interface ExcludedConditionExplanation {
@@ -268,6 +482,56 @@ export interface InferenceResponse {
         top_differentials: DifferentialEntry[];
         confidence_score: number;
     };
+    treatment_plans: Record<string, SelectedTreatmentPlan>;
+    ground_truth_summary: {
+        primary_diagnosis_status: 'confirmed' | 'highly_supported' | 'unconfirmed';
+        key_confirmatory_finding?: string;
+        missing_confirmatory_tests: string[];
+        confidence_level: 'high' | 'moderate' | 'low';
+        recommended_immediate_actions: string[];
+    };
+}
+
+export interface SelectedTreatmentPlan {
+    condition_name: string;
+    severity_class: string | null;
+    treatment_phases: Array<{
+        phase: TreatmentPhase;
+        phase_label: string;
+        timing: string;
+        protocols: Array<{
+            protocol_id: string;
+            protocol_name: string;
+            category: TreatmentCategory;
+            priority: ProtocolPriority;
+            patient_specific_dose?: string;
+            duration: string;
+            route: string;
+            frequency: string;
+            evidence_summary: string;
+            guideline_source: string[];
+            cautions_for_this_patient: string[];
+            drug_interactions_in_plan: string[];
+            monitoring_required: string[];
+            expected_response: string;
+        }>;
+        phase_notes: string;
+    }>;
+    monitoring_schedule: Array<{
+        timepoint: string;
+        tests_required: string[];
+        clinical_parameters: string[];
+        expected_findings: string;
+        action_if_abnormal: string;
+    }>;
+    owner_instructions: string[];
+    prognosis: string;
+    contraindicated_treatments: Array<{
+        treatment: string;
+        reason: string;
+    }>;
+    regional_availability_notes: string;
+    total_estimated_cost_range?: string;
 }
 
 const DiagnosticResultSchema = z.enum(['positive', 'negative', 'equivocal', 'not_done']);
