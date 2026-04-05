@@ -4,6 +4,13 @@ import {
     normalizeOntologyDiseaseName,
     type DiseaseOntologyEntry,
 } from '../ai/diseaseOntology';
+import { findConditionByName } from '../inference/condition-registry';
+import type {
+    InferenceRequest,
+    SelectedTreatmentPlan,
+    VeterinaryCondition,
+} from '../inference/types';
+import { selectTreatmentProtocol, type TreatmentContext } from '../treatment/treatment-engine';
 import type {
     TreatmentCandidateRecord,
     TreatmentEnvironmentConstraints,
@@ -101,6 +108,10 @@ const LOW_RESOURCE_JURISDICTIONS = new Set(['ke', 'kenya', 'ng', 'nigeria', 'ug'
 export function buildTreatmentRecommendationBundle(input: BuildBundleInput): TreatmentRecommendationBundle {
     const canonicalDisease = normalizeOntologyDiseaseName(input.diagnosisLabel);
     if (!canonicalDisease) {
+        const registryBundle = buildRegistryBackedTreatmentBundle(input);
+        if (registryBundle) {
+            return registryBundle;
+        }
         throw new Error(`Treatment support is only available for diseases in the VetIOS ontology. Received: ${input.diagnosisLabel}`);
     }
 
@@ -162,6 +173,291 @@ export function buildTreatmentRecommendationBundle(input: BuildBundleInput): Tre
         management_mode: diagnosticManagement.required ? 'diagnostic_management' : 'definitive',
         diagnostic_management_summary: diagnosticManagement.summary,
     };
+}
+
+function buildRegistryBackedTreatmentBundle(input: BuildBundleInput): TreatmentRecommendationBundle | null {
+    const condition = findConditionByName(input.diagnosisLabel);
+    if (!condition) return null;
+
+    const inferredRequest = coerceInferenceRequest(input.inputSignature);
+    const plan = readSelectedTreatmentPlan(input.outputPayload, condition)
+        ?? selectTreatmentProtocol(condition, inferSeverityClass(condition, inferredRequest), inferredRequest, buildTreatmentContext(input, inferredRequest));
+
+    const contradictionFlags = extractContradictionFlags(input.outputPayload);
+    const supportingSignals = extractRegistrySupportingSignals(input.outputPayload, condition);
+    const managementMode: TreatmentRecommendationBundle['management_mode'] =
+        input.diagnosisConfidence != null && input.diagnosisConfidence >= 0.85
+            ? 'definitive'
+            : 'diagnostic_management';
+    const regulatoryNotes = buildRegulatoryNotes(input.context.regulatory_region);
+    const options = buildRegistryCandidateOptions({
+        condition,
+        plan,
+        diagnosisConfidence: input.diagnosisConfidence,
+        contradictionFlags,
+        regulatoryNotes,
+        managementMode,
+    });
+
+    return {
+        inference_event_id: input.inferenceEventId,
+        disease: condition.canonical_name,
+        species: normalizeText(input.species),
+        diagnosis_confidence: input.diagnosisConfidence,
+        emergency_level: normalizeText(input.emergencyLevel),
+        severity_score: input.severityScore,
+        evidence_basis: {
+            matched_signals: supportingSignals,
+            alternative_diagnoses: extractRankedDifferentials(input.outputPayload, condition.canonical_name)
+                .map((entry) => entry.name)
+                .filter((name) => name !== condition.canonical_name)
+                .slice(0, 3),
+            contradiction_flags: contradictionFlags,
+        },
+        context: normalizeTreatmentContext(input.context),
+        contraindication_flags: options.flatMap((option) => option.detected_contraindications),
+        options,
+        observed_performance: input.observedPerformance ?? [],
+        clinician_notice: CLINICIAN_NOTICE,
+        uncertainty_summary: managementMode === 'diagnostic_management'
+            ? 'Diagnosis remains provisional; prioritise confirmatory staging while using supportive and preparation pathways.'
+            : 'Registry-backed treatment pathway generated from the structured disease-specific protocol set.',
+        management_mode: managementMode,
+        diagnostic_management_summary: managementMode === 'diagnostic_management'
+            ? 'Use stabilization and confirmatory staging before escalating to definitive disease-directed treatment.'
+            : null,
+    };
+}
+
+function coerceInferenceRequest(inputSignature: Record<string, unknown>): InferenceRequest {
+    const metadata = typeof inputSignature.metadata === 'object' && inputSignature.metadata != null
+        ? inputSignature.metadata as Record<string, unknown>
+        : {};
+    return {
+        species: typeof inputSignature.species === 'string' ? inputSignature.species : typeof metadata.species === 'string' ? metadata.species : 'canine',
+        breed: typeof inputSignature.breed === 'string' ? inputSignature.breed : typeof metadata.breed === 'string' ? metadata.breed : undefined,
+        age_years: typeof inputSignature.age_years === 'number' ? inputSignature.age_years : undefined,
+        weight_kg: typeof inputSignature.weight_kg === 'number' ? inputSignature.weight_kg : typeof metadata.weight_kg === 'number' ? metadata.weight_kg : undefined,
+        sex: typeof inputSignature.sex === 'string' ? inputSignature.sex : undefined,
+        region: typeof inputSignature.region === 'string' ? inputSignature.region : undefined,
+        presenting_signs: Array.isArray(inputSignature.presenting_signs)
+            ? inputSignature.presenting_signs.filter((entry): entry is string => typeof entry === 'string')
+            : Array.isArray(inputSignature.symptoms)
+                ? inputSignature.symptoms.filter((entry): entry is string => typeof entry === 'string')
+                : [],
+        history: typeof inputSignature.history === 'object' && inputSignature.history != null ? inputSignature.history as InferenceRequest['history'] : undefined,
+        preventive_history: typeof inputSignature.preventive_history === 'object' && inputSignature.preventive_history != null ? inputSignature.preventive_history as InferenceRequest['preventive_history'] : undefined,
+        diagnostic_tests: typeof inputSignature.diagnostic_tests === 'object' && inputSignature.diagnostic_tests != null ? inputSignature.diagnostic_tests as InferenceRequest['diagnostic_tests'] : undefined,
+        physical_exam: typeof inputSignature.physical_exam === 'object' && inputSignature.physical_exam != null ? inputSignature.physical_exam as InferenceRequest['physical_exam'] : undefined,
+    };
+}
+
+function buildTreatmentContext(input: BuildBundleInput, request: InferenceRequest): TreatmentContext {
+    return {
+        geographic_region: input.context.regulatory_region ?? request.region ?? request.history?.geographic_region ?? 'US',
+        resource_level: input.context.resource_profile === 'advanced' ? 'referral' : 'primary',
+        concurrent_conditions: extractRankedDifferentials(input.outputPayload, input.diagnosisLabel)
+            .map((entry) => entry.name)
+            .filter((name) => name !== input.diagnosisLabel)
+            .slice(0, 3),
+        patient_signalment: {
+            age_category: request.age_years != null && request.age_years < 1 ? 'puppy' : request.age_years != null && request.age_years >= 9 ? 'senior' : 'adult',
+            reproductive_status: typeof request.sex === 'string' && request.sex.includes('intact')
+                ? request.sex.includes('female') ? 'intact_female' : 'intact_male'
+                : 'neutered',
+            weight_kg: request.weight_kg ?? 20,
+        },
+    };
+}
+
+function inferSeverityClass(condition: VeterinaryCondition, request: InferenceRequest): string | null {
+    if (condition.id !== 'dirofilariosis_canine') return null;
+    const signs = new Set(request.presenting_signs.map((entry) => entry.toLowerCase()));
+    if (signs.has('collapse') || signs.has('caval_syndrome')) return 'IV';
+    if (signs.has('syncope') || signs.has('ascites') || signs.has('hemoptysis')) return 'III';
+    if (signs.has('exercise_intolerance') || signs.has('chronic_cough') || signs.has('dyspnea')) return 'II';
+    return 'I';
+}
+
+function readSelectedTreatmentPlan(outputPayload: Record<string, unknown>, condition: VeterinaryCondition): SelectedTreatmentPlan | null {
+    const treatmentPlans = typeof outputPayload.treatment_plans === 'object' && outputPayload.treatment_plans != null
+        ? outputPayload.treatment_plans as Record<string, unknown>
+        : null;
+    if (!treatmentPlans) return null;
+    const plan = treatmentPlans[condition.id];
+    return plan && typeof plan === 'object' ? plan as SelectedTreatmentPlan : null;
+}
+
+function extractRegistrySupportingSignals(outputPayload: Record<string, unknown>, condition: VeterinaryCondition): string[] {
+    const diagnosis = typeof outputPayload.diagnosis === 'object' && outputPayload.diagnosis != null
+        ? outputPayload.diagnosis as Record<string, unknown>
+        : {};
+    const differentials = Array.isArray(diagnosis.top_differentials) ? diagnosis.top_differentials : [];
+    const matching = differentials.find((entry) => {
+        if (!entry || typeof entry !== 'object') return false;
+        const candidate = entry as Record<string, unknown>;
+        return candidate.condition_id === condition.id
+            || candidate.condition === condition.canonical_name
+            || candidate.name === condition.canonical_name;
+    }) as Record<string, unknown> | undefined;
+
+    const evidence = Array.isArray(matching?.supporting_evidence) ? matching.supporting_evidence : [];
+    return evidence
+        .map((entry) => {
+            if (!entry || typeof entry !== 'object') return null;
+            return typeof (entry as Record<string, unknown>).finding === 'string'
+                ? String((entry as Record<string, unknown>).finding)
+                : null;
+        })
+        .filter((value): value is string => value != null);
+}
+
+function buildRegistryCandidateOptions(input: {
+    condition: VeterinaryCondition;
+    plan: SelectedTreatmentPlan;
+    diagnosisConfidence: number | null;
+    contradictionFlags: string[];
+    regulatoryNotes: string[];
+    managementMode: TreatmentRecommendationBundle['management_mode'];
+}): TreatmentCandidateRecord[] {
+    const gold = createRegistryOption({
+        condition: input.condition,
+        plan: input.plan,
+        pathway: 'gold_standard',
+        diagnosisConfidence: input.diagnosisConfidence,
+        contradictionFlags: input.contradictionFlags,
+        regulatoryNotes: input.regulatoryNotes,
+        managementMode: input.managementMode,
+        includePhases: input.plan.treatment_phases.map((phase) => phase.phase),
+        preferredSetting: 'advanced',
+        evidenceLevel: 'high',
+    });
+
+    const resource = createRegistryOption({
+        condition: input.condition,
+        plan: input.plan,
+        pathway: 'resource_constrained',
+        diagnosisConfidence: input.diagnosisConfidence,
+        contradictionFlags: input.contradictionFlags,
+        regulatoryNotes: input.regulatoryNotes,
+        managementMode: input.managementMode,
+        includePhases: input.plan.treatment_phases
+            .filter((phase) => phase.phase !== 'palliative')
+            .map((phase) => phase.phase),
+        preferredSetting: 'low_resource',
+        evidenceLevel: 'moderate',
+    });
+
+    const supportive = createRegistryOption({
+        condition: input.condition,
+        plan: input.plan,
+        pathway: 'supportive_only',
+        diagnosisConfidence: input.diagnosisConfidence,
+        contradictionFlags: input.contradictionFlags,
+        regulatoryNotes: input.regulatoryNotes,
+        managementMode: 'diagnostic_management',
+        includePhases: input.plan.treatment_phases
+            .filter((phase) => ['acute_stabilisation', 'pre_treatment_preparation', 'adjunctive', 'long_term_management', 'secondary_prevention'].includes(phase.phase))
+            .map((phase) => phase.phase),
+        preferredSetting: 'any',
+        evidenceLevel: 'moderate',
+    });
+
+    return [gold, resource, supportive];
+}
+
+function createRegistryOption(input: {
+    condition: VeterinaryCondition;
+    plan: SelectedTreatmentPlan;
+    pathway: TreatmentPathway;
+    diagnosisConfidence: number | null;
+    contradictionFlags: string[];
+    regulatoryNotes: string[];
+    managementMode: TreatmentRecommendationBundle['management_mode'];
+    includePhases: string[];
+    preferredSetting: TreatmentEnvironmentConstraints['preferred_setting'];
+    evidenceLevel: TreatmentEvidenceLevel;
+}): TreatmentCandidateRecord {
+    const includedPhases = input.plan.treatment_phases.filter((phase) => input.includePhases.includes(phase.phase));
+    const protocols = includedPhases.flatMap((phase) => phase.protocols);
+    const interventionDetails: TreatmentInterventionDetails = {
+        drug_classes: protocols
+            .filter((protocol) => protocol.category.startsWith('pharmacological'))
+            .map((protocol) => protocol.patient_specific_dose ? `${protocol.protocol_name}: ${protocol.patient_specific_dose}` : protocol.protocol_name),
+        procedure_types: protocols
+            .filter((protocol) => protocol.category === 'surgical' || protocol.category === 'interventional_procedure')
+            .map((protocol) => protocol.protocol_name),
+        supportive_measures: [
+            ...includedPhases.map((phase) => `${phase.phase_label}: ${phase.phase_notes}`),
+            ...input.plan.owner_instructions.slice(0, 4),
+        ],
+        monitoring: input.plan.monitoring_schedule.flatMap((entry) => [`${entry.timepoint}: ${entry.tests_required.join(', ')}`, `${entry.timepoint}: ${entry.clinical_parameters.join(', ')}`]),
+        reference_range_notes: [input.plan.regional_availability_notes],
+    };
+
+    const whyRelevant = input.pathway === 'gold_standard'
+        ? `Full disease-specific protocol for ${input.condition.canonical_name}, sequenced across stabilisation, preparation, definitive therapy, and monitoring.`
+        : input.pathway === 'resource_constrained'
+            ? `Resource-aware pathway for ${input.condition.canonical_name} that preserves essential disease-directed care while accounting for availability constraints.`
+            : `Supportive and preparation pathway for ${input.condition.canonical_name} when definitive treatment must be delayed pending staging, stabilization, or sourcing.`;
+
+    return {
+        id: '',
+        disease: input.condition.canonical_name,
+        species_applicability: input.condition.species_affected,
+        treatment_pathway: input.pathway,
+        treatment_type: protocols.some((protocol) => protocol.category === 'surgical' || protocol.category === 'interventional_procedure')
+            ? 'surgical'
+            : protocols.some((protocol) => protocol.category.startsWith('pharmacological'))
+                ? 'medical'
+                : 'supportive care',
+        intervention_details: interventionDetails,
+        indication_criteria: [
+            `Primary diagnosis: ${input.condition.canonical_name}`,
+            ...(input.plan.severity_class ? [`Severity class: ${input.plan.severity_class}`] : []),
+        ],
+        contraindications: input.plan.contraindicated_treatments.map((entry) => `${entry.treatment}: ${entry.reason}`),
+        detected_contraindications: input.plan.contraindicated_treatments.map((entry) => `${entry.treatment}: ${entry.reason}`),
+        risk_level: input.plan.severity_class === 'IV' ? 'critical' : input.plan.severity_class === 'III' ? 'high' : 'moderate',
+        urgency_level: input.plan.severity_class === 'IV' ? 'emergent' : 'urgent',
+        evidence_level: input.evidenceLevel,
+        environment_constraints: {
+            preferred_setting: input.preferredSetting,
+            notes: [input.plan.regional_availability_notes],
+        },
+        expected_outcome_range: {
+            survival_probability_band: input.plan.total_estimated_cost_range ?? 'Guideline-dependent',
+            recovery_expectation: input.plan.prognosis,
+        },
+        supporting_signals: extractUniqueLines([
+            ...protocols.map((protocol) => protocol.evidence_summary),
+            ...input.contradictionFlags.map((flag) => `Contradiction note: ${flag}`),
+        ]),
+        why_relevant: whyRelevant,
+        risks: extractUniqueLines([
+            ...protocols.flatMap((protocol) => protocol.cautions_for_this_patient),
+            ...protocols.flatMap((protocol) => protocol.drug_interactions_in_plan),
+        ]),
+        regulatory_notes: [...input.regulatoryNotes],
+        uncertainty: {
+            recommendation_confidence: Math.max(0.2, Math.min(0.95, input.diagnosisConfidence ?? 0.6)),
+            evidence_gaps: input.managementMode === 'diagnostic_management'
+                ? ['Confirmatory staging or disease-severity confirmation is still required before irreversible treatment decisions.']
+                : [],
+            alternative_diagnoses: [],
+            weak_evidence: input.evidenceLevel === 'moderate' || input.evidenceLevel === 'low',
+            diagnostic_management_required: input.managementMode === 'diagnostic_management',
+            noise_reasons: input.managementMode === 'diagnostic_management'
+                ? ['Clinician review and staging remain necessary before definitive treatment execution.']
+                : ['Clinician validation remains mandatory before applying any recommended protocol.'],
+        },
+        clinician_validation_required: true,
+        autonomous_prescribing_blocked: true,
+    };
+}
+
+function extractUniqueLines(lines: string[]): string[] {
+    return [...new Set(lines.map((line) => line.trim()).filter((line) => line.length > 0))];
 }
 
 export function validateTreatmentBundle(bundle: TreatmentRecommendationBundle) {
