@@ -3,7 +3,7 @@
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import DeveloperApiExplorer from '@/components/DeveloperApiExplorer';
+import DebugToolsPanel from '@/components/DebugToolsPanel';
 import {
     ConsoleCard,
     Container,
@@ -15,7 +15,6 @@ import {
     TerminalTextarea,
 } from '@/components/ui/terminal';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
-import { extractUuidFromText } from '@/lib/utils/uuid';
 import type {
     ControlPlaneAlertSensitivity,
     ControlPlaneLogRecord,
@@ -1010,114 +1009,13 @@ function renderGovernanceTab(
 }
 
 function renderDebugTab(
-    snapshot: ControlPlaneSnapshot,
-    onRunAction: Parameters<typeof renderTab>[0]['onRunAction'],
-    onRunProbe: Parameters<typeof renderTab>[0]['onRunProbe'],
-    onRunTelemetryStreamProbe: Parameters<typeof renderTab>[0]['onRunTelemetryStreamProbe'],
+    _snapshot: ControlPlaneSnapshot,
+    _onRunAction: Parameters<typeof renderTab>[0]['onRunAction'],
+    _onRunProbe: Parameters<typeof renderTab>[0]['onRunProbe'],
+    _onRunTelemetryStreamProbe: Parameters<typeof renderTab>[0]['onRunTelemetryStreamProbe'],
     isAdmin: boolean,
 ) {
-    const latestInferenceEventId = snapshot.debug.latest_inference_event_id;
-    const normalizedLatestInferenceEventId = extractUuidFromText(latestInferenceEventId);
-
-    return (
-        <div className="space-y-4">
-            <ConsoleCard title="System Diagnostics">
-                <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
-                    <DataCard label="Latest Inference Event" value={latestInferenceEventId ?? 'NO DATA'} />
-                    <DataCard label="Latest Evaluation Event" value={snapshot.debug.latest_evaluation_event_id ?? 'NO DATA'} />
-                    <DataCard label="Dataset Rows" value={String(snapshot.debug.dataset_row_count)} />
-                    <DataCard
-                        label="Orphan Events"
-                        value={String(
-                            snapshot.debug.orphan_counts.inference_events_missing_case_id
-                            + snapshot.debug.orphan_counts.outcome_events_missing_case_id
-                            + snapshot.debug.orphan_counts.simulation_events_missing_case_id,
-                        )}
-                    />
-                </div>
-                <div className="flex flex-wrap gap-2 mt-4">
-                    <ControlActionButton
-                        label="Test Inference Endpoint"
-                        onClick={() => void onRunProbe('Inference endpoint', '/api/inference', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                model: { name: 'gpt-4o-mini', version: '1.0.0' },
-                                input: {
-                                    input_signature: {
-                                        species: 'Canis lupus familiaris',
-                                        breed: 'Golden Retriever',
-                                        symptoms: ['lethargy', 'fever', 'loss of appetite'],
-                                        metadata: {},
-                                    },
-                                },
-                            }),
-                        })}
-                    />
-                    <ControlActionButton
-                        label="Test Outcome Creation"
-                        disabled={!normalizedLatestInferenceEventId}
-                        onClick={() => void onRunProbe('Outcome creation', '/api/outcome', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                inference_event_id: normalizedLatestInferenceEventId,
-                                outcome: {
-                                    type: 'confirmed_diagnosis',
-                                    payload: {
-                                        confirmed_diagnosis: 'Parvovirus',
-                                        primary_condition_class: 'infectious',
-                                        emergency_level: 'urgent',
-                                    },
-                                    timestamp: new Date().toISOString(),
-                                },
-                            }),
-                        })}
-                    />
-                    <ControlActionButton
-                        label="Run System Diagnostic"
-                        onClick={() => void onRunAction({ action: 'run_system_diagnostic' })}
-                    />
-                    <ControlActionButton
-                        label="Test Telemetry Stream"
-                        onClick={() => void onRunTelemetryStreamProbe()}
-                    />
-                    <ControlActionButton
-                        label="Test Evaluation Creation"
-                        disabled={!normalizedLatestInferenceEventId}
-                        onClick={() => void onRunProbe('Evaluation creation', '/api/evaluation', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                inference_event_id: normalizedLatestInferenceEventId ?? undefined,
-                                model_name: 'VetIOS Diagnostics',
-                                model_version: '1.0.0',
-                                predicted_confidence: 0.82,
-                                trigger_type: 'inference',
-                            }),
-                        })}
-                    />
-                    <ControlActionButton
-                        label="Backfill Evaluations"
-                        disabled={!isAdmin}
-                        onClick={() => void onRunAction(
-                            { action: 'backfill_evaluation_events' },
-                            { confirmMessage: 'Backfill missing evaluation events now?' },
-                        )}
-                    />
-                </div>
-                {latestInferenceEventId && !normalizedLatestInferenceEventId && (
-                    <div className="mt-4 border border-yellow-500/30 bg-yellow-500/10 p-3 font-mono text-[11px] text-yellow-300">
-                        The latest inference reference is not a canonical UUID. Outcome and evaluation probes stay disabled until a fresh inference event is generated.
-                    </div>
-                )}
-            </ConsoleCard>
-
-            <ConsoleCard title="Developer API Explorer">
-                <DeveloperApiExplorer latestInferenceEventId={latestInferenceEventId} />
-            </ConsoleCard>
-        </div>
-    );
+    return <DebugToolsPanel isAdmin={isAdmin} />;
 }
 
 function renderSimulationTab(

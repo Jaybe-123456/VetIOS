@@ -2,6 +2,17 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ConsoleCard, TerminalLabel } from '@/components/ui/terminal';
+import {
+    extractApiErrorMessage,
+    formatHttpStatus,
+    requestJson,
+    stringifyApiBody,
+} from '@/lib/debugTools/client';
+import {
+    buildEvaluationTestPayload,
+    buildInferenceTestPayload,
+    buildOutcomeTestPayload,
+} from '@/lib/debugTools/payloads';
 import { extractUuidFromText } from '@/lib/utils/uuid';
 import { Activity, AlertTriangle, Code, Play, ShieldCheck } from 'lucide-react';
 
@@ -25,29 +36,8 @@ export default function DeveloperApiExplorer({
     );
 
     const defaultPayloads = useMemo<Record<ExplorerEndpoint, string>>(() => ({
-        '/api/inference': JSON.stringify({
-            model: { name: 'gpt-4o-mini', version: '1.0.0' },
-            input: {
-                input_signature: {
-                    species: 'Canis lupus familiaris',
-                    breed: 'Golden Retriever',
-                    symptoms: ['lethargy', 'fever', 'loss of appetite'],
-                    metadata: {},
-                },
-            },
-        }, null, 2),
-        '/api/outcome': JSON.stringify({
-            inference_event_id: normalizedLatestInferenceEventId ?? '00000000-0000-0000-0000-000000000000',
-            outcome: {
-                type: 'confirmed_diagnosis',
-                payload: {
-                    confirmed_diagnosis: 'Parvovirus',
-                    primary_condition_class: 'infectious',
-                    emergency_level: 'urgent',
-                },
-                timestamp: new Date().toISOString(),
-            },
-        }, null, 2),
+        '/api/inference': JSON.stringify(buildInferenceTestPayload(), null, 2),
+        '/api/outcome': JSON.stringify(buildOutcomeTestPayload(normalizedLatestInferenceEventId ?? ''), null, 2),
         '/api/simulate': JSON.stringify({
             simulation: {
                 type: 'adversarial_case',
@@ -62,20 +52,18 @@ export default function DeveloperApiExplorer({
                 model_version: '1.0.0',
             },
         }, null, 2),
-        '/api/evaluation': JSON.stringify({
-            inference_event_id: normalizedLatestInferenceEventId ?? undefined,
-            model_name: 'VetIOS Diagnostics',
-            model_version: '1.0.0',
-            predicted_confidence: 0.82,
-            trigger_type: 'inference',
-        }, null, 2),
+        '/api/evaluation': JSON.stringify(buildEvaluationTestPayload(normalizedLatestInferenceEventId), null, 2),
     }), [normalizedLatestInferenceEventId]);
 
     const [endpoint, setEndpoint] = useState<ExplorerEndpoint>('/api/inference');
     const [payload, setPayload] = useState(defaultPayloads['/api/inference']);
-    const [response, setResponse] = useState<string | null>(null);
+    const [responseBody, setResponseBody] = useState<unknown>(null);
     const [status, setStatus] = useState<number | null>(null);
+    const [statusText, setStatusText] = useState<string | null>(null);
     const [loading, setLoading] = useState(false);
+    const [authHeaderValue, setAuthHeaderValue] = useState('');
+    const [tenantScopeValue, setTenantScopeValue] = useState('');
+    const showAuthWarning = authHeaderValue.trim().length === 0;
 
     useEffect(() => {
         setPayload(defaultPayloads[endpoint]);
@@ -83,29 +71,36 @@ export default function DeveloperApiExplorer({
 
     function handleEndpointChange(nextEndpoint: ExplorerEndpoint) {
         setEndpoint(nextEndpoint);
-        setResponse(null);
+        setResponseBody(null);
         setStatus(null);
+        setStatusText(null);
     }
 
     async function handleExecute() {
         setLoading(true);
-        setResponse(null);
+        setResponseBody(null);
         setStatus(null);
+        setStatusText(null);
 
         try {
-            const res = await fetch(endpoint, {
+            const { response, body } = await requestJson(endpoint, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    Authorization: authHeaderValue,
+                    'Content-Type': 'application/json',
+                    'X-Tenant-Scope': tenantScopeValue,
+                },
                 body: payload,
             });
 
-            setStatus(res.status);
-            const data = await res.json();
-            setResponse(JSON.stringify(data, null, 2));
+            setStatus(response.status);
+            setStatusText(response.statusText);
+            setResponseBody(body);
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
-            setStatus(500);
-            setResponse(JSON.stringify({ error: message }, null, 2));
+            setStatus(null);
+            setStatusText(null);
+            setResponseBody({ error: message });
         } finally {
             setLoading(false);
         }
@@ -140,18 +135,25 @@ export default function DeveloperApiExplorer({
                             <TerminalLabel>Authorization Header</TerminalLabel>
                             <input
                                 type="text"
-                                disabled
-                                value="Bearer <Tenant_JWT_Token>"
-                                className="w-full bg-dim border border-grid p-2 font-mono text-[10px] text-muted outline-none cursor-not-allowed"
+                                value={authHeaderValue}
+                                onChange={(event) => setAuthHeaderValue(event.target.value)}
+                                placeholder="Bearer <Tenant_JWT_Token>"
+                                className="w-full bg-dim border border-grid p-2 font-mono text-[10px] text-foreground outline-none"
                             />
+                            {showAuthWarning && (
+                                <div className="mt-2 border border-yellow-500/30 bg-yellow-500/10 p-2 font-mono text-[10px] text-yellow-300">
+                                    Authorization header is empty. This request will run without one and may rely on the current session instead.
+                                </div>
+                            )}
                         </div>
                         <div>
                             <TerminalLabel>Tenant Scope</TerminalLabel>
                             <input
                                 type="text"
-                                disabled
-                                value="Current authenticated tenant"
-                                className="w-full bg-dim border border-grid p-2 font-mono text-[10px] text-muted outline-none cursor-not-allowed"
+                                value={tenantScopeValue}
+                                onChange={(event) => setTenantScopeValue(event.target.value)}
+                                placeholder="Current authenticated tenant"
+                                className="w-full bg-dim border border-grid p-2 font-mono text-[10px] text-foreground outline-none"
                             />
                         </div>
                         <div>
@@ -174,9 +176,9 @@ export default function DeveloperApiExplorer({
                     </span>
                     <button
                         onClick={handleExecute}
-                        disabled={loading || ((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !normalizedLatestInferenceEventId)}
+                        disabled={loading}
                         className={`px-4 py-1.5 font-mono text-[10px] tracking-widest uppercase flex items-center gap-2 transition-colors border ${
-                            loading || ((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !normalizedLatestInferenceEventId)
+                            loading
                                 ? 'border-grid text-muted cursor-not-allowed'
                                 : endpoint === '/api/simulate'
                                     ? 'border-danger text-danger hover:bg-danger hover:text-white'
@@ -191,7 +193,7 @@ export default function DeveloperApiExplorer({
                     <div className="bg-danger/10 border-b border-danger/30 p-3 flex items-center gap-3">
                         <AlertTriangle className="w-4 h-4 text-danger shrink-0" />
                         <span className="font-mono text-[10px] text-danger uppercase tracking-tight">
-                            Critical Dependency Missing: No canonical inference UUID found. Run <span className="font-bold">POST /api/inference</span> first, or use a value that contains the real inference UUID.
+                            Latest inference UUID is unavailable. Execute <span className="font-bold">POST /api/inference</span> first, or replace the request payload with a real inference event id before executing.
                         </span>
                     </div>
                 )}
@@ -208,19 +210,36 @@ export default function DeveloperApiExplorer({
                     <span className="font-mono text-xs text-muted uppercase tracking-widest">
                         Raw System Response
                     </span>
-                    {status != null && (
-                        <span className={`font-mono text-[10px] uppercase tracking-widest px-2 py-0.5 border flex items-center gap-1 ${
-                            status >= 200 && status < 300
-                                ? 'border-accent text-accent bg-accent/10'
-                                : 'border-danger text-danger bg-danger/10'
-                        }`}>
-                            {status >= 200 && status < 300 ? <ShieldCheck className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-                            {status >= 200 && status < 300 ? `${status} OK` : `${status} ERR`}
-                        </span>
-                    )}
                 </div>
-                <div className="flex-1 overflow-auto p-4 font-mono text-xs whitespace-pre text-accent/80 relative z-10">
-                    {loading ? 'WAITING FOR I/O...' : response || 'No data. Execute request.'}
+                <div className="flex-1 overflow-auto p-4 font-mono text-xs text-accent/80 relative z-10">
+                    {status != null && (
+                        <div className="mb-3">
+                            <span className={`font-mono text-[10px] uppercase tracking-widest px-2 py-1 border inline-flex items-center gap-1 ${
+                                status >= 200 && status < 300
+                                    ? 'border-accent text-accent bg-accent/10'
+                                    : 'border-danger text-danger bg-danger/10'
+                            }`}>
+                                {status >= 200 && status < 300 ? <ShieldCheck className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                                {formatHttpStatus(status, statusText)}
+                            </span>
+                        </div>
+                    )}
+
+                    {loading ? (
+                        <div className="font-mono text-xs text-yellow-300 flex items-center gap-2">
+                            <Activity className="w-4 h-4 animate-spin" />
+                            WAITING FOR I/O...
+                        </div>
+                    ) : (
+                        <pre className="max-h-[30rem] overflow-y-auto whitespace-pre-wrap break-words">
+                            {responseBody == null ? 'No data. Execute request.' : stringifyApiBody(responseBody)}
+                        </pre>
+                    )}
+                    {!loading && status != null && status >= 400 && responseBody != null && (
+                        <div className="mt-3 border border-danger/30 bg-danger/10 p-3 font-mono text-[10px] text-danger">
+                            {extractApiErrorMessage(responseBody, 'Request failed.')}
+                        </div>
+                    )}
                 </div>
                 <div className="absolute inset-0 z-0 bg-transparent flex items-center justify-center pointer-events-none opacity-5">
                     <span className="font-mono text-9xl tracking-widest rotate-90 scale-150">VETIOS</span>
