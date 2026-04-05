@@ -155,7 +155,9 @@ function matchesExpected(value: unknown, expected: string): boolean {
 
 function inferHeartwormSeverity(request: InferenceRequest): string | null {
     const signs = new Set(request.presenting_signs.map((sign) => sign.toLowerCase()));
-    if (signs.has('collapse') || signs.has('caval_syndrome')) return 'IV';
+    const cyanotic = request.physical_exam?.mucous_membrane_color === 'cyanotic';
+    const delayedPerfusion = (request.physical_exam?.capillary_refill_time_s ?? 0) > 3;
+    if (signs.has('collapse') || signs.has('caval_syndrome') || cyanotic || delayedPerfusion) return 'IV';
     if (signs.has('syncope') || signs.has('ascites') || signs.has('hemoptysis')) return 'III';
     if (signs.has('exercise_intolerance') || signs.has('chronic_cough') || signs.has('dyspnea')) return 'II';
     return 'I';
@@ -284,6 +286,7 @@ export function applyPathognomicGate(request: InferenceRequest): PathognomonicRe
 export function buildPathognomonicDifferentials(result: PathognomonicResult): DifferentialEntry[] {
     if (!result.primaryCondition) return [];
     const primaryCondition = result.primaryCondition;
+    const primaryUrgency = result.severityClass === 'IV' ? 'immediate' : 'urgent';
 
     const entries: DifferentialEntry[] = [
         {
@@ -295,7 +298,7 @@ export function buildPathognomonicDifferentials(result: PathognomonicResult): Di
             determination_basis: 'pathognomonic_test',
             supporting_evidence: result.supportingEvidence,
             contradicting_evidence: [],
-            clinical_urgency: 'urgent',
+            clinical_urgency: primaryUrgency,
             recommended_confirmatory_tests: [],
             recommended_next_steps: result.recommendedNextSteps,
         },
@@ -316,7 +319,7 @@ export function buildPathognomonicDifferentials(result: PathognomonicResult): Di
                 type: secondary.relationship_type,
                 primary_condition: primaryCondition.canonical_name,
             },
-            clinical_urgency: 'urgent',
+            clinical_urgency: primaryUrgency,
             recommended_confirmatory_tests: [],
             recommended_next_steps: [],
         })),

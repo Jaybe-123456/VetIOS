@@ -96,6 +96,8 @@ export interface SafetyLayerResult {
     was_capped: boolean;
     abstain_recommendation: boolean;
     abstain_reason?: string;
+    competitive_differential?: boolean;
+    urgent_confirmatory_testing?: boolean;
     rule_overrides: string[];
     differential_spread: DifferentialSpread | null;
     telemetry: Record<string, unknown>;
@@ -548,15 +550,40 @@ export function applyDiagnosticSafetyLayer(params: {
             leadingProbability < 0.5 ||
             (differentialSpread?.spread ?? 0) < 0.12
         );
-    const abstainRecommendation =
-        Boolean(params.contradiction?.abstain) ||
-        (contradictionScore >= 0.4 && isUnstable) ||
-        (!syndromeStable && isUnstable && (postCapConfidence <= 0.45 || leadingProbability <= 0.34));
-    const abstainReason = !abstainRecommendation
-        ? undefined
-        : contradictionScore >= 0.4
-            ? 'Contradictory clinical context exceeds safe diagnosis-confidence threshold while emergency severity remains high'
-            : 'Differential remains too broad for a safe high-confidence diagnosis; clinician review is recommended';
+    const pathognomicCount = mergedDifferentials.filter((entry) => entry.determination_basis === 'pathognomonic_test').length;
+    const contradictionReasons = evidenceInference.contradiction_analysis?.contradiction_reasons
+        ?? params.contradiction?.contradiction_reasons
+        ?? [];
+    const hasMetabolicConflict =
+        contradictionScore > 0.60
+        && contradictionReasons.some((reason) =>
+            reason.toLowerCase().includes('diabetes') && reason.toLowerCase().includes('hypothyroid'),
+        );
+    let abstainRecommendation = false;
+    let abstainReason: string | undefined;
+    let competitiveDifferential = false;
+    let urgentConfirmatoryTesting = false;
+
+    if (hasMetabolicConflict) {
+        abstainRecommendation = true;
+        abstainReason = 'genuine_clinical_contradiction';
+    } else if (pathognomicCount > 1 && contradictionScore > 0.60 && contradictionReasons.length > 0) {
+        abstainRecommendation = true;
+        abstainReason = 'genuine_clinical_contradiction';
+    } else if (pathognomicCount > 0) {
+        abstainRecommendation = false;
+        abstainReason = 'pathognomonic_finding_present';
+    } else if (contradictionScore > 0.60 && contradictionReasons.length > 0) {
+        abstainRecommendation = true;
+        abstainReason = 'genuine_clinical_contradiction';
+    } else if (leadingProbability < 0.05) {
+        abstainRecommendation = true;
+        abstainReason = 'insufficient_clinical_signal';
+    } else if ((differentialSpread?.spread ?? 1) < 0.05 || leadingProbability < 0.55) {
+        abstainRecommendation = false;
+        competitiveDifferential = true;
+        urgentConfirmatoryTesting = true;
+    }
 
     const diagnosisFeatureImportance = Object.keys(evidenceInference.diagnosis_feature_importance).length > 0
         ? evidenceInference.diagnosis_feature_importance
@@ -608,6 +635,8 @@ export function applyDiagnosticSafetyLayer(params: {
         was_capped: wasCapped,
         abstain_recommendation: abstainRecommendation,
         abstain_reason: abstainReason,
+        competitive_differential: competitiveDifferential,
+        urgent_confirmatory_testing: urgentConfirmatoryTesting,
         rule_overrides: [...params.emergencyEval.emergency_rule_reasons],
         differential_spread: differentialSpread,
         telemetry: {

@@ -1,4 +1,5 @@
 import { getConditionsForSpecies } from './condition-registry';
+import { applyVectorExposurePriors, type ScoredCondition } from './exposure-priors';
 import type { InferenceRequest, Species, VeterinaryCondition } from './types';
 
 export interface RegionalPriorSet {
@@ -101,12 +102,9 @@ export function applyRegionalExposurePriors(
     candidates: VeterinaryCondition[],
     request: InferenceRequest,
 ): Map<string, number> {
-    const scores = new Map<string, number>();
     const regions = resolveRegionalKeys(request);
-    const heartwormPrevention = request.preventive_history?.heartworm_prevention ?? 'unknown';
-    const ectoparasitePrevention = request.preventive_history?.ectoparasite_prevention ?? 'unknown';
-    const vectorExposure = request.preventive_history?.vector_exposure;
     const month = new Date().getUTCMonth() + 1;
+    const baselineCandidates: ScoredCondition[] = [];
 
     for (const candidate of candidates) {
         const baseline = regions.reduce((best, regionKey) => {
@@ -126,32 +124,14 @@ export function applyRegionalExposurePriors(
             return Math.max(best, registryValue, seasonalValue);
         }, 0.01);
 
-        scores.set(candidate.id, baseline || 0.01);
+        baselineCandidates.push({
+            condition_id: candidate.id,
+            probability: baseline || 0.01,
+        });
     }
 
-    if (vectorExposure?.mosquito_endemic) {
-        const heartwormBase = heartwormPrevention === 'none'
-            ? 0.15
-            : heartwormPrevention === 'consistent'
-                ? 0.001
-                : 0.08;
-        scores.set('dirofilariosis_canine', Math.max(scores.get('dirofilariosis_canine') ?? 0.01, heartwormBase));
-        scores.set('leishmaniosis_canine', Math.max(scores.get('leishmaniosis_canine') ?? 0.01, 0.05));
-    }
-
-    if (vectorExposure?.wildlife_contact) {
-        scores.set('leptospirosis', Math.max(scores.get('leptospirosis') ?? 0.01, 0.08));
-        scores.set('rabies', Math.max(scores.get('rabies') ?? 0.01, 0.06));
-    }
-
-    if (vectorExposure?.tick_endemic && (ectoparasitePrevention === 'none' || ectoparasitePrevention === 'inconsistent' || ectoparasitePrevention === 'unknown')) {
-        scores.set('ehrlichiosis_canine', Math.max(scores.get('ehrlichiosis_canine') ?? 0.01, 0.12));
-        scores.set('anaplasmosis_canine', Math.max(scores.get('anaplasmosis_canine') ?? 0.01, 0.10));
-        scores.set('babesiosis_canine', Math.max(scores.get('babesiosis_canine') ?? 0.01, 0.09));
-        scores.set('hepatozoonosis', Math.max(scores.get('hepatozoonosis') ?? 0.01, 0.05));
-    }
-
-    return scores;
+    const exposureAdjusted = applyVectorExposurePriors(baselineCandidates, request);
+    return new Map(exposureAdjusted.map((candidate) => [candidate.condition_id, candidate.probability]));
 }
 
 export function getRegionalPriorMap(request: InferenceRequest): Map<string, number> {

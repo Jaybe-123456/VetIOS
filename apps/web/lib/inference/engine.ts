@@ -13,6 +13,8 @@ import { applyRegionalExposurePriors } from './regional-priors';
 import { applySyndromePatterns } from './syndrome-recogniser';
 import { selectTreatmentProtocol, type TreatmentContext } from '../treatment/treatment-engine';
 import type {
+    AbstainDecision,
+    ContradictionAnalysis,
     ClinicalUrgency,
     ConditionClass,
     ContradictingEvidenceEntry,
@@ -47,6 +49,111 @@ export interface ClinicalInferenceEngineResult extends InferenceResponse {
         spread: number | null;
     } | null;
     uncertainty_notes: string[];
+}
+
+function analyzeContradictions(
+    request: InferenceRequest,
+    differentials: DifferentialEntry[],
+): ContradictionAnalysis {
+    const reasons: string[] = [];
+    let score = 0;
+
+    const diabetesConfirmed =
+        request.diagnostic_tests?.biochemistry?.glucose === 'hyperglycemia'
+        && request.diagnostic_tests?.urinalysis?.glucose_in_urine === 'present';
+    const hypothyroidConfirmed =
+        request.diagnostic_tests?.serology?.t4_total === 'low'
+        || request.diagnostic_tests?.serology?.free_t4 === 'low';
+
+    if (diabetesConfirmed && hypothyroidConfirmed && request.presenting_signs.includes('weight_loss')) {
+        score = Math.max(score, 0.75);
+        reasons.push('Confirmed diabetes and hypothyroid evidence are pulling in opposite metabolic directions for the current weight-loss presentation.');
+    }
+
+    const top = differentials[0];
+    if (
+        top?.condition_id === 'dirofilariosis_canine'
+        && request.diagnostic_tests?.serology?.dirofilaria_immitis_antigen === 'negative'
+    ) {
+        score = Math.max(score, 0.85);
+        reasons.push('Heartworm antigen is negative despite heartworm leading the differential.');
+    }
+
+    return {
+        contradiction_score: Number(score.toFixed(3)),
+        contradiction_reasons: reasons,
+    };
+}
+
+function shouldAbstain(
+    differentials: DifferentialEntry[],
+    _request: InferenceRequest,
+    contradictionAnalysis: ContradictionAnalysis,
+): AbstainDecision {
+    const pathognomicCount = differentials.filter(
+        (entry) => entry.determination_basis === 'pathognomonic_test',
+    ).length;
+    const hasMetabolicConflict =
+        contradictionAnalysis.contradiction_score > 0.60
+        && contradictionAnalysis.contradiction_reasons.some((reason) =>
+            reason.toLowerCase().includes('diabetes') && reason.toLowerCase().includes('hypothyroid'),
+        );
+    if (hasMetabolicConflict) {
+        return {
+            abstain: true,
+            reason: 'genuine_clinical_contradiction',
+            details: contradictionAnalysis.contradiction_reasons,
+        };
+    }
+    if (
+        pathognomicCount > 1
+        && contradictionAnalysis.contradiction_score > 0.60
+        && contradictionAnalysis.contradiction_reasons.length > 0
+    ) {
+        return {
+            abstain: true,
+            reason: 'genuine_clinical_contradiction',
+            details: contradictionAnalysis.contradiction_reasons,
+        };
+    }
+    if (pathognomicCount > 0) {
+        return { abstain: false, reason: 'pathognomonic_finding_present' };
+    }
+
+    if (
+        contradictionAnalysis.contradiction_score > 0.60
+        && contradictionAnalysis.contradiction_reasons.length > 0
+    ) {
+        return {
+            abstain: true,
+            reason: 'genuine_clinical_contradiction',
+            details: contradictionAnalysis.contradiction_reasons,
+        };
+    }
+
+    const maxProbability = Math.max(...differentials.map((entry) => entry.probability), 0);
+    if (maxProbability < 0.05) {
+        return {
+            abstain: true,
+            reason: 'insufficient_clinical_signal',
+            details: ['No presenting signs or history provided'],
+        };
+    }
+
+    const spread = differentials[0] && differentials[1]
+        ? differentials[0].probability - differentials[1].probability
+        : 1;
+    if (spread < 0.05 || maxProbability < 0.55) {
+        return {
+            abstain: false,
+            reason: null,
+            competitive_differential: true,
+            confirmatory_testing_urgent: true,
+            message: 'Differential is competitive — confirmatory testing required to distinguish the top diagnoses',
+        };
+    }
+
+    return { abstain: false, reason: null };
 }
 
 function normalizeKey(value: string): string {
@@ -343,7 +450,9 @@ function buildInferenceExplanation(
 
 function inferHeartwormSeverityClass(request: InferenceRequest): string | null {
     const signs = new Set(request.presenting_signs);
-    if (signs.has('collapse') || signs.has('caval_syndrome')) return 'IV';
+    const cyanotic = request.physical_exam?.mucous_membrane_color === 'cyanotic';
+    const delayedPerfusion = (request.physical_exam?.capillary_refill_time_s ?? 0) > 3;
+    if (signs.has('collapse') || signs.has('caval_syndrome') || cyanotic || delayedPerfusion) return 'IV';
     if (signs.has('syncope') || signs.has('ascites') || signs.has('hemoptysis')) return 'III';
     if (signs.has('exercise_intolerance') || signs.has('chronic_cough') || signs.has('dyspnea')) return 'II';
     return 'I';
@@ -441,12 +550,19 @@ export function runClinicalInferenceEngine(
             'pathognomonic_test',
             pathognomicResult.keyFinding,
         );
+        const contradictionAnalysis = analyzeContradictions(request, confirmed);
+        const abstainDecision = shouldAbstain(confirmed, request, contradictionAnalysis);
         return {
             differentials: confirmed,
             inference_explanation: explanation,
             diagnosis: buildDiagnosisSummary(confirmed),
             treatment_plans: treatmentPlans,
             ground_truth_summary: buildGroundTruthSummary(confirmed),
+            contradiction_analysis: contradictionAnalysis,
+            abstain_recommendation: abstainDecision.abstain,
+            abstain_reason: abstainDecision.reason,
+            competitive_differential: abstainDecision.competitive_differential,
+            urgent_confirmatory_testing: abstainDecision.confirmatory_testing_urgent,
             diagnosis_feature_importance: featureImportance(confirmed),
             differential_spread: computeDifferentialSpread(confirmed),
             uncertainty_notes: pathognomicResult.anomalyNotes,
@@ -481,6 +597,11 @@ export function runClinicalInferenceEngine(
     if (request.diagnostic_tests?.serology?.dirofilaria_immitis_antigen == null && differentials.some((entry) => entry.condition_id === 'dirofilariosis_canine')) {
         uncertaintyNotes.push('Heartworm disease remains plausible; confirm with Dirofilaria immitis antigen testing.');
     }
+    const contradictionAnalysis = analyzeContradictions(request, differentials);
+    const abstainDecision = shouldAbstain(differentials, request, contradictionAnalysis);
+    if (abstainDecision.message) {
+        uncertaintyNotes.push(abstainDecision.message);
+    }
 
     return {
         differentials,
@@ -488,6 +609,11 @@ export function runClinicalInferenceEngine(
         diagnosis: buildDiagnosisSummary(differentials),
         treatment_plans: treatmentPlans,
         ground_truth_summary: buildGroundTruthSummary(differentials),
+        contradiction_analysis: contradictionAnalysis,
+        abstain_recommendation: abstainDecision.abstain,
+        abstain_reason: abstainDecision.reason,
+        competitive_differential: abstainDecision.competitive_differential,
+        urgent_confirmatory_testing: abstainDecision.confirmatory_testing_urgent,
         diagnosis_feature_importance: featureImportance(differentials),
         differential_spread: computeDifferentialSpread(differentials),
         uncertainty_notes: uncertaintyNotes,

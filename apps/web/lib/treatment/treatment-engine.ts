@@ -86,6 +86,13 @@ export function selectTreatmentProtocol(
         }];
     });
 
+    if (condition.id === 'dirofilariosis_canine' && severityClass === 'IV') {
+        contraindicated.push({
+            treatment: 'Melarsomine split-dose adulticide protocol',
+            reason: 'Melarsomine contraindicated in caval syndrome - surgical extraction first',
+        });
+    }
+
     return {
         condition_name: condition.canonical_name,
         severity_class: severityClass,
@@ -207,6 +214,9 @@ function timingLabel(phase: TreatmentPhase) {
 }
 
 function phaseNote(conditionId: string, phase: TreatmentPhase) {
+    if (conditionId === 'dirofilariosis_canine' && phase === 'acute_stabilisation') {
+        return 'For caval syndrome, surgical extraction is the immediate priority. Melarsomine contraindicated in caval syndrome - surgical extraction first.';
+    }
     if (conditionId === 'dirofilariosis_canine' && phase === 'definitive_treatment') {
         return 'Adulticide therapy must follow exercise restriction and pre-treatment preparation; do not skip the staged sequence.';
     }

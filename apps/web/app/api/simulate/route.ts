@@ -37,8 +37,11 @@ import {
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { buildSimulationSummary } from '@/lib/simulation/collapseDetector';
 import { normalizeClinicalBaseCase, sanitizeSimulationInput } from '@/lib/simulation/casePerturber';
-import { runIntegritySweep } from '@/lib/simulation/sweepEngine';
+import { runAdversarialSweep } from '@/lib/adversarial/adversarial-engine';
+import { getConditionById } from '@/lib/inference/condition-registry';
+import { runClinicalInferenceEngine } from '@/lib/inference/engine';
 import type { SimulationMode, SimulationStep } from '@/lib/simulation/simulationTypes';
+import type { AdversarialStabilityReport } from '@/lib/adversarial/types';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -103,20 +106,21 @@ export async function POST(req: Request) {
             observedAt,
         });
 
-        const sweep = await runIntegritySweep(normalizedBaseCase, {
-            model: normalizedRequest.model,
-            modelVersion: normalizedRequest.modelVersion,
-            steps: normalizedRequest.steps,
-            mode: normalizedRequest.mode,
-            timeoutMs: STEP_TIMEOUT_MS,
-            maxAdaptiveSteps: 15,
+        const targetDisease = readString(asRecord(normalizedBaseCase.metadata).target_disease) ?? 'dirofilariosis_canine';
+        const baselineInference = runClinicalInferenceEngine(normalizedBaseCase);
+        const stabilityReport = await runAdversarialSweep(normalizedBaseCase, targetDisease, {
+            target_condition: targetDisease,
+            perturbation_types: ['symptom_noise', 'contradiction_pressure'],
+            noise_levels: createSweepLevels(normalizedRequest.steps),
+            contradiction_levels: createSweepLevels(normalizedRequest.steps),
+            sweep_steps: normalizedRequest.steps,
         });
+        const sweep = adaptStabilityReportToSimulation(stabilityReport, normalizedBaseCase);
 
         const executionMetrics = finishTelemetryExecutionSample(executionSample);
         const measuredLatencyMs = executionMetrics.latencyMs;
         const summary = buildSimulationSummary(sweep);
         const finalStep = sweep.steps[sweep.steps.length - 1] ?? null;
-        const targetDisease = readString(asRecord(normalizedBaseCase.metadata).target_disease);
 
         const persistedSimulationEventId = await logSimulation(supabase, {
             id: simulationEventId,
@@ -241,13 +245,24 @@ export async function POST(req: Request) {
             simulation_event_id: persistedSimulationEventId,
             triggered_inference_event_id: null,
             clinical_case_id: canonicalClinicalCase.id,
-            inference_output: finalStep?.output ?? null,
-            confidence_score: readNumber(finalStep?.output.confidence_score) ?? null,
+            inference_output: {
+                diagnosis: baselineInference.diagnosis,
+                differentials: baselineInference.differentials,
+                inference_explanation: baselineInference.inference_explanation,
+                treatment_plans: baselineInference.treatment_plans,
+                ground_truth_summary: baselineInference.ground_truth_summary,
+                abstain_recommendation: baselineInference.abstain_recommendation ?? false,
+                abstain_reason: baselineInference.abstain_reason ?? null,
+                competitive_differential: baselineInference.competitive_differential ?? false,
+                urgent_confirmatory_testing: baselineInference.urgent_confirmatory_testing ?? false,
+            },
+            confidence_score: baselineInference.diagnosis.confidence_score,
             inference_latency_ms: measuredLatencyMs,
-            contradiction_analysis: asNullableRecord(finalStep?.output.contradiction_analysis) ?? null,
-            differential_diagnosis: readDifferentials(finalStep?.output),
-            differential_spread: asNullableRecord(finalStep?.output.differential_spread) ?? null,
+            contradiction_analysis: baselineInference.contradiction_analysis ?? null,
+            differential_diagnosis: baselineInference.differentials,
+            differential_spread: baselineInference.differential_spread ?? null,
             target_evaluation: targetEvaluation,
+            stability_report: stabilityReport,
             simulation: {
                 base_case: sweep.base_case,
                 collapse_threshold: sweep.collapse_threshold ?? null,
@@ -280,6 +295,94 @@ export async function POST(req: Request) {
             { status: 500 },
         );
     }
+}
+
+function createSweepLevels(stepCount: number) {
+    const totalSteps = Math.max(5, Math.min(15, Math.round(stepCount)));
+    return Array.from({ length: totalSteps }, (_, index) => {
+        if (totalSteps === 1) return 1;
+        return Number((0.1 + ((0.9 * index) / (totalSteps - 1))).toFixed(3));
+    });
+}
+
+function adaptStabilityReportToSimulation(
+    report: AdversarialStabilityReport,
+    normalizedBaseCase: Record<string, unknown>,
+) {
+    const steps: SimulationStep[] = report.step_results.map((step, index, allSteps) => {
+        const previousPhi = index === 0 ? allSteps[0]?.phi ?? step.phi : allSteps[index - 1]?.phi ?? step.phi;
+        const state =
+            step.collapse_detected
+                ? 'collapsed'
+                : step.rank_inversions > 0 || step.phi < 0.85
+                    ? 'metastable'
+                    : step.phi < 0.92
+                        ? 'fragile'
+                        : 'stable';
+        const outputSummary = {
+            diagnosis: {
+                top_differentials: step.differential_at_step.map((entry) => ({
+                    name: getConditionById(entry.condition_id)?.canonical_name ?? entry.condition_id,
+                    condition_id: entry.condition_id,
+                    probability: entry.probability,
+                    rank: entry.rank,
+                })),
+            },
+            confidence_score: step.target_condition_probability,
+            differential_spread: {
+                spread: step.differential_at_step[0] && step.differential_at_step[1]
+                    ? Number((step.differential_at_step[0].probability - step.differential_at_step[1].probability).toFixed(4))
+                    : null,
+            },
+        };
+
+        return {
+            m: step.noise_level,
+            perturbation_vector: {
+                noise: step.noise_level,
+                contradiction: step.contradiction_level,
+                missingness: 0,
+                ambiguity: 0,
+                distribution_shift: 0,
+            },
+            input_variant: sanitizeSimulationInput(normalizedBaseCase),
+            output: outputSummary,
+            integrity: {
+                perturbation: {
+                    m: step.noise_level,
+                    components: {
+                        noise: step.noise_level,
+                        contradiction: step.contradiction_level,
+                        missingness: 0,
+                        ambiguity: 0,
+                        distribution_shift: 0,
+                    },
+                    reasoning: ['Symptom-only perturbation applied; objective tests, exposure history, and region preserved.'],
+                },
+                global_phi: step.phi,
+                capabilities: [],
+                instability: {
+                    delta_phi: Number((step.phi - previousPhi).toFixed(4)),
+                    curvature: 0,
+                    variance_proxy: Number((step.rank_inversions / Math.max(1, step.differential_at_step.length)).toFixed(4)),
+                    divergence: step.divergence_from_baseline,
+                    critical_instability_index: Number((1 - step.phi).toFixed(4)),
+                },
+                state,
+                collapse_risk: step.collapse_detected ? 1 : 0,
+                precliff_detected: step.rank_inversions > 0 || step.phi < 0.85,
+            },
+        };
+    });
+
+    return {
+        base_case: sanitizeSimulationInput(normalizedBaseCase),
+        steps,
+        collapse_threshold: report.collapse_conditions[0]?.collapse_threshold ?? null,
+        precliff_regions: report.step_results
+            .filter((step) => step.rank_inversions > 0 || step.phi < 0.85)
+            .map((step) => step.noise_level),
+    };
 }
 
 function normalizeSimulationRequest(body: {
@@ -333,7 +436,7 @@ function buildBaseCaseFromLegacySimulation(
     };
 }
 
-function deriveFailureMode(result: Awaited<ReturnType<typeof runIntegritySweep>>) {
+function deriveFailureMode(result: { collapse_threshold?: number | null; precliff_regions: number[] }) {
     if (result.collapse_threshold != null) return 'integrity_collapse_detected';
     if (result.precliff_regions.length > 0) return 'metastability_region_detected';
     return null;
