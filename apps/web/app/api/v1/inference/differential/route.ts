@@ -20,7 +20,8 @@ export async function POST(request: NextRequest) {
                 return internalInferencePost(buildForwardedRequest(req, rawBody.text));
             }
 
-            const parsed = StructuredInferenceRequestSchema.safeParse(rawBody.value);
+            const candidateBody = normalizeLegacyInferencePayload(rawBody.value);
+            const parsed = StructuredInferenceRequestSchema.safeParse(candidateBody);
             if (!parsed.success) {
                 return NextResponse.json({
                     error: parsed.error.issues.map((issue) => issue.path.join('.') ? `${issue.path.join('.')}: ${issue.message}` : issue.message).join('; '),
@@ -98,4 +99,20 @@ function buildForwardedRequest(request: NextRequest, body: string): Request {
         headers: request.headers,
         body,
     });
+}
+
+function normalizeLegacyInferencePayload(value: unknown): unknown {
+    if (typeof value !== 'object' || value == null || Array.isArray(value)) {
+        return value;
+    }
+
+    const candidate = { ...(value as Record<string, unknown>) };
+    if (
+        !Array.isArray(candidate.presenting_signs)
+        && Array.isArray(candidate.symptoms)
+    ) {
+        candidate.presenting_signs = candidate.symptoms;
+    }
+    delete candidate.symptoms;
+    return candidate;
 }
