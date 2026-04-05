@@ -113,6 +113,11 @@ export type GroundTruthStatus =
     | 'unconfirmed'
     | 'unlikely'
     | 'excluded';
+export type InferenceAbstainReason =
+    | 'pathognomonic_finding_present'
+    | 'genuine_clinical_contradiction'
+    | 'insufficient_clinical_signal'
+    | null;
 
 export interface PathognomicTestRule {
     test: string;
@@ -446,16 +451,7 @@ export interface DifferentialEntry {
     clinical_urgency: ClinicalUrgency;
     recommended_confirmatory_tests?: string[];
     recommended_next_steps?: string[];
-    ground_truth_explanation?: {
-        condition: string;
-        pre_confirmation_probability: number;
-        post_confirmation_probability: number;
-        criteria_source: string;
-        supporting_criteria: string[];
-        missing_criteria: string[];
-        contradicting_findings: string[];
-        confirmation_status: GroundTruthStatus;
-    };
+    ground_truth_explanation?: GroundTruthExplanation;
 }
 
 export interface ExcludedConditionExplanation {
@@ -470,6 +466,32 @@ export interface InferenceExplanation {
     evidence_quality: EvidenceQuality;
     data_completeness_score: number;
     missing_data_that_would_help: string[];
+}
+
+export interface GroundTruthExplanation {
+    condition: string;
+    pre_confirmation_probability: number;
+    post_confirmation_probability: number;
+    criteria_source: string;
+    supporting_criteria: string[];
+    missing_criteria: string[];
+    contradicting_findings: string[];
+    confirmation_status: GroundTruthStatus;
+    message?: string;
+}
+
+export interface ContradictionAnalysis {
+    contradiction_score: number;
+    contradiction_reasons: string[];
+}
+
+export interface AbstainDecision {
+    abstain: boolean;
+    reason: InferenceAbstainReason;
+    details?: string[];
+    competitive_differential?: boolean;
+    confirmatory_testing_urgent?: boolean;
+    message?: string;
 }
 
 export interface InferenceResponse {
@@ -490,6 +512,11 @@ export interface InferenceResponse {
         confidence_level: 'high' | 'moderate' | 'low';
         recommended_immediate_actions: string[];
     };
+    contradiction_analysis?: ContradictionAnalysis;
+    abstain_recommendation?: boolean;
+    abstain_reason?: InferenceAbstainReason;
+    competitive_differential?: boolean;
+    urgent_confirmatory_testing?: boolean;
 }
 
 export interface SelectedTreatmentPlan {

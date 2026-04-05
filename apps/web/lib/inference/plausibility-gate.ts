@@ -102,6 +102,26 @@ export function applyEtiologicalPlausibilityGate(
             }
         }
 
+        if (entry.condition_id === 'right_sided_chf_secondary' && !hasHeartworm) {
+            filtered.push({
+                ...entry,
+                condition: 'Right-sided CHF - primary cause not identified',
+                recommended_next_steps: [
+                    ...(entry.recommended_next_steps ?? []),
+                    'Identify primary cause of right-sided failure',
+                    'Evaluate for pulmonary hypertension, pulmonic stenosis, tricuspid dysplasia, or heartworm disease',
+                ],
+                contradicting_evidence: [
+                    ...entry.contradicting_evidence,
+                    {
+                        finding: 'Right-sided CHF is a sequela and requires a primary cause to complete the diagnosis',
+                        weight: 'weakens',
+                    },
+                ],
+            });
+            continue;
+        }
+
         let probability = entry.probability;
         const contradicting = [...entry.contradicting_evidence];
 

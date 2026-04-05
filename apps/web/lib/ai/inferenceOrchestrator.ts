@@ -117,6 +117,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     payload.was_capped = safetyLayer.was_capped;
     payload.abstain_recommendation = safetyLayer.abstain_recommendation;
     payload.abstain_reason = safetyLayer.abstain_reason ?? null;
+    payload.competitive_differential = safetyLayer.competitive_differential ?? false;
+    payload.urgent_confirmatory_testing = safetyLayer.urgent_confirmatory_testing ?? false;
     payload.rule_overrides = safetyLayer.rule_overrides;
     payload.differential_spread = safetyLayer.differential_spread;
     payload.telemetry = safetyLayer.telemetry;
