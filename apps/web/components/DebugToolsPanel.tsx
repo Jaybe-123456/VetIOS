@@ -6,6 +6,7 @@ import DeveloperApiExplorer from '@/components/DeveloperApiExplorer';
 import { ConsoleCard } from '@/components/ui/terminal';
 import {
     ApiResponseError,
+    extractEnvelopeData,
     extractApiErrorMessage,
     formatHttpStatus,
     requestJson,
@@ -62,8 +63,12 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
         INITIAL_RESOURCE_STATE as DebugResourceState<number>,
     );
     const [actionState, setActionState] = useState<DiagnosticActionState>(INITIAL_ACTION_STATE);
+    const [telemetryStreamStatus, setTelemetryStreamStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+    const [telemetryStreamError, setTelemetryStreamError] = useState<string | null>(null);
+    const [telemetryEvents, setTelemetryEvents] = useState<Array<Record<string, unknown>>>([]);
     const [orphanAnimationTick, setOrphanAnimationTick] = useState(0);
     const previousOrphanCountRef = useRef<number | null>(null);
+    const telemetrySourceRef = useRef<EventSource | null>(null);
 
     const normalizedLatestInferenceEventId = useMemo(
         () => extractUuidFromText(latestInferenceEvent.value),
@@ -276,6 +281,11 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
         return () => window.clearInterval(interval);
     }, [refreshAllMetrics, refreshPrimaryCards]);
 
+    useEffect(() => () => {
+        telemetrySourceRef.current?.close();
+        telemetrySourceRef.current = null;
+    }, []);
+
     useEffect(() => {
         if (orphanEvents.status !== 'ready' || orphanEvents.value == null) {
             return;
@@ -327,9 +337,41 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
         },
     ], [isAdmin, normalizedLatestInferenceEventId]);
 
+    function openTelemetryStream() {
+        telemetrySourceRef.current?.close();
+        setTelemetryStreamStatus('connecting');
+        setTelemetryStreamError(null);
+
+        const source = new EventSource('/api/telemetry/stream');
+        telemetrySourceRef.current = source;
+
+        source.onopen = () => {
+            setTelemetryStreamStatus('connected');
+            setTelemetryStreamError(null);
+        };
+
+        source.onmessage = (event) => {
+            try {
+                const parsed = JSON.parse(event.data) as Record<string, unknown>;
+                setTelemetryEvents((current) => [parsed, ...current].slice(0, 100));
+            } catch {
+                setTelemetryEvents((current) => [{ raw: event.data }, ...current].slice(0, 100));
+            }
+        };
+
+        source.onerror = () => {
+            setTelemetryStreamStatus('error');
+            setTelemetryStreamError('Telemetry stream disconnected.');
+        };
+    }
+
     async function handleDiagnosticAction(action: typeof actionButtons[number]) {
         if (actionState.status === 'running') {
             return;
+        }
+
+        if (action.key === 'telemetry-test') {
+            openTelemetryStream();
         }
 
         setActionState({
@@ -481,6 +523,45 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                         </div>
                     )}
                 </div>
+
+                <div className="mt-4 border border-grid bg-black/20 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-grid pb-3">
+                        <div className="font-mono text-[10px] uppercase tracking-widest text-muted">
+                            Live Telemetry Stream
+                        </div>
+                        <StatusBadge
+                            tone={telemetryStreamStatus === 'connected' ? 'success' : 'error'}
+                            label={
+                                telemetryStreamStatus === 'connected'
+                                    ? 'Connected'
+                                    : telemetryStreamStatus === 'connecting'
+                                        ? 'Connecting'
+                                        : telemetryStreamStatus === 'error'
+                                            ? 'Disconnected'
+                                            : 'Idle'
+                            }
+                        />
+                    </div>
+                    <div className="pt-4 space-y-3">
+                        {telemetryStreamError && (
+                            <div className="font-mono text-xs text-danger">{telemetryStreamError}</div>
+                        )}
+                        <div className="max-h-[20rem] overflow-y-auto space-y-2">
+                            {telemetryEvents.length === 0 ? (
+                                <div className="font-mono text-xs text-muted">
+                                    No live telemetry events captured in this session yet.
+                                </div>
+                            ) : telemetryEvents.map((event, index) => (
+                                <pre
+                                    key={`${String(event.telemetry_key ?? event.id ?? index)}`}
+                                    className="border border-grid bg-black p-3 font-mono text-[11px] text-foreground/80 whitespace-pre-wrap break-words"
+                                >
+                                    {JSON.stringify(event, null, 2)}
+                                </pre>
+                            ))}
+                        </div>
+                    </div>
+                </div>
             </ConsoleCard>
 
             <ConsoleCard title="Developer API Explorer">
@@ -546,19 +627,21 @@ function StatusBadge({
 }
 
 function getStringFromBody(body: unknown, key: string) {
-    if (typeof body !== 'object' || body === null) {
+    const resolved = extractEnvelopeData<Record<string, unknown> | null>(body);
+    if (typeof resolved !== 'object' || resolved === null) {
         return null;
     }
 
-    const value = (body as Record<string, unknown>)[key];
+    const value = resolved[key];
     return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
 function getNumberFromBody(body: unknown, key: string) {
-    if (typeof body !== 'object' || body === null) {
+    const resolved = extractEnvelopeData<Record<string, unknown> | null>(body);
+    if (typeof resolved !== 'object' || resolved === null) {
         return null;
     }
 
-    const value = (body as Record<string, unknown>)[key];
+    const value = resolved[key];
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }

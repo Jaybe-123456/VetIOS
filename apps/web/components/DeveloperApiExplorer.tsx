@@ -18,6 +18,17 @@ import { Activity, AlertTriangle, Code, Play, ShieldCheck } from 'lucide-react';
 
 type ExplorerEndpoint = '/api/inference' | '/api/outcome' | '/api/simulate' | '/api/evaluation';
 
+type ExplorerHistoryEntry = {
+    endpoint: ExplorerEndpoint;
+    payload: string;
+    status: number | null;
+    statusText: string | null;
+    response: unknown;
+    timestamp: string;
+    authHeaderValue: string;
+    tenantScopeValue: string;
+};
+
 const ENDPOINTS: ExplorerEndpoint[] = [
     '/api/inference',
     '/api/outcome',
@@ -63,6 +74,7 @@ export default function DeveloperApiExplorer({
     const [loading, setLoading] = useState(false);
     const [authHeaderValue, setAuthHeaderValue] = useState('');
     const [tenantScopeValue, setTenantScopeValue] = useState('');
+    const [requestHistory, setRequestHistory] = useState<ExplorerHistoryEntry[]>([]);
     const showAuthWarning = authHeaderValue.trim().length === 0;
 
     useEffect(() => {
@@ -96,14 +108,44 @@ export default function DeveloperApiExplorer({
             setStatus(response.status);
             setStatusText(response.statusText);
             setResponseBody(body);
+            setRequestHistory((current) => [{
+                endpoint,
+                payload,
+                status: response.status,
+                statusText: response.statusText,
+                response: body,
+                timestamp: new Date().toISOString(),
+                authHeaderValue,
+                tenantScopeValue,
+            }, ...current].slice(0, 10));
         } catch (error) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             setStatus(null);
             setStatusText(null);
             setResponseBody({ error: message });
+            setRequestHistory((current) => [{
+                endpoint,
+                payload,
+                status: null,
+                statusText: null,
+                response: { error: message },
+                timestamp: new Date().toISOString(),
+                authHeaderValue,
+                tenantScopeValue,
+            }, ...current].slice(0, 10));
         } finally {
             setLoading(false);
         }
+    }
+
+    function replayHistoryEntry(entry: ExplorerHistoryEntry) {
+        setEndpoint(entry.endpoint);
+        setPayload(entry.payload);
+        setAuthHeaderValue(entry.authHeaderValue);
+        setTenantScopeValue(entry.tenantScopeValue);
+        setResponseBody(entry.response);
+        setStatus(entry.status);
+        setStatusText(entry.statusText);
     }
 
     return (
@@ -167,6 +209,33 @@ export default function DeveloperApiExplorer({
                         </div>
                     </div>
                 </ConsoleCard>
+
+                <ConsoleCard title="Request History" className="p-4">
+                    <div className="space-y-2 max-h-[20rem] overflow-y-auto">
+                        {requestHistory.length === 0 ? (
+                            <div className="font-mono text-[10px] text-muted">
+                                No requests executed yet.
+                            </div>
+                        ) : requestHistory.map((entry, index) => (
+                            <button
+                                key={`${entry.timestamp}-${index}`}
+                                type="button"
+                                onClick={() => replayHistoryEntry(entry)}
+                                className="w-full text-left border border-grid p-3 hover:border-accent"
+                            >
+                                <div className="font-mono text-[10px] uppercase tracking-widest text-muted">
+                                    {new Date(entry.timestamp).toLocaleTimeString()}
+                                </div>
+                                <div className="font-mono text-xs text-foreground">
+                                    {entry.endpoint}
+                                </div>
+                                <div className="font-mono text-[10px] text-muted">
+                                    {entry.status != null ? formatHttpStatus(entry.status, entry.statusText) : 'Network error'}
+                                </div>
+                            </button>
+                        ))}
+                    </div>
+                </ConsoleCard>
             </div>
 
             <div className="xl:col-span-5 flex flex-col h-full border border-grid bg-background">
@@ -217,7 +286,9 @@ export default function DeveloperApiExplorer({
                             <span className={`font-mono text-[10px] uppercase tracking-widest px-2 py-1 border inline-flex items-center gap-1 ${
                                 status >= 200 && status < 300
                                     ? 'border-accent text-accent bg-accent/10'
-                                    : 'border-danger text-danger bg-danger/10'
+                                    : status >= 400 && status < 500
+                                        ? 'border-yellow-500 text-yellow-300 bg-yellow-500/10'
+                                        : 'border-danger text-danger bg-danger/10'
                             }`}>
                                 {status >= 200 && status < 300 ? <ShieldCheck className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
                                 {formatHttpStatus(status, statusText)}
@@ -231,7 +302,7 @@ export default function DeveloperApiExplorer({
                             WAITING FOR I/O...
                         </div>
                     ) : (
-                        <pre className="max-h-[30rem] overflow-y-auto whitespace-pre-wrap break-words">
+                        <pre className="max-h-[320px] overflow-y-auto whitespace-pre-wrap break-words">
                             {responseBody == null ? 'No data. Execute request.' : stringifyApiBody(responseBody)}
                         </pre>
                     )}

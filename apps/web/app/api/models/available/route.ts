@@ -2,47 +2,65 @@ import { NextResponse } from 'next/server';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
-import { safeJson } from '@/lib/http/safeJson';
-import { backfillInferenceEvaluation } from '@/lib/platform/flywheel';
 import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
 import { PlatformAuthError } from '@/lib/platform/tenantContext';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
+export async function GET(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
-
     const { requestId, startTime } = guard;
     const supabase = getSupabaseServer();
 
     try {
+        const requestedTenantId = new URL(req.url).searchParams.get('tenant_id');
         const { actor, tenantId } = await requirePlatformRequestContext(req, supabase, {
-            requiredScopes: ['evaluation:write'],
-            rateLimitKind: 'evaluation',
+            requiredScopes: ['inference:write'],
+            requestedTenantId: requestedTenantId ?? undefined,
         });
 
-        if (!tenantId) {
-            throw new PlatformAuthError(400, 'tenant_missing', 'tenant_id is required for evaluation backfills.');
+        const versions = new Set<string>();
+
+        let registryQuery = supabase
+            .from('model_registry')
+            .select('model_name,model_version');
+        let inferenceQuery = supabase
+            .from('ai_inference_events')
+            .select('model_name,model_version')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        if (actor.role !== 'system_admin' || tenantId) {
+            registryQuery = registryQuery.eq('tenant_id', tenantId);
+            inferenceQuery = inferenceQuery.eq('tenant_id', tenantId);
         }
 
-        const parsed = await safeJson<{ inference_event_id?: string }>(req);
-        const inferenceEventId = parsed.ok
-            ? (typeof parsed.data.inference_event_id === 'string' ? parsed.data.inference_event_id : null)
-            : null;
+        const [{ data: registryRows, error: registryError }, { data: inferenceRows, error: inferenceError }] = await Promise.all([
+            registryQuery,
+            inferenceQuery,
+        ]);
 
-        const evaluations = await backfillInferenceEvaluation(supabase, {
-            actor,
-            tenantId,
-            inferenceEventId,
-        });
+        if (registryError) {
+            throw registryError;
+        }
+        if (inferenceError) {
+            throw inferenceError;
+        }
+
+        for (const row of [...(registryRows ?? []), ...(inferenceRows ?? [])]) {
+            const record = row as Record<string, unknown>;
+            const modelVersion = typeof record.model_version === 'string' ? record.model_version.trim() : '';
+            if (modelVersion) {
+                versions.add(modelVersion);
+            }
+        }
 
         const response = NextResponse.json({
-            data: {
-                evaluations,
-                processed: evaluations.length,
-            },
+            data: Array.from(versions).sort((left, right) => left.localeCompare(right)).map((modelVersion) => ({
+                model_version: modelVersion,
+            })),
             meta: {
                 tenant_id: tenantId,
                 timestamp: new Date().toISOString(),
@@ -51,7 +69,7 @@ export async function POST(req: Request) {
             },
             error: null,
         });
-        withRequestHeaders(response.headers, requestId, guard.startTime);
+        withRequestHeaders(response.headers, requestId, startTime);
         return response;
     } catch (error) {
         const response = error instanceof PlatformRateLimitError
@@ -77,8 +95,8 @@ export async function POST(req: Request) {
                     request_id: requestId,
                 },
                 error: {
-                    code: error instanceof PlatformAuthError ? error.code : 'evaluation_backfill_failed',
-                    message: error instanceof Error ? error.message : 'Failed to backfill evaluation events.',
+                    code: error instanceof PlatformAuthError ? error.code : 'models_available_failed',
+                    message: error instanceof Error ? error.message : 'Failed to load available model versions.',
                 },
             }, { status: error instanceof PlatformAuthError ? error.status : 500 });
         withRequestHeaders(response.headers, requestId, startTime);

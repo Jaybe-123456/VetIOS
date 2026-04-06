@@ -3,46 +3,58 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
-import { backfillInferenceEvaluation } from '@/lib/platform/flywheel';
+import { createPlatformAlert } from '@/lib/platform/alerts';
 import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
-import { PlatformAuthError } from '@/lib/platform/tenantContext';
+import { PlatformAuthError, resolveActorTenant } from '@/lib/platform/tenantContext';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
+    const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
-
     const { requestId, startTime } = guard;
     const supabase = getSupabaseServer();
 
     try {
-        const { actor, tenantId } = await requirePlatformRequestContext(req, supabase, {
+        const { actor } = await requirePlatformRequestContext(req, supabase, {
             requiredScopes: ['evaluation:write'],
-            rateLimitKind: 'evaluation',
         });
+        const parsed = await safeJson<{
+            tenant_id?: string | null;
+            type?: string;
+            severity?: 'low' | 'medium' | 'high' | 'critical';
+            title?: string;
+            message?: string;
+            metadata?: Record<string, unknown>;
+        }>(req);
 
-        if (!tenantId) {
-            throw new PlatformAuthError(400, 'tenant_missing', 'tenant_id is required for evaluation backfills.');
+        if (!parsed.ok) {
+            return NextResponse.json(
+                { error: parsed.error, request_id: requestId },
+                { status: 400 },
+            );
         }
 
-        const parsed = await safeJson<{ inference_event_id?: string }>(req);
-        const inferenceEventId = parsed.ok
-            ? (typeof parsed.data.inference_event_id === 'string' ? parsed.data.inference_event_id : null)
-            : null;
+        const tenantId = resolveActorTenant(actor, parsed.data.tenant_id ?? null);
+        if (!tenantId) {
+            throw new PlatformAuthError(400, 'tenant_missing', 'tenant_id is required to create an alert.');
+        }
+        if (!parsed.data.type || !parsed.data.title || !parsed.data.message) {
+            throw new PlatformAuthError(400, 'invalid_alert', 'type, title, and message are required.');
+        }
 
-        const evaluations = await backfillInferenceEvaluation(supabase, {
-            actor,
+        const alert = await createPlatformAlert(supabase, {
             tenantId,
-            inferenceEventId,
+            type: parsed.data.type,
+            severity: parsed.data.severity ?? 'medium',
+            title: parsed.data.title,
+            message: parsed.data.message,
+            metadata: parsed.data.metadata ?? {},
         });
 
         const response = NextResponse.json({
-            data: {
-                evaluations,
-                processed: evaluations.length,
-            },
+            data: alert,
             meta: {
                 tenant_id: tenantId,
                 timestamp: new Date().toISOString(),
@@ -50,8 +62,8 @@ export async function POST(req: Request) {
                 request_id: requestId,
             },
             error: null,
-        });
-        withRequestHeaders(response.headers, requestId, guard.startTime);
+        }, { status: 201 });
+        withRequestHeaders(response.headers, requestId, startTime);
         return response;
     } catch (error) {
         const response = error instanceof PlatformRateLimitError
@@ -77,8 +89,8 @@ export async function POST(req: Request) {
                     request_id: requestId,
                 },
                 error: {
-                    code: error instanceof PlatformAuthError ? error.code : 'evaluation_backfill_failed',
-                    message: error instanceof Error ? error.message : 'Failed to backfill evaluation events.',
+                    code: error instanceof PlatformAuthError ? error.code : 'alert_create_failed',
+                    message: error instanceof Error ? error.message : 'Failed to create alert.',
                 },
             }, { status: error instanceof PlatformAuthError ? error.status : 500 });
         withRequestHeaders(response.headers, requestId, startTime);
