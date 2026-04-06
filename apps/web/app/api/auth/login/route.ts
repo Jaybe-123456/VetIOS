@@ -48,7 +48,7 @@ export async function POST(req: Request) {
     }
 
     const { clientIp, userAgentHash } = headerValidation.data;
-    const { email, password, captchaToken } = bodyValidation.data;
+    const { email, password, captchaToken, rememberMe } = bodyValidation.data;
 
     try {
         let protection = await evaluatePasswordLoginProtection(email, clientIp);
@@ -154,7 +154,7 @@ export async function POST(req: Request) {
             }
         }
 
-        const supabase = await createPasswordLoginClient();
+        const supabase = await createPasswordLoginClient(Boolean(rememberMe));
         const { error } = await supabase.auth.signInWithPassword({
             email,
             password,
@@ -255,7 +255,7 @@ export async function POST(req: Request) {
     }
 }
 
-async function createPasswordLoginClient() {
+async function createPasswordLoginClient(rememberMe: boolean) {
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -272,7 +272,13 @@ async function createPasswordLoginClient() {
             },
             setAll(cookiesToSet) {
                 cookiesToSet.forEach(({ name, value, options }) => {
-                    cookieStore.set(name, value, options);
+                    const cookieOptions = { ...options };
+                    if (!rememberMe) {
+                        // If not remembering, prevent long-lived cookies
+                        delete cookieOptions.maxAge;
+                        cookieOptions.expires = undefined;
+                    }
+                    cookieStore.set(name, value, cookieOptions);
                 });
             },
         },
