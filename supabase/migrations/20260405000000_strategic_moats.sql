@@ -89,17 +89,17 @@ begin
     end if;
 
     if tg_op = 'DELETE' then
-        if old.tenant_id is distinct from session_tenant then
+        if old.tenant_id::text is distinct from session_tenant then
             raise exception 'Tenant isolation violation on delete for %', tg_table_name;
         end if;
         return old;
     end if;
 
-    if new.tenant_id is distinct from session_tenant then
+    if new.tenant_id::text is distinct from session_tenant then
         raise exception 'Tenant isolation violation on write for %', tg_table_name;
     end if;
 
-    if tg_op = 'UPDATE' and old.tenant_id is distinct from session_tenant then
+    if tg_op = 'UPDATE' and old.tenant_id::text is distinct from session_tenant then
         raise exception 'Tenant isolation violation on update for %', tg_table_name;
     end if;
 
@@ -502,179 +502,179 @@ alter table public.adversarial_prompts enable row level security;
 drop policy if exists outcomes_select_scope on public.outcomes;
 create policy outcomes_select_scope
     on public.outcomes
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists outcomes_insert_scope on public.outcomes;
 create policy outcomes_insert_scope
     on public.outcomes
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists outcomes_update_scope on public.outcomes;
 create policy outcomes_update_scope
     on public.outcomes
-    for update using (public.is_system_admin() or tenant_id = public.current_tenant_text())
-    with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for update using (public.is_system_admin() or tenant_id::text = public.current_tenant_text())
+    with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists dataset_snapshots_select_scope on public.dataset_snapshots;
 create policy dataset_snapshots_select_scope
     on public.dataset_snapshots
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists dataset_snapshots_insert_scope on public.dataset_snapshots;
 create policy dataset_snapshots_insert_scope
     on public.dataset_snapshots
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists evaluations_select_scope on public.evaluations;
 create policy evaluations_select_scope
     on public.evaluations
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists evaluations_insert_scope on public.evaluations;
 create policy evaluations_insert_scope
     on public.evaluations
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists evaluations_update_scope on public.evaluations;
 create policy evaluations_update_scope
     on public.evaluations
-    for update using (public.is_system_admin() or tenant_id = public.current_tenant_text())
-    with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for update using (public.is_system_admin() or tenant_id::text = public.current_tenant_text())
+    with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists orphan_event_counters_select_scope on public.orphan_event_counters;
 create policy orphan_event_counters_select_scope
     on public.orphan_event_counters
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists orphan_event_counters_insert_scope on public.orphan_event_counters;
 create policy orphan_event_counters_insert_scope
     on public.orphan_event_counters
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists orphan_event_counters_update_scope on public.orphan_event_counters;
 create policy orphan_event_counters_update_scope
     on public.orphan_event_counters
-    for update using (public.is_system_admin() or tenant_id = public.current_tenant_text())
-    with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for update using (public.is_system_admin() or tenant_id::text = public.current_tenant_text())
+    with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists governance_policies_select_scope on public.governance_policies;
 create policy governance_policies_select_scope
     on public.governance_policies
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists governance_policies_insert_scope on public.governance_policies;
 create policy governance_policies_insert_scope
     on public.governance_policies
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists governance_policies_update_scope on public.governance_policies;
 create policy governance_policies_update_scope
     on public.governance_policies
-    for update using (public.is_system_admin() or tenant_id = public.current_tenant_text())
-    with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for update using (public.is_system_admin() or tenant_id::text = public.current_tenant_text())
+    with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists audit_log_select_scope on public.audit_log;
 create policy audit_log_select_scope
     on public.audit_log
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists audit_log_insert_scope on public.audit_log;
 create policy audit_log_insert_scope
     on public.audit_log
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists platform_telemetry_select_scope on public.platform_telemetry;
 create policy platform_telemetry_select_scope
     on public.platform_telemetry
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists platform_telemetry_insert_scope on public.platform_telemetry;
 create policy platform_telemetry_insert_scope
     on public.platform_telemetry
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists drift_snapshots_select_scope on public.drift_snapshots;
 create policy drift_snapshots_select_scope
     on public.drift_snapshots
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists drift_snapshots_insert_scope on public.drift_snapshots;
 create policy drift_snapshots_insert_scope
     on public.drift_snapshots
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists tenant_rate_limits_select_scope on public.tenant_rate_limits;
 create policy tenant_rate_limits_select_scope
     on public.tenant_rate_limits
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists tenant_rate_limits_insert_scope on public.tenant_rate_limits;
 create policy tenant_rate_limits_insert_scope
     on public.tenant_rate_limits
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists tenant_rate_limits_update_scope on public.tenant_rate_limits;
 create policy tenant_rate_limits_update_scope
     on public.tenant_rate_limits
-    for update using (public.is_system_admin() or tenant_id = public.current_tenant_text())
-    with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for update using (public.is_system_admin() or tenant_id::text = public.current_tenant_text())
+    with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists webhook_subscriptions_select_scope on public.webhook_subscriptions;
 create policy webhook_subscriptions_select_scope
     on public.webhook_subscriptions
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists webhook_subscriptions_insert_scope on public.webhook_subscriptions;
 create policy webhook_subscriptions_insert_scope
     on public.webhook_subscriptions
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists webhook_subscriptions_update_scope on public.webhook_subscriptions;
 create policy webhook_subscriptions_update_scope
     on public.webhook_subscriptions
-    for update using (public.is_system_admin() or tenant_id = public.current_tenant_text())
-    with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for update using (public.is_system_admin() or tenant_id::text = public.current_tenant_text())
+    with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists webhook_deliveries_select_scope on public.webhook_deliveries;
 create policy webhook_deliveries_select_scope
     on public.webhook_deliveries
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists webhook_deliveries_insert_scope on public.webhook_deliveries;
 create policy webhook_deliveries_insert_scope
     on public.webhook_deliveries
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists simulations_select_scope on public.simulations;
 create policy simulations_select_scope
     on public.simulations
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists simulations_insert_scope on public.simulations;
 create policy simulations_insert_scope
     on public.simulations
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists simulations_update_scope on public.simulations;
 create policy simulations_update_scope
     on public.simulations
-    for update using (public.is_system_admin() or tenant_id = public.current_tenant_text())
-    with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for update using (public.is_system_admin() or tenant_id::text = public.current_tenant_text())
+    with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists adversarial_prompts_select_scope on public.adversarial_prompts;
 create policy adversarial_prompts_select_scope
     on public.adversarial_prompts
-    for select using (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for select using (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists adversarial_prompts_insert_scope on public.adversarial_prompts;
 create policy adversarial_prompts_insert_scope
     on public.adversarial_prompts
-    for insert with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for insert with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 drop policy if exists adversarial_prompts_update_scope on public.adversarial_prompts;
 create policy adversarial_prompts_update_scope
     on public.adversarial_prompts
-    for update using (public.is_system_admin() or tenant_id = public.current_tenant_text())
-    with check (public.is_system_admin() or tenant_id = public.current_tenant_text());
+    for update using (public.is_system_admin() or tenant_id::text = public.current_tenant_text())
+    with check (public.is_system_admin() or tenant_id::text = public.current_tenant_text());
 
 notify pgrst, 'reload schema';
