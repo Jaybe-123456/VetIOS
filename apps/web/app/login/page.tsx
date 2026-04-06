@@ -28,6 +28,7 @@ export default function LoginPage() {
     const [captchaToken, setCaptchaToken] = useState<string | null>(null);
     const [captchaResetKey, setCaptchaResetKey] = useState(0);
     const [nextPath, setNextPath] = useState('/inference');
+    const [rememberMe, setRememberMe] = useState(false);
     const isGoogleEmail = isGoogleMailAddress(email);
     const showGooglePasswordWarning = isGoogleEmail && password.trim().length > 0;
     const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '';
@@ -88,6 +89,12 @@ export default function LoginPage() {
             setStatus('success');
             setCaptchaRequired(false);
             setCaptchaToken(null);
+
+            // Persist the "Remember Me" preference for the Supabase client
+            if (typeof window !== 'undefined') {
+                localStorage.setItem('vetios_remember_me', rememberMe ? 'true' : 'false');
+            }
+
             router.push(nextPath);
             router.refresh();
         } catch {
@@ -248,6 +255,19 @@ export default function LoginPage() {
                                         )}
                                     </div>
                                 )}
+
+                                <div className="flex items-center gap-3 py-2">
+                                    <input
+                                        id="rememberMe"
+                                        type="checkbox"
+                                        checked={rememberMe}
+                                        onChange={(e) => setRememberMe(e.target.checked)}
+                                        className="w-4 h-4 bg-dim border-grid text-accent focus:ring-accent rounded-none"
+                                    />
+                                    <label htmlFor="rememberMe" className="font-mono text-[10px] uppercase tracking-widest text-muted cursor-pointer hover:text-foreground transition-colors">
+                                        Remember this device
+                                    </label>
+                                </div>
 
                                 <TerminalButton
                                     type="submit"
