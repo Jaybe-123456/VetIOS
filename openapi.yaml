@@ -1,0 +1,417 @@
+openapi: 3.0.3
+info:
+  title: Vetios AI Operations Platform API
+  version: '2026-04-05'
+  description: Core contract for inference, evaluation, governance, telemetry, webhooks, datasets, and simulations.
+servers:
+  - url: https://app.vetios.ai
+security:
+  - bearerAuth: []
+    tenantScope: []
+paths:
+  /api/inference:
+    get:
+      summary: List recent inference events
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+        - { in: query, name: sort, schema: { type: string, example: created_at:desc } }
+      responses:
+        '200': { description: Inference list, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+    post:
+      summary: Run inference and trigger the evaluation flywheel
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InferenceCreateRequest' }
+      responses:
+        '200': { description: Inference completed, content: { application/json: { schema: { $ref: '#/components/schemas/InferenceCreateResponse' } } } }
+        '403': { description: Governance block, content: { application/json: { schema: { $ref: '#/components/schemas/InferenceBlockedResponse' } } } }
+        '429': { description: Tenant rate limit exceeded, content: { application/json: { schema: { $ref: '#/components/schemas/RateLimitExceeded' } } } }
+  /api/outcome:
+    post:
+      summary: Attach an outcome to an inference event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OutcomeCreateRequest' }
+      responses:
+        '200': { description: Outcome attached, content: { application/json: { schema: { $ref: '#/components/schemas/OutcomeCreateResponse' } } } }
+  /api/simulate:
+    post:
+      summary: Run the legacy simulation endpoint with tenant-aware throttling
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SimulateRunRequest' }
+      responses:
+        '200': { description: Simulation completed, content: { application/json: { schema: { $ref: '#/components/schemas/SimulateRunResponse' } } } }
+        '429': { description: Tenant rate limit exceeded, content: { application/json: { schema: { $ref: '#/components/schemas/RateLimitExceeded' } } } }
+  /api/evaluation:
+    get:
+      summary: List evaluations and summary metrics
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: model_version, schema: { type: string } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200': { description: Evaluation list, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+    post:
+      summary: Trigger evaluation for an outcome or inference
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EvaluationCreateRequest' }
+      responses:
+        '200': { description: Evaluation created, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+        '429': { description: Tenant rate limit exceeded, content: { application/json: { schema: { $ref: '#/components/schemas/RateLimitExceeded' } } } }
+  /api/evaluation/backfill:
+    post:
+      summary: Backfill evaluations for recent or orphaned inference events
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                inference_event_id: { type: string, format: uuid, nullable: true }
+                tenant_id: { type: string, nullable: true }
+      responses:
+        '200': { description: Backfill result, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/datasets/stats:
+    get:
+      summary: Fetch live dataset row count
+      responses:
+        '200': { description: Dataset stats, content: { application/json: { schema: { $ref: '#/components/schemas/DatasetStatsResponse' } } } }
+  /api/datasets/versions:
+    get:
+      summary: List dataset snapshots
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200': { description: Dataset versions, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/events/orphans/count:
+    get:
+      summary: Fetch orphan event count
+      responses:
+        '200': { description: Orphan count, content: { application/json: { schema: { $ref: '#/components/schemas/OrphanCountResponse' } } } }
+  /api/governance/audit:
+    get:
+      summary: List governance audit events with cursor pagination
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+        - { in: query, name: page, schema: { type: string, nullable: true } }
+        - { in: query, name: limit, schema: { type: integer, minimum: 1, maximum: 100, default: 25 } }
+      responses:
+        '200': { description: Audit log, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/governance/policy:
+    get:
+      summary: List governance policies
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200': { description: Policy list, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+    post:
+      summary: Create a draft governance policy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GovernancePolicyCreateRequest' }
+      responses:
+        '201': { description: Policy created, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/governance/policy/{id}/activate:
+    post:
+      summary: Activate a draft governance policy
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                tenant_id: { type: string, nullable: true }
+      responses:
+        '200': { description: Policy activated, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/telemetry/stream:
+    get:
+      summary: Stream live telemetry over Server-Sent Events
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200':
+          description: Telemetry SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: "data: {\"tenant_id\":\"tenant_123\",\"pipeline_id\":\"inference\"}\n\n"
+  /api/alerts:
+    post:
+      summary: Create an alert record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AlertCreateRequest' }
+      responses:
+        '201': { description: Alert created, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/rate-limits:
+    get:
+      summary: Fetch tenant rate limits
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200': { description: Rate limits, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+    post:
+      summary: Update tenant rate limits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TenantRateLimitUpdateRequest' }
+      responses:
+        '200': { description: Rate limits updated, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/models/available:
+    get:
+      summary: List available model versions
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200': { description: Model versions, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/webhooks:
+    get:
+      summary: List webhook subscriptions
+      parameters:
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200': { description: Webhook list, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+    post:
+      summary: Create a webhook subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookCreateRequest' }
+      responses:
+        '201': { description: Webhook created, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/webhooks/{id}:
+    delete:
+      summary: Delete a webhook subscription
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200': { description: Webhook deleted, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/simulations/run:
+    post:
+      summary: Start a scenario-load, adversarial, or regression simulation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SimulationRunRequest' }
+      responses:
+        '202': { description: Simulation accepted, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/simulations/{id}/progress:
+    get:
+      summary: Stream simulation progress over Server-Sent Events
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: tenant_id, schema: { type: string } }
+      responses:
+        '200':
+          description: Simulation progress SSE stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                example: "data: {\"completed\":12,\"total\":50,\"success_rate\":0.94}\n\n"
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+    tenantScope: { type: apiKey, in: header, name: X-Tenant-Scope }
+  schemas:
+    ApiEnvelope:
+      type: object
+      properties:
+        data:
+          nullable: true
+          oneOf:
+            - { type: object, additionalProperties: true }
+            - { type: array, items: { type: object, additionalProperties: true } }
+            - { type: string }
+            - { type: integer }
+            - { type: number }
+            - { type: boolean }
+        meta: { $ref: '#/components/schemas/ApiMeta' }
+        error: { $ref: '#/components/schemas/ApiError', nullable: true }
+    ApiMeta:
+      type: object
+      properties:
+        tenant_id: { type: string, nullable: true }
+        timestamp: { type: string, format: date-time }
+        version: { type: string }
+        request_id: { type: string }
+        next_cursor: { type: string, nullable: true }
+        limit: { type: integer }
+    ApiError:
+      type: object
+      properties:
+        code: { type: string }
+        message: { type: string }
+    RateLimitExceeded:
+      type: object
+      properties:
+        error: { type: string, enum: [rate_limit_exceeded] }
+        tenant_id: { type: string }
+        limit: { type: integer }
+        window_seconds: { type: integer }
+        retry_after_seconds: { type: integer }
+    InferenceCreateRequest:
+      type: object
+      required: [model, input]
+      properties:
+        clinic_id: { type: string }
+        case_id: { type: string }
+        model:
+          type: object
+          required: [name, version]
+          properties:
+            name: { type: string }
+            version: { type: string }
+        input:
+          type: object
+          required: [input_signature]
+          properties:
+            input_signature:
+              type: object
+              required: [symptoms]
+              properties:
+                species: { type: string, nullable: true }
+                breed: { type: string, nullable: true }
+                symptoms: { type: array, items: { type: string } }
+                metadata: { type: object, additionalProperties: true }
+                diagnostic_images: { type: array, items: { type: object, additionalProperties: true } }
+                lab_results: { type: array, items: { type: object, additionalProperties: true } }
+    InferenceCreateResponse:
+      type: object
+      properties:
+        inference_event_id: { type: string, format: uuid }
+        clinical_case_id: { type: string }
+        episode_id: { type: string, nullable: true }
+        prediction: { type: object, additionalProperties: true }
+        output: { type: object, additionalProperties: true }
+        confidence_score: { type: number, nullable: true }
+        inference_latency_ms: { type: number }
+        evaluation: { type: object, nullable: true, additionalProperties: true }
+        auto_outcome: { type: object, nullable: true, additionalProperties: true }
+        flywheel_error: { type: string, nullable: true }
+        routing: { type: object, additionalProperties: true }
+    InferenceBlockedResponse:
+      type: object
+      properties:
+        blocked: { type: boolean, enum: [true] }
+        reason: { type: string }
+        policy_id: { type: string, nullable: true }
+        request_id: { type: string }
+    OutcomeCreateRequest:
+      type: object
+      required: [inference_event_id, outcome]
+      properties:
+        inference_event_id: { type: string, format: uuid }
+        clinic_id: { type: string }
+        case_id: { type: string }
+        outcome:
+          type: object
+          required: [type, payload, timestamp]
+          properties:
+            type: { type: string }
+            payload: { type: object, additionalProperties: true }
+            timestamp: { type: string, format: date-time }
+    OutcomeCreateResponse:
+      type: object
+      properties:
+        outcome_event_id: { type: string, format: uuid }
+        linked_inference_event_id: { type: string, format: uuid }
+        episode_id: { type: string, nullable: true }
+        evaluation: { type: object, nullable: true, additionalProperties: true }
+    SimulateRunRequest:
+      type: object
+      additionalProperties: true
+    SimulateRunResponse:
+      type: object
+      properties:
+        simulation_event_id: { type: string, format: uuid }
+        clinical_case_id: { type: string }
+        inference_output: { type: object, additionalProperties: true }
+        confidence_score: { type: number, nullable: true }
+        inference_latency_ms: { type: number }
+        simulation: { type: object, additionalProperties: true }
+    EvaluationCreateRequest:
+      type: object
+      required: [model_name, model_version]
+      properties:
+        outcome_id: { type: string, format: uuid }
+        inference_event_id: { type: string, format: uuid }
+        model_name: { type: string }
+        model_version: { type: string }
+        predicted_confidence: { type: number }
+        trigger_type: { type: string, enum: [inference, outcome, simulation] }
+    DatasetStatsResponse:
+      type: object
+      properties:
+        row_count: { type: integer }
+        request_id: { type: string }
+    OrphanCountResponse:
+      type: object
+      properties:
+        count: { type: integer }
+        request_id: { type: string }
+    GovernancePolicyCreateRequest:
+      type: object
+      properties:
+        tenant_id: { type: string, nullable: true }
+        name: { type: string }
+        rules: { type: object, additionalProperties: true }
+        metadata: { type: object, additionalProperties: true }
+    AlertCreateRequest:
+      type: object
+      required: [type, title, message]
+      properties:
+        tenant_id: { type: string, nullable: true }
+        type: { type: string }
+        severity: { type: string, enum: [low, medium, high, critical] }
+        title: { type: string }
+        message: { type: string }
+        metadata: { type: object, additionalProperties: true }
+    TenantRateLimitUpdateRequest:
+      type: object
+      properties:
+        tenant_id: { type: string, nullable: true }
+        inference_requests_per_minute: { type: integer }
+        evaluation_requests_per_minute: { type: integer }
+        simulate_requests_per_minute: { type: integer }
+    WebhookCreateRequest:
+      type: object
+      required: [url, events]
+      properties:
+        tenant_id: { type: string, nullable: true }
+        url: { type: string, format: uri }
+        events:
+          type: array
+          items:
+            type: string
+            enum: [inference.completed, inference.blocked, evaluation.scored, evaluation.failed, pipeline.started, pipeline.failed, drift.detected, orphan.detected]
+        secret: { type: string, nullable: true }
+        active: { type: boolean }
+    SimulationRunRequest:
+      type: object
+      additionalProperties: true

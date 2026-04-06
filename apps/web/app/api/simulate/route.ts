@@ -8,7 +8,6 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
-import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { logSimulation } from '@/lib/logging/simulationLogger';
 import {
@@ -42,6 +41,8 @@ import { getConditionById } from '@/lib/inference/condition-registry';
 import { runClinicalInferenceEngine } from '@/lib/inference/engine';
 import type { SimulationMode, SimulationStep } from '@/lib/simulation/simulationTypes';
 import type { AdversarialStabilityReport } from '@/lib/adversarial/types';
+import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
+import { PlatformAuthError } from '@/lib/platform/tenantContext';
 
 export const runtime = 'nodejs';
 export const maxDuration = 300;
@@ -54,17 +55,36 @@ export async function POST(req: Request) {
     const { requestId, startTime } = guard;
 
     const supabase = getSupabaseServer();
-    const auth = await resolveClinicalApiActor(req, {
-        client: supabase,
-        requiredScopes: ['simulation:write'],
-    });
-    if (auth.error || !auth.actor) {
+    let tenantId: string | null = null;
+    let userId: string | null = null;
+
+    try {
+        const context = await requirePlatformRequestContext(req, supabase, {
+            requiredScopes: ['simulation:write'],
+            rateLimitKind: 'simulate',
+        });
+        tenantId = context.tenantId;
+        userId = context.actor.userId;
+    } catch (error) {
+        if (error instanceof PlatformRateLimitError) {
+            return NextResponse.json(
+                buildRateLimitErrorPayload(error),
+                { status: error.status },
+            );
+        }
+
         return NextResponse.json(
-            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
-            { status: auth.error?.status ?? 401 },
+            { error: error instanceof Error ? error.message : 'Unauthorized', request_id: requestId },
+            { status: error instanceof PlatformAuthError ? error.status : 401 },
         );
     }
-    const { tenantId, userId } = auth.actor;
+
+    if (!tenantId) {
+        return NextResponse.json(
+            { error: 'tenant_id is required for simulation requests.', request_id: requestId },
+            { status: 400 },
+        );
+    }
 
     const parsed = await safeJson(req);
     if (!parsed.ok) {

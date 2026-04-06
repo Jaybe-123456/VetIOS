@@ -4,6 +4,8 @@ import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import DebugToolsPanel from '@/components/DebugToolsPanel';
+import GovernanceAuditPanel from '@/components/GovernanceAuditPanel';
+import TenantRateLimitPanel from '@/components/TenantRateLimitPanel';
 import {
     ConsoleCard,
     Container,
@@ -1004,6 +1006,7 @@ function renderGovernanceTab(
                     )}
                 </ConsoleCard>
             ))}
+            <GovernanceAuditPanel />
         </div>
     );
 }
@@ -1276,6 +1279,9 @@ function renderConfigurationTab(
                     </div>
                 )}
             </ConsoleCard>
+            <div className="xl:col-span-3">
+                <TenantRateLimitPanel />
+            </div>
         </div>
     );
 }

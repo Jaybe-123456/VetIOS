@@ -25,6 +25,13 @@ export interface InferenceLogInput {
     uncertainty_metrics?: Record<string, unknown> | null;
     compute_profile?: Record<string, unknown> | null;
     inference_latency_ms: number;
+    blocked?: boolean;
+    flagged?: boolean;
+    flag_reason?: string | null;
+    blocked_reason?: string | null;
+    governance_policy_id?: string | null;
+    orphaned?: boolean;
+    orphaned_at?: string | null;
 }
 
 export async function logInference(
@@ -50,6 +57,13 @@ export async function logInference(
             [C.uncertainty_metrics]: input.uncertainty_metrics ?? null,
             [C.compute_profile]: input.compute_profile ?? null,
             [C.inference_latency_ms]: input.inference_latency_ms,
+            [C.blocked]: input.blocked ?? false,
+            [C.flagged]: input.flagged ?? false,
+            [C.flag_reason]: input.flag_reason ?? null,
+            [C.blocked_reason]: input.blocked_reason ?? null,
+            [C.governance_policy_id]: input.governance_policy_id ?? null,
+            [C.orphaned]: input.orphaned ?? false,
+            [C.orphaned_at]: input.orphaned_at ?? null,
         })
         .select('id')
         .single();

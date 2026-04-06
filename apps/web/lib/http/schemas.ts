@@ -94,6 +94,7 @@ export type SimulateRequest = z.infer<typeof SimulateRequestSchema>;
 // ── /api/evaluation ──────────────────────────────────────────────────────────
 
 export const EvaluationRequestSchema = z.object({
+    outcome_id: OptionalUuidLikeSchema,
     inference_event_id: OptionalUuidLikeSchema,
     model_name: z.string().min(1),
     model_version: z.string().min(1),

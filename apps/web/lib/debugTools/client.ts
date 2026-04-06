@@ -46,6 +46,12 @@ export function extractApiErrorMessage(body: unknown, fallback: string) {
 
     if (typeof body === 'object' && body !== null) {
         const record = body as Record<string, unknown>;
+        if (typeof record.error === 'object' && record.error !== null) {
+            const nestedMessage = (record.error as Record<string, unknown>).message;
+            if (typeof nestedMessage === 'string' && nestedMessage.trim().length > 0) {
+                return nestedMessage;
+            }
+        }
         if (typeof record.error === 'string' && record.error.trim().length > 0) {
             return record.error;
         }
@@ -72,6 +78,19 @@ export function stringifyApiBody(body: unknown) {
     } catch {
         return JSON.stringify({ error: 'Response could not be serialized.' }, null, 2);
     }
+}
+
+export function extractEnvelopeData<T = unknown>(body: unknown): T | null {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        return body as T;
+    }
+
+    const record = body as Record<string, unknown>;
+    if ('data' in record) {
+        return record.data as T;
+    }
+
+    return body as T;
 }
 
 async function parseResponseBody(response: Response) {

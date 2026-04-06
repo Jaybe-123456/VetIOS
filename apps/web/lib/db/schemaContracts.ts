@@ -23,6 +23,13 @@ export const AI_INFERENCE_EVENTS = {
         uncertainty_metrics: 'uncertainty_metrics', // jsonb, nullable
         inference_latency_ms: 'inference_latency_ms', // integer, nullable
         compute_profile: 'compute_profile',       // jsonb, nullable
+        blocked: 'blocked',                       // boolean, NOT NULL
+        flagged: 'flagged',                       // boolean, NOT NULL
+        flag_reason: 'flag_reason',               // text, nullable
+        blocked_reason: 'blocked_reason',         // text, nullable
+        governance_policy_id: 'governance_policy_id', // uuid, nullable
+        orphaned: 'orphaned',                     // boolean, NOT NULL
+        orphaned_at: 'orphaned_at',               // timestamptz, nullable
         created_at: 'created_at',                 // timestamptz, NOT NULL
     },
 } as const;

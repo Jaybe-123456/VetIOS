@@ -1,15 +1,14 @@
 import { NextResponse } from 'next/server';
-import { POST as runControlPlaneAction } from '@/app/api/settings/control-plane/route';
-import { buildJsonProxyRequest } from '@/lib/debugTools/proxy';
 import { requireDebugToolsRouteAccess } from '@/lib/debugTools/routeAccess';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
+import { recordPlatformTelemetry } from '@/lib/platform/telemetry';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 10, windowMs: 60_000 });
+    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
 
     const access = await requireDebugToolsRouteAccess({
@@ -22,11 +21,32 @@ export async function POST(req: Request) {
     }
 
     try {
-        return await runControlPlaneAction(
-            buildJsonProxyRequest(req, '/api/settings/control-plane', {
-                action: 'restart_telemetry_stream',
-            }),
-        );
+        const event = await recordPlatformTelemetry(access.access.client, {
+            telemetry_key: `telemetry-test:${access.access.tenantId}:${Date.now()}`,
+            inference_event_id: null,
+            tenant_id: access.access.tenantId,
+            pipeline_id: 'telemetry-test',
+            model_version: 'platform',
+            latency_ms: 1,
+            token_count_input: 1,
+            token_count_output: 1,
+            outcome_linked: false,
+            evaluation_score: null,
+            flagged: false,
+            blocked: false,
+            timestamp: new Date().toISOString(),
+            metadata: {
+                source: 'debug_tools',
+                request_id: guard.requestId,
+            },
+        });
+
+        const response = NextResponse.json({
+            event,
+            request_id: guard.requestId,
+        });
+        withRequestHeaders(response.headers, guard.requestId, guard.startTime);
+        return response;
     } catch (error) {
         const response = NextResponse.json(
             {

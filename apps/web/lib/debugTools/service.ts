@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { collectClinicalDatasetDebugSnapshot } from '@/lib/dataset/clinicalDatasetDiagnostics';
-import { AI_INFERENCE_EVENTS, MODEL_EVALUATION_EVENTS } from '@/lib/db/schemaContracts';
+import { AI_INFERENCE_EVENTS } from '@/lib/db/schemaContracts';
+import { getOrphanCounter } from '@/lib/platform/flywheel';
 
 export async function getLatestInferenceEventId(client: SupabaseClient, tenantId: string) {
     const columns = AI_INFERENCE_EVENTS.COLUMNS;
@@ -20,12 +21,11 @@ export async function getLatestInferenceEventId(client: SupabaseClient, tenantId
 }
 
 export async function getLatestEvaluationEventId(client: SupabaseClient, tenantId: string) {
-    const columns = MODEL_EVALUATION_EVENTS.COLUMNS;
     const { data, error } = await client
-        .from(MODEL_EVALUATION_EVENTS.TABLE)
-        .select(`${columns.evaluation_event_id},${columns.id}`)
-        .eq(columns.tenant_id, tenantId)
-        .order(columns.created_at, { ascending: false })
+        .from('evaluations')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .order('evaluated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
@@ -33,8 +33,7 @@ export async function getLatestEvaluationEventId(client: SupabaseClient, tenantI
         throw new Error(`Failed to load latest evaluation event: ${error.message}`);
     }
 
-    const record = data as Record<string, unknown> | null;
-    return readText(record?.evaluation_event_id) ?? readText(record?.id);
+    return readText((data as Record<string, unknown> | null)?.id);
 }
 
 export async function getDatasetRowCount(client: SupabaseClient, tenantId: string, userId: string | null) {
@@ -43,10 +42,8 @@ export async function getDatasetRowCount(client: SupabaseClient, tenantId: strin
 }
 
 export async function getOrphanEventCount(client: SupabaseClient, tenantId: string, userId: string | null) {
-    const snapshot = await collectClinicalDatasetDebugSnapshot(client, tenantId, userId);
-    return snapshot.orphan_counts.inference_events_missing_case_id
-        + snapshot.orphan_counts.outcome_events_missing_case_id
-        + snapshot.orphan_counts.simulation_events_missing_case_id;
+    void userId;
+    return getOrphanCounter(client, tenantId);
 }
 
 function readText(value: unknown) {

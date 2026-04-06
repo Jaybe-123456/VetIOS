@@ -7,7 +7,6 @@
 import { NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { revalidatePath } from 'next/cache';
-import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
@@ -41,6 +40,13 @@ import {
 import { recordInferenceObservability } from '@/lib/telemetry/observability';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import { evaluateClinicalIntegrity } from '@/lib/integrity/clinicalIntegrityEngine';
+import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
+import { evaluateGovernancePolicyForInference } from '@/lib/platform/governance';
+import { PlatformAuthError } from '@/lib/platform/tenantContext';
+import { recordPlatformTelemetry } from '@/lib/platform/telemetry';
+import { runInferenceFlywheel } from '@/lib/platform/flywheel';
+import { dispatchWebhookEvent } from '@/lib/platform/webhooks';
+import type { PlatformActor } from '@/lib/platform/types';
 import {
     buildRoutingTelemetryMetadata,
     createRoutingDecisionRecord,
@@ -57,23 +63,121 @@ const AI_TIMEOUT_MS = 50_000;
 const NON_CRITICAL_EFFECT_TIMEOUT_MS = 1_500;
 const DECISION_ENGINE_TIMEOUT_MS = 1_000;
 
-export async function POST(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 10, windowMs: 60_000 });
+export async function GET(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
     const supabase = getSupabaseServer();
-    const auth = await resolveClinicalApiActor(req, {
-        client: supabase,
-        requiredScopes: ['inference:write'],
-    });
-    if (auth.error || !auth.actor) {
+
+    try {
+        const { actor, tenantId } = await requirePlatformRequestContext(req, supabase, {
+            requiredScopes: ['inference:write'],
+            requestedTenantId: new URL(req.url).searchParams.get('tenant_id'),
+        });
+
+        const url = new URL(req.url);
+        const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? '20'), 100));
+        const sort = url.searchParams.get('sort') ?? 'created_at:desc';
+        const ascending = sort.endsWith(':asc');
+
+        let query = supabase
+            .from('ai_inference_events')
+            .select('id,tenant_id,model_name,model_version,input_signature,output_payload,confidence_score,created_at,flagged,flag_reason,blocked')
+            .order('created_at', { ascending })
+            .limit(limit);
+
+        if (actor.role !== 'system_admin' || tenantId) {
+            query = query.eq('tenant_id', tenantId);
+        }
+
+        const { data, error } = await query;
+        if (error) {
+            throw error;
+        }
+
+        const response = NextResponse.json({
+            data: data ?? [],
+            meta: {
+                tenant_id: tenantId,
+                timestamp: new Date().toISOString(),
+                version: '2026-04-05',
+                request_id: requestId,
+            },
+            error: null,
+        });
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
+    } catch (error) {
+        const response = error instanceof PlatformRateLimitError
+            ? NextResponse.json({
+                data: buildRateLimitErrorPayload(error),
+                meta: {
+                    tenant_id: error.tenantId,
+                    timestamp: new Date().toISOString(),
+                    version: '2026-04-05',
+                    request_id: requestId,
+                },
+                error: {
+                    code: error.code,
+                    message: error.message,
+                },
+            }, { status: error.status })
+            : NextResponse.json({
+                data: null,
+                meta: {
+                    tenant_id: null,
+                    timestamp: new Date().toISOString(),
+                    version: '2026-04-05',
+                    request_id: requestId,
+                },
+                error: {
+                    code: error instanceof PlatformAuthError ? error.code : 'inference_list_failed',
+                    message: error instanceof Error ? error.message : 'Failed to load inference events.',
+                },
+            }, { status: error instanceof PlatformAuthError ? error.status : 500 });
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
+    }
+}
+
+export async function POST(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+    const { requestId, startTime } = guard;
+
+    const supabase = getSupabaseServer();
+    let actor: PlatformActor;
+    let tenantId: string | null;
+    try {
+        const context = await requirePlatformRequestContext(req, supabase, {
+            requiredScopes: ['inference:write'],
+            rateLimitKind: 'inference',
+        });
+        actor = context.actor;
+        tenantId = context.tenantId;
+    } catch (error) {
+        if (error instanceof PlatformRateLimitError) {
+            return NextResponse.json(
+                buildRateLimitErrorPayload(error),
+                { status: error.status },
+            );
+        }
+
         return NextResponse.json(
-            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
-            { status: auth.error?.status ?? 401 },
+            { error: error instanceof Error ? error.message : 'Unauthorized', request_id: requestId },
+            { status: error instanceof PlatformAuthError ? error.status : 401 },
         );
     }
-    const { tenantId, userId } = auth.actor;
+
+    if (!tenantId) {
+        return NextResponse.json(
+            { error: 'tenant_id is required for inference requests.', request_id: requestId },
+            { status: 400 },
+        );
+    }
+
+    const userId = actor.userId;
 
     const parsed = await safeJson(req);
     if (!parsed.ok) {
@@ -117,6 +221,59 @@ export async function POST(req: Request) {
     }
 
     const body = result.data;
+    const governanceDecision = await evaluateGovernancePolicyForInference(supabase, {
+        actor,
+        tenantId,
+        requestBody: rawBody,
+    });
+
+    if (governanceDecision.decision === 'block') {
+        await recordPlatformTelemetry(supabase, {
+            telemetry_key: `blocked:${tenantId}:${requestId}`,
+            inference_event_id: null,
+            tenant_id: tenantId,
+            pipeline_id: 'governance',
+            model_version: body.model.version,
+            latency_ms: 0,
+            token_count_input: governanceDecision.tokenCount,
+            token_count_output: 0,
+            outcome_linked: false,
+            evaluation_score: null,
+            flagged: false,
+            blocked: true,
+            timestamp: new Date().toISOString(),
+            metadata: {
+                policy_id: governanceDecision.policyId,
+                reason: governanceDecision.reason,
+            },
+        }).catch((error) => {
+            console.error(`[${requestId}] Failed to emit blocked-governance telemetry:`, error);
+        });
+
+        await dispatchWebhookEvent(supabase, {
+            tenantId,
+            eventType: 'inference.blocked',
+            payload: {
+                policy_id: governanceDecision.policyId,
+                reason: governanceDecision.reason,
+                request_id: requestId,
+                model_version: body.model.version,
+            },
+        }).catch((error) => {
+            console.error(`[${requestId}] Failed to dispatch blocked-governance webhook:`, error);
+        });
+
+        return NextResponse.json(
+            {
+                blocked: true,
+                reason: governanceDecision.reason,
+                policy_id: governanceDecision.policyId,
+                request_id: requestId,
+            },
+            { status: 403 },
+        );
+    }
+
     let routingPlan: Awaited<ReturnType<typeof planModelRoute>> | null = null;
 
     try {
@@ -234,6 +391,13 @@ export async function POST(req: Request) {
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
             compute_profile: telemetry,
             inference_latency_ms: latencyMs,
+            blocked: false,
+            flagged: governanceDecision.flagged,
+            flag_reason: governanceDecision.reason,
+            blocked_reason: null,
+            governance_policy_id: governanceDecision.policyId,
+            orphaned: false,
+            orphaned_at: null,
         });
 
         logClinicalDatasetMutation({
@@ -291,6 +455,56 @@ export async function POST(req: Request) {
                 ? episodeError.message
                 : 'Failed to attach inference to episode.';
             console.warn(`[${requestId}] Episode reconciliation failed (non-fatal):`, episodeError);
+        }
+
+        let flywheelEvaluation:
+            | {
+                outcome: { id: string; status: string };
+                evaluation: { id: string; score: number; dataset_version: number | null };
+            }
+            | null = null;
+        let flywheelError: string | null = null;
+
+        try {
+            const tokenCountInput = estimateTokenCount(rawBody);
+            const tokenCountOutput = estimateTokenCount(inferenceResult.output_payload);
+            const flywheelResult = await runInferenceFlywheel(supabase, {
+                actor,
+                tenantId,
+                inferenceEventId: persistedInferenceEventId,
+                modelName: routedModel.model_name,
+                modelVersion: routedModel.model_version,
+                outputPayload: inferenceResult.output_payload,
+                rawOutput: JSON.stringify(inferenceResult.output_payload),
+                confidenceScore: inferenceResult.confidence_score ?? null,
+                latencyMs,
+                tokenCountInput,
+                tokenCountOutput,
+                flagged: governanceDecision.flagged,
+                blocked: false,
+                flagReason: governanceDecision.reason,
+                pipelineId: 'inference',
+                metadata: {
+                    request_id: requestId,
+                    case_id: canonicalClinicalCase.id,
+                },
+            });
+            flywheelEvaluation = {
+                outcome: {
+                    id: flywheelResult.outcome.id,
+                    status: flywheelResult.outcome.status,
+                },
+                evaluation: {
+                    id: flywheelResult.evaluation.id,
+                    score: flywheelResult.evaluation.score,
+                    dataset_version: flywheelResult.evaluation.dataset_version,
+                },
+            };
+        } catch (error) {
+            flywheelError = error instanceof Error
+                ? error.message
+                : 'Automatic flywheel processing failed.';
+            console.error(`[${requestId}] Inference flywheel failed:`, error);
         }
 
         await Promise.all([
@@ -467,7 +681,9 @@ export async function POST(req: Request) {
                 })),
             },
             safety_policy: integrityEvaluation.safetyPolicy,
-            evaluation: null,
+            evaluation: flywheelEvaluation?.evaluation ?? null,
+            auto_outcome: flywheelEvaluation?.outcome ?? null,
+            flywheel_error: flywheelError,
             ml_risk: inferenceResult.mlRisk,
             routing: {
                 routing_decision_id: routingPlan.routing_decision_id,
@@ -556,6 +772,10 @@ function asNullableRecord(value: unknown): Record<string, unknown> | null {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : null;
+}
+
+function estimateTokenCount(value: unknown) {
+    return Math.max(1, Math.ceil(JSON.stringify(value).length / 4));
 }
 
 async function settleNonCriticalEffect(
