@@ -37,6 +37,7 @@ const LoginRequestSchema = z.object({
         .max(2_048)
         .nullable()
         .optional(),
+    rememberMe: z.boolean().optional().default(false),
 }).strict();
 
 const PRIMARY_IP_HEADER_NAMES = [
@@ -66,6 +67,7 @@ export interface ParsedPasswordLoginRequest {
     email: string;
     password: string;
     captchaToken: string | null;
+    rememberMe: boolean;
 }
 
 export interface PasswordLoginHeaderContext {
@@ -191,6 +193,7 @@ export async function parsePasswordLoginRequest(req: Request): Promise<{
             email: result.data.email,
             password: result.data.password,
             captchaToken: result.data.captchaToken ?? null,
+            rememberMe: result.data.rememberMe,
         },
     };
 }
