@@ -77,10 +77,10 @@ returns trigger
 language plpgsql
 as $$
 declare
-    session_tenant text := public.current_tenant_text();
+    session_tenant text := nullif(current_setting('app.tenant_id', true), '');
     session_role text := coalesce(nullif(current_setting('app.role', true), ''), 'tenant_user');
 begin
-    if session_role in ('system_admin', 'service_role', 'supabase_admin') then
+    if session_role = 'system_admin' then
         return coalesce(new, old);
     end if;
 
