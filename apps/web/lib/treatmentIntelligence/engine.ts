@@ -13,6 +13,7 @@ import type {
 import { selectTreatmentProtocol, type TreatmentContext } from '../treatment/treatment-engine';
 import type {
     TreatmentCandidateRecord,
+    TreatmentConditionModuleReport,
     TreatmentEnvironmentConstraints,
     TreatmentExpectedOutcomeRange,
     TreatmentInterventionDetails,
@@ -88,6 +89,47 @@ interface DiagnosticManagementAssessment {
     confirmatory_actions: string[];
 }
 
+interface ConditionModuleBuildInput {
+    disease: DiseaseOntologyEntry;
+    input: BuildBundleInput;
+    observations: string[];
+    rankedDifferentials: RankedDifferential[];
+    supportingSignals: string[];
+}
+
+interface HypocalcemiaPatientContext {
+    species: string | null;
+    breed: string | null;
+    ageYears: number | null;
+    sex: string | null;
+    weightKg: number | null;
+    bodyConditionScore: number | null;
+    region: string | null;
+    progression: string | null;
+    observations: Set<string>;
+    rawNarrative: string;
+    totalCalcium: number | null;
+    ionizedCalcium: number | null;
+    albumin: number | null;
+    phosphorus: number | null;
+    magnesium: number | null;
+    bunCreatinine: string | null;
+    pth: number | null;
+    calcitriol: number | null;
+    lipase: number | null;
+    ecgNarrative: string | null;
+    bloodGasNarrative: string | null;
+    postpartum: boolean;
+    lactating: boolean;
+    pregnant: boolean;
+    intactFemale: boolean;
+    smallBreed: boolean;
+    obese: boolean;
+    acutePresentation: boolean;
+    chronicPresentation: boolean;
+    hasTetanyPattern: boolean;
+}
+
 const CLINICIAN_NOTICE = 'This is a clinical decision-support system. Final decisions require licensed clinician judgment.';
 
 const CONTRAINDICATION_LABELS: Record<ContraindicationFlag, string> = {
@@ -104,6 +146,13 @@ const CONTRAINDICATION_LABELS: Record<ContraindicationFlag, string> = {
 };
 
 const LOW_RESOURCE_JURISDICTIONS = new Set(['ke', 'kenya', 'ng', 'nigeria', 'ug', 'uganda', 'tz', 'tanzania']);
+const HYPOCALCEMIA_MODULE_DISEASE_IDS = new Set([
+    'puerperal-hypocalcemia-eclampsia',
+    'acute-electrolyte-derangement',
+    'acute-pancreatitis',
+    'chronic-kidney-disease',
+    'acute-kidney-injury',
+]);
 
 export function buildTreatmentRecommendationBundle(input: BuildBundleInput): TreatmentRecommendationBundle {
     const canonicalDisease = normalizeOntologyDiseaseName(input.diagnosisLabel);
@@ -145,6 +194,13 @@ export function buildTreatmentRecommendationBundle(input: BuildBundleInput): Tre
     });
     const playbook = resolveTreatmentPlaybook(disease);
     const regulatoryNotes = buildRegulatoryNotes(input.context.regulatory_region);
+    const conditionModule = buildConditionModule({
+        disease,
+        input,
+        observations,
+        rankedDifferentials,
+        supportingSignals,
+    });
 
     const options = [
         materializeOption(playbook.gold_standard, disease, input, supportingSignals, alternatives, contextFlags, regulatoryNotes, diagnosticManagement),
@@ -172,6 +228,7 @@ export function buildTreatmentRecommendationBundle(input: BuildBundleInput): Tre
         uncertainty_summary: buildUncertaintySummary(input.diagnosisConfidence, alternatives, contradictionFlags, options, diagnosticManagement),
         management_mode: diagnosticManagement.required ? 'diagnostic_management' : 'definitive',
         diagnostic_management_summary: diagnosticManagement.summary,
+        condition_module: conditionModule ?? undefined,
     };
 }
 
@@ -226,6 +283,7 @@ function buildRegistryBackedTreatmentBundle(input: BuildBundleInput): TreatmentR
         diagnostic_management_summary: managementMode === 'diagnostic_management'
             ? 'Use stabilization and confirmatory staging before escalating to definitive disease-directed treatment.'
             : null,
+        condition_module: undefined,
     };
 }
 
@@ -1530,6 +1588,587 @@ function buildUncertaintySummary(
         : 'Pathways are ranked from the closed-world treatment library, but the system still expects clinician confirmation before any intervention is chosen.';
 }
 
+function buildConditionModule(input: ConditionModuleBuildInput): TreatmentConditionModuleReport | null {
+    const patient = extractHypocalcemiaPatientContext(input);
+    if (!shouldBuildHypocalcemiaModule(input.disease, patient, input.rankedDifferentials, input.supportingSignals)) {
+        return null;
+    }
+
+    const differentials = buildHypocalcemiaDifferentials(input, patient);
+    const signalTriage = buildHypocalcemiaSignalTriage(patient, input);
+    const signalmentPrior = buildHypocalcemiaSignalmentPrior(patient);
+    const diagnostics = buildHypocalcemiaDiagnostics(patient, differentials[0]?.condition ?? input.disease.name);
+    const treatmentPathway = buildHypocalcemiaTreatmentPathway(patient, differentials[0]?.condition ?? input.disease.name, signalTriage.urgency_classification);
+    const monitoring = buildHypocalcemiaMonitoring(patient);
+    const confidenceSummary = buildHypocalcemiaConfidenceSummary(patient, differentials);
+
+    return {
+        module_key: 'hypocalcaemia_small_animals',
+        title: 'HYPOCALCAEMIA MODULE (Dogs & Cats)',
+        step_1_signal_triage: signalTriage,
+        step_2_species_signalment_prior: signalmentPrior,
+        step_3_aetiology_differential_ranking: differentials,
+        step_4_diagnostic_recommendations: diagnostics,
+        step_5_treatment_pathway: treatmentPathway,
+        step_6_monitoring_protocol: monitoring,
+        step_7_confidence_summary: confidenceSummary,
+        actionable_now: confidenceSummary.recommended_action,
+    };
+}
+
+function shouldBuildHypocalcemiaModule(
+    disease: DiseaseOntologyEntry,
+    patient: HypocalcemiaPatientContext,
+    rankedDifferentials: RankedDifferential[],
+    supportingSignals: string[],
+) {
+    const diseaseMatch = HYPOCALCEMIA_MODULE_DISEASE_IDS.has(disease.id);
+    const differentialMatch = rankedDifferentials.some((entry) =>
+        entry.name === 'Puerperal Hypocalcemia (Eclampsia)'
+        || entry.name === 'Acute Electrolyte Derangement',
+    );
+    const calciumSignal =
+        patient.observations.has('hypocalcemia')
+        || (patient.ionizedCalcium != null && patient.ionizedCalcium < 1.1)
+        || (patient.totalCalcium != null && patient.totalCalcium < 8)
+        || supportingSignals.includes('hypocalcemia')
+        || (patient.postpartum && patient.hasTetanyPattern);
+
+    if (disease.id === 'acute-pancreatitis' || disease.id === 'chronic-kidney-disease' || disease.id === 'acute-kidney-injury') {
+        return calciumSignal;
+    }
+
+    return diseaseMatch || differentialMatch || calciumSignal;
+}
+
+function extractHypocalcemiaPatientContext(input: ConditionModuleBuildInput): HypocalcemiaPatientContext {
+    const signature = input.input.inputSignature;
+    const metadata = asRecord(signature.metadata);
+    const history = asRecord(signature.history);
+    const diagnosticTests = asRecord(signature.diagnostic_tests);
+    const scalarEntries = collectScalarEntries(signature);
+    const rawNarrative = collectStringsFromUnknown(signature).join(' | ').toLowerCase();
+    const species = normalizeText(signature.species) ?? normalizeText(metadata.species);
+    const breed = normalizeText(signature.breed) ?? normalizeText(metadata.breed);
+    const ageYears = readMeasurementNumber(signature.age_years) ?? readMeasurementNumber(metadata.age_years);
+    const weightKg = readMeasurementNumber(signature.weight_kg) ?? readMeasurementNumber(metadata.weight_kg);
+    const sex = normalizeText(signature.sex) ?? normalizeText(metadata.sex);
+    const bodyConditionScore =
+        readMeasurementNumber(signature.body_condition_score)
+        ?? readMeasurementNumber(signature.body_condition)
+        ?? readMeasurementNumber(metadata.body_condition_score)
+        ?? readMeasurementNumber(metadata.body_condition);
+    const progression =
+        normalizeText(history.progression)
+        ?? (rawNarrative.includes('peracute') ? 'peracute' : rawNarrative.includes('subacute') ? 'subacute' : rawNarrative.includes('chronic') ? 'chronic' : rawNarrative.includes('acute') ? 'acute' : null);
+    const region =
+        normalizeText(signature.region)
+        ?? normalizeText(history.geographic_region)
+        ?? normalizeText(metadata.region)
+        ?? normalizeText(input.input.context.regulatory_region);
+    const observations = new Set(input.observations);
+    const totalCalcium = readScalarEntryNumber(scalarEntries, /(total_?calcium|calcium_total|serum_?calcium)/i);
+    const ionizedCalcium = readScalarEntryNumber(scalarEntries, /(ioni[sz]ed_?calcium|ioni[sz]ed_?ca|ionized_?ica|ionised_?ica|ica\b)/i);
+    const albumin = readScalarEntryNumber(scalarEntries, /\balbumin\b/i);
+    const phosphorus = readScalarEntryNumber(scalarEntries, /(phosphorus|phosphate)/i);
+    const magnesium = readScalarEntryNumber(scalarEntries, /\bmagnesium\b|\bmg\b/i);
+    const pth = readScalarEntryNumber(scalarEntries, /\bpth\b|parathyroid_?hormone/i);
+    const calcitriol = readScalarEntryNumber(scalarEntries, /\bcalcitriol\b|vitamin_?d/i);
+    const lipase = readScalarEntryNumber(scalarEntries, /\blipase\b|\bcpli\b|\bfpli\b/i);
+    const ecgNarrative = readScalarEntryText(scalarEntries, /\becg\b|electrocardiogram/i);
+    const bloodGasNarrative = readScalarEntryText(scalarEntries, /(blood_?gas|acid_?base|ph|alkalosis|acidosis)/i);
+    const bunCreatinine =
+        readScalarEntryText(scalarEntries, /(bun_?creatinine|creatinine|azotemia)/i)
+        ?? normalizeText(asRecord(diagnosticTests.biochemistry).bun_creatinine);
+    const postpartum = observations.has('postpartum') || /(postpartum|post-partum|post whelp|post-whelp|post queening|recent whelping|recent queening)/i.test(rawNarrative);
+    const lactating = /(lactating|nursing|currently nursing|milk production|suckling)/i.test(rawNarrative);
+    const pregnant = /(pregnant|gestat)/i.test(rawNarrative) || observations.has('pregnant');
+    const sexLower = (sex ?? '').toLowerCase();
+    const intactFemale =
+        ((sexLower.includes('female') || sexLower.includes('bitch') || sexLower.includes('queen')) && !sexLower.includes('spayed') && !sexLower.includes('neutered'))
+        || /(intact female|entire female|unspayed bitch|unspayed queen)/i.test(rawNarrative);
+    const smallBreed = isSmallBreed(breed) || (weightKg != null && weightKg <= 8);
+    const obese = (bodyConditionScore != null && bodyConditionScore >= 7) || /(obese|overweight)/i.test(rawNarrative);
+    const acutePresentation =
+        observations.has('acute_onset')
+        || progression === 'acute'
+        || progression === 'peracute'
+        || /(acute onset|sudden onset|hours|same day)/i.test(rawNarrative);
+    const chronicPresentation =
+        observations.has('chronic_duration')
+        || progression === 'chronic'
+        || /(weeks|months|chronic)/i.test(rawNarrative);
+    const hasTetanyPattern =
+        observations.has('seizures')
+        || observations.has('tremors')
+        || observations.has('muscle_rigidity')
+        || /(tetany|fasciculation|muscle twitch|muscle tremor|seizure|convulsion)/i.test(rawNarrative);
+
+    return {
+        species,
+        breed,
+        ageYears,
+        sex,
+        weightKg,
+        bodyConditionScore,
+        region,
+        progression,
+        observations,
+        rawNarrative,
+        totalCalcium,
+        ionizedCalcium,
+        albumin,
+        phosphorus,
+        magnesium,
+        bunCreatinine,
+        pth,
+        calcitriol,
+        lipase,
+        ecgNarrative,
+        bloodGasNarrative,
+        postpartum,
+        lactating,
+        pregnant,
+        intactFemale,
+        smallBreed,
+        obese,
+        acutePresentation,
+        chronicPresentation,
+        hasTetanyPattern,
+    };
+}
+
+function buildHypocalcemiaSignalTriage(
+    patient: HypocalcemiaPatientContext,
+    input: ConditionModuleBuildInput,
+): TreatmentConditionModuleReport['step_1_signal_triage'] {
+    const emergencyPattern =
+        patient.hasTetanyPattern
+        || patient.observations.has('hyperthermia')
+        || patient.observations.has('tachycardia')
+        || /prolonged qt|arrhythmia|bradycardia/i.test(patient.ecgNarrative ?? '')
+        || input.input.emergencyLevel?.toUpperCase() === 'CRITICAL';
+    const urgentPattern =
+        emergencyPattern
+        || patient.observations.has('weakness')
+        || patient.observations.has('lethargy')
+        || patient.observations.has('anorexia')
+        || patient.observations.has('collapse');
+    const correctedTotalCalcium = computeCorrectedTotalCalcium(patient.totalCalcium, patient.albumin);
+    const urgencyClassification = patient.postpartum && patient.smallBreed && patient.hasTetanyPattern
+        ? 'EMERGENCY'
+        : emergencyPattern
+            ? 'EMERGENCY'
+            : urgentPattern
+                ? 'URGENT'
+                : 'STABLE';
+    const bullets = dedupeStrings([
+        emergencyPattern ? 'Tetany-pattern neurologic signs are present, so IV calcium readiness should not wait for a long differential workup.' : null,
+        patient.postpartum && patient.smallBreed ? 'Post-partum small-breed status sharply increases puerperal tetany risk and triggers emergency escalation even before full lab confirmation.' : null,
+        patient.ionizedCalcium != null ? `Ionized calcium available: ${patient.ionizedCalcium.toFixed(2)} mmol/L.` : null,
+        patient.ionizedCalcium == null && correctedTotalCalcium != null ? `⚠️ IONIZED Ca NOT AVAILABLE — corrected total Ca ${correctedTotalCalcium.toFixed(2)} mg/dL used, reduced confidence.` : null,
+        patient.ionizedCalcium == null && correctedTotalCalcium == null ? '⚠️ ASSUMPTION: No ionized calcium was provided, so urgency is being inferred from clinical signs and available total-calcium cues.' : null,
+    ]);
+
+    return {
+        urgency_classification: urgencyClassification,
+        summary: urgencyClassification === 'EMERGENCY'
+            ? 'Neuromuscular instability is compatible with true hypocalcaemic crisis and should be stabilized immediately.'
+            : urgencyClassification === 'URGENT'
+                ? 'Compatible hypocalcaemia signs are present, but the current payload does not prove active tetany.'
+                : 'Current data suggests a lower-acuity hypocalcaemia workup rather than immediate crash stabilization.',
+        bullets,
+    };
+}
+
+function buildHypocalcemiaSignalmentPrior(patient: HypocalcemiaPatientContext): TreatmentConditionModuleReport['step_2_species_signalment_prior'] {
+    const species = normalizeSpecies(patient.species);
+    const speciesLabel = species === 'dog' ? 'Dog' : species === 'cat' ? 'Cat' : patient.species ?? 'Small-animal patient';
+    const bullets = dedupeStrings([
+        species === 'dog' ? 'Dog prior raises suspicion for eclampsia, pancreatitis-associated hypocalcaemia, protein-losing enteropathy, and primary hypoparathyroidism.' : null,
+        species === 'cat' ? 'Cat prior raises suspicion for CKD-associated hypocalcaemia and idiopathic hypoparathyroidism.' : null,
+        patient.ageYears != null && patient.ageYears < 1 ? 'Young age keeps nutritional, neonatal, and malabsorptive causes in play.' : null,
+        patient.ageYears != null && patient.ageYears >= 8 ? 'Older age increases renal and chronic-systemic causes.' : null,
+        patient.postpartum || patient.lactating ? 'Post-partum/lactating status is a major Bayesian shift toward puerperal hypocalcaemia.' : null,
+        patient.smallBreed ? 'Small-breed status further raises eclampsia prior.' : null,
+        patient.obese ? 'Higher body condition adds support for pancreatitis as a hypocalcaemia driver.' : null,
+        !patient.postpartum && !patient.lactating && !patient.pregnant
+            ? '⚠️ ASSUMPTION: No reproductive-state cue was found, so endocrine and renal causes are weighted more heavily than eclampsia.'
+            : null,
+    ]);
+
+    return {
+        summary: `${speciesLabel} signalment is being used as the primary prior layer before ranking hypocalcaemia aetiologies.`,
+        bullets,
+    };
+}
+
+function buildHypocalcemiaDifferentials(
+    input: ConditionModuleBuildInput,
+    patient: HypocalcemiaPatientContext,
+): TreatmentConditionModuleReport['step_3_aetiology_differential_ranking'] {
+    const lowIonized = patient.ionizedCalcium != null && patient.ionizedCalcium < 1.1;
+    const lowTotal = patient.totalCalcium != null && patient.totalCalcium < 8;
+    const phosphorusHigh = patient.phosphorus != null && patient.phosphorus > 6;
+    const magnesiumLow = patient.magnesium != null && patient.magnesium < 1.6;
+    const albuminLow = patient.albumin != null && patient.albumin < 2.6;
+    const azotemia = (patient.bunCreatinine ?? '').toLowerCase().includes('azot');
+    const vomitingOrDiarrhea = patient.observations.has('vomiting') || patient.observations.has('diarrhea');
+    const abdominalPattern = patient.observations.has('abdominal_pain') || patient.observations.has('abdominal_distension') || patient.lipase != null || input.disease.id === 'acute-pancreatitis';
+    const toxinPattern = /(ethylene glycol|antifreeze|citrate|transfusion|furosemide|loop diuretic|parathyroidectomy|toxin exposure|toxicity)/i.test(patient.rawNarrative);
+    const species = normalizeSpecies(patient.species);
+
+    const candidates = [
+        {
+            condition: 'Puerperal Hypocalcaemia (Eclampsia)',
+            score: 18 + (patient.postpartum ? 34 : 0) + (patient.lactating ? 18 : 0) + (patient.smallBreed ? 12 : 0) + (patient.intactFemale ? 8 : 0) + (patient.hasTetanyPattern ? 16 : 0) + (patient.acutePresentation ? 10 : 0) + (lowIonized || lowTotal || patient.observations.has('hypocalcemia') ? 24 : 0) - (patient.chronicPresentation ? 18 : 0) - (species === 'cat' ? 10 : 0),
+            mechanism: 'Lactation-driven calcium demand exceeds PTH/calcitriol compensation, dropping ionized calcium and producing acute neuromuscular excitability.',
+            supporting: dedupeStrings([
+                patient.postpartum ? 'Recent post-partum timing is directly compatible with puerperal tetany.' : null,
+                patient.lactating ? 'Active nursing/lactation increases calcium draw.' : null,
+                patient.smallBreed ? 'Small-breed status raises eclampsia prior.' : null,
+                patient.hasTetanyPattern ? 'Tremors, rigidity, or seizures fit hypocalcaemic tetany.' : null,
+                lowIonized ? 'Ionized calcium is below the target range.' : null,
+                !patient.postpartum && !patient.lactating ? '⚠️ ASSUMPTION: Reproductive cues were incomplete, so eclampsia remains provisional until history is verified.' : null,
+            ]),
+            confirms_if: [
+                'Ionized calcium is low during the episode.',
+                'The patient is lactating or recently post-partum.',
+                'Clinical signs improve rapidly during ECG-monitored IV calcium administration.',
+            ],
+            excludes_if: [
+                'Reproductive history rules out recent lactation/post-partum status.',
+                'Ionized calcium is normal during active signs.',
+                'A stronger competing explanation such as toxin exposure or renal failure is proven.',
+            ],
+        },
+        {
+            condition: 'Primary Hypoparathyroidism',
+            score: 16 + (lowIonized || lowTotal || patient.observations.has('hypocalcemia') ? 24 : 0) + (phosphorusHigh ? 16 : 0) + (!patient.postpartum && !patient.lactating ? 12 : 0) + (species === 'dog' || species === 'cat' ? 10 : 0) - (azotemia ? 12 : 0) - (albuminLow ? 8 : 0),
+            mechanism: 'Inadequate PTH reduces renal calcium conservation, bone mobilization, and calcitriol activation, producing true hypocalcaemia.',
+            supporting: dedupeStrings([
+                lowIonized || lowTotal ? 'Low calcium phenotype is present.' : null,
+                phosphorusHigh ? 'Concurrent hyperphosphataemia supports impaired PTH effect.' : null,
+                !patient.postpartum && !patient.lactating ? 'No strong lactation trigger is present.' : null,
+                patient.pth != null ? `PTH value is available at ${patient.pth.toFixed(2)} and should be interpreted against calcium status.` : null,
+                patient.pth == null ? '⚠️ ASSUMPTION: PTH was not supplied, so endocrine confirmation is still missing.' : null,
+            ]),
+            confirms_if: [
+                'PTH is inappropriately low or non-elevated in a truly hypocalcaemic patient.',
+                'Phosphorus is elevated without a better renal explanation.',
+                'Hypocalcaemia persists outside the lactation window.',
+            ],
+            excludes_if: [
+                'PTH is appropriately elevated for the degree of hypocalcaemia.',
+                'A post-partum/lactational cause fully explains the episode.',
+                'Correcting magnesium or albumin resolves the apparent hypocalcaemia pattern.',
+            ],
+        },
+        {
+            condition: 'CKD-Associated Hypocalcaemia',
+            score: 14 + (species === 'cat' ? 18 : 0) + ((patient.ageYears ?? 0) >= 8 ? 14 : 0) + (azotemia ? 26 : 0) + (patient.chronicPresentation ? 14 : 0) + (phosphorusHigh ? 10 : 0) - (patient.postpartum && patient.hasTetanyPattern ? 20 : 0),
+            mechanism: 'Renal disease lowers calcitriol generation and promotes phosphorus retention, reducing effective calcium homeostasis.',
+            supporting: dedupeStrings([
+                species === 'cat' ? 'Feline species prior supports CKD-related calcium disturbance.' : null,
+                azotemia ? 'Renal values appear compatible with azotemia.' : null,
+                patient.chronicPresentation ? 'The timeline sounds chronic rather than isolated and periparturient.' : null,
+                phosphorusHigh ? 'High phosphorus strengthens renal-mediated hypocalcaemia.' : null,
+                !azotemia ? '⚠️ ASSUMPTION: Full renal chemistry was not available, so CKD remains a lower-confidence systemic cause.' : null,
+            ]),
+            confirms_if: [
+                'Azotemia and urine concentrating failure support chronic renal disease.',
+                'Phosphorus is elevated and calcitriol deficiency is plausible.',
+                'Ionized hypocalcaemia persists alongside chronic renal findings.',
+            ],
+            excludes_if: [
+                'Renal values and urinalysis are normal.',
+                'The episode is clearly post-partum eclampsia with rapid calcium response.',
+                'A pancreatic or toxic cause explains the acute event better.',
+            ],
+        },
+        {
+            condition: 'Acute Pancreatitis-Associated Hypocalcaemia',
+            score: 14 + (species === 'dog' ? 10 : 0) + (patient.obese ? 12 : 0) + (vomitingOrDiarrhea ? 16 : 0) + (abdominalPattern ? 18 : 0) + (patient.acutePresentation ? 10 : 0) + (input.disease.id === 'acute-pancreatitis' ? 24 : 0) - (patient.postpartum ? 12 : 0),
+            mechanism: 'Inflammation and fat saponification in pancreatitis can reduce ionized calcium while critical illness worsens calcium handling.',
+            supporting: dedupeStrings([
+                vomitingOrDiarrhea ? 'GI signs are compatible with pancreatitis.' : null,
+                abdominalPattern ? 'Abdominal pain, lipase signal, or pancreatic concern is present.' : null,
+                patient.obese ? 'Higher body condition raises pancreatitis prior.' : null,
+                input.disease.id === 'acute-pancreatitis' ? 'The current primary ontology diagnosis already includes acute pancreatitis.' : null,
+                !abdominalPattern ? '⚠️ ASSUMPTION: Pancreatitis remains inferential until lipase or imaging data are supplied.' : null,
+            ]),
+            confirms_if: [
+                'Pancreatic lipase or abdominal imaging supports pancreatitis.',
+                'Ionized calcium is low in the setting of compatible GI/inflammatory disease.',
+                'No stronger endocrine or renal explanation is found.',
+            ],
+            excludes_if: [
+                'Pancreatic testing and abdominal imaging are unrevealing.',
+                'A clear endocrine trigger such as eclampsia or hypoparathyroidism is proven.',
+                'The patient lacks abdominal/GI evidence for pancreatitis.',
+            ],
+        },
+        {
+            condition: 'Pseudohypocalcaemia Secondary to Hypoalbuminaemia',
+            score: 10 + (albuminLow ? 28 : 0) + (lowTotal ? 16 : 0) + (patient.ionizedCalcium == null ? 8 : 0) - (lowIonized ? 22 : 0),
+            mechanism: 'Low albumin lowers total calcium concentration without necessarily lowering ionized, biologically active calcium.',
+            supporting: dedupeStrings([
+                albuminLow ? 'Albumin is reduced enough to make pseudohypocalcaemia plausible.' : null,
+                lowTotal ? 'Total calcium appears low.' : null,
+                patient.ionizedCalcium == null ? '⚠️ ASSUMPTION: Ionized calcium is missing, so true versus pseudo-hypocalcaemia cannot yet be separated confidently.' : null,
+                patient.ionizedCalcium != null ? `Ionized calcium ${patient.ionizedCalcium.toFixed(2)} mmol/L helps adjudicate whether the total-calcium drop is biologically important.` : null,
+            ]),
+            confirms_if: [
+                'Ionized calcium is normal despite low total calcium.',
+                'Albumin is low enough to explain the total-calcium drop.',
+                'Clinical neuromuscular signs are absent or disproportionate to the total-calcium change.',
+            ],
+            excludes_if: [
+                'Ionized calcium is clearly low.',
+                'Tetany/seizures resolve with IV calcium and true hypocalcaemia is documented.',
+                'Another endocrine, renal, or pancreatic driver is confirmed.',
+            ],
+        },
+        {
+            condition: 'Toxic or Iatrogenic Hypocalcaemia',
+            score: 8 + (toxinPattern ? 34 : 0) + (patient.acutePresentation ? 10 : 0) + (lowIonized || lowTotal ? 10 : 0),
+            mechanism: 'Chelation, renal injury, or drug-related shifts can reduce serum calcium abruptly after toxic or iatrogenic exposure.',
+            supporting: dedupeStrings([
+                toxinPattern ? 'History includes a toxin, transfusion, or medication cue that can precipitate hypocalcaemia.' : null,
+                patient.acutePresentation ? 'The onset appears abrupt.' : null,
+                !toxinPattern ? '⚠️ ASSUMPTION: No clear toxin history was supplied, so this remains a lower-priority exclusion differential.' : null,
+            ]),
+            confirms_if: [
+                'Exposure history confirms ethylene glycol, citrate load, loop diuretic effect, or post-surgical calcium loss.',
+                'Laboratory changes are temporally linked to the exposure.',
+                'Concurrent renal or acid-base findings support the toxic mechanism.',
+            ],
+            excludes_if: [
+                'Exposure history is negative and no compatible treatment/surgery occurred.',
+                'A more direct endocrine, renal, or pancreatic explanation is confirmed.',
+            ],
+        },
+        {
+            condition: 'Hypomagnesaemia-Mediated Hypocalcaemia',
+            score: 8 + (magnesiumLow ? 34 : 0) + (patient.hasTetanyPattern ? 10 : 0) + (vomitingOrDiarrhea ? 8 : 0),
+            mechanism: 'Magnesium depletion impairs PTH secretion and end-organ responsiveness, making hypocalcaemia refractory until magnesium is corrected.',
+            supporting: dedupeStrings([
+                magnesiumLow ? 'Magnesium is low enough to interfere with PTH signaling.' : null,
+                patient.hasTetanyPattern ? 'Neuromuscular irritability is compatible with refractory electrolyte disease.' : null,
+                patient.magnesium == null ? '⚠️ ASSUMPTION: Magnesium was not supplied, so a correctable cofactor deficit cannot be excluded.' : null,
+            ]),
+            confirms_if: [
+                'Magnesium is low and calcium correction is incomplete until magnesium is supplemented.',
+                'No better primary endocrine explanation is found.',
+            ],
+            excludes_if: [
+                'Magnesium is normal and calcium responds normally to therapy.',
+                'A stronger direct cause such as eclampsia or CKD is confirmed.',
+            ],
+        },
+    ]
+        .filter((candidate) => candidate.score > 0)
+        .sort((left, right) => right.score - left.score)
+        .slice(0, 5);
+
+    const totalScore = candidates.reduce((sum, candidate) => sum + candidate.score, 0) || 1;
+
+    return candidates.map((candidate, index) => ({
+        rank: index + 1,
+        condition: candidate.condition,
+        confidence_percent: clamp(Math.round((candidate.score / totalScore) * 100), 8, 92),
+        mechanism: candidate.mechanism,
+        supporting: candidate.supporting,
+        confirms_if: candidate.confirms_if,
+        excludes_if: candidate.excludes_if,
+    }));
+}
+
+function buildHypocalcemiaDiagnostics(
+    patient: HypocalcemiaPatientContext,
+    primaryDiagnosis: string,
+): TreatmentConditionModuleReport['step_4_diagnostic_recommendations'] {
+    const correctedTotalCalcium = computeCorrectedTotalCalcium(patient.totalCalcium, patient.albumin);
+
+    return [
+        {
+            priority: 'urgent',
+            test_name: 'Ionized calcium',
+            rules_in_or_out: 'Confirms true biologically active hypocalcaemia and separates it from pseudohypocalcaemia.',
+            expected_if_hypothesis_correct: primaryDiagnosis.includes('Pseudohypocalcaemia')
+                ? 'Ionized calcium remains normal despite low total calcium.'
+                : 'Ionized calcium is below the target range, often <1.1 mmol/L.',
+        },
+        {
+            priority: 'urgent',
+            test_name: 'Continuous ECG during stabilization',
+            rules_in_or_out: 'Identifies calcium-associated rhythm disturbance and treatment-limiting bradyarrhythmia/QT changes.',
+            expected_if_hypothesis_correct: 'Prolonged QT or rhythm irritability may be present in symptomatic true hypocalcaemia.',
+        },
+        {
+            priority: 'essential',
+            test_name: 'Phosphorus + magnesium + albumin + glucose panel',
+            rules_in_or_out: 'Separates hypoparathyroidism, hypomagnesaemia, pseudohypocalcaemia, and competing metabolic mimics.',
+            expected_if_hypothesis_correct: primaryDiagnosis.includes('Hypoparathyroidism')
+                ? 'High phosphorus with low calcium.'
+                : primaryDiagnosis.includes('Pseudohypocalcaemia')
+                    ? 'Low albumin with discordantly normal ionized calcium.'
+                    : 'Low calcium with either low magnesium, low albumin, or parallel metabolic disturbance.',
+        },
+        {
+            priority: 'essential',
+            test_name: 'BUN/creatinine + urinalysis',
+            rules_in_or_out: 'Assesses CKD/AKI contribution and whether renal disease is driving phosphorus and calcitriol abnormalities.',
+            expected_if_hypothesis_correct: 'Azotemia and impaired urine concentration are present in renal-associated cases.',
+        },
+        {
+            priority: 'optional',
+            test_name: 'Pancreatic lipase and focused abdominal imaging',
+            rules_in_or_out: 'Confirms or demotes pancreatitis as the inflammatory cause of hypocalcaemia.',
+            expected_if_hypothesis_correct: 'Lipase and imaging support pancreatitis when GI or abdominal signs are present.',
+        },
+        {
+            priority: 'advanced',
+            test_name: 'PTH +/- calcitriol once stabilized',
+            rules_in_or_out: 'Confirms endocrine calcium-regulation failure after true hypocalcaemia is documented.',
+            expected_if_hypothesis_correct: 'PTH is inappropriately low/non-elevated for the degree of hypocalcaemia; calcitriol may also be low in renal disease.',
+        },
+        {
+            priority: 'advanced',
+            test_name: 'Blood gas / acid-base assessment',
+            rules_in_or_out: 'Detects alkalosis-driven ionized calcium reduction and frames the urgency of metabolic correction.',
+            expected_if_hypothesis_correct: 'Alkalosis can worsen ionized calcium suppression even when total calcium appears less dramatic.',
+        },
+        ...(patient.ionizedCalcium == null && correctedTotalCalcium != null
+            ? [{
+                priority: 'essential' as const,
+                test_name: 'Albumin-corrected total calcium check',
+                rules_in_or_out: 'Temporary surrogate only when ionized calcium is unavailable.',
+                expected_if_hypothesis_correct: `⚠️ IONIZED Ca NOT AVAILABLE — corrected total Ca currently estimates ${correctedTotalCalcium.toFixed(2)} mg/dL, but ionized calcium should replace this as soon as possible.`,
+            }]
+            : []),
+    ];
+}
+
+function buildHypocalcemiaTreatmentPathway(
+    patient: HypocalcemiaPatientContext,
+    primaryDiagnosis: string,
+    urgencyClassification: 'EMERGENCY' | 'URGENT' | 'STABLE',
+): TreatmentConditionModuleReport['step_5_treatment_pathway'] {
+    const bolusLine = patient.weightKg != null
+        ? `⚠️ VERIFY DOSE with attending clinician: Calcium gluconate 10% IV 0.5–1.5 mL/kg slow IV over 10–20 minutes (approximately ${(patient.weightKg * 0.5).toFixed(1)}-${(patient.weightKg * 1.5).toFixed(1)} mL total for ${patient.weightKg.toFixed(1)} kg).`
+        : '⚠️ VERIFY DOSE with attending clinician: Calcium gluconate 10% IV 0.5–1.5 mL/kg slow IV over 10–20 minutes.';
+
+    return [
+        {
+            tier: 'tier_1_emergency_stabilisation',
+            title: 'TIER 1 - EMERGENCY STABILISATION',
+            items: dedupeStrings([
+                urgencyClassification === 'EMERGENCY'
+                    ? 'Emergency trigger is active because tetany-pattern instability is present or strongly suspected.'
+                    : 'Emergency trigger is not yet definitive, but the calcium rescue protocol should stay ready if tremors, tetany, or seizures emerge.',
+                bolusLine,
+                'Continuous ECG monitoring is mandatory; stop or slow administration if bradycardia or new arrhythmia develops.',
+                'Expected response: neuromuscular improvement should begin within minutes if true hypocalcaemia is the main driver.',
+                'If response is incomplete, reassess ionized calcium, magnesium, glucose, and the possibility of a competing diagnosis.',
+            ]),
+        },
+        {
+            tier: 'tier_2_short_term_stabilisation',
+            title: 'TIER 2 - SHORT-TERM STABILISATION (24-72h)',
+            items: dedupeStrings([
+                'If repeated calcium support is required, transition to clinician-directed serial boluses or a calcium infusion with formulation-specific verification.',
+                '⚠️ VERIFY DOSE with attending clinician: This module does not auto-set a calcium CRI rate without a verified formulation-to-elemental-calcium map.',
+                'Correct concurrent hypomagnesaemia, acid-base derangement, glucose abnormalities, and dehydration in parallel.',
+                'Recheck ionized calcium every 4-6 hours until the trend is stable, then widen the interval.',
+                'Once signs are controlled, transition toward oral calcium support and aetiology-specific therapy.',
+            ]),
+        },
+        {
+            tier: 'tier_3_long_term_maintenance',
+            title: 'TIER 3 - LONG-TERM / MAINTENANCE',
+            items: dedupeStrings([
+                `Primary diagnosis focus: ${primaryDiagnosis}.`,
+                'Primary hypoparathyroidism -> ⚠️ VERIFY DOSE with attending clinician: lifelong oral calcium plus calcitriol 0.01-0.03 mcg/kg/day, titrated to ionized calcium.',
+                'Eclampsia -> continue calcium supplementation, reduce nursing demand, and wean puppies/kittens early if recurrence risk is high.',
+                'CKD-associated hypocalcaemia -> renal diet strategy, phosphorus control, calcitriol consideration, and serial renal/ionized calcium monitoring.',
+                'Pancreatitis / critical illness -> treat the primary inflammatory disease while continuing calcium support only as needed for true ionized hypocalcaemia.',
+                'Hypomagnesaemia -> replete magnesium because calcium control may remain refractory until magnesium is corrected.',
+                'Pseudohypocalcaemia -> treat the hypoalbuminaemia source; calcium supplementation is not indicated if ionized calcium is normal.',
+                'Toxic / iatrogenic causes -> remove the trigger, treat the toxin-specific emergency, and use calcium support only with ECG-guided clinician oversight.',
+            ]),
+        },
+    ];
+}
+
+function buildHypocalcemiaMonitoring(patient: HypocalcemiaPatientContext): TreatmentConditionModuleReport['step_6_monitoring_protocol'] {
+    return {
+        summary: 'Monitoring should stay anchored to ionized calcium rather than total calcium alone, with active surveillance for overcorrection.',
+        bullets: dedupeStrings([
+            'Recheck ionized calcium every 4-6 hours during active stabilization; once stable, extend toward 12-24 hour intervals and then outpatient rechecks.',
+            'Target ionized calcium range: 1.1-1.4 mmol/L for dogs and cats.',
+            'Hypercalcaemia risk flags: vomiting, facial rubbing, polyuria/polydipsia, bradycardia, or new arrhythmia after supplementation.',
+            'Co-monitor phosphorus, magnesium, renal values, hydration/perfusion status, and ECG when IV calcium is being administered.',
+            'Escalate or refer if seizures persist, calcium remains unstable after initial therapy, hypoparathyroidism is suspected, CKD is advanced, or toxin/ICU care exceeds local monitoring capacity.',
+            patient.bloodGasNarrative == null ? '⚠️ ASSUMPTION: Acid-base status was not supplied, so alkalosis as a suppressor of ionized calcium has not yet been excluded.' : null,
+        ]),
+    };
+}
+
+function buildHypocalcemiaConfidenceSummary(
+    patient: HypocalcemiaPatientContext,
+    differentials: TreatmentConditionModuleReport['step_3_aetiology_differential_ranking'],
+): TreatmentConditionModuleReport['step_7_confidence_summary'] {
+    const primary = differentials[0];
+    const missingDataGaps = [
+        patient.ionizedCalcium == null ? 'Ionized calcium is missing.' : null,
+        patient.magnesium == null ? 'Magnesium is missing.' : null,
+        patient.phosphorus == null ? 'Phosphorus is missing.' : null,
+        patient.albumin == null ? 'Albumin is missing.' : null,
+        patient.pth == null ? 'PTH is missing for endocrine confirmation.' : null,
+        patient.bunCreatinine == null ? 'Renal values are incomplete.' : null,
+        patient.lipase == null ? 'Pancreatic testing is incomplete if pancreatitis remains plausible.' : null,
+    ].filter((value): value is string => value != null);
+    const baseScore =
+        (primary?.confidence_percent ?? 45)
+        + (patient.ionizedCalcium != null ? 12 : 0)
+        + (patient.postpartum ? 10 : 0)
+        + (patient.hasTetanyPattern ? 8 : 0)
+        - Math.min(24, missingDataGaps.length * 4);
+    const systemConfidenceScore = clamp(Math.round(baseScore), 28, 96);
+    const certaintyBand: TreatmentConditionModuleReport['step_7_confidence_summary']['certainty_band'] =
+        systemConfidenceScore >= 85 ? 'Very High'
+            : systemConfidenceScore >= 70 ? 'High'
+                : systemConfidenceScore >= 55 ? 'Moderate'
+                    : 'Low';
+    const evidenceStrength: TreatmentConditionModuleReport['step_7_confidence_summary']['evidence_strength'] =
+        patient.ionizedCalcium != null || (patient.postpartum && patient.hasTetanyPattern)
+            ? 'Strong'
+            : missingDataGaps.length <= 3
+                ? 'Moderate'
+                : 'Weak';
+    const nairobiCalibration = patient.region != null && /(nairobi|kenya|east[_ -]?africa|ke\b)/i.test(patient.region)
+        ? 'Applied - Nairobi/East African prevalence priors remained active, but this ranking stayed physiology-dominant rather than vector-borne.'
+        : 'Applied - Nairobi-calibrated prevalence priors were active, but they did not materially outweigh the physiology-first hypocalcaemia pattern.';
+    const recommendedAction = patient.postpartum && patient.smallBreed && patient.hasTetanyPattern
+        ? 'Start ECG-monitored IV calcium gluconate immediately, obtain ionized calcium plus magnesium/phosphorus now, and reduce nursing demand while confirming puerperal tetany.'
+        : patient.hasTetanyPattern
+            ? 'Start ECG-monitored calcium rescue immediately while obtaining ionized calcium, magnesium, phosphorus, albumin, and renal values.'
+            : 'Measure ionized calcium now and complete the magnesium/phosphorus/albumin/renal panel before committing to long-term supplementation.';
+
+    return {
+        system_confidence_score: systemConfidenceScore,
+        certainty_band: certaintyBand,
+        primary_diagnosis: primary?.condition ?? 'Hypocalcaemia syndrome under evaluation',
+        evidence_strength: evidenceStrength,
+        data_gaps: missingDataGaps.length > 0
+            ? missingDataGaps
+            : ['Major immediate data gaps are limited; clinician confirmation is still required before definitive long-term therapy.'],
+        nairobi_prevalence_calibration: nairobiCalibration,
+        recommended_action: recommendedAction,
+    };
+}
+
 function deriveSupportingSignals(disease: DiseaseOntologyEntry, observations: string[]) {
     const observationSet = new Set(observations);
     return [
@@ -1687,6 +2326,81 @@ function hasAny(values: Set<string>, targets: string[]) {
 
 function clamp(value: number, min: number, max: number) {
     return Math.min(max, Math.max(min, value));
+}
+
+function computeCorrectedTotalCalcium(totalCalcium: number | null, albumin: number | null) {
+    if (totalCalcium == null || albumin == null) return null;
+    return totalCalcium - albumin + 3.5;
+}
+
+function isSmallBreed(breed: string | null) {
+    if (!breed) return false;
+    return /(chihuahua|yorkshire terrier|yorkie|pomeranian|maltese|toy poodle|miniature poodle|mini poodle|papillon|pug|shih tzu|miniature schnauzer|dachshund|jack russell|bichon|pekingese|pinscher)/i.test(breed);
+}
+
+function collectScalarEntries(value: unknown, prefix = ''): Array<{ path: string; value: unknown }> {
+    const entries: Array<{ path: string; value: unknown }> = [];
+    if (Array.isArray(value)) {
+        value.forEach((item, index) => {
+            const path = prefix ? `${prefix}.${index}` : String(index);
+            if (typeof item === 'object' && item != null) {
+                entries.push(...collectScalarEntries(item, path));
+            } else {
+                entries.push({ path, value: item });
+            }
+        });
+        return entries;
+    }
+    if (typeof value !== 'object' || value == null) {
+        if (prefix) entries.push({ path: prefix, value });
+        return entries;
+    }
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+        const path = prefix ? `${prefix}.${key}` : key;
+        if (typeof nested === 'object' && nested != null) {
+            entries.push(...collectScalarEntries(nested, path));
+        } else {
+            entries.push({ path, value: nested });
+        }
+    }
+    return entries;
+}
+
+function collectStringsFromUnknown(value: unknown): string[] {
+    if (typeof value === 'string') return [value];
+    if (typeof value === 'number' && Number.isFinite(value)) return [String(value)];
+    if (Array.isArray(value)) return value.flatMap((entry) => collectStringsFromUnknown(entry));
+    if (typeof value === 'object' && value != null) {
+        return Object.values(value as Record<string, unknown>).flatMap((entry) => collectStringsFromUnknown(entry));
+    }
+    return [];
+}
+
+function readScalarEntryNumber(entries: Array<{ path: string; value: unknown }>, matcher: RegExp) {
+    for (const entry of entries) {
+        if (!matcher.test(entry.path)) continue;
+        const value = readMeasurementNumber(entry.value);
+        if (value != null) return value;
+    }
+    return null;
+}
+
+function readScalarEntryText(entries: Array<{ path: string; value: unknown }>, matcher: RegExp) {
+    for (const entry of entries) {
+        if (!matcher.test(entry.path)) continue;
+        const value = normalizeText(entry.value);
+        if (value != null) return value;
+    }
+    return null;
+}
+
+function readMeasurementNumber(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value !== 'string') return null;
+    const match = value.match(/-?\d+(?:\.\d+)?/);
+    if (!match) return null;
+    const parsed = Number(match[0]);
+    return Number.isFinite(parsed) ? parsed : null;
 }
 
 function normalizeText(value: unknown) {

@@ -31,9 +31,17 @@ function transpileIntoGenerated(relativePath, sourcePath) {
     fs.writeFileSync(targetPath, transpiled.outputText, 'utf8');
 }
 
+function writeGeneratedStub(relativePath, source) {
+    const targetPath = path.join(generatedDir, relativePath);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, source, 'utf8');
+}
+
 function compileModules() {
     transpileIntoGenerated(path.join('lib', 'ai', 'diseaseOntology.js'), diseaseOntologySource);
     transpileIntoGenerated(path.join('lib', 'treatmentIntelligence', 'types.js'), treatmentTypesSource);
+    writeGeneratedStub(path.join('lib', 'inference', 'condition-registry.js'), 'exports.findConditionByName = () => undefined;');
+    writeGeneratedStub(path.join('lib', 'treatment', 'treatment-engine.js'), 'exports.selectTreatmentProtocol = () => null;');
     transpileIntoGenerated(path.join('lib', 'treatmentIntelligence', 'engine.js'), treatmentEngineSource);
     const enginePath = path.join(generatedDir, 'lib', 'treatmentIntelligence', 'engine.js');
     delete require.cache[enginePath];
@@ -134,6 +142,57 @@ function buildNoisyNeurologicBundle(mod) {
     });
 }
 
+function buildHypocalcemiaModuleBundle(mod) {
+    return mod.buildTreatmentRecommendationBundle({
+        inferenceEventId: '33333333-3333-4333-8333-333333333333',
+        diagnosisLabel: 'Puerperal Hypocalcemia (Eclampsia)',
+        diagnosisConfidence: 0.91,
+        emergencyLevel: 'CRITICAL',
+        severityScore: 0.95,
+        species: 'dog',
+        inputSignature: {
+            species: 'dog',
+            breed: 'Chihuahua',
+            age_years: 3,
+            weight_kg: 2.1,
+            sex: 'intact female',
+            symptoms: ['muscle tremors', 'panting', 'seizures', 'postpartum'],
+            history: {
+                progression: 'acute',
+                owner_observations: ['Three weeks post-whelping and currently nursing four puppies'],
+                geographic_region: 'nairobi_ke',
+            },
+            diagnostic_tests: {
+                biochemistry: {
+                    calcium: 'hypocalcemia',
+                },
+            },
+            metadata: {
+                total_calcium: '5.8 mg/dL',
+                albumin: '2.8 g/dL',
+            },
+        },
+        outputPayload: {
+            diagnosis: {
+                top_differentials: [
+                    { name: 'Puerperal Hypocalcemia (Eclampsia)', probability: 0.91 },
+                    { name: 'Acute Electrolyte Derangement', probability: 0.06 },
+                    { name: 'Hypoglycemic Crisis', probability: 0.03 },
+                ],
+            },
+            contradiction_analysis: {
+                contradiction_flags: [],
+            },
+            risk_assessment: {
+                emergency_level: 'CRITICAL',
+                severity_score: 0.95,
+            },
+        },
+        context: buildContext('advanced'),
+        observedPerformance: [],
+    });
+}
+
 function main() {
     const mod = compileModules();
 
@@ -168,12 +227,22 @@ function main() {
     assert(noisyNeurologic.options.some((option) => option.intervention_details.procedure_types.some((entry) => entry.toLowerCase().includes('confirmatory') || entry.toLowerCase().includes('repeat focused neurologic examination'))), 'Noisy neurologic case should prioritize confirmatory diagnostics in treatment procedures.');
     assert(noisyNeurologic.options.some((option) => option.why_relevant.toLowerCase().includes('diagnostic-management pathway')), 'Noisy neurologic case should reframe rationale around diagnostic management.');
 
+    const hypocalcemiaBundle = buildHypocalcemiaModuleBundle(mod);
+    assert(hypocalcemiaBundle.condition_module, 'Hypocalcaemia-pattern case should expose a condition module.');
+    assert(hypocalcemiaBundle.condition_module.module_key === 'hypocalcaemia_small_animals', 'Hypocalcaemia condition module should be keyed correctly.');
+    assert(hypocalcemiaBundle.condition_module.step_1_signal_triage.urgency_classification === 'EMERGENCY', 'Post-partum tetany case should escalate to emergency triage.');
+    assert(hypocalcemiaBundle.condition_module.step_7_confidence_summary.primary_diagnosis.includes('Eclampsia'), 'Hypocalcaemia module should rank eclampsia first in the canonical post-partum case.');
+    assert(hypocalcemiaBundle.condition_module.step_4_diagnostic_recommendations.some((entry) => entry.test_name.toLowerCase().includes('ionized calcium')), 'Hypocalcaemia module should prioritize ionized calcium.');
+    assert(hypocalcemiaBundle.condition_module.step_5_treatment_pathway.some((tier) => tier.items.some((item) => item.includes('Calcium gluconate 10% IV'))), 'Hypocalcaemia module should expose emergency calcium stabilization guidance.');
+    assert(hypocalcemiaBundle.condition_module.actionable_now.toLowerCase().includes('iv calcium') || hypocalcemiaBundle.condition_module.actionable_now.toLowerCase().includes('calcium gluconate'), 'Hypocalcaemia module should end with a right-now action.');
+
     const inferencePage = fs.readFileSync(inferencePageSource, 'utf8');
     const recommendRoute = fs.readFileSync(recommendRouteSource, 'utf8');
     const outcomeRoute = fs.readFileSync(outcomeRouteSource, 'utf8');
     assert(inferencePage.includes('TreatmentPathwaysPanel'), 'Inference console is missing the treatment pathways panel.');
-    assert(inferencePage.includes('Acute deterioration risk model'), 'Inference console is missing the generic non-abdominal risk label.');
+    assert(inferencePage.includes('Acute Deterioration Risk'), 'Inference console is missing the acute deterioration risk label.');
     assert(inferencePage.includes('Diagnostic Management Mode') || fs.readFileSync(path.join(appRoot, 'components', 'TreatmentPathwaysPanel.tsx'), 'utf8').includes('Diagnostic Management Mode'), 'Treatment pathways UI is missing the diagnostic-management banner.');
+    assert(fs.readFileSync(path.join(appRoot, 'components', 'TreatmentPathwaysPanel.tsx'), 'utf8').includes('Step 1 - Signal Triage'), 'Treatment pathways UI is missing the condition-module render path.');
     assert(recommendRoute.includes('recommendTreatmentPathways'), 'Treatment recommend route is missing treatment service integration.');
     assert(outcomeRoute.includes('recordTreatmentDecisionAndOutcome'), 'Treatment outcome route is missing treatment logging integration.');
 
