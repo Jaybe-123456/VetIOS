@@ -22,10 +22,13 @@ import {
     type MechanismClassOutput,
 } from '@/lib/ai/abdominalEmergency';
 import {
+    evaluateDifferentialSystemGate,
+    getClinicalSystemDisplayLabel,
     getOrganSystemDisplayLabel,
     getMasterDiseaseOntology,
     normalizeOntologyDiseaseName,
     scoreClosedWorldDiseases,
+    type SystemGatingDecision,
 } from '@/lib/ai/diseaseOntology';
 import { runClinicalInferenceEngine } from '@/lib/inference/engine';
 import type { InferenceExplanation } from '@/lib/inference/types';
@@ -128,6 +131,7 @@ interface CandidateScoringResult {
     scores: CandidateScore[];
     signalHierarchy: ReturnType<typeof scoreClosedWorldDiseases>['signalHierarchy'];
     activeCategories: ReturnType<typeof scoreClosedWorldDiseases>['activeCategories'];
+    systemGating: ReturnType<typeof scoreClosedWorldDiseases>['systemGating'];
 }
 
 const CONDITION_CLASSES: ConditionClass[] = [
@@ -505,23 +509,37 @@ export function applyDiagnosticSafetyLayer(params: {
     const heuristicScores = heuristicScoring.scores;
     const evidenceInference = runClinicalInferenceEngine(params.inputSignature);
     const existingDifferentials = normalizeExistingDifferentials(params.diagnosis.top_differentials);
-    const mergedDifferentials = evidenceInference.differentials.length > 0
-        ? normalizeExistingDifferentials(evidenceInference.diagnosis.top_differentials)
-        : mergeDifferentials({
-            contradictionScore,
-            heuristicScores,
-            signalHierarchy: heuristicScoring.signalHierarchy,
-            existingDifferentials,
-            emergencyEval: params.emergencyEval,
-            signals,
-        });
+    const gatedEvidenceDifferentials = filterDifferentialsBySystemGating(
+        normalizeExistingDifferentials(evidenceInference.diagnosis.top_differentials),
+        heuristicScoring.systemGating,
+    );
+    const gatedModelDifferentials = filterDifferentialsBySystemGating(
+        existingDifferentials,
+        heuristicScoring.systemGating,
+    );
+    const mergedDifferentials = mergeDifferentials({
+        contradictionScore,
+        heuristicScores,
+        signalHierarchy: heuristicScoring.signalHierarchy,
+        systemGating: heuristicScoring.systemGating,
+        existingDifferentials: [
+            ...gatedEvidenceDifferentials.allowed,
+            ...gatedModelDifferentials.allowed,
+        ],
+        emergencyEval: params.emergencyEval,
+        signals,
+    });
+    const systemGatingExcluded = [
+        ...gatedEvidenceDifferentials.excluded,
+        ...gatedModelDifferentials.excluded,
+    ];
     const mechanismClass = buildMechanismClassOutput({
         signals,
         differentials: mergedDifferentials,
         emergencyEval: params.emergencyEval,
     });
-    const differentialSpread = evidenceInference.differential_spread ?? computeDifferentialSpread(mergedDifferentials);
-    const conditionClassProbabilities = evidenceInference.diagnosis.condition_class_probabilities ?? buildConditionClassProbabilities(mergedDifferentials);
+    const differentialSpread = computeDifferentialSpread(mergedDifferentials);
+    const conditionClassProbabilities = buildConditionClassProbabilities(mergedDifferentials);
     const primaryClassMass = Math.max(...Object.values(conditionClassProbabilities));
     const preservedEmergency = params.emergencyEval.emergency_rule_reasons.some((reason) => reason.toLowerCase().includes('persistence'));
     const syndromeStable = (preservedEmergency && primaryClassMass >= 0.72) || primaryClassMass >= 0.82;
@@ -599,18 +617,20 @@ export function applyDiagnosticSafetyLayer(params: {
             existingNotes: params.existingUncertaintyNotes,
             signals,
             signalHierarchy: heuristicScoring.signalHierarchy,
+            systemGating: heuristicScoring.systemGating,
         }),
         evidenceInference.uncertainty_notes,
     );
-    const primaryConditionClass = evidenceInference.diagnosis.primary_condition_class ?? pickPrimaryConditionClass(mergedDifferentials, params.diagnosis.primary_condition_class, signals);
-    const diagnosisAnalysis = typeof evidenceInference.diagnosis.analysis === 'string' && evidenceInference.diagnosis.analysis.trim().length > 0
-        ? evidenceInference.diagnosis.analysis
-        : buildAnalysisText(
-            params.diagnosis.analysis,
-            mergedDifferentials,
-            contradictionScore,
-            params.emergencyEval,
-            heuristicScoring.signalHierarchy,
+    const primaryConditionClass = pickPrimaryConditionClass(mergedDifferentials, params.diagnosis.primary_condition_class, signals);
+    const diagnosisAnalysis = buildAnalysisText(
+        typeof evidenceInference.diagnosis.analysis === 'string' && evidenceInference.diagnosis.analysis.trim().length > 0
+            ? evidenceInference.diagnosis.analysis
+            : params.diagnosis.analysis,
+        mergedDifferentials,
+        contradictionScore,
+        params.emergencyEval,
+        heuristicScoring.signalHierarchy,
+        heuristicScoring.systemGating,
     );
 
     const diagnosis: Record<string, unknown> = {
@@ -624,7 +644,7 @@ export function applyDiagnosticSafetyLayer(params: {
 
     return {
         diagnosis,
-        inference_explanation: evidenceInference.inference_explanation,
+        inference_explanation: appendSystemGatingExclusions(evidenceInference.inference_explanation, systemGatingExcluded),
         treatment_plans: evidenceInference.treatment_plans,
         ground_truth_summary: evidenceInference.ground_truth_summary,
         mechanism_class: mechanismClass,
@@ -652,6 +672,8 @@ export function applyDiagnosticSafetyLayer(params: {
             suppressed_signals: suppressedSignals,
             mechanism_class: mechanismClass,
             signal_hierarchy: heuristicScoring.signalHierarchy,
+            system_gating: heuristicScoring.systemGating,
+            system_gating_exclusions: systemGatingExcluded,
             ontology_active_categories: heuristicScoring.activeCategories,
             inference_engine_primary_basis: evidenceInference.inference_explanation?.primary_determination ?? null,
             inference_engine_key_finding: evidenceInference.inference_explanation?.key_finding ?? null,
@@ -745,6 +767,7 @@ function scoreCandidates(
     return {
         signalHierarchy: closedWorldScores.signalHierarchy,
         activeCategories: closedWorldScores.activeCategories,
+        systemGating: closedWorldScores.systemGating,
         scores: closedWorldScores.ranked.map((candidate) => ({
             name: candidate.name,
             conditionClass: candidate.conditionClass,
@@ -836,10 +859,71 @@ function buildOntologyObservationHints(signals: ClinicalSignals): string[] {
     return [...hints];
 }
 
+function filterDifferentialsBySystemGating(
+    differentials: DifferentialEntry[],
+    systemGating: SystemGatingDecision,
+): {
+    allowed: DifferentialEntry[];
+    excluded: Array<{ condition: string; reason: string }>;
+} {
+    const allowed: DifferentialEntry[] = [];
+    const excluded: Array<{ condition: string; reason: string }> = [];
+
+    for (const differential of differentials) {
+        const gate = evaluateDifferentialSystemGate(differential.name, systemGating);
+        if (!gate.allowed) {
+            excluded.push({
+                condition: differential.name,
+                reason: gate.reason ?? 'outside_allowed_system_gate',
+            });
+            continue;
+        }
+
+        allowed.push({
+            ...differential,
+            probability: Number((differential.probability * gate.multiplier).toFixed(4)),
+        });
+    }
+
+    return { allowed, excluded };
+}
+
+function appendSystemGatingExclusions(
+    explanation: InferenceExplanation | undefined,
+    excluded: Array<{ condition: string; reason: string }>,
+): InferenceExplanation | undefined {
+    if (!explanation) {
+        return explanation;
+    }
+
+    const merged = new Map<string, string>();
+    for (const entry of explanation.excluded_conditions ?? []) {
+        merged.set(entry.condition, entry.reason);
+    }
+    for (const entry of excluded) {
+        const reason = entry.reason
+            .replace(/^suppressed_/g, '')
+            .replace(/^outside_allowed_system_gate$/g, 'Blocked by system gating')
+            .replace(/_/g, ' ');
+        if (!merged.has(entry.condition)) {
+            merged.set(entry.condition, reason.charAt(0).toUpperCase() + reason.slice(1));
+        }
+    }
+
+    return {
+        ...explanation,
+        excluded_conditions: [...merged.entries()].map(([condition, reason]) => ({
+            condition,
+            reason,
+        })),
+    };
+}
+
 function mergeDifferentials(params: {
     contradictionScore: number;
     heuristicScores: CandidateScore[];
     signalHierarchy: CandidateScoringResult['signalHierarchy'];
+    systemGating: CandidateScoringResult['systemGating'];
     existingDifferentials: DifferentialEntry[];
     emergencyEval: EmergencyRuleResult;
     signals: ClinicalSignals;
@@ -890,6 +974,7 @@ function mergeDifferentials(params: {
     applyConditionClassStabilization(combined, params.signals);
     applyEndocrineDifferentialLogic(combined, params.signals);
     applyOrganSystemDominanceReranking(combined, params);
+    applySystemGatingToCombinedDifferentials(combined, params.systemGating);
     enforceDominantClusterConsistency(combined, params.signals);
     applyClassicGdvDominance(combined, params.signals);
     normalizeProbabilities(combined);
@@ -1175,6 +1260,21 @@ function applyOrganSystemDominanceReranking(
     }
 }
 
+function applySystemGatingToCombinedDifferentials(
+    combined: Map<string, DifferentialEntry>,
+    systemGating: CandidateScoringResult['systemGating'],
+) {
+    for (const [name, entry] of combined.entries()) {
+        const gate = evaluateDifferentialSystemGate(name, systemGating);
+        if (!gate.allowed) {
+            combined.delete(name);
+            continue;
+        }
+
+        entry.probability *= gate.multiplier;
+    }
+}
+
 function applyClassicGdvDominance(
     combined: Map<string, DifferentialEntry>,
     signals: ClinicalSignals,
@@ -1266,7 +1366,7 @@ function buildDiagnosisFeatureImportance(
         includeCategories: ['red_flag', 'primary_signal'],
         topN: 6,
     });
-    for (const [label, weight] of Object.entries(weightedImportance)) {
+    for (const [label, weight] of Object.entries(weightedImportance) as Array<[string, number]>) {
         if (shouldSuppressAcuteAbdominalFeature(signals, label)) continue;
         importance[label] = Math.max(importance[label] ?? 0, weight);
     }
@@ -1283,6 +1383,7 @@ function buildUncertaintyNotes(params: {
     existingNotes: unknown;
     signals: ClinicalSignals;
     signalHierarchy: CandidateScoringResult['signalHierarchy'];
+    systemGating: CandidateScoringResult['systemGating'];
 }): string[] {
     const notes = new Set<string>();
 
@@ -1343,6 +1444,17 @@ function buildUncertaintyNotes(params: {
     }
     if (params.signalHierarchy.abstain_recommended) {
         notes.add('Signal hierarchy flagged the case as too weakly anchored for an aggressive single-diagnosis commitment.');
+    }
+    if (params.systemGating.hard_gating_active && params.systemGating.dominant_systems.length > 0) {
+        notes.add(
+            `System gating constrained ranking to ${params.systemGating.allowed_systems.map((system) => getClinicalSystemDisplayLabel(system)).filter(Boolean).join(', ')} diseases before final scoring.`,
+        );
+    }
+    if (params.systemGating.emergency_metabolic_priority) {
+        notes.add('Emergency metabolic priority rules boosted electrolyte and glycemic causes above distant-system mimics.');
+    }
+    if (params.systemGating.postpartum_hypocalcemia_override) {
+        notes.add('Postpartum hypocalcemia override remained active during final ranking.');
     }
 
     return [...notes];
@@ -1411,13 +1523,17 @@ function buildAnalysisText(
     contradictionScore: number,
     emergencyEval: EmergencyRuleResult,
     signalHierarchy: CandidateScoringResult['signalHierarchy'],
+    systemGating: CandidateScoringResult['systemGating'],
 ): string {
     const topNames = differentials.slice(0, 3).map((differential) => differential.name).join(', ');
     const preservedEmergency = emergencyEval.emergency_rule_reasons.some((reason) => reason.toLowerCase().includes('persistence'));
     const dominanceClause = signalHierarchy.dominant_system
         ? ` Dominant ${getOrganSystemDisplayLabel(signalHierarchy.dominant_system)} pathophysiology was used to prioritize organ-aligned diseases over generic symptom mimics.`
         : '';
-    const summary = `Deterministic safety layer preserved the leading syndrome pattern and re-ranked the differential as: ${topNames}.${dominanceClause}`;
+    const systemGateClause = systemGating.hard_gating_active && systemGating.allowed_systems.length > 0
+        ? ` System gating restricted candidates to ${systemGating.allowed_systems.map((system) => getClinicalSystemDisplayLabel(system)).filter(Boolean).join(', ')} disease domains before ranking.`
+        : '';
+    const summary = `Deterministic safety layer preserved the leading syndrome pattern and re-ranked the differential as: ${topNames}.${dominanceClause}${systemGateClause}`;
 
     if (typeof existingAnalysis !== 'string' || existingAnalysis.trim().length === 0) {
         return preservedEmergency && contradictionScore > 0
