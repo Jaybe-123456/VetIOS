@@ -6,6 +6,7 @@ import { ConsoleCard, TerminalButton, TerminalInput, TerminalLabel, TerminalText
 import { extractUuidFromText } from '@/lib/utils/uuid';
 import type {
     TreatmentCandidateRecord,
+    TreatmentConditionModuleReport,
     TreatmentPerformanceSummary,
     TreatmentRecommendationBundle,
     TreatmentResourceProfile,
@@ -266,6 +267,10 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                             </div>
                         ) : null}
 
+                        {loadState.bundle.condition_module ? (
+                            <ConditionModulePanel module={loadState.bundle.condition_module} />
+                        ) : null}
+
                         <div className="space-y-4">
                             {loadState.bundle.options.map((option) => (
                                 <TreatmentOptionCard
@@ -398,6 +403,95 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                     </form>
                 </ConsoleCard>
             ) : null}
+        </div>
+    );
+}
+
+function ConditionModulePanel({ module }: { module: TreatmentConditionModuleReport }) {
+    return (
+        <div className="border border-cyan-400/30 bg-cyan-500/5 p-4 font-mono text-xs">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-cyan-300 uppercase tracking-[0.18em]">{module.title}</div>
+                <div className="flex flex-wrap gap-2">
+                    <StatusPill label={module.step_1_signal_triage.urgency_classification} tone={module.step_1_signal_triage.urgency_classification === 'EMERGENCY' ? 'danger' : module.step_1_signal_triage.urgency_classification === 'URGENT' ? 'warn' : 'success'} />
+                    <StatusPill label={module.step_7_confidence_summary.certainty_band} tone={module.step_7_confidence_summary.certainty_band === 'Very High' || module.step_7_confidence_summary.certainty_band === 'High' ? 'success' : module.step_7_confidence_summary.certainty_band === 'Moderate' ? 'warn' : 'danger'} />
+                </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-4">
+                <MetricBox label="Step 1" value={module.step_1_signal_triage.urgency_classification} compact />
+                <MetricBox label="Primary Dx" value={module.step_7_confidence_summary.primary_diagnosis} compact />
+                <MetricBox label="Confidence" value={`${module.step_7_confidence_summary.system_confidence_score}%`} compact />
+                <MetricBox label="Evidence" value={module.step_7_confidence_summary.evidence_strength} compact />
+            </div>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <MiniBlock title="Step 1 - Signal Triage" lines={[module.step_1_signal_triage.summary, ...module.step_1_signal_triage.bullets]} />
+                <MiniBlock title="Step 2 - Species + Signalment Prior" lines={[module.step_2_species_signalment_prior.summary, ...module.step_2_species_signalment_prior.bullets]} />
+            </div>
+
+            <div className="mt-4 border border-grid/70 bg-black/20 p-3">
+                <div className="mb-3 uppercase tracking-[0.15em] text-muted">Step 3 - Aetiology Differential Ranking</div>
+                <div className="space-y-3">
+                    {module.step_3_aetiology_differential_ranking.map((entry) => (
+                        <div key={`${entry.rank}-${entry.condition}`} className="border border-grid/70 p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-foreground">[{entry.rank}] {entry.condition}</div>
+                                <StatusPill label={`${entry.confidence_percent}%`} tone={entry.confidence_percent >= 60 ? 'success' : entry.confidence_percent >= 35 ? 'warn' : 'neutral'} />
+                            </div>
+                            <div className="mt-2 text-muted">Mechanism: {entry.mechanism}</div>
+                            <div className="mt-3 grid gap-3 md:grid-cols-3">
+                                <MiniBlock title="Supporting" lines={entry.supporting} />
+                                <MiniBlock title="Confirms If" lines={entry.confirms_if} />
+                                <MiniBlock title="Excludes If" lines={entry.excludes_if} />
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <div className="border border-grid/70 bg-black/20 p-3">
+                    <div className="mb-3 uppercase tracking-[0.15em] text-muted">Step 4 - Diagnostic Recommendation</div>
+                    <div className="space-y-3">
+                        {module.step_4_diagnostic_recommendations.map((diagnostic) => (
+                            <div key={`${diagnostic.priority}-${diagnostic.test_name}`} className="border border-grid/70 p-3">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="text-foreground">{diagnostic.test_name}</div>
+                                    <StatusPill label={diagnostic.priority} tone={diagnostic.priority === 'urgent' ? 'danger' : diagnostic.priority === 'essential' ? 'warn' : 'neutral'} />
+                                </div>
+                                <div className="mt-2 text-muted">Rules in/out: {diagnostic.rules_in_or_out}</div>
+                                <div className="mt-2 text-foreground">Expected: {diagnostic.expected_if_hypothesis_correct}</div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="border border-grid/70 bg-black/20 p-3">
+                    <div className="mb-3 uppercase tracking-[0.15em] text-muted">Step 5 - Treatment Pathway</div>
+                    <div className="space-y-3">
+                        {module.step_5_treatment_pathway.map((tier) => (
+                            <MiniBlock key={tier.tier} title={tier.title} lines={tier.items} />
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <MiniBlock title="Step 6 - Monitoring Protocol" lines={[module.step_6_monitoring_protocol.summary, ...module.step_6_monitoring_protocol.bullets]} />
+                <MiniBlock title="Step 7 - Confidence Summary" lines={[
+                    `SYSTEM CONFIDENCE SCORE: ${module.step_7_confidence_summary.system_confidence_score}% (${module.step_7_confidence_summary.certainty_band} Certainty)`,
+                    `Primary Diagnosis: ${module.step_7_confidence_summary.primary_diagnosis}`,
+                    `Evidence Strength: ${module.step_7_confidence_summary.evidence_strength}`,
+                    `Nairobi Prevalence Calibration: ${module.step_7_confidence_summary.nairobi_prevalence_calibration}`,
+                    `Recommended Action: ${module.step_7_confidence_summary.recommended_action}`,
+                    ...module.step_7_confidence_summary.data_gaps.map((gap) => `Data Gap: ${gap}`),
+                ]} />
+            </div>
+
+            <div className="mt-4 border border-yellow-500/30 bg-yellow-500/10 p-3 text-yellow-100">
+                {module.actionable_now}
+            </div>
         </div>
     );
 }
