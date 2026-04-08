@@ -1,6 +1,6 @@
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth/callback'];
-const PUBLIC_MARKETING_PATH_PREFIXES = ['/platform', '/'];
+const PUBLIC_MARKETING_PATH_PREFIXES = ['/platform'];
 const PUBLIC_METADATA_PATHS = ['/robots.txt', '/sitemap.xml', '/manifest.webmanifest', '/icon.svg'];
 
 function normalizeConfiguredOrigin(value: string | null | undefined): string | null {
