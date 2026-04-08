@@ -32,6 +32,42 @@ export type OrganSystem =
     | 'reproductive'
     | 'skeletal';
 
+export type ClinicalSystemDomain =
+    | 'metabolic_electrolyte'
+    | 'neurologic'
+    | 'respiratory'
+    | 'cardiac'
+    | 'hepatic'
+    | 'infectious'
+    | 'toxic'
+    | 'abdominal_mechanical';
+
+export interface ClinicalSystemScore {
+    system: ClinicalSystemDomain;
+    score: number;
+    matchedTerms: string[];
+    supportingTerms: string[];
+}
+
+export interface SystemGatingDecision {
+    observed_terms: string[];
+    scores: ClinicalSystemScore[];
+    dominant_systems: ClinicalSystemDomain[];
+    supporting_systems: ClinicalSystemDomain[];
+    allowed_systems: ClinicalSystemDomain[];
+    blocked_systems: ClinicalSystemDomain[];
+    hard_gating_active: boolean;
+    emergency_metabolic_priority: boolean;
+    postpartum_hypocalcemia_override: boolean;
+    cross_system_exclusions: {
+        respiratory_suppressed: boolean;
+        cardiac_suppressed: boolean;
+        hemoparasitic_suppressed: boolean;
+        toxic_suppressed: boolean;
+    };
+    notes: string[];
+}
+
 export interface OrganSystemScore {
     system: OrganSystem;
     score: number;
@@ -145,6 +181,7 @@ export interface ClosedWorldScoreResult {
     observations: string[];
     activeCategories: DiseaseDomain[];
     signalHierarchy: ClosedWorldSignalHierarchy;
+    systemGating: SystemGatingDecision;
     ranked: ClosedWorldCandidateScore[];
 }
 
@@ -155,7 +192,7 @@ export const DISEASE_CATEGORY_STRUCTURE: Record<DiseaseDomain, string[]> = {
     Hemoparasitic: ['Protozoal', 'Rickettsial', 'Vector-borne'],
     Parasitic: ['Endoparasites', 'Ectoparasites', 'Protozoal enteric'],
     Toxicology: ['Neurotoxic', 'Hemotoxic', 'Hepatotoxic', 'Drug-associated'],
-    Endocrine: ['Glycemic', 'Adrenal', 'Thyroid'],
+    Endocrine: ['Glycemic', 'Electrolyte', 'Adrenal', 'Thyroid'],
     Gastrointestinal: ['Mechanical', 'Inflammatory', 'Pancreatic', 'Septic'],
     Cardiopulmonary: ['Airway', 'Parenchymal', 'Cardiogenic'],
     Renal: ['Acute renal injury', 'Chronic renal disease', 'Lower urinary', 'Upper urinary'],
@@ -265,6 +302,7 @@ export const ONTOLOGY_OBSERVATION_DICTIONARY: OntologyObservationDefinition[] = 
     { term: 'coagulopathy', aliases: ['prolonged clotting times'], category: 'lab' },
     { term: 'bleeding', aliases: ['active bleeding', 'hemorrhage'], category: 'symptom' },
     { term: 'hypoglycemia', aliases: ['low blood sugar'], category: 'lab' },
+    { term: 'hypocalcemia', aliases: ['low calcium', 'milk fever', 'eclampsia'], category: 'lab' },
     { term: 'miosis', aliases: ['pinpoint pupils'], category: 'exam' },
     { term: 'foreign_body_exposure', aliases: ['ate a sock', 'swallowed string'], category: 'exposure' },
     { term: 'garbage_ingestion', aliases: ['got into trash'], category: 'exposure' },
@@ -845,6 +883,56 @@ export const MASTER_DISEASE_ONTOLOGY: DiseaseOntologyEntry[] = [
         zoonotic: false,
     },
     {
+        id: 'puerperal-hypocalcemia-eclampsia',
+        name: 'Puerperal Hypocalcemia (Eclampsia)',
+        aliases: ['eclampsia', 'puerperal tetany', 'milk fever'],
+        category: 'Endocrine',
+        subcategory: 'Electrolyte',
+        condition_class: 'Metabolic / Endocrine',
+        key_clinical_features: [f('postpartum', 0.22), f('tremors', 0.24), f('seizures', 0.18), f('muscle_rigidity', 0.18)],
+        supporting_features: [f('acute_onset', 0.14), f('panting', 0.1), f('collapse', 0.12), f('weakness', 0.12)],
+        exclusion_features: [f('chronic_duration', 0.12), f('recent_estrus', 0.08), f('fever', 0.06)],
+        lab_signatures: [f('hypocalcemia', 0.34)],
+        progression_pattern: ['acute', 'hyperacute'],
+        species_relevance: ['dog', 'cat', 'cow'],
+        zoonotic: false,
+        minimum_feature_match_threshold: 2,
+        minimum_key_feature_matches: 1,
+    },
+    {
+        id: 'hypoglycemic-crisis',
+        name: 'Hypoglycemic Crisis',
+        aliases: ['acute hypoglycemia', 'hypoglycemic emergency'],
+        category: 'Endocrine',
+        subcategory: 'Glycemic',
+        condition_class: 'Metabolic / Endocrine',
+        key_clinical_features: [f('hypoglycemia', 0.34), f('seizures', 0.16), f('tremors', 0.16), f('collapse', 0.16)],
+        supporting_features: [f('acute_onset', 0.14), f('weakness', 0.12), f('mentation_change', 0.1), f('panting', 0.08)],
+        exclusion_features: [f('significant_hyperglycemia', 0.18), f('glucosuria', 0.14), f('chronic_duration', 0.08)],
+        lab_signatures: [f('hypoglycemia', 0.3)],
+        progression_pattern: ['acute', 'hyperacute'],
+        species_relevance: ['dog', 'cat', 'cow', 'horse'],
+        zoonotic: false,
+        minimum_feature_match_threshold: 2,
+        minimum_key_feature_matches: 1,
+    },
+    {
+        id: 'acute-electrolyte-derangement',
+        name: 'Acute Electrolyte Derangement',
+        aliases: ['electrolyte imbalance', 'electrolyte disorder', 'electrolyte emergency'],
+        category: 'Endocrine',
+        subcategory: 'Electrolyte',
+        condition_class: 'Metabolic / Endocrine',
+        key_clinical_features: [f('tremors', 0.18), f('seizures', 0.14), f('collapse', 0.14), f('weakness', 0.14)],
+        supporting_features: [f('acute_onset', 0.12), f('postpartum', 0.08), f('vomiting', 0.08), f('diarrhea', 0.08), f('dehydration', 0.08)],
+        exclusion_features: [f('chronic_duration', 0.08)],
+        lab_signatures: [f('hypocalcemia', 0.24), f('hypoglycemia', 0.18)],
+        progression_pattern: ['acute', 'hyperacute', 'subacute'],
+        species_relevance: ['dog', 'cat', 'cow', 'horse'],
+        zoonotic: false,
+        minimum_feature_match_threshold: 2,
+    },
+    {
         id: 'gdv',
         name: 'Gastric Dilatation-Volvulus (GDV)',
         aliases: ['gdv', 'gastric dilatation-volvulus', 'gastric dilatation volvulus'],
@@ -1189,6 +1277,8 @@ const ANCHOR_SIGNAL_OVERRIDES = new Set<string>([
     'glucosuria',
     'ketonuria',
     'significant_hyperglycemia',
+    'hypoglycemia',
+    'hypocalcemia',
     'diabetic_metabolic_profile',
     'alt_elevation',
     'ast_elevation',
@@ -1300,6 +1390,35 @@ const ANCHOR_LOCK_RULES: AnchorLockRule[] = [
         protected_categories: ['Endocrine'],
     },
     {
+        id: 'postpartum-hypocalcemia-anchor',
+        label: 'Postpartum hypocalcemic emergency anchor',
+        requires_all: ['postpartum'],
+        required_groups: [
+            ['tremors', 'seizures', 'muscle_rigidity', 'collapse'],
+            ['acute_onset', 'hypocalcemia', 'panting'],
+        ],
+        anchored_diseases: [
+            'Puerperal Hypocalcemia (Eclampsia)',
+            'Acute Electrolyte Derangement',
+        ],
+        protected_categories: ['Endocrine'],
+    },
+    {
+        id: 'metabolic-emergency-anchor',
+        label: 'Acute metabolic emergency anchor',
+        required_groups: [
+            ['hypoglycemia', 'hypocalcemia'],
+            ['seizures', 'tremors', 'collapse', 'mentation_change'],
+            ['acute_onset', 'weakness'],
+        ],
+        anchored_diseases: [
+            'Puerperal Hypocalcemia (Eclampsia)',
+            'Hypoglycemic Crisis',
+            'Acute Electrolyte Derangement',
+        ],
+        protected_categories: ['Endocrine'],
+    },
+    {
         id: 'pyometra-anchor',
         label: 'Pyometra reproductive anchor',
         requires_all: ['intact_female'],
@@ -1337,7 +1456,7 @@ const CATEGORY_TRIGGER_TERMS: Record<DiseaseDomain, string[]> = {
     Hemoparasitic: ['tick_exposure', 'tick_infestation', 'fever', 'anemia', 'thrombocytopenia', 'icterus', 'petechiae', 'ecchymosis', 'hemoglobinuria', 'lymphadenopathy'],
     Parasitic: ['worms_in_stool', 'scooting', 'pruritus', 'alopecia', 'skin_crusting', 'flea_infestation', 'tick_infestation', 'diarrhea', 'weight_loss'],
     Toxicology: ['toxin_exposure_possible', 'rodenticide_exposure', 'medication_exposure', 'nsaid_exposure', 'ivermectin_exposure', 'plant_toxin_exposure', 'organophosphate_exposure', 'carbamate_exposure', 'heavy_metal_exposure', 'aflatoxin_exposure', 'hypersalivation', 'miosis', 'bleeding', 'coagulopathy', 'tremors', 'icterus', 'bilirubin_elevation', 'alt_elevation', 'ast_elevation', 'hepatic_dysfunction'],
-    Endocrine: ['polyuria', 'polydipsia', 'polyphagia', 'glucosuria', 'significant_hyperglycemia', 'ketonuria', 'diabetic_metabolic_profile', 'panting', 'alopecia', 'pot_bellied_appearance', 'marked_alp_elevation', 'supportive_acth_stimulation_test', 'dilute_urine'],
+    Endocrine: ['polyuria', 'polydipsia', 'polyphagia', 'glucosuria', 'significant_hyperglycemia', 'ketonuria', 'diabetic_metabolic_profile', 'hypoglycemia', 'hypocalcemia', 'postpartum', 'panting', 'alopecia', 'pot_bellied_appearance', 'marked_alp_elevation', 'supportive_acth_stimulation_test', 'dilute_urine'],
     Gastrointestinal: ['vomiting', 'diarrhea', 'hemorrhagic_diarrhea', 'melena', 'hematemesis', 'abdominal_distension', 'abdominal_pain', 'retching_unproductive', 'foreign_body_exposure', 'garbage_ingestion'],
     Cardiopulmonary: ['cough', 'honking_cough', 'dyspnea', 'respiratory_distress', 'tachypnea', 'orthopnea', 'open_mouth_breathing', 'exercise_intolerance', 'syncope', 'heart_murmur', 'arrhythmia', 'pneumonia', 'pulmonary_edema'],
     Renal: ['stranguria', 'dysuria', 'pollakiuria', 'hematuria', 'oliguria', 'anuria', 'pyuria', 'azotemia'],
@@ -1348,6 +1467,19 @@ interface OrganSystemRule {
     mappedCategories: DiseaseDomain[];
     anchorTerms: Array<{ term: string; weight: number }>;
     contextualTerms: Array<{ term: string; weight: number }>;
+}
+
+interface ClinicalSystemRule {
+    anchorTerms: Array<{ term: string; weight: number }>;
+    contextualTerms: Array<{ term: string; weight: number }>;
+}
+
+interface DiseaseSystemGateProfile {
+    name: string;
+    systems: ClinicalSystemDomain[];
+    primarySystem: ClinicalSystemDomain | null;
+    hemoparasitic: boolean;
+    acuteCompatible: boolean;
 }
 
 export interface OrganSystemAnalysis {
@@ -1567,8 +1699,263 @@ const ORGAN_SYSTEM_RULES: Record<OrganSystem, OrganSystemRule> = {
     },
 };
 
+const ALL_CLINICAL_SYSTEMS: ClinicalSystemDomain[] = [
+    'metabolic_electrolyte',
+    'neurologic',
+    'respiratory',
+    'cardiac',
+    'hepatic',
+    'infectious',
+    'toxic',
+    'abdominal_mechanical',
+];
+
+const CLINICAL_SYSTEM_DISPLAY_LABELS: Record<ClinicalSystemDomain, string> = {
+    metabolic_electrolyte: 'metabolic/electrolyte',
+    neurologic: 'neurologic',
+    respiratory: 'respiratory',
+    cardiac: 'cardiac',
+    hepatic: 'hepatic',
+    infectious: 'infectious',
+    toxic: 'toxic',
+    abdominal_mechanical: 'abdominal/mechanical',
+};
+
+const CLINICAL_SYSTEM_RULES: Record<ClinicalSystemDomain, ClinicalSystemRule> = {
+    metabolic_electrolyte: {
+        anchorTerms: [
+            { term: 'hypocalcemia', weight: 0.42 },
+            { term: 'hypoglycemia', weight: 0.38 },
+            { term: 'postpartum', weight: 0.18 },
+            { term: 'significant_hyperglycemia', weight: 0.22 },
+            { term: 'glucosuria', weight: 0.2 },
+            { term: 'ketonuria', weight: 0.18 },
+            { term: 'diabetic_metabolic_profile', weight: 0.18 },
+        ],
+        contextualTerms: [
+            { term: 'tremors', weight: 0.12 },
+            { term: 'seizures', weight: 0.1 },
+            { term: 'collapse', weight: 0.08 },
+            { term: 'weakness', weight: 0.08 },
+            { term: 'panting', weight: 0.06 },
+            { term: 'acute_onset', weight: 0.06 },
+            { term: 'polyuria', weight: 0.08 },
+            { term: 'polydipsia', weight: 0.08 },
+            { term: 'polyphagia', weight: 0.06 },
+        ],
+    },
+    neurologic: {
+        anchorTerms: [
+            { term: 'seizures', weight: 0.2 },
+            { term: 'myoclonus', weight: 0.22 },
+            { term: 'ataxia', weight: 0.2 },
+            { term: 'head_tilt', weight: 0.18 },
+            { term: 'circling', weight: 0.16 },
+            { term: 'paresis', weight: 0.18 },
+            { term: 'paralysis', weight: 0.2 },
+            { term: 'nystagmus', weight: 0.18 },
+            { term: 'spinal_cord_deficits', weight: 0.22 },
+            { term: 'disc_extrusion', weight: 0.24 },
+            { term: 'head_pressing', weight: 0.18 },
+            { term: 'neck_pain', weight: 0.16 },
+            { term: 'spinal_pain', weight: 0.16 },
+        ],
+        contextualTerms: [
+            { term: 'tremors', weight: 0.1 },
+            { term: 'mentation_change', weight: 0.12 },
+            { term: 'disorientation', weight: 0.1 },
+            { term: 'weakness', weight: 0.06 },
+            { term: 'acute_onset', weight: 0.04 },
+        ],
+    },
+    respiratory: {
+        anchorTerms: [
+            { term: 'dyspnea', weight: 0.2 },
+            { term: 'respiratory_distress', weight: 0.22 },
+            { term: 'tachypnea', weight: 0.18 },
+            { term: 'honking_cough', weight: 0.18 },
+            { term: 'pneumonia', weight: 0.22 },
+            { term: 'pulmonary_edema', weight: 0.18 },
+            { term: 'pleural_effusion', weight: 0.18 },
+            { term: 'cyanosis', weight: 0.18 },
+            { term: 'open_mouth_breathing', weight: 0.16 },
+            { term: 'orthopnea', weight: 0.16 },
+        ],
+        contextualTerms: [
+            { term: 'cough', weight: 0.08 },
+            { term: 'exercise_intolerance', weight: 0.08 },
+            { term: 'syncope', weight: 0.06 },
+        ],
+    },
+    cardiac: {
+        anchorTerms: [
+            { term: 'heart_murmur', weight: 0.22 },
+            { term: 'arrhythmia', weight: 0.2 },
+            { term: 'pulmonary_edema', weight: 0.18 },
+            { term: 'pleural_effusion', weight: 0.16 },
+            { term: 'syncope', weight: 0.16 },
+        ],
+        contextualTerms: [
+            { term: 'dyspnea', weight: 0.08 },
+            { term: 'orthopnea', weight: 0.1 },
+            { term: 'exercise_intolerance', weight: 0.08 },
+            { term: 'tachycardia', weight: 0.08 },
+            { term: 'bradycardia', weight: 0.08 },
+            { term: 'cough', weight: 0.04 },
+        ],
+    },
+    hepatic: {
+        anchorTerms: [
+            { term: 'icterus', weight: 0.24 },
+            { term: 'bilirubin_elevation', weight: 0.24 },
+            { term: 'alt_elevation', weight: 0.18 },
+            { term: 'ast_elevation', weight: 0.16 },
+            { term: 'hepatic_dysfunction', weight: 0.22 },
+            { term: 'ascites', weight: 0.12 },
+            { term: 'head_pressing', weight: 0.12 },
+        ],
+        contextualTerms: [
+            { term: 'mentation_change', weight: 0.08 },
+            { term: 'bleeding', weight: 0.08 },
+            { term: 'weakness', weight: 0.06 },
+            { term: 'vomiting', weight: 0.04 },
+        ],
+    },
+    infectious: {
+        anchorTerms: [
+            { term: 'fever', weight: 0.18 },
+            { term: 'pneumonia', weight: 0.18 },
+            { term: 'lymphadenopathy', weight: 0.18 },
+            { term: 'tick_exposure', weight: 0.18 },
+            { term: 'tick_infestation', weight: 0.16 },
+            { term: 'vaginal_discharge', weight: 0.16 },
+        ],
+        contextualTerms: [
+            { term: 'ocular_discharge', weight: 0.08 },
+            { term: 'nasal_discharge', weight: 0.08 },
+            { term: 'cough', weight: 0.04 },
+            { term: 'diarrhea', weight: 0.04 },
+            { term: 'vomiting', weight: 0.04 },
+        ],
+    },
+    toxic: {
+        anchorTerms: [
+            { term: 'toxin_exposure_possible', weight: 0.16 },
+            { term: 'rodenticide_exposure', weight: 0.24 },
+            { term: 'medication_exposure', weight: 0.18 },
+            { term: 'nsaid_exposure', weight: 0.2 },
+            { term: 'ivermectin_exposure', weight: 0.2 },
+            { term: 'plant_toxin_exposure', weight: 0.18 },
+            { term: 'organophosphate_exposure', weight: 0.24 },
+            { term: 'carbamate_exposure', weight: 0.22 },
+            { term: 'heavy_metal_exposure', weight: 0.2 },
+            { term: 'aflatoxin_exposure', weight: 0.18 },
+            { term: 'miosis', weight: 0.16 },
+            { term: 'coagulopathy', weight: 0.14 },
+        ],
+        contextualTerms: [
+            { term: 'hypersalivation', weight: 0.1 },
+            { term: 'tremors', weight: 0.1 },
+            { term: 'bleeding', weight: 0.08 },
+            { term: 'icterus', weight: 0.06 },
+        ],
+    },
+    abdominal_mechanical: {
+        anchorTerms: [
+            { term: 'retching_unproductive', weight: 0.24 },
+            { term: 'abdominal_distension', weight: 0.24 },
+            { term: 'abdominal_pain', weight: 0.18 },
+            { term: 'foreign_body_exposure', weight: 0.18 },
+            { term: 'garbage_ingestion', weight: 0.14 },
+            { term: 'hematemesis', weight: 0.12 },
+            { term: 'melena', weight: 0.12 },
+        ],
+        contextualTerms: [
+            { term: 'vomiting', weight: 0.08 },
+            { term: 'diarrhea', weight: 0.06 },
+            { term: 'hypersalivation', weight: 0.06 },
+            { term: 'acute_onset', weight: 0.08 },
+        ],
+    },
+};
+
+const RESPIRATORY_EVIDENCE_TERMS = new Set<string>([
+    'cough',
+    'honking_cough',
+    'dyspnea',
+    'respiratory_distress',
+    'tachypnea',
+    'orthopnea',
+    'open_mouth_breathing',
+    'pneumonia',
+    'pulmonary_edema',
+    'pleural_effusion',
+    'cyanosis',
+]);
+
+const CARDIAC_EVIDENCE_TERMS = new Set<string>([
+    'heart_murmur',
+    'arrhythmia',
+    'syncope',
+    'pulmonary_edema',
+    'pleural_effusion',
+    'orthopnea',
+    'tachycardia',
+    'bradycardia',
+]);
+
+const HEMOPARASITIC_EVIDENCE_TERMS = new Set<string>([
+    'tick_exposure',
+    'tick_infestation',
+    'anemia',
+    'thrombocytopenia',
+    'hemoglobinuria',
+    'petechiae',
+    'ecchymosis',
+    'icterus',
+    'fever',
+]);
+
+const TOXIC_EVIDENCE_TERMS = new Set<string>([
+    'toxin_exposure_possible',
+    'rodenticide_exposure',
+    'medication_exposure',
+    'nsaid_exposure',
+    'ivermectin_exposure',
+    'plant_toxin_exposure',
+    'organophosphate_exposure',
+    'carbamate_exposure',
+    'heavy_metal_exposure',
+    'aflatoxin_exposure',
+    'hypersalivation',
+    'miosis',
+    'coagulopathy',
+]);
+
+const TOXIC_EXPOSURE_TERMS = new Set<string>([
+    'toxin_exposure_possible',
+    'rodenticide_exposure',
+    'medication_exposure',
+    'nsaid_exposure',
+    'ivermectin_exposure',
+    'plant_toxin_exposure',
+    'organophosphate_exposure',
+    'carbamate_exposure',
+    'heavy_metal_exposure',
+    'aflatoxin_exposure',
+]);
+
+const HEMOPARASITIC_DISEASE_NAMES = new Set<string>([
+    'Babesiosis',
+    'Ehrlichiosis',
+    'Anaplasmosis',
+    'Trypanosomiasis',
+    'Theileriosis',
+]);
+
 const OBSERVATION_SYSTEM_LOOKUP = buildObservationSystemLookup();
 const DISEASE_ORGAN_SYSTEM_LOOKUP = buildDiseaseOrganSystemLookup();
+const DISEASE_SYSTEM_GATE_LOOKUP = buildDiseaseSystemGateLookup();
 
 function buildObservationSystemLookup() {
     const lookup = new Map<string, OrganSystem[]>();
@@ -1674,6 +2061,486 @@ function buildDiseaseOrganSystemLookup() {
     }
 
     return lookup;
+}
+
+function buildDiseaseSystemGateLookup() {
+    const lookup = new Map<string, DiseaseSystemGateProfile>();
+    for (const disease of MASTER_DISEASE_ONTOLOGY) {
+        lookup.set(disease.name, inferDiseaseSystemGateProfile(disease));
+    }
+    return lookup;
+}
+
+function inferDiseaseSystemGateProfile(disease: DiseaseOntologyEntry): DiseaseSystemGateProfile {
+    const systems = new Set<ClinicalSystemDomain>();
+
+    switch (disease.category) {
+        case 'Neurological':
+            systems.add('neurologic');
+            break;
+        case 'Hemoparasitic':
+            systems.add('infectious');
+            break;
+        case 'Parasitic':
+            systems.add('infectious');
+            break;
+        case 'Toxicology':
+            systems.add('toxic');
+            break;
+        case 'Endocrine':
+            systems.add('metabolic_electrolyte');
+            break;
+        case 'Gastrointestinal':
+            systems.add('abdominal_mechanical');
+            break;
+        case 'Cardiopulmonary':
+            if (disease.subcategory === 'Cardiogenic') {
+                systems.add('cardiac');
+                systems.add('respiratory');
+            } else {
+                systems.add('respiratory');
+            }
+            break;
+        case 'Renal':
+            systems.add('metabolic_electrolyte');
+            break;
+        case 'Reproductive':
+            if (disease.condition_class === 'Mechanical') {
+                systems.add('abdominal_mechanical');
+            }
+            break;
+        default:
+            break;
+    }
+
+    if (disease.condition_class === 'Infectious') {
+        systems.add('infectious');
+    }
+
+    const featureTerms = new Set(
+        [...disease.key_clinical_features, ...disease.supporting_features, ...disease.lab_signatures].map((feature) => feature.term),
+    );
+    if (
+        disease.name === 'Hepatic Encephalopathy'
+        || featureTerms.has('hepatic_dysfunction')
+        || featureTerms.has('bilirubin_elevation')
+        || featureTerms.has('alt_elevation')
+        || featureTerms.has('ast_elevation')
+        || featureTerms.has('icterus')
+    ) {
+        systems.add('hepatic');
+    }
+
+    if (
+        disease.name === 'Puerperal Hypocalcemia (Eclampsia)'
+        || disease.name === 'Hypoglycemic Crisis'
+        || disease.name === 'Acute Electrolyte Derangement'
+    ) {
+        systems.add('metabolic_electrolyte');
+    }
+
+    if (HEMOPARASITIC_DISEASE_NAMES.has(disease.name)) {
+        systems.add('infectious');
+    }
+
+    return {
+        name: disease.name,
+        systems: [...systems],
+        primarySystem: [...systems][0] ?? null,
+        hemoparasitic: HEMOPARASITIC_DISEASE_NAMES.has(disease.name),
+        acuteCompatible: disease.progression_pattern.some((pattern) => pattern === 'acute' || pattern === 'hyperacute' || pattern === 'subacute'),
+    };
+}
+
+function scoreClinicalSystems(observations: Set<string>) {
+    return (Object.entries(CLINICAL_SYSTEM_RULES) as Array<[ClinicalSystemDomain, ClinicalSystemRule]>)
+        .map(([system, rule]) => {
+            const matchedTerms = new Set<string>();
+            const supportingTerms = new Set<string>();
+            let score = 0;
+
+            for (const termWeight of rule.anchorTerms) {
+                if (!observations.has(termWeight.term)) continue;
+                matchedTerms.add(termWeight.term);
+                score += termWeight.weight;
+            }
+
+            for (const termWeight of rule.contextualTerms) {
+                if (!observations.has(termWeight.term)) continue;
+                supportingTerms.add(termWeight.term);
+                score += termWeight.weight;
+            }
+
+            return {
+                system,
+                score: Number(score.toFixed(3)),
+                matchedTerms: [...matchedTerms],
+                supportingTerms: [...supportingTerms],
+            };
+        })
+        .filter((entry) => entry.score > 0)
+        .sort((left, right) => right.score - left.score);
+}
+
+function hasAnyObservation(observations: Set<string>, candidates: Set<string>) {
+    for (const term of candidates) {
+        if (observations.has(term)) return true;
+    }
+    return false;
+}
+
+function buildSystemGatingDecisionForObservations(
+    observations: Set<string>,
+    activeCategories: DiseaseDomain[],
+): SystemGatingDecision {
+    const scoredSystems = scoreClinicalSystems(observations);
+    const notes = new Set<string>();
+    const scoresBySystem = new Map(scoredSystems.map((score) => [score.system, score]));
+    const topScore = scoredSystems[0]?.score ?? 0;
+    const secondScore = scoredSystems[1]?.score ?? 0;
+    const neurologicScore = scoresBySystem.get('neurologic')?.score ?? 0;
+    const respiratoryScore = scoresBySystem.get('respiratory')?.score ?? 0;
+    const cardiacScore = scoresBySystem.get('cardiac')?.score ?? 0;
+    const toxicScore = scoresBySystem.get('toxic')?.score ?? 0;
+    const infectiousScore = scoresBySystem.get('infectious')?.score ?? 0;
+    const metabolicScore = scoresBySystem.get('metabolic_electrolyte')?.score ?? 0;
+    const postpartumHypocalcemiaOverride =
+        observations.has('postpartum')
+        && (observations.has('tremors') || observations.has('seizures') || observations.has('muscle_rigidity') || observations.has('collapse'))
+        && (observations.has('acute_onset') || observations.has('hypocalcemia') || observations.has('panting'));
+    const emergencyMetabolicPriority =
+        postpartumHypocalcemiaOverride
+        || (
+            (observations.has('seizures') || observations.has('tremors') || observations.has('collapse'))
+            && observations.has('acute_onset')
+            && (observations.has('hypocalcemia') || observations.has('hypoglycemia') || metabolicScore >= 0.18)
+        );
+
+    if (emergencyMetabolicPriority) {
+        notes.add('Acute tremor/seizure physiology triggered metabolic emergency prioritization ahead of unrelated chronic or distant-system causes.');
+    }
+    if (postpartumHypocalcemiaOverride) {
+        notes.add('Postpartum neurologic signs activated a hypocalcemia override and forced electrolyte disease prioritization.');
+    }
+
+    const dominantSystems = new Set<ClinicalSystemDomain>();
+    if (postpartumHypocalcemiaOverride || emergencyMetabolicPriority) {
+        dominantSystems.add('metabolic_electrolyte');
+        if (neurologicScore >= 0.12) {
+            dominantSystems.add('neurologic');
+        }
+    } else if (scoredSystems[0] && topScore >= 0.22) {
+        dominantSystems.add(scoredSystems[0].system);
+        if (scoredSystems[1] && secondScore >= Math.max(0.16, topScore * 0.72)) {
+            dominantSystems.add(scoredSystems[1].system);
+        }
+    }
+
+    const supportingSystems = new Set<ClinicalSystemDomain>();
+    for (const score of scoredSystems) {
+        if (dominantSystems.has(score.system)) continue;
+        if (score.score >= Math.max(0.12, topScore * 0.55)) {
+            supportingSystems.add(score.system);
+        }
+    }
+
+    const allowedSystems = new Set<ClinicalSystemDomain>();
+    if (postpartumHypocalcemiaOverride) {
+        allowedSystems.add('metabolic_electrolyte');
+    } else {
+        for (const system of dominantSystems) {
+            allowedSystems.add(system);
+        }
+        for (const system of supportingSystems) {
+            allowedSystems.add(system);
+        }
+    }
+
+    if (respiratoryScore >= 0.18) {
+        allowedSystems.add('respiratory');
+    }
+    if (cardiacScore >= 0.18 && hasAnyObservation(observations, CARDIAC_EVIDENCE_TERMS)) {
+        allowedSystems.add('cardiac');
+    }
+    if (infectiousScore >= 0.18) {
+        allowedSystems.add('infectious');
+    }
+    if (toxicScore >= 0.18 || hasAnyObservation(observations, TOXIC_EXPOSURE_TERMS)) {
+        allowedSystems.add('toxic');
+    }
+
+    if (activeCategories.includes('Gastrointestinal') && topScore < 0.2) {
+        allowedSystems.add('abdominal_mechanical');
+    }
+
+    const hardGatingActive =
+        postpartumHypocalcemiaOverride
+        || emergencyMetabolicPriority
+        || (
+            scoredSystems[0] != null
+            && topScore >= 0.3
+            && (
+                scoredSystems[0].matchedTerms.length >= 2
+                || (topScore - secondScore) >= 0.08
+                || (
+                    scoredSystems[0].system === 'abdominal_mechanical'
+                    && observations.has('retching_unproductive')
+                    && observations.has('abdominal_distension')
+                )
+            )
+        );
+
+    const respiratorySuppressed = !hasAnyObservation(observations, RESPIRATORY_EVIDENCE_TERMS);
+    const cardiacSuppressed = !hasAnyObservation(observations, CARDIAC_EVIDENCE_TERMS);
+    const hemoparasiticSuppressed = !hasAnyObservation(observations, HEMOPARASITIC_EVIDENCE_TERMS);
+    const toxicSuppressed = !hasAnyObservation(observations, TOXIC_EVIDENCE_TERMS);
+
+    if (respiratorySuppressed) {
+        notes.add('Respiratory diseases were suppressed because no direct respiratory evidence was detected.');
+    }
+    if (hemoparasiticSuppressed) {
+        notes.add('Tick-borne hemoparasitic diseases were suppressed because no vector or hematologic evidence was detected.');
+    }
+
+    const blockedSystems = ALL_CLINICAL_SYSTEMS.filter((system) => !allowedSystems.has(system));
+
+    return {
+        observed_terms: [...observations].sort(),
+        scores: scoredSystems,
+        dominant_systems: [...dominantSystems],
+        supporting_systems: [...supportingSystems],
+        allowed_systems: [...allowedSystems],
+        blocked_systems: blockedSystems,
+        hard_gating_active: hardGatingActive,
+        emergency_metabolic_priority: emergencyMetabolicPriority,
+        postpartum_hypocalcemia_override: postpartumHypocalcemiaOverride,
+        cross_system_exclusions: {
+            respiratory_suppressed: respiratorySuppressed,
+            cardiac_suppressed: cardiacSuppressed,
+            hemoparasitic_suppressed: hemoparasiticSuppressed,
+            toxic_suppressed: toxicSuppressed,
+        },
+        notes: [...notes],
+    };
+}
+
+function inferLegacySystemDomains(name: string): DiseaseSystemGateProfile | null {
+    const normalized = normalizePhrase(name);
+    if (!normalized) return null;
+
+    const systems = new Set<ClinicalSystemDomain>();
+    if (
+        normalized.includes('hypocalc')
+        || normalized.includes('hypoglyc')
+        || normalized.includes('electrolyte')
+        || normalized.includes('diabetes')
+        || normalized.includes('cushing')
+        || normalized.includes('addison')
+        || normalized.includes('hypoadren')
+        || normalized.includes('hyperadren')
+        || normalized.includes('thyroid')
+    ) {
+        systems.add('metabolic_electrolyte');
+    }
+    if (
+        normalized.includes('seizure')
+        || normalized.includes('epilep')
+        || normalized.includes('meningo')
+        || normalized.includes('encephal')
+        || normalized.includes('vestib')
+        || normalized.includes('disc')
+    ) {
+        systems.add('neurologic');
+    }
+    if (
+        normalized.includes('trache')
+        || normalized.includes('bronch')
+        || normalized.includes('pneumonia')
+        || normalized.includes('airway')
+        || normalized.includes('larynge')
+    ) {
+        systems.add('respiratory');
+    }
+    if (
+        normalized.includes('mitral')
+        || normalized.includes('cardio')
+        || normalized.includes('heart failure')
+        || normalized.includes('chf')
+        || normalized.includes('cardiomyopathy')
+    ) {
+        systems.add('cardiac');
+    }
+    if (
+        normalized.includes('hepatic')
+        || normalized.includes('liver')
+        || normalized.includes('aflatox')
+    ) {
+        systems.add('hepatic');
+    }
+    if (
+        normalized.includes('toxic')
+        || normalized.includes('rodenticide')
+        || normalized.includes('organophosphate')
+        || normalized.includes('carbamate')
+        || normalized.includes('ivermectin')
+        || normalized.includes('poison')
+    ) {
+        systems.add('toxic');
+    }
+    if (
+        normalized.includes('babes')
+        || normalized.includes('ehrlich')
+        || normalized.includes('anaplas')
+        || normalized.includes('theiler')
+        || normalized.includes('trypano')
+        || normalized.includes('heartworm')
+        || normalized.includes('dirofil')
+        || normalized.includes('infect')
+    ) {
+        systems.add('infectious');
+    }
+    if (
+        normalized.includes('gdv')
+        || normalized.includes('gastric')
+        || normalized.includes('obstruction')
+        || normalized.includes('volvulus')
+        || normalized.includes('pancreat')
+        || normalized.includes('periton')
+    ) {
+        systems.add('abdominal_mechanical');
+    }
+
+    if (systems.size === 0) {
+        return null;
+    }
+
+    return {
+        name,
+        systems: [...systems],
+        primarySystem: [...systems][0] ?? null,
+        hemoparasitic:
+            normalized.includes('babes')
+            || normalized.includes('ehrlich')
+            || normalized.includes('anaplas')
+            || normalized.includes('theiler')
+            || normalized.includes('trypano'),
+        acuteCompatible:
+            normalized.includes('acute')
+            || normalized.includes('crisis')
+            || normalized.includes('gdv')
+            || normalized.includes('volvulus')
+            || normalized.includes('periton'),
+    };
+}
+
+function getDiseaseSystemGateProfileByName(name: string): DiseaseSystemGateProfile | null {
+    return DISEASE_SYSTEM_GATE_LOOKUP.get(name)
+        ?? inferLegacySystemDomains(name);
+}
+
+function evaluateDiseaseSystemGateProfile(
+    profile: DiseaseSystemGateProfile,
+    systemGating: SystemGatingDecision,
+) {
+    if (systemGating.cross_system_exclusions.hemoparasitic_suppressed && profile.hemoparasitic) {
+        return {
+            allowed: false,
+            multiplier: 0,
+            reason: 'suppressed_no_hemoparasitic_evidence',
+        };
+    }
+
+    if (
+        systemGating.cross_system_exclusions.cardiac_suppressed
+        && profile.primarySystem === 'cardiac'
+        && !systemGating.allowed_systems.includes('cardiac')
+    ) {
+        return {
+            allowed: false,
+            multiplier: 0,
+            reason: 'suppressed_no_cardiac_evidence',
+        };
+    }
+
+    if (
+        systemGating.cross_system_exclusions.respiratory_suppressed
+        && profile.primarySystem === 'respiratory'
+        && !systemGating.allowed_systems.includes('respiratory')
+    ) {
+        return {
+            allowed: false,
+            multiplier: 0,
+            reason: 'suppressed_no_respiratory_evidence',
+        };
+    }
+
+    if (
+        systemGating.cross_system_exclusions.toxic_suppressed
+        && profile.primarySystem === 'toxic'
+        && !systemGating.allowed_systems.includes('toxic')
+    ) {
+        return {
+            allowed: false,
+            multiplier: 0,
+            reason: 'suppressed_no_toxic_evidence',
+        };
+    }
+
+    const intersectsAllowed = profile.systems.some((system) => systemGating.allowed_systems.includes(system));
+    if (!systemGating.hard_gating_active) {
+        return {
+            allowed: true,
+            multiplier:
+                systemGating.emergency_metabolic_priority && profile.systems.includes('metabolic_electrolyte')
+                    ? profile.acuteCompatible ? 1.28 : 0.9
+                    : 1,
+            reason: null,
+        };
+    }
+
+    if (intersectsAllowed) {
+        let multiplier = 1;
+        if (systemGating.emergency_metabolic_priority && profile.systems.includes('metabolic_electrolyte')) {
+            multiplier = profile.acuteCompatible ? 1.34 : 0.92;
+        } else if (profile.systems.some((system) => systemGating.dominant_systems.includes(system))) {
+            multiplier = 1.12;
+        }
+        return {
+            allowed: true,
+            multiplier,
+            reason: null,
+        };
+    }
+
+    if (systemGating.cross_system_exclusions.respiratory_suppressed && profile.systems.includes('respiratory')) {
+        return {
+            allowed: false,
+            multiplier: 0,
+            reason: 'suppressed_no_respiratory_evidence',
+        };
+    }
+
+    if (systemGating.cross_system_exclusions.cardiac_suppressed && profile.systems.includes('cardiac')) {
+        return {
+            allowed: false,
+            multiplier: 0,
+            reason: 'suppressed_no_cardiac_evidence',
+        };
+    }
+
+    if (systemGating.cross_system_exclusions.toxic_suppressed && profile.systems.includes('toxic')) {
+        return {
+            allowed: false,
+            multiplier: 0,
+            reason: 'suppressed_no_toxic_evidence',
+        };
+    }
+
+    return {
+        allowed: false,
+        multiplier: 0,
+        reason: 'outside_allowed_system_gate',
+    };
 }
 
 function computeDiseaseSystemSupport(
@@ -1785,6 +2652,55 @@ export function analyzeOrganSystemSignals(
 export function getOrganSystemDisplayLabel(system: OrganSystem | null | undefined): string | null {
     if (!system) return null;
     return ORGAN_SYSTEM_DISPLAY_LABELS[system] ?? system;
+}
+
+export function getClinicalSystemDisplayLabel(system: ClinicalSystemDomain | null | undefined): string | null {
+    if (!system) return null;
+    return CLINICAL_SYSTEM_DISPLAY_LABELS[system] ?? system;
+}
+
+export function buildSystemGatingDecision(params: {
+    inputSignature: Record<string, unknown>;
+    observationHints?: string[];
+}): SystemGatingDecision {
+    const observationSet = new Set<string>(extractOntologyObservations(params.inputSignature));
+    for (const hint of params.observationHints ?? []) {
+        const normalized = normalizeOntologyObservation(hint);
+        if (normalized) {
+            observationSet.add(normalized);
+        }
+    }
+
+    return buildSystemGatingDecisionForObservations(
+        observationSet,
+        inferActiveCategories(observationSet),
+    );
+}
+
+export function evaluateDifferentialSystemGate(
+    name: string,
+    systemGating: SystemGatingDecision,
+): {
+    allowed: boolean;
+    multiplier: number;
+    reason: string | null;
+    systems: ClinicalSystemDomain[];
+} {
+    const profile = getDiseaseSystemGateProfileByName(name);
+    if (!profile) {
+        return {
+            allowed: !systemGating.hard_gating_active,
+            multiplier: 1,
+            reason: systemGating.hard_gating_active ? 'unknown_system_profile' : null,
+            systems: [],
+        };
+    }
+
+    const evaluation = evaluateDiseaseSystemGateProfile(profile, systemGating);
+    return {
+        ...evaluation,
+        systems: profile.systems,
+    };
 }
 
 function buildObservationTermMetadata() {
@@ -2093,10 +3009,29 @@ export function scoreClosedWorldDiseases(params: {
 
     const observations = [...observationSet];
     const activeCategories = inferActiveCategories(observationSet);
+    const systemGating = buildSystemGatingDecisionForObservations(observationSet, activeCategories);
     const signalHierarchy = buildSignalHierarchy(observationSet, activeCategories);
     const species = normalizeSpecies(params.species);
     const scored = MASTER_DISEASE_ONTOLOGY
+        .filter((disease) => evaluateDiseaseSystemGateProfile(inferDiseaseSystemGateProfile(disease), systemGating).allowed)
         .map((disease) => scoreDisease(disease, observationSet, activeCategories, species, signalHierarchy))
+        .map((score) => {
+            const profile = getDiseaseSystemGateProfileByName(score.name);
+            if (!profile) {
+                return score;
+            }
+            const gate = evaluateDiseaseSystemGateProfile(profile, systemGating);
+            if (!gate.allowed) {
+                return {
+                    ...score,
+                    rawScore: 0,
+                };
+            }
+            return {
+                ...score,
+                rawScore: Number((score.rawScore * gate.multiplier).toFixed(4)),
+            };
+        })
         .filter((score) => score.rawScore > 0);
 
     const candidatePool = scored
@@ -2151,6 +3086,7 @@ export function scoreClosedWorldDiseases(params: {
         observations,
         activeCategories,
         signalHierarchy,
+        systemGating,
         ranked: candidatePool
             .map((score, index) => ({
                 ...score,
@@ -2580,6 +3516,12 @@ function applyNumericHeuristic(key: string, value: number, observations: Set<str
         observations.add('significant_hyperglycemia');
     } else if ((normalizedKey.includes('glucose') || normalizedKey.includes('blood sugar')) && value >= 140) {
         observations.add('mild_hyperglycemia');
+    } else if ((normalizedKey.includes('glucose') || normalizedKey.includes('blood sugar')) && value > 0 && value <= 70) {
+        observations.add('hypoglycemia');
+    }
+
+    if (normalizedKey.includes('calcium') && value > 0 && value <= 7.8) {
+        observations.add('hypocalcemia');
     }
 
     if ((normalizedKey.includes('creatinine') || normalizedKey.includes('bun') || normalizedKey.includes('urea')) && value > 2.2) {

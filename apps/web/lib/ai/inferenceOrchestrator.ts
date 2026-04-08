@@ -169,8 +169,25 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     risk.operative_urgency_risk = riskModelOutput.operative_urgency_risk;
     risk.shock_risk = riskModelOutput.shock_risk;
     risk.legacy_ml_operational_risk = riskModelOutput.legacy_ml_operational_risk;
+    const systemGatingTelemetry = (safetyLayer.telemetry as Record<string, unknown>).system_gating as Record<string, unknown> | undefined;
+    const dominantSystems = Array.isArray(systemGatingTelemetry?.dominant_systems)
+        ? ((systemGatingTelemetry.dominant_systems as unknown[]).join(', ') || 'undifferentiated')
+        : 'undifferentiated';
+    const allowedSystems = Array.isArray(systemGatingTelemetry?.allowed_systems)
+        ? ((systemGatingTelemetry.allowed_systems as unknown[]).join(', ') || 'open')
+        : 'open';
     payload.pipeline_trace = [
         ...pipelineTrace,
+        {
+            stage: 'system_classification',
+            status: 'completed',
+            detail: String(dominantSystems),
+        },
+        {
+            stage: 'candidate_restriction',
+            status: 'completed',
+            detail: String(allowedSystems),
+        },
         { stage: 'condition_classification', status: 'completed', detail: String(finalDiagnosis.primary_condition_class ?? 'Undifferentiated') },
         { stage: 'mechanism_layering', status: 'completed', detail: String(safetyLayer.mechanism_class.label) },
         { stage: 'dataset_writeback_ready', status: 'completed' },
