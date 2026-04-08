@@ -506,24 +506,41 @@ export function createSupabaseExperimentTrackingStore(
 
         async createAuditLog(record) {
             const timestamp = new Date().toISOString();
+            const insertPayload = {
+                event_id: record.event_id,
+                tenant_id: record.tenant_id,
+                run_id: record.run_id,
+                event_type: record.event_type,
+                actor: record.actor,
+                metadata: record.payload,
+                timestamp,
+            };
+
+            // audit_log is append-only (UPDATE/DELETE blocked by DB trigger).
+            // Use insert; if a duplicate event_id exists, fetch the existing row.
             const { data, error } = await client
                 .from(AUDIT_LOG.TABLE)
-                .upsert({
-                    event_id: record.event_id,
-                    tenant_id: record.tenant_id,
-                    run_id: record.run_id,
-                    event_type: record.event_type,
-                    actor: record.actor,
-                    metadata: record.payload,
-                    timestamp,
-                }, {
-                    onConflict: `${AUDIT_LOG.COLUMNS.event_id}`,
-                })
+                .insert(insertPayload)
                 .select('*')
                 .single();
 
-            if (error || !data) {
-                throw new Error(`Failed to create experiment audit log event: ${error?.message ?? 'Unknown error'}`);
+            if (error) {
+                // Duplicate key → row already exists, fetch it instead of crashing
+                if (error.code === '23505') {
+                    const { data: existing, error: fetchError } = await client
+                        .from(AUDIT_LOG.TABLE)
+                        .select('*')
+                        .eq(AUDIT_LOG.COLUMNS.event_id, record.event_id)
+                        .single();
+
+                    if (fetchError || !existing) {
+                        throw new Error(`Failed to retrieve existing audit log event: ${fetchError?.message ?? 'Unknown error'}`);
+                    }
+
+                    return mapAuditLog(asRecord(existing));
+                }
+
+                throw new Error(`Failed to create experiment audit log event: ${error.message}`);
             }
 
             return mapAuditLog(asRecord(data));
