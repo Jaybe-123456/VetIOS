@@ -90,7 +90,7 @@ export default function LandingPage() {
                 <div className="relative z-10 flex flex-col items-center w-full">
                     <Link href="/changelog" className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-[#00e5ff]/30 bg-[#00e5ff]/10 text-[#00e5ff] text-sm font-medium mb-8 hover:bg-[#00e5ff]/20 transition-colors cursor-pointer">
                         <span className="w-2 h-2 rounded-full bg-[#00e5ff] animate-pulse"></span>
-                        Now live: VetIOS V1.0 OMEGA — East Africa's only veterinary AI platform <ArrowRight className="w-4 h-4" />
+                        Now live: VetIOS V1.0 OMEGA — East Africa&apos;s only veterinary AI platform <ArrowRight className="w-4 h-4" />
                     </Link>
 
                     <h1 className="text-5xl md:text-7xl lg:text-[84px] font-mono font-bold leading-tight tracking-tighter mb-6 max-w-5xl">
@@ -305,7 +305,7 @@ export default function LandingPage() {
                             <div className="mb-2">Diagnosis: <span className="text-white font-bold">Tick Fever</span></div>
                             <div className="mb-2">Confidence: <span className="text-[#00e5ff]">98.1%</span></div>
                             <div className="text-gray-500 mt-4 leading-normal">
-                                /* Treatment plan executed successfully. Patient recovered in 48 hours. Metrics captured for federated learning pool. */
+                                {`/* Treatment plan executed successfully. Patient recovered in 48 hours. Metrics captured for federated learning pool. */`}
                             </div>
                         </div>
                     </div>
@@ -316,7 +316,7 @@ export default function LandingPage() {
                     <div className="w-full lg:w-1/2">
                         <h2 className="text-3xl md:text-4xl font-mono font-bold mb-6 text-white">Adversarial Simulation: Stress-tested before it ships</h2>
                         <p className="text-lg text-gray-400 mb-8 leading-relaxed">
-                            Models don't fail on average cases — they fail at the edges. 10M synthetic scenarios/day. No model ships until 99.9% adversarial accuracy is cleared.
+                            Models don&apos;t fail on average cases — they fail at the edges. 10M synthetic scenarios/day. No model ships until 99.9% adversarial accuracy is cleared.
                         </p>
                         <Link href="/docs/simulation" className="inline-flex items-center text-[#00e5ff] font-bold hover:underline font-mono">
                             Simulation Lab docs <ArrowRight className="w-4 h-4 ml-2" />
@@ -368,7 +368,7 @@ export default function LandingPage() {
             {/* --- 7. TESTIMONIAL --- */}
             <section className="py-24 px-6 bg-[#00e5ff]/5 border-y border-[#00e5ff]/15">
                 <div className="max-w-4xl mx-auto text-center">
-                    <div className="text-[#00e5ff] text-6xl font-serif mb-4">"</div>
+                    <div className="text-[#00e5ff] text-6xl font-serif mb-4">&quot;</div>
                     <p className="text-2xl md:text-3xl font-light text-white mb-8 leading-snug font-sans">
                         VetIOS is the only platform that actually knows what diseases look like in Nairobi. Western AI gave us London differentials. <span className="font-bold text-[#00e5ff]">VetIOS gives us the truth.</span>
                     </p>
@@ -399,7 +399,7 @@ export default function LandingPage() {
                             <li className="flex items-start gap-2"><Lock className="w-4 h-4 text-[#00e5ff] mt-0.5 shrink-0" /> PetPass integration</li>
                             <li className="flex items-start gap-2"><Lock className="w-4 h-4 text-[#00e5ff] mt-0.5 shrink-0" /> Data Dividend credits</li>
                         </ul>
-                        <div className="text-xs text-center text-gray-500 font-mono mb-4 border-t border-white/10 pt-4">"3% monthly churn"</div>
+                        <div className="text-xs text-center text-gray-500 font-mono mb-4 border-t border-white/10 pt-4">&quot;3% monthly churn&quot;</div>
                         <Link href="/dashboard" className="w-full py-3 text-center border border-white/20 hover:bg-white hover:text-black rounded transition-colors font-bold tracking-wide">
                             Start free trial
                         </Link>
@@ -421,7 +421,7 @@ export default function LandingPage() {
                             <li className="flex items-start gap-2"><Lock className="w-4 h-4 text-[#39ff14] mt-0.5 shrink-0" /> Model Registry</li>
                             <li className="flex items-start gap-2"><Lock className="w-4 h-4 text-[#39ff14] mt-0.5 shrink-0" /> Full API Access</li>
                         </ul>
-                        <div className="text-xs text-center text-[#39ff14] font-mono mb-4 border-t border-white/10 pt-4">"~1% monthly churn"</div>
+                        <div className="text-xs text-center text-[#39ff14] font-mono mb-4 border-t border-white/10 pt-4">&quot;~1% monthly churn&quot;</div>
                         <Link href="/contact" className="w-full py-3 text-center bg-[#00e5ff] text-[#0d1117] hover:bg-white rounded transition-colors font-bold tracking-wide">
                             Contact Us
                         </Link>
@@ -440,7 +440,7 @@ export default function LandingPage() {
                             <li className="flex items-start gap-2"><Lock className="w-4 h-4 text-gray-500 mt-0.5 shrink-0" /> Edge Box hardware</li>
                             <li className="flex items-start gap-2"><Lock className="w-4 h-4 text-gray-500 mt-0.5 shrink-0" /> Dedicated support</li>
                         </ul>
-                        <div className="text-xs text-center text-gray-500 font-mono mb-4 border-t border-white/10 pt-4">"10% annual churn"</div>
+                        <div className="text-xs text-center text-gray-500 font-mono mb-4 border-t border-white/10 pt-4">&quot;10% annual churn&quot;</div>
                         <Link href="/contact" className="w-full py-3 text-center border border-white/20 hover:bg-white hover:text-black rounded transition-colors font-bold tracking-wide">
                             Get a demo
                         </Link>
