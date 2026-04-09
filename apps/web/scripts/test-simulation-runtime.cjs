@@ -38,12 +38,73 @@ exports.POST = async function(request) {
 };
 `);
     writeGeneratedModule(generatedDir, path.join('lib', 'platform', 'webhooks.js'), 'exports.dispatchWebhookEvent = async () => undefined;');
-    writeGeneratedModule(generatedDir, path.join('lib', 'platform', 'tenantContext.js'), 'exports.issueInternalPlatformToken = () => "test-token";');
+    writeGeneratedModule(generatedDir, path.join('lib', 'platform', 'tenantContext.js'), `
+exports.issueInternalPlatformToken = () => {
+    if (!process.env.VETIOS_JWT_SECRET) {
+        throw new Error('VETIOS_JWT_SECRET is required to issue internal platform tokens.');
+    }
+    return 'test-token';
+};
+`);
+    writeGeneratedModule(generatedDir, path.join('lib', 'ai', 'inferenceOrchestrator.js'), `
+exports.runInferencePipeline = async function(input) {
+    const rawInput = input?.rawInput?.input_signature || {};
+    const note = String(rawInput?.metadata?.raw_note || '');
+    const contradiction = /ignore previous safety|override|metadata injection|tool result|x-trusted-diagnosis/i.test(note) ? 0.3 : 0.05;
+    const confidence = input.model === 'candidate-regressed' ? 0.45 : input.model === 'candidate-strong' ? 0.9 : 0.78;
+    return {
+        output_payload: {
+            diagnosis: {
+                confidence_score: confidence,
+                top_differentials: [{ name: 'Simulated Differential', probability: confidence }],
+            },
+            abstain_recommendation: contradiction > 0.25,
+            competitive_differential: contradiction > 0.2,
+            differential_spread: { spread: contradiction > 0.25 ? 0.03 : 0.2 },
+            telemetry: {},
+        },
+        confidence_score: confidence,
+        contradiction_analysis: {
+            contradiction_score: contradiction,
+        },
+        uncertainty_metrics: {},
+    };
+};
+`);
+    writeGeneratedModule(generatedDir, path.join('lib', 'logging', 'inferenceLogger.js'), `
+exports.logInference = async function(client, input) {
+    client.tables.ai_inference_events.push({
+        id: input.id,
+        tenant_id: input.tenant_id,
+        input_signature: input.input_signature,
+        model_name: input.model_name,
+        model_version: input.model_version,
+        created_at: new Date().toISOString(),
+    });
+    return input.id;
+};
+`);
+    writeGeneratedModule(generatedDir, path.join('lib', 'platform', 'flywheel.js'), `
+exports.runInferenceFlywheel = async function(_client, input) {
+    const score = input.modelVersion === 'candidate-regressed' ? 0.45 : input.modelVersion === 'candidate-strong' ? 0.9 : 0.82;
+    return {
+        outcome: { id: 'outcome_' + input.inferenceEventId, status: 'scored' },
+        evaluation: { id: 'evaluation_' + input.inferenceEventId, score, dataset_version: 1 },
+    };
+};
+`);
     writeGeneratedModule(generatedDir, path.join('lib', 'platform', 'governance.js'), `
 exports.writeGovernanceAuditEvent = async (client, input) => {
     client.__auditEvents = client.__auditEvents || [];
     client.__auditEvents.push(input);
 };
+exports.evaluateGovernancePolicyForInference = async () => ({
+    decision: 'allow',
+    policyId: null,
+    reason: null,
+    tokenCount: 0,
+    flagged: false,
+});
 `);
 
     const transpiled = ts.transpileModule(fs.readFileSync(sourcePath, 'utf8'), {

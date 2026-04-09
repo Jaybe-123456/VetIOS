@@ -93,6 +93,9 @@ export default function SimulationWorkbench() {
             try {
                 const parsed = JSON.parse(event.data) as SimulationProgress | null;
                 setProgress(parsed);
+                if (typeof parsed?.error_message === 'string' && parsed.error_message.trim().length > 0) {
+                    setError(parsed.error_message);
+                }
                 if (parsed?.status === 'completed' || parsed?.status === 'failed') {
                     source.close();
                     eventSourceRef.current = null;
@@ -321,6 +324,11 @@ export default function SimulationWorkbench() {
                         {error && (
                             <div className="border border-danger/30 bg-danger/10 p-3 font-mono text-xs text-danger">
                                 {error}
+                            </div>
+                        )}
+                        {!error && progress?.error_message && (
+                            <div className="border border-danger/30 bg-danger/10 p-3 font-mono text-xs text-danger">
+                                {progress.error_message}
                             </div>
                         )}
                     </div>
