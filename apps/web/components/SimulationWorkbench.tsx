@@ -30,6 +30,8 @@ const ADVERSARIAL_CATEGORIES = [
     'sensitive_topic',
 ] as const;
 
+const STREAM_FALLBACK_MESSAGE = 'Live progress stream interrupted. Switching to polling.';
+
 export default function SimulationWorkbench() {
     const [mode, setMode] = useState<SimulationMode>('scenario_load');
     const [models, setModels] = useState<string[]>([]);
@@ -48,14 +50,14 @@ export default function SimulationWorkbench() {
     const [selectedCategories, setSelectedCategories] = useState<string[]>(['jailbreak', 'injection']);
     const [candidateModelVersion, setCandidateModelVersion] = useState('gpt-4o-mini');
     const eventSourceRef = useRef<EventSource | null>(null);
+    const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
         void loadModels();
     }, []);
 
     useEffect(() => () => {
-        eventSourceRef.current?.close();
-        eventSourceRef.current = null;
+        stopProgressTracking();
     }, []);
 
     async function loadModels() {
@@ -84,34 +86,104 @@ export default function SimulationWorkbench() {
         }
     }
 
-    function startProgressStream(simulationId: string) {
+    function stopProgressTracking() {
         eventSourceRef.current?.close();
+        eventSourceRef.current = null;
+        if (pollingTimeoutRef.current) {
+            clearTimeout(pollingTimeoutRef.current);
+            pollingTimeoutRef.current = null;
+        }
+    }
+
+    function applyProgressUpdate(nextProgress: SimulationProgress | null) {
+        setProgress(nextProgress);
+        if (typeof nextProgress?.error_message === 'string' && nextProgress.error_message.trim().length > 0) {
+            setError(nextProgress.error_message);
+        } else {
+            setError((current) => current === STREAM_FALLBACK_MESSAGE ? null : current);
+        }
+
+        if (nextProgress?.status === 'completed' || nextProgress?.status === 'failed') {
+            stopProgressTracking();
+            setBusy(false);
+        }
+    }
+
+    async function fetchProgressSnapshot(simulationId: string) {
+        const { response, body } = await requestJson(`/api/simulations/${simulationId}`);
+        if (!response.ok) {
+            throw new Error(extractApiErrorMessage(body, 'Failed to load simulation status.'));
+        }
+        const data = extractEnvelopeData<SimulationProgress | null>(body);
+        applyProgressUpdate(data ?? null);
+        return data ?? null;
+    }
+
+    function scheduleProgressPoll(simulationId: string, delayMs = 3000) {
+        if (pollingTimeoutRef.current) {
+            clearTimeout(pollingTimeoutRef.current);
+        }
+        pollingTimeoutRef.current = setTimeout(() => {
+            void (async () => {
+                try {
+                    const nextProgress = await fetchProgressSnapshot(simulationId);
+                    if (nextProgress?.status === 'completed' || nextProgress?.status === 'failed') {
+                        return;
+                    }
+                    scheduleProgressPoll(simulationId);
+                } catch (pollError) {
+                    setError(pollError instanceof Error ? pollError.message : 'Failed to poll simulation progress.');
+                    scheduleProgressPoll(simulationId, 5000);
+                }
+            })();
+        }, delayMs);
+    }
+
+    function startProgressPolling(simulationId: string) {
+        eventSourceRef.current?.close();
+        eventSourceRef.current = null;
+        setError(STREAM_FALLBACK_MESSAGE);
+        void (async () => {
+            try {
+                const nextProgress = await fetchProgressSnapshot(simulationId);
+                if (nextProgress?.status === 'completed' || nextProgress?.status === 'failed') {
+                    return;
+                }
+            } catch (pollError) {
+                setError(pollError instanceof Error ? pollError.message : 'Failed to poll simulation progress.');
+            }
+            scheduleProgressPoll(simulationId);
+        })();
+    }
+
+    function startProgressStream(simulationId: string) {
+        stopProgressTracking();
         const source = new EventSource(`/api/simulations/${simulationId}/progress`);
         eventSourceRef.current = source;
+
+        source.onopen = () => {
+            setError((current) => current === STREAM_FALLBACK_MESSAGE ? null : current);
+        };
 
         source.onmessage = (event) => {
             try {
                 const parsed = JSON.parse(event.data) as SimulationProgress | null;
-                setProgress(parsed);
-                if (typeof parsed?.error_message === 'string' && parsed.error_message.trim().length > 0) {
-                    setError(parsed.error_message);
-                }
-                if (parsed?.status === 'completed' || parsed?.status === 'failed') {
-                    source.close();
-                    eventSourceRef.current = null;
-                    setBusy(false);
-                }
+                applyProgressUpdate(parsed);
             } catch {
                 setError('Failed to parse simulation progress payload.');
             }
         };
 
         source.onerror = () => {
-            setError('Simulation progress stream disconnected.');
+            if (eventSourceRef.current !== source) {
+                return;
+            }
+            startProgressPolling(simulationId);
         };
     }
 
     async function submitSimulation() {
+        stopProgressTracking();
         setBusy(true);
         setError(null);
         setProgress(null);
