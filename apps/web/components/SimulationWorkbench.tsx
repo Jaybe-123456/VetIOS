@@ -152,6 +152,7 @@ export default function SimulationWorkbench({
     const eventSourceRef = useRef<EventSource | null>(null);
     const pollingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const seenEventIdsRef = useRef<Set<string>>(new Set());
+    const bootstrapRef = useRef<() => Promise<void>>(async () => undefined);
 
     const distributionTotal = distribution.canine + distribution.feline + distribution.equine + distribution.other;
     const totalRequests = agentCount * requestsPerAgent;
@@ -163,7 +164,7 @@ export default function SimulationWorkbench({
     );
 
     useEffect(() => {
-        void bootstrap();
+        void bootstrapRef.current();
     }, []);
 
     useEffect(() => {
@@ -212,6 +213,8 @@ export default function SimulationWorkbench({
             setLoading(false);
         }
     }
+
+    bootstrapRef.current = bootstrap;
 
     async function loadModels() {
         const { response, body } = await requestJson('/api/models/available');

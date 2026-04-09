@@ -533,6 +533,8 @@ export async function POST(req: Request) {
             reliability_badge: cireResult.snapshot.reliability_badge,
             input_quality: cireResult.input_quality,
             incident_id: cireResult.incident?.id ?? null,
+            available: cireResult.available,
+            unavailable_reason: cireResult.unavailable_reason,
         };
 
         await Promise.all([
@@ -733,7 +735,7 @@ export async function POST(req: Request) {
             },
         };
 
-        if (cirePayload.safety_state === 'blocked') {
+        if (cirePayload.available !== false && cirePayload.safety_state === 'blocked') {
             const response = NextResponse.json({
                 inference_event_id: persistedInferenceEventId,
                 clinical_case_id: finalizedClinicalCase.id,
