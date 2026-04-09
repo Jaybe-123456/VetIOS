@@ -557,7 +557,15 @@ export function applyDiagnosticSafetyLayer(params: {
         0.18,
         0.88,
     );
-    const preCapConfidence = clamp(baseConfidence - (contradictionScore * 0.22), 0.12, 0.88);
+    const contradictionDetails = params.contradiction?.contradiction_details ?? [];
+    const biologicPlausibilityPenalty = contradictionDetails.some((detail) => detail.source === 'biologic_plausibility')
+        ? 0.15
+        : 0;
+    const preCapConfidence = clamp(
+        baseConfidence - (contradictionScore * 0.22) - biologicPlausibilityPenalty,
+        0.12,
+        0.88,
+    );
     const confidenceCap = params.contradiction?.confidence_cap ?? 1;
     const postCapConfidence = Math.min(preCapConfidence, confidenceCap);
     const wasCapped = postCapConfidence < preCapConfidence - 0.0001;
@@ -569,9 +577,14 @@ export function applyDiagnosticSafetyLayer(params: {
             (differentialSpread?.spread ?? 0) < 0.12
         );
     const pathognomicCount = mergedDifferentials.filter((entry) => entry.determination_basis === 'pathognomonic_test').length;
-    const contradictionReasons = evidenceInference.contradiction_analysis?.contradiction_reasons
-        ?? params.contradiction?.contradiction_reasons
-        ?? [];
+    const contradictionReasons = mergeNoteSets(
+        evidenceInference.contradiction_analysis?.contradiction_reasons,
+        params.contradiction?.contradiction_reasons,
+    );
+    const contradictionForcesAbstention =
+        params.contradiction?.abstain === true
+        && contradictionScore > 0.60
+        && contradictionReasons.length > 0;
     const hasMetabolicConflict =
         contradictionScore > 0.60
         && contradictionReasons.some((reason) =>
@@ -585,7 +598,7 @@ export function applyDiagnosticSafetyLayer(params: {
     if (hasMetabolicConflict) {
         abstainRecommendation = true;
         abstainReason = 'genuine_clinical_contradiction';
-    } else if (pathognomicCount > 1 && contradictionScore > 0.60 && contradictionReasons.length > 0) {
+    } else if (contradictionForcesAbstention || (pathognomicCount > 1 && contradictionScore > 0.60 && contradictionReasons.length > 0)) {
         abstainRecommendation = true;
         abstainReason = 'genuine_clinical_contradiction';
     } else if (pathognomicCount > 0) {
@@ -595,6 +608,14 @@ export function applyDiagnosticSafetyLayer(params: {
         abstainRecommendation = true;
         abstainReason = 'genuine_clinical_contradiction';
     } else if (leadingProbability < 0.05) {
+        abstainRecommendation = true;
+        abstainReason = 'insufficient_clinical_signal';
+    } else if (
+        isUnstable
+        && postCapConfidence < 0.5
+        && contradictionScore < 0.1
+        && !params.emergencyEval.emergency_rule_triggered
+    ) {
         abstainRecommendation = true;
         abstainReason = 'insufficient_clinical_signal';
     } else if ((differentialSpread?.spread ?? 1) < 0.05 || leadingProbability < 0.55) {

@@ -1,4 +1,7 @@
-import contradictionRegistry from '@/lib/clinicalSignal/contradiction_rules.json';
+import {
+    contradictionRuleRegistry,
+    type ContradictionRuleDefinition,
+} from '@/lib/clinicalSignal/contradictionRules';
 import {
     extractClinicalTermsFromText,
     normalizeClinicalTermArray,
@@ -38,18 +41,6 @@ export interface ContradictionConfig {
     mild_confidence_cap: number;
     moderate_confidence_cap: number;
     high_confidence_cap: number;
-}
-
-interface ContradictionRuleDefinition {
-    id: string;
-    label: string;
-    rule_type: string;
-    severity: 'mild' | 'moderate' | 'high';
-    weight: number;
-    requires_all?: string[];
-    conflicts_any?: string[];
-    requires_any?: string[];
-    explanation_template: string;
 }
 
 const DEFAULT_CONFIG: ContradictionConfig = {
@@ -157,7 +148,7 @@ export function detectContradictions(
 }
 
 function evaluateRegistryRules(termSet: Set<string>): ContradictionDetail[] {
-    const rules = (contradictionRegistry.rules ?? []) as ContradictionRuleDefinition[];
+    const rules = contradictionRuleRegistry.rules ?? [];
     const details: ContradictionDetail[] = [];
 
     for (const rule of rules) {
