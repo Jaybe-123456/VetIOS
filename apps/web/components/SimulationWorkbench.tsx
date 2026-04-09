@@ -15,6 +15,15 @@ type SimulationProgress = {
     error_message?: string | null;
 };
 
+type ModelOption = {
+    model_version?: string;
+    model_name?: string | null;
+    lifecycle_status?: string | null;
+    registry_role?: string | null;
+    source?: 'registry' | 'inference';
+    preferred?: boolean;
+};
+
 const DEFAULT_PROMPT_DISTRIBUTION = JSON.stringify([
     { prompt: 'Dog with persistent vomiting, lethargy, abdominal discomfort', weight: 0.5 },
     { prompt: 'Cat with cough, fever, fast breathing, appetite loss', weight: 0.3 },
@@ -34,7 +43,7 @@ const STREAM_FALLBACK_MESSAGE = 'Live progress stream interrupted. Switching to 
 
 export default function SimulationWorkbench() {
     const [mode, setMode] = useState<SimulationMode>('scenario_load');
-    const [models, setModels] = useState<string[]>([]);
+    const [models, setModels] = useState<ModelOption[]>([]);
     const [loadingModels, setLoadingModels] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [runId, setRunId] = useState<string | null>(null);
@@ -69,18 +78,21 @@ export default function SimulationWorkbench() {
             if (!response.ok) {
                 throw new Error(extractApiErrorMessage(body, 'Failed to load available model versions.'));
             }
-            const data = extractEnvelopeData<Array<{ model_version?: string }>>(body) ?? [];
-            const resolvedModels = data
-                .map((entry) => entry.model_version)
-                .filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+            const data = extractEnvelopeData<ModelOption[]>(body) ?? [];
+            const resolvedModels = data.filter((entry): entry is ModelOption & { model_version: string } =>
+                typeof entry?.model_version === 'string' && entry.model_version.trim().length > 0,
+            );
 
-            const nextModels = resolvedModels.length > 0 ? resolvedModels : ['gpt-4o-mini'];
+            const nextModels = resolvedModels.length > 0
+                ? resolvedModels
+                : [{ model_version: 'gpt-4o-mini', source: 'inference', preferred: false }];
+            const preferredModelVersion = nextModels[0]?.model_version ?? 'gpt-4o-mini';
             setModels(nextModels);
-            setSelectedModelVersion((current) => current || nextModels[0] || 'gpt-4o-mini');
-            setCandidateModelVersion((current) => current || nextModels[0] || 'gpt-4o-mini');
+            setSelectedModelVersion(preferredModelVersion);
+            setCandidateModelVersion(preferredModelVersion);
         } catch (loadError) {
             setError(loadError instanceof Error ? loadError.message : 'Failed to load available model versions.');
-            setModels(['gpt-4o-mini']);
+            setModels([{ model_version: 'gpt-4o-mini', source: 'inference', preferred: false }]);
         } finally {
             setLoadingModels(false);
         }
@@ -291,7 +303,9 @@ export default function SimulationWorkbench() {
                                             className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
                                         >
                                             {models.map((model) => (
-                                                <option key={model} value={model}>{model}</option>
+                                                <option key={model.model_version} value={model.model_version}>
+                                                    {formatModelLabel(model)}
+                                                </option>
                                             ))}
                                         </select>
                                     </div>
@@ -327,7 +341,9 @@ export default function SimulationWorkbench() {
                                         className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
                                     >
                                         {models.map((model) => (
-                                            <option key={model} value={model}>{model}</option>
+                                            <option key={model.model_version} value={model.model_version}>
+                                                {formatModelLabel(model)}
+                                            </option>
                                         ))}
                                     </select>
                                 </div>
@@ -357,7 +373,9 @@ export default function SimulationWorkbench() {
                                     className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
                                 >
                                     {models.map((model) => (
-                                        <option key={model} value={model}>{model}</option>
+                                        <option key={model.model_version} value={model.model_version}>
+                                            {formatModelLabel(model)}
+                                        </option>
                                     ))}
                                 </select>
                             </div>
@@ -440,4 +458,19 @@ function formatMetric(value: unknown) {
 
 function formatLatency(value: unknown) {
     return typeof value === 'number' ? `${value.toFixed(1)} ms` : 'NO DATA';
+}
+
+function formatModelLabel(model: ModelOption) {
+    const version = typeof model.model_version === 'string' && model.model_version.trim().length > 0
+        ? model.model_version
+        : 'unknown';
+    const descriptors = [
+        model.preferred ? 'LATEST' : null,
+        typeof model.lifecycle_status === 'string' ? model.lifecycle_status.toUpperCase() : null,
+        typeof model.registry_role === 'string' ? model.registry_role.toUpperCase() : null,
+    ].filter((entry): entry is string => Boolean(entry));
+
+    return descriptors.length > 0
+        ? `${version} [${descriptors.join(' · ')}]`
+        : version;
 }
