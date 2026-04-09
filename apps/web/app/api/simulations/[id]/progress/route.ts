@@ -3,6 +3,7 @@ import { requirePlatformRequestContext } from '@/lib/platform/route';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 900;
 
 export async function GET(
     req: Request,
