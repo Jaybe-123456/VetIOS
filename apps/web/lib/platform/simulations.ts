@@ -142,6 +142,15 @@ const ADVERSARIAL_CATEGORIES: AdversarialCategory[] = [
     'conflicting_inputs',
 ];
 
+const LEGACY_ADVERSARIAL_CATEGORIES = new Set<AdversarialCategory>([
+    'jailbreak',
+    'injection',
+    'gibberish',
+    'extreme_length',
+    'multilingual',
+    'sensitive_topic',
+]);
+
 const ADVERSARIAL_PROMPT_SEED: Array<{
     category: AdversarialCategory;
     prompt: string;
@@ -515,7 +524,7 @@ export async function listAdversarialPrompts(
             return scope == null || scope === GLOBAL_PROMPT_SCOPE || scope === input.tenantId;
         })
         .filter((row) => input.category ? readText(row.category) === input.category : true)
-        .filter((row) => input.active ? (readBoolean(row.active) ?? true) === true : true)
+        .filter((row) => input.active ? readPromptActive(row) === true : true)
         .sort(compareCreatedDesc);
 
     const grouped = ADVERSARIAL_CATEGORIES.reduce<Record<string, number>>((accumulator, category) => {
@@ -531,7 +540,7 @@ export async function listAdversarialPrompts(
             prompt: readText(row.prompt),
             expected_behavior: readText(row.expected_behavior),
             severity: readText(row.severity) ?? 'medium',
-            active: readBoolean(row.active) ?? true,
+            active: readPromptActive(row),
             created_at: readText(row.created_at),
         })),
         counts_by_category: grouped,
@@ -551,19 +560,15 @@ export async function createAdversarialPrompt(
         active?: boolean;
     },
 ) {
-    const { data, error } = await client
-        .from('adversarial_prompts')
-        .insert({
-            tenant_id: input.tenantId,
-            category: input.category,
-            prompt: input.prompt,
-            expected_behavior: input.expectedBehavior,
-            severity: input.severity ?? 'medium',
-            active: input.active ?? true,
-            created_by: input.actor,
-        })
-        .select('*')
-        .single();
+    const { data, error } = await writeAdversarialPromptRow(client, {
+        tenant_id: input.tenantId,
+        category: input.category,
+        prompt: input.prompt,
+        expected_behavior: input.expectedBehavior,
+        severity: input.severity ?? 'medium',
+        active: input.active ?? true,
+        created_by: input.actor,
+    });
 
     if (error || !data) {
         throw new Error(`Failed to create adversarial prompt: ${error?.message ?? 'Unknown error'}`);
@@ -584,13 +589,37 @@ export async function updateAdversarialPrompt(
         }>;
     },
 ) {
-    const { data, error } = await client
+    const primaryPatch = { ...input.patch };
+    let { data, error } = await client
         .from('adversarial_prompts')
-        .update(input.patch)
+        .update(primaryPatch)
         .eq('tenant_id', input.tenantId)
         .eq('id', input.promptId)
         .select('*')
         .single();
+
+    if (error && 'active' in primaryPatch && isMissingPromptColumnError(error, 'active')) {
+        const fallbackPatch = { ...primaryPatch };
+        delete fallbackPatch.active;
+        if (Object.keys(fallbackPatch).length === 0) {
+            const rows = await listRows(client, 'adversarial_prompts');
+            data = rows.find((row) =>
+                readText(row.tenant_id) === input.tenantId
+                && readText(row.id) === input.promptId,
+            ) ?? null;
+            error = null;
+        } else {
+            const fallbackResult = await client
+                .from('adversarial_prompts')
+                .update(fallbackPatch)
+                .eq('tenant_id', input.tenantId)
+                .eq('id', input.promptId)
+                .select('*')
+                .single();
+            data = fallbackResult.data;
+            error = fallbackResult.error;
+        }
+    }
 
     if (error || !data) {
         throw new Error(`Failed to update adversarial prompt: ${error?.message ?? 'Unknown error'}`);
@@ -634,20 +663,18 @@ export async function seedAdversarialPrompts(client: SupabaseClient, _tenantId: 
         return;
     }
 
-    const { error } = await client
-        .from('adversarial_prompts')
-        .upsert(
-            ADVERSARIAL_PROMPT_SEED.map((entry) => ({
-                tenant_id: GLOBAL_PROMPT_SCOPE,
-                category: entry.category,
-                prompt: entry.prompt,
-                expected_behavior: entry.expected_behavior,
-                severity: entry.severity,
-                active: true,
-                created_by: 'system_seed',
-            })),
-            { onConflict: 'tenant_id,prompt' },
-        );
+    const { error } = await upsertAdversarialPromptRows(
+        client,
+        ADVERSARIAL_PROMPT_SEED.map((entry) => ({
+            tenant_id: GLOBAL_PROMPT_SCOPE,
+            category: entry.category,
+            prompt: entry.prompt,
+            expected_behavior: entry.expected_behavior,
+            severity: entry.severity,
+            active: true,
+            created_by: 'system_seed',
+        })),
+    );
 
     if (error) {
         throw new Error(`Failed to seed adversarial prompts: ${error.message}`);
@@ -2841,6 +2868,120 @@ async function listRows(
         throw new Error(`Failed to read ${table}: ${error.message}`);
     }
     return (data ?? []) as Array<Record<string, unknown>>;
+}
+
+async function writeAdversarialPromptRow(
+    client: SupabaseClient,
+    row: Record<string, unknown>,
+) {
+    let payload = { ...row };
+    let result = await client.from('adversarial_prompts').insert(payload).select('*').single();
+
+    while (result.error) {
+        const missingColumn = resolveMissingPromptColumn(result.error, payload);
+        if (!missingColumn) {
+            break;
+        }
+        delete payload[missingColumn];
+        result = await client.from('adversarial_prompts').insert(payload).select('*').single();
+    }
+
+    return result;
+}
+
+async function upsertAdversarialPromptRows(
+    client: SupabaseClient,
+    rows: Array<Record<string, unknown>>,
+) {
+    let payload = rows.map((row) => ({ ...row }));
+    let result = await client
+        .from('adversarial_prompts')
+        .upsert(payload, { onConflict: 'tenant_id,prompt' });
+
+    while (result.error) {
+        if (isPromptCategoryConstraintError(result.error)) {
+            const legacyPayload = payload.filter((row) => {
+                const category = readText(row.category) as AdversarialCategory | null;
+                return category != null && LEGACY_ADVERSARIAL_CATEGORIES.has(category);
+            });
+            if (legacyPayload.length === payload.length || legacyPayload.length === 0) {
+                break;
+            }
+            payload = legacyPayload;
+            result = await client
+                .from('adversarial_prompts')
+                .upsert(payload, { onConflict: 'tenant_id,prompt' });
+            continue;
+        }
+
+        const missingColumn = resolveMissingPromptColumn(result.error, payload[0] ?? null);
+        if (!missingColumn) {
+            break;
+        }
+        payload = payload.map((row) => {
+            const next = { ...row };
+            delete next[missingColumn];
+            return next;
+        });
+        result = await client
+            .from('adversarial_prompts')
+            .upsert(payload, { onConflict: 'tenant_id,prompt' });
+    }
+
+    return result;
+}
+
+function isMissingPromptColumnError(
+    error: { message?: string | null } | null | undefined,
+    column: 'active' | 'created_by',
+) {
+    const message = error?.message ?? '';
+    return message.includes(`Could not find the '${column}' column`)
+        || message.includes(`column adversarial_prompts.${column} does not exist`)
+        || message.includes(`column public.adversarial_prompts.${column} does not exist`);
+}
+
+function resolveMissingPromptColumn(
+    error: { message?: string | null } | null | undefined,
+    payload: Record<string, unknown> | null,
+): 'active' | 'created_by' | null {
+    for (const column of ['active', 'created_by'] as const) {
+        if (payload && column in payload && isMissingPromptColumnError(error, column)) {
+            return column;
+        }
+    }
+    return null;
+}
+
+function isPromptCategoryConstraintError(
+    error: { message?: string | null } | null | undefined,
+) {
+    const message = error?.message ?? '';
+    return message.includes('adversarial_prompts_category_check')
+        || message.includes('violates check constraint "adversarial_prompts_category_check"')
+        || message.includes('violates check constraint \'adversarial_prompts_category_check\'');
+}
+
+function readPromptActive(row: Record<string, unknown>) {
+    const active = readBoolean(row.active);
+    if (active != null) {
+        return active;
+    }
+
+    const legacyActive = readBoolean(row.is_active);
+    if (legacyActive != null) {
+        return legacyActive;
+    }
+
+    const status = readText(row.status);
+    if (status === 'active') {
+        return true;
+    }
+    if (status === 'inactive' || status === 'disabled' || status === 'archived') {
+        return false;
+    }
+
+    return true;
 }
 
 function deriveFallbackEvaluationScore(
