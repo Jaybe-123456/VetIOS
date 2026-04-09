@@ -29,6 +29,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@vetios/cire-engine':
+        specifier: workspace:*
+        version: link:../../packages/cire-engine
       '@supabase/ssr':
         specifier: ^0.8.0
         version: 0.8.0(@supabase/supabase-js@2.96.0)
@@ -180,6 +183,18 @@ importers:
         version: 5.9.3
 
   packages/logger:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.33
+      '@vetios/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/cire-engine:
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
