@@ -75,6 +75,8 @@ export type CireEvaluationResult = {
     profile: CireCollapseProfile | null;
     input_quality: number;
     incident: CireIncident | null;
+    available: boolean;
+    unavailable_reason: string | null;
 };
 
 export async function evaluateInferenceReliability(
@@ -91,87 +93,98 @@ export async function evaluateInferenceReliability(
     const vector = extractDifferentialVector(input.outputPayload);
     const inputMHat = computeInputMHat(input.inputPayload);
     const phiHat = computePhiHat(vector);
-    const rollingState = await updateRollingState(client, input.tenantId, phiHat);
-    const profile = await getLatestCollapseProfile(client, input.tenantId, input.modelVersion);
-    const phiBaseline = Math.max(profile?.phi_baseline ?? 1, 0.0001);
-    const cps = computeCPS(
-        phiHat,
-        rollingState.delta_ema,
-        rollingState.sigma_delta,
-        phiBaseline,
-    );
-    const classification = classifySafetyState(cps);
-    const snapshot: CireSnapshot = {
-        inference_id: input.inferenceId,
-        tenant_id: input.tenantId,
-        phi_hat: roundNumber(phiHat, 6),
-        delta_rolling: roundNumber(rollingState.delta_ema, 6),
-        sigma_delta: roundNumber(rollingState.sigma_delta, 6),
-        cps: roundNumber(cps, 6),
-        input_m_hat: roundNumber(inputMHat, 6),
-        safety_state: classification.safety_state,
-        reliability_badge: classification.reliability_badge,
-    };
-
-    const persistedSnapshot = await insertCireSnapshot(client, snapshot);
-    let incident: CireIncident | null = null;
-
-    if (classification.safety_state === 'critical' || classification.safety_state === 'blocked') {
-        incident = await createCireIncident(client, {
+    try {
+        const rollingState = await updateRollingState(client, input.tenantId, phiHat);
+        const profile = await getLatestCollapseProfile(client, input.tenantId, input.modelVersion);
+        const phiBaseline = Math.max(profile?.phi_baseline ?? 1, 0.0001);
+        const cps = computeCPS(
+            phiHat,
+            rollingState.delta_ema,
+            rollingState.sigma_delta,
+            phiBaseline,
+        );
+        const classification = classifySafetyState(cps);
+        const snapshot: CireSnapshot = {
             inference_id: input.inferenceId,
             tenant_id: input.tenantId,
+            phi_hat: roundNumber(phiHat, 6),
+            delta_rolling: roundNumber(rollingState.delta_ema, 6),
+            sigma_delta: roundNumber(rollingState.sigma_delta, 6),
+            cps: roundNumber(cps, 6),
+            input_m_hat: roundNumber(inputMHat, 6),
             safety_state: classification.safety_state,
-            phi_hat: snapshot.phi_hat,
-            cps: snapshot.cps,
-            input_summary: buildInputSummary(input.inputPayload, inputMHat),
-        });
+            reliability_badge: classification.reliability_badge,
+        };
 
-        await createPlatformAlert(client, {
-            tenantId: input.tenantId,
-            type: 'cire_safety_alert',
-            severity: classification.safety_state === 'blocked' ? 'critical' : 'high',
-            title: classification.safety_state === 'blocked'
-                ? 'CIRE OUTPUT SUPPRESSED'
-                : 'CIRE RELIABILITY WARNING',
-            message: `CIRE classified inference ${input.inferenceId} as ${classification.safety_state}.`,
-            metadata: {
+        const persistedSnapshot = await insertCireSnapshot(client, snapshot);
+        let incident: CireIncident | null = null;
+
+        if (classification.safety_state === 'critical' || classification.safety_state === 'blocked') {
+            incident = await createCireIncident(client, {
                 inference_id: input.inferenceId,
-                incident_id: incident.id,
-                cps: snapshot.cps,
-                phi_hat: snapshot.phi_hat,
+                tenant_id: input.tenantId,
                 safety_state: classification.safety_state,
+                phi_hat: snapshot.phi_hat,
+                cps: snapshot.cps,
+                input_summary: buildInputSummary(input.inputPayload, inputMHat),
+            });
+
+            await createPlatformAlert(client, {
+                tenantId: input.tenantId,
+                type: 'cire_safety_alert',
+                severity: classification.safety_state === 'blocked' ? 'critical' : 'high',
+                title: classification.safety_state === 'blocked'
+                    ? 'CIRE OUTPUT SUPPRESSED'
+                    : 'CIRE RELIABILITY WARNING',
+                message: `CIRE classified inference ${input.inferenceId} as ${classification.safety_state}.`,
+                metadata: {
+                    inference_id: input.inferenceId,
+                    incident_id: incident.id,
+                    cps: snapshot.cps,
+                    phi_hat: snapshot.phi_hat,
+                    safety_state: classification.safety_state,
+                },
+            }).catch(() => undefined);
+        }
+
+        await writeGovernanceAuditEvent(client, {
+            tenantId: input.tenantId,
+            actor: input.actor.userId,
+            eventType: classification.safety_state === 'nominal'
+                ? 'cire_nominal'
+                : classification.safety_state === 'warning'
+                    ? 'cire_warning'
+                    : classification.safety_state === 'critical'
+                        ? 'cire_critical'
+                        : 'cire_blocked',
+            payload: {
+                inference_id: input.inferenceId,
+                phi_hat: snapshot.phi_hat,
+                cps: snapshot.cps,
+                safety_state: snapshot.safety_state,
+                input_quality_score: roundNumber(1 - inputMHat, 6),
+                cire_snapshot_id: persistedSnapshot.id ?? null,
+                cire_incident_id: incident?.id ?? null,
             },
         }).catch(() => undefined);
+
+        return {
+            snapshot: persistedSnapshot,
+            rolling_state: rollingState,
+            profile,
+            input_quality: roundNumber(1 - inputMHat, 6),
+            incident,
+            available: true,
+            unavailable_reason: null,
+        };
+    } catch (error) {
+        if (!isCireSchemaUnavailable(error)) {
+            throw error;
+        }
+
+        console.warn('[CIRE] Schema unavailable during inference reliability evaluation.', error);
+        return buildUnavailableEvaluation(input, phiHat, inputMHat);
     }
-
-    await writeGovernanceAuditEvent(client, {
-        tenantId: input.tenantId,
-        actor: input.actor.userId,
-        eventType: classification.safety_state === 'nominal'
-            ? 'cire_nominal'
-            : classification.safety_state === 'warning'
-                ? 'cire_warning'
-                : classification.safety_state === 'critical'
-                    ? 'cire_critical'
-                    : 'cire_blocked',
-        payload: {
-            inference_id: input.inferenceId,
-            phi_hat: snapshot.phi_hat,
-            cps: snapshot.cps,
-            safety_state: snapshot.safety_state,
-            input_quality_score: roundNumber(1 - inputMHat, 6),
-            cire_snapshot_id: persistedSnapshot.id ?? null,
-            cire_incident_id: incident?.id ?? null,
-        },
-    }).catch(() => undefined);
-
-    return {
-        snapshot: persistedSnapshot,
-        rolling_state: rollingState,
-        profile,
-        input_quality: roundNumber(1 - inputMHat, 6),
-        incident,
-    };
 }
 
 export async function updateRollingState(
@@ -234,7 +247,7 @@ export async function getCireStatus(
         .order('created_at', { ascending: false })
         .limit(200);
 
-    if (snapshotsError) {
+    if (snapshotsError && !isCireSchemaUnavailable(snapshotsError)) {
         throw new Error(`Failed to load CIRE snapshots: ${snapshotsError.message}`);
     }
 
@@ -245,7 +258,7 @@ export async function getCireStatus(
         .order('created_at', { ascending: false })
         .limit(500);
 
-    if (incidentsError) {
+    if (incidentsError && !isCireSchemaUnavailable(incidentsError)) {
         throw new Error(`Failed to load CIRE incidents: ${incidentsError.message}`);
     }
 
@@ -269,6 +282,7 @@ export async function getCireStatus(
             blocked: countByState(last24h, 'blocked'),
         },
         incident_count_7d: incidentCount7d,
+        schema_available: !snapshotsError && !incidentsError,
         calibration_status: !profile
             ? 'uncalibrated'
             : activeModel && profile.model_version !== activeModel
@@ -298,6 +312,12 @@ export async function listCireIncidents(
         .limit(500);
 
     if (error) {
+        if (isCireSchemaUnavailable(error)) {
+            return {
+                rows: [],
+                nextCursor: null,
+            };
+        }
         throw new Error(`Failed to load CIRE incidents: ${error.message}`);
     }
 
@@ -345,6 +365,9 @@ export async function resolveCireIncident(
         .single();
 
     if (error || !data) {
+        if (isCireSchemaUnavailable(error)) {
+            throw new Error('CIRE incident storage is unavailable until the database migrations are applied.');
+        }
         throw new Error(`Failed to resolve CIRE incident: ${error?.message ?? 'Unknown error'}`);
     }
 
@@ -379,6 +402,9 @@ export async function getLatestCollapseProfile(
 
     const { data, error } = await query;
     if (error) {
+        if (isCireSchemaUnavailable(error)) {
+            return null;
+        }
         throw new Error(`Failed to load CIRE collapse profile: ${error.message}`);
     }
 
@@ -403,6 +429,9 @@ export async function getPhiHistory(
         .limit(5000);
 
     if (error) {
+        if (isCireSchemaUnavailable(error)) {
+            return [];
+        }
         throw new Error(`Failed to load CIRE phi history: ${error.message}`);
     }
 
@@ -476,6 +505,20 @@ export async function storeCollapseProfile(
         .single();
 
     if (error || !data) {
+        if (isCireSchemaUnavailable(error)) {
+            console.warn('[CIRE] Collapse profile storage unavailable; skipping persistence until migrations are applied.', error);
+            return {
+                id: randomUUID(),
+                tenant_id: input.tenantId,
+                model_version: input.modelVersion,
+                phi_baseline: input.phiBaseline,
+                m_threshold_map: input.mThresholdMap,
+                hii: input.hii,
+                phi_curve: input.phiCurve,
+                calibrated_at: new Date().toISOString(),
+                simulation_id: input.simulationId,
+            };
+        }
         throw new Error(`Failed to store CIRE collapse profile: ${error?.message ?? 'Unknown error'}`);
     }
 
@@ -631,6 +674,76 @@ function normalizeCollapseProfile(row: Record<string, unknown>): CireCollapsePro
         calibrated_at: readText(row.calibrated_at) ?? new Date().toISOString(),
         simulation_id: readText(row.simulation_id),
     };
+}
+
+function buildUnavailableEvaluation(
+    input: {
+        inferenceId: string;
+        tenantId: string;
+    },
+    phiHat: number,
+    inputMHat: number,
+): CireEvaluationResult {
+    const rollingState = buildEphemeralRollingState(input.tenantId, phiHat);
+    const snapshot: CireSnapshot = {
+        inference_id: input.inferenceId,
+        tenant_id: input.tenantId,
+        phi_hat: roundNumber(phiHat, 6),
+        delta_rolling: roundNumber(rollingState.delta_ema, 6),
+        sigma_delta: roundNumber(rollingState.sigma_delta, 6),
+        cps: 0.25,
+        input_m_hat: roundNumber(inputMHat, 6),
+        safety_state: 'warning',
+        reliability_badge: 'REVIEW',
+    };
+
+    return {
+        snapshot,
+        rolling_state: rollingState,
+        profile: null,
+        input_quality: roundNumber(1 - inputMHat, 6),
+        incident: null,
+        available: false,
+        unavailable_reason: 'schema_unavailable',
+    };
+}
+
+function buildEphemeralRollingState(tenantId: string, phiHat: number): RollingState {
+    const next = advanceRollingState(null, phiHat);
+    return {
+        tenant_id: tenantId,
+        phi_ema: next.phi_ema,
+        delta_ema: next.delta_ema,
+        sigma_buffer: next.sigma_buffer,
+        sigma_delta: next.sigma_delta,
+        delta_hat: next.delta_hat,
+        window_count: next.window_count,
+        last_phi_hat: next.last_phi_hat,
+        updated_at: null,
+    };
+}
+
+function isCireSchemaUnavailable(error: unknown) {
+    const candidate = asRecord(error);
+    const composite = [
+        readText(candidate.code),
+        readText(candidate.message),
+        readText(candidate.details),
+        readText(candidate.hint),
+        error instanceof Error ? error.message : null,
+    ]
+        .filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+        .join(' ')
+        .toLowerCase();
+
+    return composite.includes('cire_')
+        && (
+            composite.includes('schema cache')
+            || composite.includes('could not find the table')
+            || composite.includes('does not exist')
+            || composite.includes('42p01')
+            || composite.includes('pgrst205')
+        );
 }
 
 function countByState(rows: Array<Record<string, unknown>>, state: SafetyState) {
