@@ -247,12 +247,13 @@ function computeModelPriority(input: {
         return -1;
     }
     if (input.source === 'registry') {
-        if (input.lifecycleStatus === 'staging' && input.registryRole === 'challenger') return 6;
-        if (input.lifecycleStatus === 'candidate') return 5;
-        if (input.registryRole === 'challenger') return 5;
-        if (input.lifecycleStatus === 'production' && input.registryRole === 'champion') return 4;
-        if (input.lifecycleStatus === 'training') return 3;
-        if (input.lifecycleStatus === 'archived') return 1;
+        if (input.lifecycleStatus === 'production' && input.registryRole === 'champion') return 6;
+        if (input.lifecycleStatus === 'staging' && input.registryRole === 'challenger') return 5;
+        if (input.registryRole === 'rollback_target') return 4;
+        if (input.lifecycleStatus === 'candidate') return 3;
+        if (input.registryRole === 'challenger') return 3;
+        if (input.lifecycleStatus === 'training') return 1;
+        if (input.lifecycleStatus === 'archived') return 0;
         return 2;
     }
 
