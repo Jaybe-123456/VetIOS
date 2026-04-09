@@ -97,9 +97,10 @@ async function fetchRegistryRows(
 ) {
     const enrichedSelect = 'model_name,model_version,lifecycle_status,registry_role,updated_at,created_at,blocked,block_reason,blocked_at,blocked_by_simulation_id';
     const legacySelect = 'model_name,model_version,lifecycle_status,registry_role,updated_at,created_at';
+    const registryTable = supabase.from('model_registry') as any;
 
     const enriched = await applyTenantScope(
-        supabase.from('model_registry').select(enrichedSelect),
+        registryTable.select(enrichedSelect),
         tenantId,
     );
 
@@ -114,7 +115,7 @@ async function fetchRegistryRows(
         }
 
         const legacy = await applyTenantScope(
-            supabase.from('model_registry').select(legacySelect),
+            registryTable.select(legacySelect),
             tenantId,
         );
         if (!legacy.error) {
@@ -135,9 +136,9 @@ async function fetchInferenceRows(
     supabase: ReturnType<typeof getSupabaseServer>,
     tenantId: string | null,
 ) {
+    const inferenceTable = supabase.from('ai_inference_events') as any;
     const result = await applyTenantScope(
-        supabase
-            .from('ai_inference_events')
+        inferenceTable
             .select('model_name,model_version,created_at')
             .order('created_at', { ascending: false })
             .limit(200),
@@ -151,10 +152,10 @@ async function fetchInferenceRows(
     return (result.data ?? []) as Array<Record<string, unknown>>;
 }
 
-function applyTenantScope<T extends { eq: (column: string, value: string) => T }>(
-    query: T,
+function applyTenantScope(
+    query: any,
     tenantId: string | null,
-) {
+): any {
     return tenantId ? query.eq('tenant_id', tenantId) : query;
 }
 
