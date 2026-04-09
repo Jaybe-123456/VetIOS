@@ -3,7 +3,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
-import { ConsoleCard, Container, DataRow, PageHeader, TerminalButton } from '@/components/ui/terminal';
+import { ConsoleCard, Container, DataRow, PageHeader, TerminalButton, TerminalTabs } from '@/components/ui/terminal';
 import { TelemetryChart } from '@/components/ui/TelemetryChart';
 import type {
     ControlPlaneAlertRecord,
@@ -33,11 +33,56 @@ import {
 } from 'lucide-react';
 
 type StreamStatus = 'connecting' | 'live' | 'disconnected';
+type DashboardTab = 'overview' | 'cire';
+
+type CireStatusSnapshot = {
+    phi_population_mean: number;
+    rolling_cps: number;
+    safety_state_distribution: {
+        nominal: number;
+        warning: number;
+        critical: number;
+        blocked: number;
+    };
+    incident_count_7d: number;
+    calibration_status: 'calibrated' | 'uncalibrated' | 'stale';
+    last_calibrated_at: string | null;
+};
+
+type CireIncidentRecord = {
+    id: string;
+    inference_id: string;
+    safety_state: 'nominal' | 'warning' | 'critical' | 'blocked';
+    phi_hat: number | null;
+    cps: number | null;
+    resolved: boolean;
+    created_at: string;
+};
+
+type CireHistoryPoint = {
+    timestamp: string;
+    phi_mean: number;
+    cps_mean: number;
+    incident_count: number;
+};
+
+type CireCollapseProfile = {
+    model_version: string;
+    phi_baseline: number;
+    hii: number | null;
+    calibrated_at: string;
+    m_threshold_map: Record<string, unknown>;
+};
 
 export default function DashboardControlPlaneClient() {
+    const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
     const [snapshot, setSnapshot] = useState<ControlPlaneDashboardViewSnapshot | null>(null);
     const [telemetrySnapshot, setTelemetrySnapshot] = useState<TelemetrySnapshot | null>(null);
     const [topologySnapshot, setTopologySnapshot] = useState<TopologySnapshot | null>(null);
+    const [cireStatus, setCireStatus] = useState<CireStatusSnapshot | null>(null);
+    const [cireHistory, setCireHistory] = useState<CireHistoryPoint[]>([]);
+    const [cireIncidents, setCireIncidents] = useState<CireIncidentRecord[]>([]);
+    const [cireProfile, setCireProfile] = useState<CireCollapseProfile | null>(null);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [requestError, setRequestError] = useState<string | null>(null);
@@ -46,6 +91,7 @@ export default function DashboardControlPlaneClient() {
     const [topologyStreamStatus, setTopologyStreamStatus] = useState<StreamStatus>('connecting');
     const [lastTelemetryUpdate, setLastTelemetryUpdate] = useState<string | null>(null);
     const [lastTopologyUpdate, setLastTopologyUpdate] = useState<string | null>(null);
+    const [cireActionState, setCireActionState] = useState<'idle' | 'working'>('idle');
 
     const refreshSnapshot = useCallback(async (initial = false) => {
         if (initial) {
@@ -72,6 +118,40 @@ export default function DashboardControlPlaneClient() {
         }
     }, []);
 
+    const refreshCire = useCallback(async () => {
+        try {
+            const from = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
+            const [statusRes, historyRes, incidentsRes, profileRes] = await Promise.all([
+                fetch('/api/cire/status', { cache: 'no-store' }),
+                fetch(`/api/cire/phi-history?from=${encodeURIComponent(from)}&granularity=hour`, { cache: 'no-store' }),
+                fetch('/api/cire/incidents?resolved=false&limit=6', { cache: 'no-store' }),
+                fetch('/api/cire/collapse-profile', { cache: 'no-store' }),
+            ]);
+
+            const [statusJson, historyJson, incidentsJson, profileJson] = await Promise.all([
+                statusRes.json(),
+                historyRes.json(),
+                incidentsRes.json(),
+                profileRes.json(),
+            ]);
+
+            if (statusRes.ok) {
+                setCireStatus(statusJson.data ?? null);
+            }
+            if (historyRes.ok) {
+                setCireHistory(Array.isArray(historyJson.data) ? historyJson.data : []);
+            }
+            if (incidentsRes.ok) {
+                setCireIncidents(Array.isArray(incidentsJson.data) ? incidentsJson.data : []);
+            }
+            if (profileRes.ok) {
+                setCireProfile(profileJson.data ?? null);
+            }
+        } catch (error) {
+            console.warn('Failed to refresh CIRE dashboard state:', error);
+        }
+    }, []);
+
     useEffect(() => {
         const handleVisibilityChange = () => {
             setPageVisible(document.visibilityState === 'visible');
@@ -87,13 +167,15 @@ export default function DashboardControlPlaneClient() {
 
     useEffect(() => {
         void refreshSnapshot(true);
+        void refreshCire();
         const interval = window.setInterval(() => {
             if (document.visibilityState !== 'visible') return;
             void refreshSnapshot(false);
+            void refreshCire();
         }, 60_000);
 
         return () => window.clearInterval(interval);
-    }, [refreshSnapshot]);
+    }, [refreshSnapshot, refreshCire]);
 
     useEffect(() => {
         if (!pageVisible) return;
@@ -177,6 +259,53 @@ export default function DashboardControlPlaneClient() {
     const recentLogs = (snapshot?.logs ?? []).slice(0, 8);
     const pipelineStates = snapshot?.pipelines ?? [];
     const loadingWithoutData = loading && !snapshot && !telemetrySnapshot && !topologySnapshot;
+    const cireHistoryChart = cireHistory.map((point) => ({
+        time: new Date(point.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        value: point.phi_mean,
+        cps: point.cps_mean,
+    }));
+
+    const handleCireCalibration = useCallback(async () => {
+        setCireActionState('working');
+        try {
+            const response = await fetch('/api/cire/calibrate', {
+                method: 'POST',
+                cache: 'no-store',
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error?.message ?? 'Failed to start CIRE calibration.');
+            }
+            window.location.href = `/simulate?simulation_id=${result.data?.simulation_id ?? ''}`;
+        } catch (error) {
+            setRequestError(error instanceof Error ? error.message : 'Failed to start CIRE calibration.');
+        } finally {
+            setCireActionState('idle');
+        }
+    }, []);
+
+    const handleResolveCireIncident = useCallback(async (incidentId: string) => {
+        setCireActionState('working');
+        try {
+            const response = await fetch(`/api/cire/incidents/${incidentId}/resolve`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                cache: 'no-store',
+                body: JSON.stringify({
+                    resolution_notes: 'Resolved from system dashboard',
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error?.message ?? 'Failed to resolve CIRE incident.');
+            }
+            await refreshCire();
+        } catch (error) {
+            setRequestError(error instanceof Error ? error.message : 'Failed to resolve CIRE incident.');
+        } finally {
+            setCireActionState('idle');
+        }
+    }, [refreshCire]);
 
     return (
         <Container className="pb-10">
@@ -185,6 +314,19 @@ export default function DashboardControlPlaneClient() {
                 description="Live operational control across telemetry, topology, routing, governance, and self-healing decisions."
             />
 
+            <div className="mb-4">
+                <TerminalTabs
+                    tabs={[
+                        { id: 'overview', label: 'Overview', icon: <Activity className="w-4 h-4" /> },
+                        { id: 'cire', label: 'CIRE', icon: <ShieldAlert className="w-4 h-4" /> },
+                    ]}
+                    activeTab={activeTab}
+                    onTabChange={(tab) => setActiveTab(tab as DashboardTab)}
+                />
+            </div>
+
+            {activeTab === 'overview' && (
+                <>
             <div className="mb-4 sm:mb-6 flex flex-col gap-3">
                 <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] sm:text-xs uppercase tracking-[0.2em]">
                     <StatusChip
@@ -482,6 +624,153 @@ export default function DashboardControlPlaneClient() {
                     </div>
                 </ConsoleCard>
             </div>
+                </>
+            )}
+
+            {activeTab === 'cire' && (
+                <div className="space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
+                        <MetricCard
+                            label="Phi Mean"
+                            value={cireStatus ? cireStatus.phi_population_mean.toFixed(3) : 'NO DATA'}
+                            tone="accent"
+                            icon={<ShieldAlert className="w-4 h-4" />}
+                            detail="Last 100 inferences"
+                        />
+                        <MetricCard
+                            label="Rolling CPS"
+                            value={cireStatus ? cireStatus.rolling_cps.toFixed(3) : 'NO DATA'}
+                            tone={cireStatus && cireStatus.rolling_cps >= 0.75 ? 'danger' : cireStatus && cireStatus.rolling_cps >= 0.5 ? 'warning' : 'accent'}
+                            icon={<Gauge className="w-4 h-4" />}
+                            detail="Tenant collapse proximity"
+                        />
+                        <MetricCard
+                            label="Incidents 7D"
+                            value={cireStatus ? String(cireStatus.incident_count_7d) : 'NO DATA'}
+                            tone={cireStatus && cireStatus.incident_count_7d > 0 ? 'warning' : 'accent'}
+                            icon={<AlertTriangle className="w-4 h-4" />}
+                            detail="Critical + blocked snapshots"
+                        />
+                        <MetricCard
+                            label="Calibration"
+                            value={cireStatus ? cireStatus.calibration_status.toUpperCase() : 'NO DATA'}
+                            tone={cireStatus?.calibration_status === 'calibrated' ? 'accent' : 'warning'}
+                            icon={<Cpu className="w-4 h-4" />}
+                            detail={cireStatus?.last_calibrated_at ? `Last ${new Date(cireStatus.last_calibrated_at).toLocaleString()}` : 'No calibration yet'}
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+                        <div className="xl:col-span-2">
+                            <ConsoleCard title="Rolling Phi History" className="h-[320px]" collapsible>
+                                {cireHistoryChart.length > 0 ? (
+                                    <div className="h-full -mx-2 sm:-mx-4">
+                                        <TelemetryChart data={cireHistoryChart} dataKey="value" color="#00ff41" />
+                                    </div>
+                                ) : (
+                                    <EmptyChartState message="NO CIRE HISTORY" />
+                                )}
+                            </ConsoleCard>
+                        </div>
+                        <ConsoleCard title="Safety State Distribution" collapsible>
+                            {cireStatus ? (
+                                <div className="space-y-3 font-mono text-xs">
+                                    {Object.entries(cireStatus.safety_state_distribution).map(([label, value]) => {
+                                        const total = Object.values(cireStatus.safety_state_distribution).reduce((sum, count) => sum + count, 0) || 1;
+                                        const width = (value / total) * 100;
+                                        return (
+                                            <div key={label}>
+                                                <div className="flex items-center justify-between uppercase text-muted">
+                                                    <span>{label}</span>
+                                                    <span>{value}</span>
+                                                </div>
+                                                <div className="mt-1 h-2 bg-black/30 border border-grid">
+                                                    <div
+                                                        className={label === 'blocked' ? 'h-full bg-danger' : label === 'critical' ? 'h-full bg-orange-500' : label === 'warning' ? 'h-full bg-yellow-400' : 'h-full bg-accent'}
+                                                        style={{ width: `${width}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <EmptyListState message="NO CIRE DISTRIBUTION" compact />
+                            )}
+                        </ConsoleCard>
+                    </div>
+
+                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+                        <div className="xl:col-span-2">
+                            <ConsoleCard title="Recent CIRE Incidents" collapsible>
+                                <div className="mb-4">
+                                    <TerminalButton onClick={() => void handleCireCalibration()} disabled={cireActionState === 'working'}>
+                                        {cireActionState === 'working' ? 'CALIBRATING...' : 'CALIBRATE'}
+                                    </TerminalButton>
+                                </div>
+                                {cireIncidents.length > 0 ? (
+                                    <div className="space-y-3">
+                                        {cireIncidents.map((incident) => (
+                                            <div key={incident.id} className="border border-grid bg-black/20 p-3">
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div className="font-mono text-xs text-foreground break-all">{incident.id}</div>
+                                                    <StateText tone={incident.safety_state === 'blocked' ? 'danger' : incident.safety_state === 'critical' ? 'warning' : 'accent'}>
+                                                        {incident.safety_state.toUpperCase()}
+                                                    </StateText>
+                                                </div>
+                                                <div className="mt-2 font-mono text-[10px] text-muted">
+                                                    phi={incident.phi_hat?.toFixed(4) ?? 'n/a'} | cps={incident.cps?.toFixed(4) ?? 'n/a'} | {new Date(incident.created_at).toLocaleString()}
+                                                </div>
+                                                <div className="mt-3 flex gap-3">
+                                                    <TerminalButton onClick={() => void handleResolveCireIncident(incident.id)} disabled={cireActionState === 'working'}>
+                                                        Resolve
+                                                    </TerminalButton>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <EmptyListState message="NO OPEN CIRE INCIDENTS" />
+                                )}
+                            </ConsoleCard>
+                        </div>
+
+                        <ConsoleCard title="Collapse Profile" collapsible>
+                            {cireProfile ? (
+                                <div className="space-y-3">
+                                    <DataRow label="Model" value={cireProfile.model_version} />
+                                    <DataRow label="Phi Baseline" value={cireProfile.phi_baseline.toFixed(4)} />
+                                    <DataRow label="HII" value={cireProfile.hii != null ? cireProfile.hii.toFixed(4) : 'NO DATA'} />
+                                    <DataRow label="Calibrated" value={new Date(cireProfile.calibrated_at).toLocaleString()} />
+                                    <div className="border-t border-grid pt-3">
+                                        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted mb-2">
+                                            m† by Capability
+                                        </div>
+                                        <div className="space-y-2">
+                                            {Object.entries(cireProfile.m_threshold_map ?? {}).map(([capability, value]) => {
+                                                const numericValue = typeof value === 'number' ? value : 0;
+                                                return (
+                                                    <div key={capability} className="font-mono text-[10px]">
+                                                        <div className="flex items-center justify-between text-muted uppercase">
+                                                            <span>{capability}</span>
+                                                            <span>{numericValue.toFixed(3)}</span>
+                                                        </div>
+                                                        <div className="mt-1 h-2 bg-black/30 border border-grid">
+                                                            <div className="h-full bg-cyan-400" style={{ width: `${Math.min(100, numericValue * 100)}%` }} />
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : (
+                                <EmptyListState message="NO CIRE PROFILE" />
+                            )}
+                        </ConsoleCard>
+                    </div>
+                </div>
+            )}
         </Container>
     );
 }

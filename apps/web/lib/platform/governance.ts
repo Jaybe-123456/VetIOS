@@ -218,7 +218,13 @@ export async function writeGovernanceAuditEvent(
             | 'model_unblocked'
             | 'regression_check_passed'
             | 'regression_threshold_exceeded'
-            | 'adversarial_suite_results';
+            | 'adversarial_suite_results'
+            | 'cire_nominal'
+            | 'cire_warning'
+            | 'cire_critical'
+            | 'cire_blocked'
+            | 'cire_incident_resolved'
+            | 'cire_calibrated';
         actor: string | null;
         payload: Record<string, unknown>;
     },
