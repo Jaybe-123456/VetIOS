@@ -48,14 +48,16 @@ const modelRegistryControlPlaneInFlight = new Map<string, Promise<ModelRegistryC
 
 function invalidateModelRegistryControlPlaneSnapshot(tenantId: string): void {
     for (const readOnly of [true, false]) {
-        const cacheKey = getModelRegistryControlPlaneCacheKey(tenantId, readOnly);
-        modelRegistryControlPlaneSnapshotCache.delete(cacheKey);
-        modelRegistryControlPlaneInFlight.delete(cacheKey);
+        for (const lightweight of [true, false]) {
+            const cacheKey = getModelRegistryControlPlaneCacheKey(tenantId, readOnly, lightweight);
+            modelRegistryControlPlaneSnapshotCache.delete(cacheKey);
+            modelRegistryControlPlaneInFlight.delete(cacheKey);
+        }
     }
 }
 
-function getModelRegistryControlPlaneCacheKey(tenantId: string, readOnly: boolean): string {
-    return `${tenantId}:${readOnly ? 'read_only' : 'materialized'}`;
+function getModelRegistryControlPlaneCacheKey(tenantId: string, readOnly: boolean, lightweight: boolean): string {
+    return `${tenantId}:${readOnly ? 'read_only' : 'materialized'}:${lightweight ? 'lightweight' : 'full'}`;
 }
 
 export class RegistryControlPlaneError extends Error {
@@ -1099,12 +1101,16 @@ export async function getExperimentDashboardSnapshot(
         compareRunIds?: string[];
         runLimit?: number;
         readOnly?: boolean;
+        lightweight?: boolean;
     } = {},
 ): Promise<ExperimentDashboardSnapshot> {
     const readOnly = options.readOnly !== false;
-    await backfillSummaryExperimentRuns(store, tenantId, {
-        materializeGovernance: !readOnly,
-    });
+    const lightweight = options.lightweight === true;
+    if (!lightweight) {
+        await backfillSummaryExperimentRuns(store, tenantId, {
+            materializeGovernance: !readOnly,
+        });
+    }
 
     const runs = await store.listExperimentRuns(tenantId, {
         limit: options.runLimit ?? 50,
@@ -1113,23 +1119,27 @@ export async function getExperimentDashboardSnapshot(
     const selectedRunId = options.selectedRunId && runs.some((run) => run.run_id === options.selectedRunId)
         ? options.selectedRunId
         : pickDefaultSelectedRunId(runs);
-    const runMetrics = await Promise.all(
-        runs.map(async (run) => [run.run_id, await store.listExperimentMetrics(tenantId, run.run_id, 2_000)] as const),
+    const metricsByRun = Object.fromEntries(
+        runs.map((run) => [run.run_id, buildDashboardMetricPreview(run)] as const),
     );
-    const metricsByRun = Object.fromEntries(runMetrics);
     const comparisonRequest = resolveDashboardComparisonRequest(runs, selectedRunId, options.compareRunIds ?? []);
-    const [selectedRunDetail, comparison] = await Promise.all([
-        selectedRunId ? getExperimentRunDetail(store, tenantId, selectedRunId, { readOnly }) : Promise.resolve(null),
-        comparisonRequest.run_ids.length > 1
-            ? getExperimentComparison(
-                store,
-                tenantId,
-                comparisonRequest.run_ids,
-                comparisonRequest.source,
-                comparisonRequest.rationale,
-            )
-            : Promise.resolve(null),
-    ]);
+    const [selectedRunDetail, comparison] = lightweight
+        ? await Promise.all([
+            Promise.resolve(null),
+            Promise.resolve(null),
+        ])
+        : await Promise.all([
+            selectedRunId ? getExperimentRunDetail(store, tenantId, selectedRunId, { readOnly }) : Promise.resolve(null),
+            comparisonRequest.run_ids.length > 1
+                ? getExperimentComparison(
+                    store,
+                    tenantId,
+                    comparisonRequest.run_ids,
+                    comparisonRequest.source,
+                    comparisonRequest.rationale,
+                )
+                : Promise.resolve(null),
+        ]);
 
     return {
         tenant_id: tenantId,
@@ -1147,10 +1157,12 @@ export async function getModelRegistryControlPlaneSnapshot(
     tenantId: string,
     options: {
         readOnly?: boolean;
+        lightweight?: boolean;
     } = {},
 ): Promise<ModelRegistryControlPlaneSnapshot> {
     const readOnly = options.readOnly !== false;
-    const cacheKey = getModelRegistryControlPlaneCacheKey(tenantId, readOnly);
+    const lightweight = options.lightweight === true;
+    const cacheKey = getModelRegistryControlPlaneCacheKey(tenantId, readOnly, lightweight);
     const now = Date.now();
     const cached = modelRegistryControlPlaneSnapshotCache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
@@ -1163,9 +1175,11 @@ export async function getModelRegistryControlPlaneSnapshot(
     }
 
     const promise = (async () => {
-        await backfillSummaryExperimentRuns(store, tenantId, {
-            materializeGovernance: !readOnly,
-        });
+        if (!lightweight) {
+            await backfillSummaryExperimentRuns(store, tenantId, {
+                materializeGovernance: !readOnly,
+            });
+        }
 
         const [runs, registryRecords, promotionRequirements, routingPointers, registryAuditEvents] = await Promise.all([
             store.listExperimentRuns(tenantId, { limit: 500, includeSummaryOnly: true }),
@@ -1184,14 +1198,12 @@ export async function getModelRegistryControlPlaneSnapshot(
         const entries = await Promise.all(
             registryRecords.map(async (registry) => {
                 const run = runsById.get(registry.run_id) ?? null;
-                const [metrics, benchmarks, calibrationMetrics, adversarialMetrics, deploymentDecision] = await Promise.all([
-                    store.listExperimentMetrics(tenantId, registry.run_id, 2_000),
-                    store.listExperimentBenchmarks(tenantId, registry.run_id),
+                const [calibrationMetrics, adversarialMetrics, deploymentDecision] = await Promise.all([
                     store.getCalibrationMetrics(tenantId, registry.run_id),
                     store.getAdversarialMetrics(tenantId, registry.run_id),
                     store.getDeploymentDecision(tenantId, registry.run_id),
                 ]);
-                const latestMetric = metrics.at(-1) ?? null;
+                const latestMetric = run ? buildLatestMetricFromRunSummary(run) : null;
                 const requirements = requirementsByRunId.get(registry.run_id) ?? null;
                 const promotionGating = run == null
                     ? {
@@ -3374,10 +3386,10 @@ function hasCompleteMetricStream(
 }
 
 function hasTelemetrySignal(
-    _run: ExperimentRunRecord,
+    run: ExperimentRunRecord,
     metrics: ExperimentMetricRecord[],
 ): boolean {
-    const latest = metrics[metrics.length - 1] ?? null;
+    const latest = metrics[metrics.length - 1] ?? buildLatestMetricFromRunSummary(run);
     if (!latest) return false;
     return latest.train_loss != null ||
         latest.val_loss != null ||
@@ -3393,6 +3405,70 @@ function hasTelemetrySignal(
         latest.dangerous_false_reassurance_rate != null ||
         latest.abstain_accuracy != null ||
         latest.contradiction_detection_rate != null;
+}
+
+function buildDashboardMetricPreview(run: ExperimentRunRecord): ExperimentMetricRecord[] {
+    const latest = buildLatestMetricFromRunSummary(run);
+    return latest ? [latest] : [];
+}
+
+function buildLatestMetricFromRunSummary(run: ExperimentRunRecord): ExperimentMetricRecord | null {
+    const primaryValue = run.metric_primary_value;
+    const macroF1 = numberOrNull(run.safety_metrics.macro_f1) ?? primaryValue;
+    const valAccuracy = numberOrNull(run.safety_metrics.val_accuracy) ?? primaryValue;
+    const recallCritical = numberOrNull(run.safety_metrics.recall_critical);
+    const calibrationError = numberOrNull(run.safety_metrics.calibration_ece);
+    const adversarialScore = numberOrNull(run.safety_metrics.adversarial_score);
+    const falseNegativeCriticalRate = numberOrNull(run.safety_metrics.false_negative_critical_rate);
+    const dangerousFalseReassuranceRate = numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate);
+    const abstainAccuracy = numberOrNull(run.safety_metrics.abstain_accuracy);
+    const contradictionDetectionRate = numberOrNull(run.safety_metrics.contradiction_detection_rate);
+
+    const hasSignal = [
+        macroF1,
+        valAccuracy,
+        recallCritical,
+        calibrationError,
+        adversarialScore,
+        falseNegativeCriticalRate,
+        dangerousFalseReassuranceRate,
+        abstainAccuracy,
+        contradictionDetectionRate,
+    ].some((value) => value != null);
+
+    if (!hasSignal) {
+        return null;
+    }
+
+    const metricTimestamp = run.updated_at ?? run.ended_at ?? run.last_heartbeat_at ?? run.created_at;
+    return {
+        id: `summary_metric:${run.run_id}`,
+        tenant_id: run.tenant_id,
+        run_id: run.run_id,
+        epoch: run.epochs_completed,
+        global_step: null,
+        train_loss: numberOrNull(run.safety_metrics.train_loss),
+        val_loss: numberOrNull(run.safety_metrics.val_loss),
+        train_accuracy: numberOrNull(run.safety_metrics.train_accuracy),
+        val_accuracy: valAccuracy,
+        learning_rate: numberOrNull(run.safety_metrics.learning_rate),
+        gradient_norm: numberOrNull(run.safety_metrics.gradient_norm),
+        macro_f1: macroF1,
+        recall_critical: recallCritical,
+        calibration_error: calibrationError,
+        adversarial_score: adversarialScore,
+        false_negative_critical_rate: falseNegativeCriticalRate,
+        dangerous_false_reassurance_rate: dangerousFalseReassuranceRate,
+        abstain_accuracy: abstainAccuracy,
+        contradiction_detection_rate: contradictionDetectionRate,
+        wall_clock_time_seconds: null,
+        steps_per_second: numberOrNull(run.resource_usage.steps_per_second),
+        gpu_utilization: numberOrNull(run.resource_usage.gpu_utilization),
+        cpu_utilization: numberOrNull(run.resource_usage.cpu_utilization),
+        memory_utilization: numberOrNull(run.resource_usage.memory_utilization),
+        metric_timestamp: metricTimestamp,
+        created_at: metricTimestamp,
+    };
 }
 
 function isHealthyActiveRun(run: ExperimentRunRecord): boolean {

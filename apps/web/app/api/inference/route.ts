@@ -537,7 +537,7 @@ export async function POST(req: Request) {
             unavailable_reason: cireResult.unavailable_reason,
         };
 
-        await Promise.all([
+        runDetachedEffects(requestId, [
             settleNonCriticalEffect(
                 requestId,
                 'Clinical integrity logging',
@@ -915,4 +915,13 @@ async function settleNonCriticalEffect(
     } catch (error) {
         console.error(`[${requestId}] ${label} failed (non-fatal):`, error);
     }
+}
+
+function runDetachedEffects(
+    requestId: string,
+    effects: Promise<unknown>[],
+) {
+    void Promise.all(effects).catch((error) => {
+        console.error(`[${requestId}] Detached inference effects failed:`, error);
+    });
 }

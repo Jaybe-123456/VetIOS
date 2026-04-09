@@ -31,7 +31,7 @@ export default async function ModelRegistryPage() {
         ? await getModelRegistryControlPlaneSnapshot(
             createSupabaseExperimentTrackingStore(getSupabaseServer()),
             tenantId,
-            { readOnly: false },
+            { readOnly: true, lightweight: true },
         )
         : createEmptySnapshot();
 

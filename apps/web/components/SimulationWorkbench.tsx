@@ -162,6 +162,11 @@ export default function SimulationWorkbench({
         () => models.filter((model) => model.model_version && model.model_version !== activeModelVersion),
         [activeModelVersion, models],
     );
+    const regressionReady = Boolean(
+        activeModelVersion &&
+        candidateModelVersion &&
+        candidateModelVersion !== activeModelVersion,
+    );
 
     useEffect(() => {
         void bootstrapRef.current();
@@ -446,6 +451,16 @@ export default function SimulationWorkbench({
         setError(null);
         setProgress(null);
         setDetail(null);
+
+        if (mode === 'regression' && !regressionReady) {
+            setError(
+                activeModelVersion
+                    ? 'Select a candidate model different from the current production model before starting a regression simulation.'
+                    : 'The current production baseline model is still loading. Wait for the registry to resolve before starting a regression simulation.',
+            );
+            setBusy(false);
+            return;
+        }
 
         const request = buildSimulationRequest();
         if (mode === 'regression' && autoBlock) {
@@ -769,7 +784,7 @@ export default function SimulationWorkbench({
             <>
                 <Field label="BASELINE MODEL (PRODUCTION)">
                     <div className="border border-grid bg-dim px-3 py-3 font-mono text-sm text-foreground">
-                        {activeModelVersion} (CURRENT)
+                        {activeModelVersion ? `${activeModelVersion} (CURRENT)` : 'LOADING ACTIVE PRODUCTION MODEL...'}
                     </div>
                 </Field>
                 <Field label="CANDIDATE MODEL (TO TEST)">
@@ -800,8 +815,15 @@ export default function SimulationWorkbench({
                     ) : null}
                 </Field>
                 <PreviewBlock lines={[`AVAILABLE INFERENCE EVENTS: ${formatNumber(inferenceEventCount)}`]} />
+                {!regressionReady ? (
+                    <div className="font-mono text-[11px] text-muted">
+                        {activeModelVersion
+                            ? 'Choose a candidate model that differs from the current production baseline.'
+                            : 'Baseline model resolution is still in progress. Regression execution will unlock once the active production model loads.'}
+                    </div>
+                ) : null}
                 <div className="flex flex-wrap gap-2">
-                    <TerminalButton onClick={() => void submitSimulation()} disabled={busy || !candidateModelVersion || candidateModelVersion === activeModelVersion}>
+                    <TerminalButton onClick={() => void submitSimulation()} disabled={busy || !regressionReady}>
                         {busy ? 'RUNNING REGRESSION...' : '> RUN REGRESSION SIMULATION'}
                     </TerminalButton>
                 </div>
