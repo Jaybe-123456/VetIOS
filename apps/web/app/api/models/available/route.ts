@@ -35,35 +35,15 @@ export async function GET(req: Request) {
             requestedTenantId: requestedTenantId ?? undefined,
         });
 
-        let registryQuery = supabase
-            .from('model_registry')
-            .select('model_name,model_version,lifecycle_status,registry_role,updated_at,created_at,blocked,block_reason,blocked_at,blocked_by_simulation_id');
-        let inferenceQuery = supabase
-            .from('ai_inference_events')
-            .select('model_name,model_version,created_at')
-            .order('created_at', { ascending: false })
-            .limit(200);
-
-        if (actor.role !== 'system_admin' || tenantId) {
-            registryQuery = registryQuery.eq('tenant_id', tenantId);
-            inferenceQuery = inferenceQuery.eq('tenant_id', tenantId);
-        }
-
-        const [{ data: registryRows, error: registryError }, { data: inferenceRows, error: inferenceError }] = await Promise.all([
-            registryQuery,
-            inferenceQuery,
+        const tenantScope = actor.role !== 'system_admin' || tenantId ? tenantId : null;
+        const [registryRows, inferenceRows] = await Promise.all([
+            fetchRegistryRows(supabase, tenantScope),
+            fetchInferenceRows(supabase, tenantScope),
         ]);
 
-        if (registryError) {
-            throw registryError;
-        }
-        if (inferenceError) {
-            throw inferenceError;
-        }
-
         const availableModels = buildAvailableModelRows({
-            registryRows: (registryRows ?? []) as Array<Record<string, unknown>>,
-            inferenceRows: (inferenceRows ?? []) as Array<Record<string, unknown>>,
+            registryRows,
+            inferenceRows,
         });
 
         const response = NextResponse.json({
@@ -109,6 +89,73 @@ export async function GET(req: Request) {
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     }
+}
+
+async function fetchRegistryRows(
+    supabase: ReturnType<typeof getSupabaseServer>,
+    tenantId: string | null,
+) {
+    const enrichedSelect = 'model_name,model_version,lifecycle_status,registry_role,updated_at,created_at,blocked,block_reason,blocked_at,blocked_by_simulation_id';
+    const legacySelect = 'model_name,model_version,lifecycle_status,registry_role,updated_at,created_at';
+
+    const enriched = await applyTenantScope(
+        supabase.from('model_registry').select(enrichedSelect),
+        tenantId,
+    );
+
+    if (!enriched.error) {
+        return (enriched.data ?? []) as Array<Record<string, unknown>>;
+    }
+
+    if (isMissingRegistryColumn(enriched.error) || isMissingRegistryTable(enriched.error)) {
+        if (isMissingRegistryTable(enriched.error)) {
+            console.warn('[models/available] model_registry missing from schema cache, falling back to inference history only.');
+            return [];
+        }
+
+        const legacy = await applyTenantScope(
+            supabase.from('model_registry').select(legacySelect),
+            tenantId,
+        );
+        if (!legacy.error) {
+            console.warn('[models/available] model_registry is missing blocked-model columns; using legacy registry projection.');
+            return (legacy.data ?? []) as Array<Record<string, unknown>>;
+        }
+        if (isMissingRegistryTable(legacy.error)) {
+            console.warn('[models/available] model_registry missing from schema cache after legacy fallback, using inference history only.');
+            return [];
+        }
+        throw legacy.error;
+    }
+
+    throw enriched.error;
+}
+
+async function fetchInferenceRows(
+    supabase: ReturnType<typeof getSupabaseServer>,
+    tenantId: string | null,
+) {
+    const result = await applyTenantScope(
+        supabase
+            .from('ai_inference_events')
+            .select('model_name,model_version,created_at')
+            .order('created_at', { ascending: false })
+            .limit(200),
+        tenantId,
+    );
+
+    if (result.error) {
+        throw result.error;
+    }
+
+    return (result.data ?? []) as Array<Record<string, unknown>>;
+}
+
+function applyTenantScope<T extends { eq: (column: string, value: string) => T }>(
+    query: T,
+    tenantId: string | null,
+) {
+    return tenantId ? query.eq('tenant_id', tenantId) : query;
 }
 
 function buildAvailableModelRows(input: {
@@ -219,4 +266,32 @@ function parseTimestamp(value: string | null) {
     if (!value) return 0;
     const parsed = Date.parse(value);
     return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isMissingRegistryColumn(error: unknown) {
+    const message = readErrorMessage(error);
+    return message.includes('model_registry.blocked')
+        || message.includes('block_reason')
+        || message.includes('blocked_at')
+        || message.includes('blocked_by_simulation_id');
+}
+
+function isMissingRegistryTable(error: unknown) {
+    const message = readErrorMessage(error);
+    return message.includes("could not find the table 'public.model_registry'")
+        || message.includes('relation "public.model_registry" does not exist')
+        || message.includes('relation "model_registry" does not exist');
+}
+
+function readErrorMessage(error: unknown) {
+    if (error instanceof Error) {
+        return error.message.toLowerCase();
+    }
+    if (typeof error === 'object' && error !== null) {
+        const message = (error as { message?: unknown }).message;
+        if (typeof message === 'string') {
+            return message.toLowerCase();
+        }
+    }
+    return '';
 }
