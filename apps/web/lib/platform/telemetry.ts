@@ -21,6 +21,8 @@ export async function recordPlatformTelemetry(
         blocked: input.blocked,
         timestamp: input.timestamp,
         metadata: input.metadata ?? {},
+        simulation: input.simulation ?? false,
+        simulation_id: input.simulation_id ?? null,
     };
 
     const { data, error } = await client

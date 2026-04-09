@@ -16,6 +16,10 @@ type AvailableModelRow = {
     source: 'registry' | 'inference';
     last_seen_at: string | null;
     preferred: boolean;
+    blocked: boolean;
+    block_reason: string | null;
+    blocked_at: string | null;
+    blocked_by_simulation_id: string | null;
 };
 
 export async function GET(req: Request) {
@@ -33,7 +37,7 @@ export async function GET(req: Request) {
 
         let registryQuery = supabase
             .from('model_registry')
-            .select('model_name,model_version,lifecycle_status,registry_role,updated_at,created_at');
+            .select('model_name,model_version,lifecycle_status,registry_role,updated_at,created_at,blocked,block_reason,blocked_at,blocked_by_simulation_id');
         let inferenceQuery = supabase
             .from('ai_inference_events')
             .select('model_name,model_version,created_at')
@@ -120,10 +124,12 @@ function buildAvailableModelRows(input: {
         const lifecycleStatus = readText(row.lifecycle_status);
         const registryRole = readText(row.registry_role);
         const lastSeenAt = readText(row.updated_at) ?? readText(row.created_at);
+        const isBlocked = row.blocked === true;
         const nextPriority = computeModelPriority({
             source: 'registry',
             lifecycleStatus,
             registryRole,
+            blocked: isBlocked,
         });
         const nextTimestamp = parseTimestamp(lastSeenAt);
         const existing = models.get(modelVersion);
@@ -136,7 +142,11 @@ function buildAvailableModelRows(input: {
                 registry_role: registryRole,
                 source: 'registry',
                 last_seen_at: lastSeenAt,
-                preferred: nextPriority >= 4,
+                preferred: nextPriority >= 4 && !isBlocked,
+                blocked: isBlocked,
+                block_reason: readText(row.block_reason),
+                blocked_at: readText(row.blocked_at),
+                blocked_by_simulation_id: readText(row.blocked_by_simulation_id),
                 priority: nextPriority,
                 timestamp_ms: nextTimestamp,
             });
@@ -161,6 +171,10 @@ function buildAvailableModelRows(input: {
             source: 'inference',
             last_seen_at: lastSeenAt,
             preferred: false,
+            blocked: false,
+            block_reason: null,
+            blocked_at: null,
+            blocked_by_simulation_id: null,
             priority: nextPriority,
             timestamp_ms: parseTimestamp(lastSeenAt),
         });
@@ -179,7 +193,11 @@ function computeModelPriority(input: {
     source: 'registry' | 'inference';
     lifecycleStatus: string | null;
     registryRole: string | null;
+    blocked?: boolean;
 }) {
+    if (input.blocked) {
+        return -1;
+    }
     if (input.source === 'registry') {
         if (input.lifecycleStatus === 'staging' && input.registryRole === 'challenger') return 6;
         if (input.lifecycleStatus === 'candidate') return 5;

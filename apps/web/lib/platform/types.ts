@@ -66,6 +66,8 @@ export interface PlatformTelemetryRecord {
     blocked: boolean;
     timestamp: string;
     metadata: Record<string, unknown>;
+    simulation?: boolean;
+    simulation_id?: string | null;
     created_at?: string;
     updated_at?: string;
 }
@@ -145,14 +147,18 @@ export interface SimulationRecord {
     id: string;
     tenant_id: string;
     scenario_name: string;
-    mode: 'scenario_load' | 'adversarial' | 'regression';
-    status: 'queued' | 'running' | 'completed' | 'failed';
+    mode: 'load' | 'scenario_load' | 'adversarial' | 'regression';
+    status: 'pending' | 'queued' | 'running' | 'complete' | 'completed' | 'failed' | 'blocked';
     config: Record<string, unknown>;
+    results?: Record<string, unknown>;
     summary: Record<string, unknown>;
     completed: number;
     total: number;
     candidate_model_version: string | null;
     error_message: string | null;
+    started_at?: string | null;
+    completed_at?: string | null;
+    created_by?: string | null;
     created_at: string;
     updated_at: string;
 }

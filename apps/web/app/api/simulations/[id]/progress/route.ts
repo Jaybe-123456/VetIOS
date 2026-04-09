@@ -1,5 +1,7 @@
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { requirePlatformRequestContext } from '@/lib/platform/route';
+import { subscribeSimulationSignal } from '@/lib/platform/eventBus';
+import { assertSimulationTenantAccess, resolveSimulationProgress } from '@/lib/platform/simulations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,61 +25,104 @@ export async function GET(
         if (!resolvedTenantId) {
             return new Response('tenant_id is required for simulation progress.', { status: 400 });
         }
+        await assertSimulationTenantAccess(supabase, {
+            tenantId: resolvedTenantId,
+            simulationId: params.id,
+        });
 
         const encoder = new TextEncoder();
-        let intervalId: ReturnType<typeof setInterval> | null = null;
+        let unsubscribe: (() => void) | null = null;
+        let heartbeatId: ReturnType<typeof setInterval> | null = null;
+        let fallbackPollId: ReturnType<typeof setInterval> | null = null;
         let closed = false;
+        let pushInFlight = false;
+        let pushQueued = false;
 
         const stream = new ReadableStream<Uint8Array>({
             async start(controller) {
                 const pushProgress = async () => {
-                    const { data, error } = await supabase
-                        .from('simulations')
-                        .select('id,status,completed,total,summary,error_message')
-                        .eq('tenant_id', resolvedTenantId)
-                        .eq('id', params.id)
-                        .maybeSingle();
-
-                    if (error) {
-                        controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: error.message })}\n\n`));
+                    if (closed) return;
+                    if (pushInFlight) {
+                        pushQueued = true;
                         return;
                     }
+                    pushInFlight = true;
 
-                    controller.enqueue(encoder.encode(`data: ${JSON.stringify(data ?? null)}\n\n`));
+                    try {
+                        const progress = await resolveSimulationProgress(supabase, {
+                            tenantId: resolvedTenantId,
+                            simulationId: params.id,
+                        });
 
-                    if ((data as Record<string, unknown> | null)?.status === 'completed' || (data as Record<string, unknown> | null)?.status === 'failed') {
+                        if (!progress) {
+                            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message: 'Simulation not found.' })}\n\n`));
+                            if (!closed) {
+                                closed = true;
+                                unsubscribe?.();
+                                if (heartbeatId) clearInterval(heartbeatId);
+                                if (fallbackPollId) clearInterval(fallbackPollId);
+                                controller.close();
+                            }
+                            return;
+                        }
+
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify(progress)}\n\n`));
+
+                        if (progress.type === 'complete' || progress.type === 'error') {
+                            if (!closed) {
+                                closed = true;
+                                unsubscribe?.();
+                                if (heartbeatId) clearInterval(heartbeatId);
+                                if (fallbackPollId) clearInterval(fallbackPollId);
+                                controller.close();
+                            }
+                        }
+                    } catch (error) {
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'error', message: error instanceof Error ? error.message : 'Simulation progress failed.' })}\n\n`));
                         if (!closed) {
                             closed = true;
-                            if (intervalId) {
-                                clearInterval(intervalId);
-                                intervalId = null;
-                            }
+                            unsubscribe?.();
+                            if (heartbeatId) clearInterval(heartbeatId);
+                            if (fallbackPollId) clearInterval(fallbackPollId);
                             controller.close();
+                        }
+                    } finally {
+                        pushInFlight = false;
+                        if (pushQueued && !closed) {
+                            pushQueued = false;
+                            void pushProgress();
                         }
                     }
                 };
 
                 controller.enqueue(encoder.encode('retry: 2000\n\n'));
                 await pushProgress();
-                intervalId = setInterval(() => {
+                unsubscribe = subscribeSimulationSignal(resolvedTenantId, params.id, () => {
                     void pushProgress();
-                }, 2000);
+                });
+                heartbeatId = setInterval(() => {
+                    if (!closed) {
+                        controller.enqueue(encoder.encode(': keep-alive\n\n'));
+                    }
+                }, 15_000);
+                fallbackPollId = setInterval(() => {
+                    void pushProgress();
+                }, 5_000);
 
                 req.signal.addEventListener('abort', () => {
+                    if (closed) return;
                     closed = true;
-                    if (intervalId) {
-                        clearInterval(intervalId);
-                        intervalId = null;
-                    }
+                    unsubscribe?.();
+                    if (heartbeatId) clearInterval(heartbeatId);
+                    if (fallbackPollId) clearInterval(fallbackPollId);
                     controller.close();
                 });
             },
             cancel() {
                 closed = true;
-                if (intervalId) {
-                    clearInterval(intervalId);
-                    intervalId = null;
-                }
+                unsubscribe?.();
+                if (heartbeatId) clearInterval(heartbeatId);
+                if (fallbackPollId) clearInterval(fallbackPollId);
             },
         });
 
@@ -90,8 +135,11 @@ export async function GET(
             },
         });
     } catch (error) {
+        const status = typeof (error as { status?: number })?.status === 'number'
+            ? (error as { status: number }).status
+            : 401;
         return new Response(error instanceof Error ? error.message : 'Simulation progress stream failed.', {
-            status: 401,
+            status,
         });
     }
 }

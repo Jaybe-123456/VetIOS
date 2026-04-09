@@ -244,6 +244,10 @@ export interface ModelRegistryRecord {
     lineage: RegistryLineageRecord;
     rollback_metadata: RollbackMetadataRecord | null;
     artifact_path: string | null;
+    blocked?: boolean;
+    block_reason?: string | null;
+    blocked_at?: string | null;
+    blocked_by_simulation_id?: string | null;
     status: ModelRegistryStatus;
     role: ExperimentRegistryRole;
     created_at: string;

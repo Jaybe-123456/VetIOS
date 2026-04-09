@@ -204,7 +204,21 @@ export async function writeGovernanceAuditEvent(
     client: SupabaseClient,
     input: {
         tenantId: string;
-        eventType: 'policy_updated' | 'policy_applied' | 'request_blocked' | 'request_flagged' | 'model_version_changed' | 'governance_override';
+        eventType:
+            | 'policy_updated'
+            | 'policy_applied'
+            | 'request_blocked'
+            | 'request_flagged'
+            | 'model_version_changed'
+            | 'governance_override'
+            | 'simulation_started'
+            | 'simulation_complete'
+            | 'simulation_cancelled'
+            | 'model_blocked'
+            | 'model_unblocked'
+            | 'regression_check_passed'
+            | 'regression_threshold_exceeded'
+            | 'adversarial_suite_results';
         actor: string | null;
         payload: Record<string, unknown>;
     },
@@ -215,7 +229,7 @@ export async function writeGovernanceAuditEvent(
             tenant_id: input.tenantId,
             event_type: input.eventType,
             actor: input.actor,
-            payload: input.payload,
+            metadata: input.payload,
         })
         .select('*')
         .single();

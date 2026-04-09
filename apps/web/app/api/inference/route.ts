@@ -77,27 +77,37 @@ export async function GET(req: Request) {
         });
 
         const url = new URL(req.url);
+        const countOnly = url.searchParams.get('count') === 'true';
+        const requestedScope = url.searchParams.get('scope');
         const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? '20'), 100));
         const sort = url.searchParams.get('sort') ?? 'created_at:desc';
         const ascending = sort.endsWith(':asc');
 
-        let query = supabase
-            .from('ai_inference_events')
-            .select('id,tenant_id,model_name,model_version,input_signature,output_payload,confidence_score,created_at,flagged,flag_reason,blocked')
-            .order('created_at', { ascending })
-            .limit(limit);
+        if (requestedScope === 'all' && actor.role !== 'system_admin') {
+            throw new PlatformAuthError(403, 'system_admin_required', 'scope=all requires a system_admin actor.');
+        }
 
-        if (actor.role !== 'system_admin' || tenantId) {
+        let query = countOnly
+            ? supabase
+                .from('ai_inference_events')
+                .select('id', { count: 'exact', head: true })
+            : supabase
+                .from('ai_inference_events')
+                .select('id,tenant_id,model_name,model_version,input_signature,output_payload,confidence_score,created_at,flagged,flag_reason,blocked')
+                .order('created_at', { ascending })
+                .limit(limit);
+
+        if (requestedScope !== 'all' || actor.role !== 'system_admin' || tenantId) {
             query = query.eq('tenant_id', tenantId);
         }
 
-        const { data, error } = await query;
+        const { data, error, count } = await query;
         if (error) {
             throw error;
         }
 
         const response = NextResponse.json({
-            data: data ?? [],
+            data: countOnly ? { count: count ?? 0 } : data ?? [],
             meta: {
                 tenant_id: tenantId,
                 timestamp: new Date().toISOString(),
