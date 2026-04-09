@@ -31,7 +31,7 @@ export async function POST(req: Request) {
         }
 
         const body = parsed.data;
-        const baselineModel = readText(body.baseline_model);
+        const requestedBaselineModel = readText(body.baseline_model);
         const candidateModel = readText(body.candidate_model);
         const replayN = readNumber(body.replay_n);
         const thresholdPct = readNumber(body.threshold_pct);
@@ -42,8 +42,8 @@ export async function POST(req: Request) {
         }
         const tenantScope = requestedTenantScope === 'all' && actor.role === 'system_admin' ? 'all' : 'own';
 
-        if (!baselineModel || !candidateModel || replayN == null || thresholdPct == null || autoBlock == null) {
-            throw new PlatformAuthError(400, 'invalid_simulation', 'baseline_model, candidate_model, replay_n, threshold_pct, and auto_block are required.');
+        if (!candidateModel || replayN == null || thresholdPct == null || autoBlock == null) {
+            throw new PlatformAuthError(400, 'invalid_simulation', 'candidate_model, replay_n, threshold_pct, and auto_block are required.');
         }
         if (!Number.isInteger(replayN) || replayN < 10 || replayN > 200) {
             throw new PlatformAuthError(400, 'invalid_replay_n', 'replay_n must be an integer between 10 and 200.');
@@ -53,6 +53,10 @@ export async function POST(req: Request) {
         }
 
         const activeModel = await getActiveModelVersion(supabase, tenantId);
+        const baselineModel = requestedBaselineModel ?? activeModel;
+        if (!baselineModel) {
+            throw new PlatformAuthError(400, 'invalid_baseline', 'baseline_model is required when no active production model can be resolved for the tenant.');
+        }
         if (!activeModel || activeModel !== baselineModel) {
             throw new PlatformAuthError(400, 'invalid_baseline', 'baseline_model must be the current active production model.');
         }

@@ -28,7 +28,7 @@ export async function GET(req: Request) {
         selectedRunId,
         compareRunIds,
         runLimit: Number.isFinite(limit) ? Math.max(1, Math.min(limit, 200)) : 50,
-        readOnly: false,
+        readOnly: true,
     });
 
     const response = NextResponse.json({

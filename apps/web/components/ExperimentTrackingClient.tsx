@@ -1,6 +1,6 @@
 'use client';
 
-import { useDeferredValue, useEffect, useMemo, useState, useTransition, type ReactNode } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import { Activity, AlertTriangle, CheckCircle2, Gauge, RefreshCw, Search, ShieldAlert } from 'lucide-react';
 import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components/ui/terminal';
 import { ExperimentMetricChart } from '@/components/ExperimentMetricChart';
@@ -34,6 +34,7 @@ export function ExperimentTrackingClient({
     const [bootstrapMessage, setBootstrapMessage] = useState<string | null>(null);
     const [bootstrapError, setBootstrapError] = useState<string | null>(null);
     const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+    const hydratedInitialSnapshotRef = useRef(false);
 
     useEffect(() => {
         if (snapshot.summary.active_runs <= 0) return;
@@ -54,6 +55,17 @@ export function ExperimentTrackingClient({
             document.removeEventListener('visibilitychange', refresh);
         };
     }, [snapshot.summary.active_runs, selectedRunId, compareRunIds]);
+
+    useEffect(() => {
+        if (hydratedInitialSnapshotRef.current) return;
+        if (initialSnapshot.runs.length === 0) return;
+        if (initialSnapshot.selected_run_detail || initialSnapshot.comparison) return;
+        hydratedInitialSnapshotRef.current = true;
+
+        startRefreshTransition(() => {
+            void refreshSnapshot(selectedRunId ?? initialSnapshot.selected_run_id ?? null, compareRunIds, setSnapshot);
+        });
+    }, [compareRunIds, initialSnapshot.comparison, initialSnapshot.runs.length, initialSnapshot.selected_run_detail, initialSnapshot.selected_run_id, selectedRunId]);
 
     const filteredRuns = useMemo(
         () => snapshot.runs.filter((run) => matchesRunFilter(run, deferredQuery, statusFilter, taskFilter, includeSummaryOnly)),
