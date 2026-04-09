@@ -1,8 +1,12 @@
+import { randomUUID } from 'crypto';
 import { POST as runInferenceRoute } from '@/app/api/inference/route';
+import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { logInference } from '@/lib/logging/inferenceLogger';
+import { evaluateGovernancePolicyForInference, writeGovernanceAuditEvent } from '@/lib/platform/governance';
+import { runInferenceFlywheel } from '@/lib/platform/flywheel';
 import { dispatchWebhookEvent } from '@/lib/platform/webhooks';
 import { issueInternalPlatformToken } from '@/lib/platform/tenantContext';
-import { writeGovernanceAuditEvent } from '@/lib/platform/governance';
 import type { PlatformActor, SimulationRecord } from '@/lib/platform/types';
 
 type ScenarioPrompt = { prompt: string; weight: number };
@@ -180,7 +184,7 @@ async function runScenarioLoadSimulation(
 
     for (let index = 0; index < total; index += 1) {
         const prompt = weightedPromptPick(prompts);
-        const response = await executeSimulationInference(actor, record.tenant_id, {
+        const response = await executeSimulationInference(client, actor, record.tenant_id, {
             modelVersion: readText(config.model_version) ?? 'gpt-4o-mini',
             prompt,
         });
@@ -248,7 +252,7 @@ async function runAdversarialSimulation(
     for (const [index, promptRow] of prompts.entries()) {
         const prompt = readText(promptRow.prompt) ?? '';
         const category = readText(promptRow.category) ?? 'unknown';
-        const response = await executeSimulationInference(actor, record.tenant_id, {
+        const response = await executeSimulationInference(client, actor, record.tenant_id, {
             modelVersion,
             prompt,
         });
@@ -337,7 +341,7 @@ async function runRegressionSimulation(
             ?? asStringArray(inputSignature.symptoms).join(', ')
             ?? 'Simulation regression replay';
 
-        const response = await executeSimulationInference(actor, record.tenant_id, {
+        const response = await executeSimulationInference(client, actor, record.tenant_id, {
             modelVersion: candidateModelVersion,
             prompt,
         });
@@ -383,6 +387,7 @@ async function runRegressionSimulation(
 }
 
 async function executeSimulationInference(
+    client: SupabaseClient,
     actor: PlatformActor,
     tenantId: string,
     input: {
@@ -390,43 +395,197 @@ async function executeSimulationInference(
         prompt: string;
     },
 ) {
-    const token = issueInternalPlatformToken({
-        sub: actor.userId ?? 'simulation-runner',
-        tenantId,
-        role: actor.role,
-        scopes: ['inference:write', 'evaluation:write'],
-    });
-    const request = new Request('http://vetios.local/api/inference', {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'X-Tenant-Scope': tenantId,
-        },
-        body: JSON.stringify({
-            model: {
-                name: input.modelVersion,
-                version: input.modelVersion,
+    const requestPayload = buildSimulationInferenceRequest(input);
+
+    try {
+        const token = issueInternalPlatformToken({
+            sub: actor.userId ?? 'simulation-runner',
+            tenantId,
+            role: actor.role,
+            scopes: ['inference:write', 'evaluation:write'],
+        });
+        const response = await runInferenceRoute(new Request('http://vetios.local/api/inference', {
+            method: 'POST',
+            headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': 'application/json',
+                'X-Tenant-Scope': tenantId,
             },
-            input: {
-                input_signature: {
-                    species: 'canine',
-                    breed: null,
-                    symptoms: input.prompt.split(/[,.;\n]/).map((entry) => entry.trim()).filter(Boolean).slice(0, 8),
-                    metadata: {
-                        raw_note: input.prompt,
-                    },
+            body: JSON.stringify(requestPayload),
+        }));
+        const body = await parseRouteResponse(response);
+        return {
+            status: response.status,
+            body,
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!message.includes('VETIOS_JWT_SECRET')) {
+            throw error;
+        }
+    }
+
+    return executeSimulationInferenceDirect(client, actor, tenantId, requestPayload);
+}
+
+async function executeSimulationInferenceDirect(
+    client: SupabaseClient,
+    actor: PlatformActor,
+    tenantId: string,
+    requestPayload: Record<string, unknown>,
+) {
+    const governanceDecision = await evaluateGovernancePolicyForInference(client, {
+        actor,
+        tenantId,
+        requestBody: requestPayload,
+    });
+    if (governanceDecision.decision === 'block') {
+        return {
+            status: 403,
+            body: {
+                blocked: true,
+                reason: governanceDecision.reason,
+                policy_id: governanceDecision.policyId,
+                evaluation: null,
+                inference_latency_ms: 0,
+            },
+        };
+    }
+
+    const startedAt = Date.now();
+    const inferenceResult = await runInferencePipeline({
+        model: readText(asRecord(requestPayload.model).version) ?? 'gpt-4o-mini',
+        rawInput: asRecord(requestPayload.input),
+        inputMode: 'json',
+    });
+    const inferenceLatencyMs = Math.max(1, Date.now() - startedAt);
+    const prediction = asRecord(inferenceResult.output_payload);
+    const confidenceScore = readNumber(prediction.confidence_score)
+        ?? readNumber(asRecord(prediction.diagnosis).confidence_score)
+        ?? inferenceResult.confidence_score
+        ?? 0.5;
+    const contradictionAnalysis = asRecord(inferenceResult.contradiction_analysis);
+
+    let evaluation: { id: string | null; score: number; dataset_version: number | null } | null = null;
+    let flywheelError: string | null = null;
+
+    try {
+        const inferenceEventId = await logInference(client, {
+            id: randomUUID(),
+            tenant_id: tenantId,
+            user_id: actor.userId,
+            source_module: 'simulation_workbench',
+            model_name: readText(asRecord(requestPayload.model).name) ?? 'simulation',
+            model_version: readText(asRecord(requestPayload.model).version) ?? 'gpt-4o-mini',
+            input_signature: asRecord(asRecord(requestPayload.input).input_signature),
+            output_payload: prediction,
+            confidence_score: confidenceScore,
+            uncertainty_metrics: asRecord(inferenceResult.uncertainty_metrics),
+            compute_profile: asRecord(prediction.telemetry),
+            inference_latency_ms: inferenceLatencyMs,
+            blocked: false,
+            flagged: governanceDecision.flagged,
+            flag_reason: governanceDecision.reason,
+            blocked_reason: null,
+            governance_policy_id: governanceDecision.policyId,
+            orphaned: false,
+            orphaned_at: null,
+        });
+
+        const flywheel = await runInferenceFlywheel(client, {
+            actor,
+            tenantId,
+            inferenceEventId,
+            modelName: readText(asRecord(requestPayload.model).name) ?? 'simulation',
+            modelVersion: readText(asRecord(requestPayload.model).version) ?? 'gpt-4o-mini',
+            outputPayload: prediction,
+            rawOutput: JSON.stringify(prediction),
+            confidenceScore,
+            latencyMs: inferenceLatencyMs,
+            tokenCountInput: estimatePayloadTokens(requestPayload),
+            tokenCountOutput: estimatePayloadTokens(prediction),
+            flagged: governanceDecision.flagged,
+            blocked: false,
+            flagReason: governanceDecision.reason,
+            pipelineId: 'simulation',
+            metadata: {
+                source: 'simulation_workbench',
+            },
+        });
+        evaluation = {
+            id: flywheel.evaluation.id,
+            score: flywheel.evaluation.score,
+            dataset_version: flywheel.evaluation.dataset_version,
+        };
+    } catch (error) {
+        flywheelError = error instanceof Error ? error.message : 'Simulation flywheel processing failed.';
+        evaluation = {
+            id: null,
+            score: deriveFallbackEvaluationScore(confidenceScore, contradictionAnalysis, prediction),
+            dataset_version: null,
+        };
+    }
+
+    return {
+        status: 200,
+        body: {
+            prediction,
+            output: prediction,
+            confidence_score: confidenceScore,
+            contradiction_analysis: contradictionAnalysis,
+            differential_spread: prediction.differential_spread ?? null,
+            inference_latency_ms: inferenceLatencyMs,
+            evaluation,
+            flywheel_error: flywheelError,
+            blocked: false,
+            flag_reason: governanceDecision.flagged ? governanceDecision.reason : null,
+        },
+    };
+}
+
+function buildSimulationInferenceRequest(input: {
+    modelVersion: string;
+    prompt: string;
+}) {
+    return {
+        model: {
+            name: input.modelVersion,
+            version: input.modelVersion,
+        },
+        input: {
+            input_signature: {
+                species: 'canine',
+                breed: null,
+                symptoms: input.prompt.split(/[,.;\n]/).map((entry) => entry.trim()).filter(Boolean).slice(0, 8),
+                metadata: {
+                    raw_note: input.prompt,
                 },
             },
-        }),
-    });
-
-    const response = await runInferenceRoute(request);
-    const body = await parseRouteResponse(response);
-    return {
-        status: response.status,
-        body,
+        },
     };
+}
+
+function deriveFallbackEvaluationScore(
+    confidenceScore: number,
+    contradictionAnalysis: Record<string, unknown>,
+    outputPayload: Record<string, unknown>,
+) {
+    const contradictionScore = readNumber(contradictionAnalysis.contradiction_score) ?? 0;
+    const abstainRecommended = outputPayload.abstain_recommendation === true;
+    const competitiveDifferential = outputPayload.competitive_differential === true;
+    const adjusted = confidenceScore
+        - (contradictionScore * 0.35)
+        - (abstainRecommended ? 0.1 : 0)
+        - (competitiveDifferential ? 0.04 : 0);
+    return Math.max(0, Math.min(1, Number(adjusted.toFixed(4))));
+}
+
+function estimatePayloadTokens(value: unknown) {
+    const text = JSON.stringify(value);
+    if (!text || text.length === 0) {
+        return 0;
+    }
+    return Math.max(1, Math.ceil(text.length / 4));
 }
 
 async function parseRouteResponse(response: Response) {
