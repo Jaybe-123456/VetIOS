@@ -16,6 +16,7 @@ const SUPPORTED_FIELDS = [
     'SYMPTOM_VECTOR',
     'PHYSICAL_EXAM',
     'LAB_FINDINGS',
+    'IMAGING_FINDINGS',
     'RISK_FACTORS',
     'DIFFERENTIALS',
     'PRIMARY_CONDITION_CLASS',
@@ -63,6 +64,48 @@ const ADVERSARIAL_VARIANTS = [
         contradictorySignals: ['post-ictal phase omitted', 'owner reports brief collapse only'],
         noiseLevel: 0.50,
         expectedBehavior: 'differentiate_seizure_vs_syncope',
+    },
+    {
+        caseId: 'ADV-PNEU-001',
+        baseCaseId: 'PNEU-001',
+        contradictorySignals: ['cough retained', 'fever omitted', 'lung sounds normal', 'radiographs unavailable'],
+        noiseLevel: 0.55,
+        expectedBehavior: 'reduce_confidence_and_expand_differentials',
+    },
+    {
+        caseId: 'ADV-KC-001',
+        baseCaseId: 'KC-001',
+        contradictorySignals: ['boarding history omitted', 'cough retained', 'mild fever omitted'],
+        noiseLevel: 0.50,
+        expectedBehavior: 'consider_kennel_cough_but_rule_out_other_upper_airway_causes',
+    },
+    {
+        caseId: 'ADV-FURI-001',
+        baseCaseId: 'FURI-001',
+        contradictorySignals: ['ocular discharge removed', 'only sneezing and anorexia remain', 'cat exposure history unclear'],
+        noiseLevel: 0.45,
+        expectedBehavior: 'maintain_uri_differentials_without_overconfidence',
+    },
+    {
+        caseId: 'ADV-HW-001',
+        baseCaseId: 'HW-001',
+        contradictorySignals: ['antigen test unavailable', 'microfilariae not seen', 'cough and exercise intolerance remain'],
+        noiseLevel: 0.60,
+        expectedBehavior: 'avoid_false_certainty_and_recommend_cardiopulmonary_workup',
+    },
+    {
+        caseId: 'ADV-CPV-001',
+        baseCaseId: 'CPV-001',
+        contradictorySignals: ['bloody diarrhea omitted', 'vomiting and lethargy retained', 'recent vaccination introduces false positive concern'],
+        noiseLevel: 0.65,
+        expectedBehavior: 'consider_parvo_but_check_vaccine_timing_and_other_enteric_causes',
+    },
+    {
+        caseId: 'ADV-ADDI-001',
+        baseCaseId: 'ADDI-001',
+        contradictorySignals: ['bradycardia omitted', 'vomiting and diarrhea only', 'shock status not documented'],
+        noiseLevel: 0.60,
+        expectedBehavior: 'include_addisons_in_differentials_but_do_not_overcall_without_endocrine_support',
     },
 ];
 
@@ -349,6 +392,7 @@ function normalizeCase(entry, args) {
     const riskFactors = splitList(entry.RISK_FACTORS);
     const physicalExam = splitList(entry.PHYSICAL_EXAM);
     const labFindings = splitList(entry.LAB_FINDINGS);
+    const imagingFindings = splitList(entry.IMAGING_FINDINGS);
     const severity = normalizeSeverity(entry.SEVERITY);
     const emergencyLevel = mapEmergencyLevel(severity);
     const severityScore = mapSeverityScore(severity);
@@ -371,6 +415,7 @@ function normalizeCase(entry, args) {
             presenting_complaint: entry.PRESENTING_COMPLAINT || null,
             physical_exam: physicalExam,
             lab_findings: labFindings,
+            imaging_findings: imagingFindings,
             risk_factors: riskFactors,
             emergency_flags: emergencyFlags,
             source_topic: entry.SOURCE_TOPIC || null,
@@ -405,6 +450,7 @@ function normalizeCase(entry, args) {
             risk_factors: riskFactors,
             physical_exam: physicalExam,
             lab_findings: labFindings,
+            imaging_findings: imagingFindings,
             source_topic: entry.SOURCE_TOPIC || null,
             prognosis: entry.PROGNOSIS || null,
             initial_management: entry.INITIAL_MANAGEMENT || null,

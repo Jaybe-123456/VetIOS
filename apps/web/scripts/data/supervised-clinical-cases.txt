@@ -393,3 +393,425 @@ RECOMMENDED_TESTS: imaging; cytology or histopathology; CBC; biochemistry
 INITIAL_MANAGEMENT: staging workup; supportive care
 PROGNOSIS: Guarded to poor
 SOURCE_TOPIC: Introduction to oncology / Diseases of the liver in small animals
+
+CASE_ID: PNEU-001
+SPECIES: Dog
+BREED: French Bulldog
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: History of coughing and progressive breathing difficulty after living in a crowded poorly ventilated environment. Pre-existing airway compromise suspected.
+PRESENTING_COMPLAINT: Cough, dyspnea, fever, nasal discharge
+SYMPTOM_VECTOR: coughing; difficulty breathing; nasal discharge; fever; lethargy; loss of appetite; cyanosis; exercise intolerance; tachypnea
+PHYSICAL_EXAM: abnormal lung sounds; tachypnea; possible cyanosis
+LAB_FINDINGS: CBC changes; blood gas abnormalities possible; respiratory culture pending
+IMAGING_FINDINGS: thoracic radiographs suggest lower respiratory disease
+RISK_FACTORS: brachycephalic airway syndrome; overcrowded living conditions; possible immunocompromise
+DIFFERENTIALS: pneumonia; chronic bronchitis exacerbation; tracheal collapse; fungal pneumonia
+PRIMARY_CONDITION_CLASS: Lower respiratory infectious-inflammatory disease
+FINAL_DIAGNOSIS: Pneumonia
+SEVERITY: High
+EMERGENCY_FLAGS: cyanosis; tachypnea; respiratory distress
+SUPPORTING_EVIDENCE: coughing; difficulty breathing; fever; abnormal lung sounds; lower airway imaging changes
+RECOMMENDED_TESTS: physical examination; thoracic radiography; CBC; blood gas analysis; culture and sensitivity of respiratory secretions; PCR or cytology
+INITIAL_MANAGEMENT: broad-spectrum antibiotics initially; oxygen therapy; nebulization; hydration; tailor therapy to culture results
+PROGNOSIS: Variable depending on severity and cause
+SOURCE_TOPIC: Pneumonia
+
+CASE_ID: PNEU-002
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Puppy
+SEX: Female
+HISTORY: Recent vomiting episode followed by acute respiratory distress and cough.
+PRESENTING_COMPLAINT: Acute cough and breathing difficulty after aspiration event
+SYMPTOM_VECTOR: coughing; difficulty breathing; tachypnea; lethargy; loss of appetite
+PHYSICAL_EXAM: harsh lung sounds; respiratory distress
+LAB_FINDINGS: CBC changes possible
+IMAGING_FINDINGS: thoracic radiographs consistent with aspiration pneumonia
+RISK_FACTORS: aspiration of foreign material or vomit; young age
+DIFFERENTIALS: aspiration pneumonia; bacterial pneumonia; foreign body aspiration
+PRIMARY_CONDITION_CLASS: Lower respiratory disease
+FINAL_DIAGNOSIS: Aspiration pneumonia
+SEVERITY: Critical
+EMERGENCY_FLAGS: respiratory distress; tachypnea
+SUPPORTING_EVIDENCE: post-vomiting onset; acute dyspnea; thoracic radiographic changes
+RECOMMENDED_TESTS: thoracic radiography; CBC; blood gas analysis
+INITIAL_MANAGEMENT: oxygen therapy; hydration; antimicrobial coverage; supportive respiratory care
+PROGNOSIS: Guarded
+SOURCE_TOPIC: Pneumonia
+
+CASE_ID: KC-001
+SPECIES: Dog
+BREED: Golden Retriever
+AGE_GROUP: Young Adult
+SEX: Female
+HISTORY: Persistent dry hacking cough after recent boarding kennel stay.
+PRESENTING_COMPLAINT: Hacking cough, gagging, mild nasal discharge
+SYMPTOM_VECTOR: hacking cough; gagging; retching; nasal discharge; mild fever; lethargy; loss of appetite
+PHYSICAL_EXAM: tracheal palpation induces coughing; lung sounds may be normal
+LAB_FINDINGS: nasal or throat swab pending
+RISK_FACTORS: high-density housing; boarding stress; poor ventilation exposure
+DIFFERENTIALS: kennel cough; early pneumonia; tracheal irritation
+PRIMARY_CONDITION_CLASS: Upper respiratory infectious disease
+FINAL_DIAGNOSIS: Infectious tracheobronchitis (kennel cough)
+SEVERITY: Moderate
+EMERGENCY_FLAGS: persistent cough; worsening respiratory signs
+SUPPORTING_EVIDENCE: recent boarding exposure; hacking cough; tracheal palpation induces cough
+RECOMMENDED_TESTS: clinical diagnosis; nasal or throat swab; thoracic radiographs if complications suspected
+INITIAL_MANAGEMENT: rest; hydration; cough suppressants; antibiotics if bacterial infection suspected; isolation
+PROGNOSIS: Good
+SOURCE_TOPIC: Infectious tracheobronchitis (Kennel cough)
+
+CASE_ID: KC-002
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Cough worsens with excitement and exercise after contact with multiple dogs in shelter setting.
+PRESENTING_COMPLAINT: Exercise-triggered cough and retching
+SYMPTOM_VECTOR: hacking cough; retching; nasal discharge; lethargy
+PHYSICAL_EXAM: tracheal sensitivity
+LAB_FINDINGS: culture or sensitivity pending
+IMAGING_FINDINGS: chest radiographs used to rule out pneumonia if needed
+RISK_FACTORS: shelter exposure; airborne droplets; direct dog contact
+DIFFERENTIALS: kennel cough; pneumonia; tracheal collapse
+PRIMARY_CONDITION_CLASS: Upper respiratory infectious disease
+FINAL_DIAGNOSIS: Infectious tracheobronchitis (kennel cough)
+SEVERITY: Moderate
+EMERGENCY_FLAGS: cough worsens with exercise
+SUPPORTING_EVIDENCE: shelter exposure; exercise/excitement-triggered cough; direct dog contact
+RECOMMENDED_TESTS: clinical assessment; tracheal palpation; consider chest radiographs
+INITIAL_MANAGEMENT: exercise restriction; hydration; monitor for secondary infection
+PROGNOSIS: Good
+SOURCE_TOPIC: Infectious tracheobronchitis (Kennel cough)
+
+CASE_ID: FURI-001
+SPECIES: Cat
+BREED: Domestic Short Hair
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Recent exposure to other cats. Acute onset sneezing, ocular discharge, and reduced appetite.
+PRESENTING_COMPLAINT: Sneezing, nasal and ocular discharge, conjunctivitis
+SYMPTOM_VECTOR: fever; sneezing; serous to mucopurulent nasal discharge; conjunctivitis; hypersalivation; cough; loss of appetite
+PHYSICAL_EXAM: conjunctivitis; rhinitis; mild fever
+LAB_FINDINGS: PCR pending from conjunctival or oropharyngeal swabs
+RISK_FACTORS: contact with infected cats; carrier exposure; overcrowding
+DIFFERENTIALS: FHV-1 infection; FCV infection; chlamydophila-associated URI; bacterial secondary infection
+PRIMARY_CONDITION_CLASS: Upper respiratory viral-bacterial syndrome
+FINAL_DIAGNOSIS: Feline upper respiratory disease complex
+SEVERITY: High
+EMERGENCY_FLAGS: anorexia; dehydration risk
+SUPPORTING_EVIDENCE: sneezing; nasal discharge; conjunctivitis; cat exposure history
+RECOMMENDED_TESTS: clinical diagnosis; conjunctival or oropharyngeal swabs; PCR; cytology if indicated
+INITIAL_MANAGEMENT: supportive care; hydration; nutrition; clean exudate; doxycycline or other indicated antibiotic in severe or secondary bacterial cases
+PROGNOSIS: Good in acute cases
+SOURCE_TOPIC: Feline upper respiratory disease
+
+CASE_ID: FURI-002
+SPECIES: Cat
+BREED: Domestic Short Hair
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Chronic intermittent nasal discharge following prior respiratory infection.
+PRESENTING_COMPLAINT: Persistent nasal discharge and reduced appetite
+SYMPTOM_VECTOR: chronic nasal discharge; intermittent upper respiratory signs; loss of appetite
+PHYSICAL_EXAM: chronic rhinitis signs
+LAB_FINDINGS: PCR or repeat swabs considered; secondary bacterial infection possible
+RISK_FACTORS: carrier state; persistent FHV-associated mucosal damage; possible immunosuppression
+DIFFERENTIALS: chronic FHV-associated rhinitis; secondary bacterial infection; chronic carrier state
+PRIMARY_CONDITION_CLASS: Chronic upper respiratory syndrome
+FINAL_DIAGNOSIS: Chronic feline upper respiratory disease
+SEVERITY: Moderate
+EMERGENCY_FLAGS: persistent discharge; reduced quality of life
+SUPPORTING_EVIDENCE: history of prior URI; chronic nasal discharge; possible carrier state
+RECOMMENDED_TESTS: clinical reassessment; PCR if needed; evaluation for secondary bacterial infection
+INITIAL_MANAGEMENT: vaporizer treatments; saline; control secondary infection; consider lysine per document approach
+PROGNOSIS: Good quality of life possible with support
+SOURCE_TOPIC: Feline upper respiratory disease
+
+CASE_ID: CARD-001
+SPECIES: Dog
+BREED: Cavalier King Charles Spaniel
+AGE_GROUP: Senior
+SEX: Male
+HISTORY: Progressive nocturnal coughing, exercise intolerance, and weight loss with fluid accumulation signs.
+PRESENTING_COMPLAINT: Nocturnal cough and exercise intolerance
+SYMPTOM_VECTOR: coughing; exercise intolerance; anorexia; dullness; weight loss; ascites; cyanosis; jugular pulsation
+PHYSICAL_EXAM: cardiac murmur or arrhythmia on auscultation; ascites possible; cyanosis possible
+LAB_FINDINGS: ECG changes possible
+IMAGING_FINDINGS: thoracic radiography may show cardiomegaly or pulmonary fluid; echocardiography indicated
+RISK_FACTORS: acquired heart disease; possible valvular disease
+DIFFERENTIALS: valvular disease; myocardial disease; heartworm disease; congestive heart failure
+PRIMARY_CONDITION_CLASS: Cardiovascular disease
+FINAL_DIAGNOSIS: Acquired heart disease with congestive heart failure pattern
+SEVERITY: High
+EMERGENCY_FLAGS: ascites; cyanosis; exercise intolerance
+SUPPORTING_EVIDENCE: nocturnal cough; jugular pulsation; ascites; arrhythmia or murmur on exam
+RECOMMENDED_TESTS: clinical examination; auscultation; thoracic radiography; electrocardiography; echocardiography
+INITIAL_MANAGEMENT: diuretics; ACE inhibitor; digoxin where indicated; oxygen support; nutritional management
+PROGNOSIS: Variable
+SOURCE_TOPIC: Cardiovascular diseases
+
+CASE_ID: HW-001
+SPECIES: Dog
+BREED: German Shepherd
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Lives in mosquito-endemic area without consistent preventive dosing. Progressive cough and exercise intolerance.
+PRESENTING_COMPLAINT: Cough, fainting episodes, exercise intolerance
+SYMPTOM_VECTOR: cough; exercise intolerance; fainting; coughing up blood; congestive heart failure
+PHYSICAL_EXAM: possible heart murmur; reduced exercise capacity
+LAB_FINDINGS: microfilariae may be present on smear; antigen positive after 6 months; anemia; eosinophilia
+IMAGING_FINDINGS: radiography may show lung damage and cardiac enlargement; echocardiography may suggest pulmonary hypertension
+RISK_FACTORS: mosquito exposure; missed preventive doses
+DIFFERENTIALS: heartworm disease; pulmonary hypertension; congestive heart failure
+PRIMARY_CONDITION_CLASS: Parasitic cardiopulmonary disease
+FINAL_DIAGNOSIS: Canine heartworm disease
+SEVERITY: High
+EMERGENCY_FLAGS: fainting; hemoptysis; CHF signs
+SUPPORTING_EVIDENCE: mosquito exposure; cough; exercise intolerance; positive antigen or microfilariae testing
+RECOMMENDED_TESTS: direct smear for microfilariae; antigen test; radiography; echocardiography; hematology
+INITIAL_MANAGEMENT: stabilize if symptomatic; doxycycline; macrocyclic lactone preventive; melarsomine protocol in dogs; activity restriction
+PROGNOSIS: Variable to guarded
+SOURCE_TOPIC: Heartworm
+
+CASE_ID: HW-002
+SPECIES: Cat
+BREED: Domestic Short Hair
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Outdoor cat with respiratory signs in mosquito-rich area. Heartworm disease suspected.
+PRESENTING_COMPLAINT: Cough and respiratory distress
+SYMPTOM_VECTOR: cough; respiratory signs
+PHYSICAL_EXAM: respiratory distress possible
+LAB_FINDINGS: serologic monitoring indicated
+IMAGING_FINDINGS: ultrasonography may be needed to localize worms
+RISK_FACTORS: mosquito exposure
+DIFFERENTIALS: feline heartworm disease; asthma-like respiratory disease; other respiratory disease
+PRIMARY_CONDITION_CLASS: Parasitic cardiopulmonary disease
+FINAL_DIAGNOSIS: Feline heartworm-associated disease suspicion
+SEVERITY: High
+EMERGENCY_FLAGS: respiratory distress
+SUPPORTING_EVIDENCE: mosquito exposure; respiratory signs; cat species treatment constraints
+RECOMMENDED_TESTS: serologic retesting; ultrasonography if worm localization possible
+INITIAL_MANAGEMENT: supportive corticosteroids; bronchodilators; oxygen; fluids; doxycycline as considered in document context
+PROGNOSIS: Guarded
+SOURCE_TOPIC: Heartworm
+
+CASE_ID: SALM-001
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: History of contaminated feed exposure with acute bloody large-bowel diarrhea and fever.
+PRESENTING_COMPLAINT: Acute diarrhea with blood and tenesmus
+SYMPTOM_VECTOR: acute diarrhea; fever; vomiting; inappetence; mucus in stool; frank blood; tenesmus
+PHYSICAL_EXAM: dehydration possible
+LAB_FINDINGS: fecal smear pending; fecal culture pending
+RISK_FACTORS: fecal-oral transmission; ingestion of contaminated feed
+DIFFERENTIALS: salmonellosis; campylobacteriosis; clostridial colitis
+PRIMARY_CONDITION_CLASS: Bacterial gastrointestinal disease
+FINAL_DIAGNOSIS: Salmonellosis
+SEVERITY: High
+EMERGENCY_FLAGS: bloody diarrhea; tenesmus; fever
+SUPPORTING_EVIDENCE: contaminated feed history; acute/chronic diarrhea; blood and mucus in stool
+RECOMMENDED_TESTS: clinical assessment; fecal smear; fecal culture
+INITIAL_MANAGEMENT: supportive care; culture and sensitivity guided antibiotics in moderate to severe cases
+PROGNOSIS: Good with GI involvement, guarded if septicemia
+SOURCE_TOPIC: Salmonellosis
+
+CASE_ID: CAMPY-001
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Young
+SEX: Female
+HISTORY: Acute onset diarrhea and vomiting after suspected contaminated feed exposure.
+PRESENTING_COMPLAINT: Diarrhea, vomiting, tenesmus
+SYMPTOM_VECTOR: acute diarrhea; vomiting; mucus in stool; frank blood; tenesmus
+PHYSICAL_EXAM: dehydration possible
+LAB_FINDINGS: fecal smear pending; fecal culture pending
+RISK_FACTORS: fecal-oral transmission; contaminated feed
+DIFFERENTIALS: campylobacteriosis; salmonellosis; clostridial disease
+PRIMARY_CONDITION_CLASS: Bacterial gastrointestinal disease
+FINAL_DIAGNOSIS: Campylobacteriosis
+SEVERITY: Moderate
+EMERGENCY_FLAGS: bloody stool; tenesmus; dehydration risk
+SUPPORTING_EVIDENCE: acute diarrhea; vomiting; large bowel signs
+RECOMMENDED_TESTS: clinical assessment; fecal smear; fecal culture
+INITIAL_MANAGEMENT: supportive care; erythromycin based on document guidance and culture context
+PROGNOSIS: Good with GI involvement, guarded if septicemia
+SOURCE_TOPIC: Campylobacteriosis
+
+CASE_ID: CLOST-001
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Sudden hemorrhagic diarrhea after suspected feed contamination.
+PRESENTING_COMPLAINT: Acute hemorrhagic diarrhea
+SYMPTOM_VECTOR: acute hemorrhagic diarrhea; mucoid diarrhea possible
+PHYSICAL_EXAM: dehydration possible
+LAB_FINDINGS: fecal smear may show leukocytes and spore-forming bacteria; fecal culture pending
+RISK_FACTORS: fecal-oral transmission; contaminated feed; toxigenic clostridial strains
+DIFFERENTIALS: clostridial disease; acute hemorrhagic diarrhea syndrome; salmonellosis
+PRIMARY_CONDITION_CLASS: Bacterial gastrointestinal disease
+FINAL_DIAGNOSIS: Clostridial disease
+SEVERITY: High
+EMERGENCY_FLAGS: acute hemorrhagic diarrhea
+SUPPORTING_EVIDENCE: peracute hemorrhagic or chronic mucoid diarrhea; spore-forming bacteria context
+RECOMMENDED_TESTS: clinical assessment; fecal smear; fecal culture; cytotoxin assay if C. difficile suspected
+INITIAL_MANAGEMENT: amoxycillin or ampicillin or metronidazole depending on organism context; supportive care; high-fibre diet in chronic cases
+PROGNOSIS: Good in mild cases, guarded if severe
+SOURCE_TOPIC: Clostridial disease
+
+CASE_ID: YERS-001
+SPECIES: Cat
+BREED: Domestic Short Hair
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Outdoor hunting cat with possible contaminated rodent or bird ingestion.
+PRESENTING_COMPLAINT: Diarrhea, vomiting, weight loss, jaundice
+SYMPTOM_VECTOR: diarrhea; weight loss; vomiting; icterus
+PHYSICAL_EXAM: poor body condition; possible jaundice
+LAB_FINDINGS: fecal culture pending; biopsy may be needed
+RISK_FACTORS: ingestion of contaminated rodents or birds
+DIFFERENTIALS: yersiniosis; salmonellosis; hepatic disease
+PRIMARY_CONDITION_CLASS: Bacterial gastrointestinal-hepatic disease
+FINAL_DIAGNOSIS: Yersinia pseudotuberculosis infection
+SEVERITY: High
+EMERGENCY_FLAGS: icterus; progressive weight loss
+SUPPORTING_EVIDENCE: rodent or bird ingestion; GI signs with hepatic involvement
+RECOMMENDED_TESTS: clinical assessment; fecal culture; biopsy of affected tissues
+INITIAL_MANAGEMENT: long-term trimethoprim/sulphonamide per document guidance
+PROGNOSIS: Guarded in cats
+SOURCE_TOPIC: Yersiniosis
+
+CASE_ID: YERS-002
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Young
+SEX: Male
+HISTORY: Diet history includes raw pork exposure.
+PRESENTING_COMPLAINT: Mucoid diarrhea and tenesmus
+SYMPTOM_VECTOR: mucoid diarrhea; tenesmus
+LAB_FINDINGS: fecal culture pending
+RISK_FACTORS: raw pork ingestion
+DIFFERENTIALS: yersiniosis; campylobacteriosis; colitis
+PRIMARY_CONDITION_CLASS: Bacterial gastrointestinal disease
+FINAL_DIAGNOSIS: Yersinia enterocolitica infection
+SEVERITY: Moderate
+EMERGENCY_FLAGS: tenesmus
+SUPPORTING_EVIDENCE: raw pork exposure; mucoid diarrhea in young dog
+RECOMMENDED_TESTS: clinical assessment; fecal culture
+INITIAL_MANAGEMENT: culture and sensitivity guided treatment
+PROGNOSIS: Good
+SOURCE_TOPIC: Yersiniosis
+
+CASE_ID: BPI-001
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Puppy
+SEX: Male
+HISTORY: Very young animal with acute anorexia, diarrhea, lethargy, and concurrent illness.
+PRESENTING_COMPLAINT: Rapidly progressive enterocolitis syndrome
+SYMPTOM_VECTOR: acute anorexia; diarrhea; lethargy
+PHYSICAL_EXAM: depression; weakness
+LAB_FINDINGS: antemortem diagnosis difficult
+RISK_FACTORS: puppy age; concurrent disease
+DIFFERENTIALS: Bacillus piliformis infection; acute hemorrhagic enterocolitis; parvoviral enteritis
+PRIMARY_CONDITION_CLASS: Severe bacterial enterocolitis
+FINAL_DIAGNOSIS: Bacillus piliformis infection
+SEVERITY: Critical
+EMERGENCY_FLAGS: very rapid deterioration; death risk within 48 hours
+SUPPORTING_EVIDENCE: puppy age; acute anorexia; diarrhea; lethargy; difficult antemortem diagnosis
+RECOMMENDED_TESTS: clinical suspicion; postmortem confirmation often needed
+INITIAL_MANAGEMENT: aggressive supportive care
+PROGNOSIS: Poor
+SOURCE_TOPIC: Bacillus piliformis infection
+
+CASE_ID: CPV-001
+SPECIES: Dog
+BREED: Rottweiler
+AGE_GROUP: Puppy
+SEX: Male
+HISTORY: Unvaccinated young dog with sudden onset vomiting and foul-smelling bloody diarrhea.
+PRESENTING_COMPLAINT: Acute hemorrhagic vomiting and diarrhea
+SYMPTOM_VECTOR: lethargy; vomiting; loss of appetite; bloody foul-smelling diarrhea; dehydration
+PHYSICAL_EXAM: dehydration; depression
+LAB_FINDINGS: fecal ELISA positive possible; leukopenia possible
+RISK_FACTORS: age less than one year; high-risk breed; poor vaccination; stress; fecal contaminated fomites
+DIFFERENTIALS: canine parvovirus; coronavirus enteritis; acute hemorrhagic enteritis
+PRIMARY_CONDITION_CLASS: Viral gastrointestinal disease
+FINAL_DIAGNOSIS: Canine parvoviral enteritis
+SEVERITY: Critical
+EMERGENCY_FLAGS: dehydration; bloody diarrhea; sepsis risk
+SUPPORTING_EVIDENCE: young age; poor vaccination; sudden onset vomiting; characteristic foul-smelling bloody diarrhea; leukopenia possible
+RECOMMENDED_TESTS: history and clinical signs; fecal ELISA; hemagglutination or other viral testing; CBC
+INITIAL_MANAGEMENT: aggressive fluid and electrolyte replacement; broad-spectrum antibiotics; antiemetics; colloidal therapy if indicated
+PROGNOSIS: Guarded to good if early supportive survival window is reached
+SOURCE_TOPIC: Canine parvoviral enteritis
+
+CASE_ID: CCOV-001
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Young
+SEX: Female
+HISTORY: Contact with infective feces before onset of enteric signs.
+PRESENTING_COMPLAINT: Vomiting and yellow-orange watery diarrhea
+SYMPTOM_VECTOR: anorexia; depression; vomiting; yellow-orange watery diarrhea; bloody diarrhea possible
+PHYSICAL_EXAM: dehydration possible
+LAB_FINDINGS: virus isolation or electron microscopy considered
+RISK_FACTORS: contact with infective feces
+DIFFERENTIALS: canine coronavirus enteritis; parvoviral enteritis; dietary enteritis
+PRIMARY_CONDITION_CLASS: Viral gastrointestinal disease
+FINAL_DIAGNOSIS: Canine coronavirus enteritis
+SEVERITY: Moderate
+EMERGENCY_FLAGS: dehydration risk
+SUPPORTING_EVIDENCE: contact with infective feces; yellow-orange watery or bloody diarrhea; vomiting
+RECOMMENDED_TESTS: electron microscopy; virus isolation
+INITIAL_MANAGEMENT: symptomatic treatment; fluid support
+PROGNOSIS: Good to fair
+SOURCE_TOPIC: Canine coronavirus enteritis
+
+CASE_ID: ROTA-001
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Young
+SEX: Female
+HISTORY: Young animal with short-duration acute enteritis and diarrhea.
+PRESENTING_COMPLAINT: Short-duration diarrhea
+SYMPTOM_VECTOR: acute enteritis; diarrhea
+PHYSICAL_EXAM: mild dehydration possible
+RISK_FACTORS: young age
+DIFFERENTIALS: rotavirus enteritis; mild viral enteritis
+PRIMARY_CONDITION_CLASS: Viral gastrointestinal disease
+FINAL_DIAGNOSIS: Rotaviral enteritis
+SEVERITY: Low
+EMERGENCY_FLAGS:
+SUPPORTING_EVIDENCE: young age; short duration diarrhea
+RECOMMENDED_TESTS: clinical assessment
+INITIAL_MANAGEMENT: fluid therapy; dietary management
+PROGNOSIS: Good
+SOURCE_TOPIC: Canine and feline rotavirus
+
+CASE_ID: ADDI-001
+SPECIES: Dog
+BREED: Standard Poodle
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Acute collapse-type presentation with severe dehydration, shock, slow heart rate, vomiting, and diarrhea. Adrenal insufficiency suspected.
+PRESENTING_COMPLAINT: Collapse, vomiting, diarrhea, profound weakness
+SYMPTOM_VECTOR: severe dehydration; shock; slow heart rate; vomiting; diarrhea
+PHYSICAL_EXAM: bradycardia; dehydration; shock
+LAB_FINDINGS: ACTH stimulation test indicated
+RISK_FACTORS: immune-mediated adrenal cortex destruction suspected
+DIFFERENTIALS: Addisonian crisis; acute gastroenteric collapse; shock of other cause
+PRIMARY_CONDITION_CLASS: Endocrine emergency
+FINAL_DIAGNOSIS: Canine hypoadrenocorticism (Addison's disease)
+SEVERITY: Critical
+EMERGENCY_FLAGS: shock; bradycardia; severe dehydration
+SUPPORTING_EVIDENCE: acute severe dehydration; shock; slow heart rate; vomiting; diarrhea; adrenal insufficiency framework
+RECOMMENDED_TESTS: ACTH stimulation test; baseline biochemical and electrolyte assessment
+INITIAL_MANAGEMENT: immediate stabilization; fluid resuscitation; confirm endocrine diagnosis
+PROGNOSIS: Guarded acutely, improved with rapid recognition
+SOURCE_TOPIC: Canine hypoadrenocorticism (Addison's disease)
