@@ -1,0 +1,395 @@
+CASE_ID: ALF-001
+SPECIES: Dog
+BREED: Labrador Retriever
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Acute onset over 48 hours. Possible ingestion of moldy feed. Reduced appetite and progressive weakness.
+PRESENTING_COMPLAINT: Vomiting, lethargy, jaundice, weakness
+SYMPTOM_VECTOR: vomiting; lethargy; inappetence; weakness; dehydration; icterus; hypoglycemia; neurological depression
+PHYSICAL_EXAM: jaundice; dehydration; depressed mentation
+LAB_FINDINGS: ALT markedly elevated; AST elevated; ALP elevated; GGT elevated; bilirubin elevated; ammonia elevated; PT prolonged
+RISK_FACTORS: toxin exposure; contaminated feed
+DIFFERENTIALS: aflatoxicosis; drug-induced hepatotoxicity; leptospirosis; infectious canine hepatitis
+PRIMARY_CONDITION_CLASS: Hepatic failure
+FINAL_DIAGNOSIS: Acute liver failure
+SEVERITY: Critical
+EMERGENCY_FLAGS: coagulopathy; hepatic encephalopathy; hypoglycemia
+SUPPORTING_EVIDENCE: icterus; coagulopathy; neurological dysfunction; elevated liver enzymes; hyperbilirubinemia
+RECOMMENDED_TESTS: CBC; serum biochemistry; coagulation profile; ammonia; bilirubin; abdominal ultrasound
+INITIAL_MANAGEMENT: intravenous fluids; maintain normoglycemia; correct electrolyte abnormalities; hepatic antioxidants; manage complications
+PROGNOSIS: Guarded to poor depending on cause
+SOURCE_TOPIC: Acute liver failure in dogs and cats
+
+CASE_ID: ALF-002
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Recent exposure to carprofen. Acute deterioration with anorexia and vomiting.
+PRESENTING_COMPLAINT: Vomiting and jaundice after medication exposure
+SYMPTOM_VECTOR: vomiting; anorexia; lethargy; weakness; icterus
+PHYSICAL_EXAM: jaundice; dullness; dehydration
+LAB_FINDINGS: ALT high; AST high; bilirubin high; coagulation times mildly prolonged
+RISK_FACTORS: recent hepatotoxic drug exposure
+DIFFERENTIALS: acute liver failure; aflatoxicosis; leptospirosis; extrahepatic bile obstruction
+PRIMARY_CONDITION_CLASS: Toxic hepatopathy
+FINAL_DIAGNOSIS: Drug-induced hepatotoxicity with acute liver failure pattern
+SEVERITY: High
+EMERGENCY_FLAGS: worsening jaundice; coagulopathy risk
+SUPPORTING_EVIDENCE: drug exposure history; hepatocellular enzyme elevation; hyperbilirubinemia
+RECOMMENDED_TESTS: serum biochemistry; coagulation profile; bilirubin; ammonia; urinalysis
+INITIAL_MANAGEMENT: discontinue offending drug; supportive fluids; monitor coagulation; nutritional support
+PROGNOSIS: Variable
+SOURCE_TOPIC: Acute liver failure in dogs and cats
+
+CASE_ID: ALF-003
+SPECIES: Dog
+BREED: German Shepherd
+AGE_GROUP: Young Adult
+SEX: Male
+HISTORY: Exposure to stagnant water. Acute illness with fever and vomiting before jaundice developed.
+PRESENTING_COMPLAINT: Fever, vomiting, jaundice, weakness
+SYMPTOM_VECTOR: fever; vomiting; lethargy; icterus; weakness
+PHYSICAL_EXAM: pyrexia; jaundice; dehydration
+LAB_FINDINGS: bilirubin elevated; ALT elevated; AST elevated; renal values abnormal
+RISK_FACTORS: exposure to contaminated water
+DIFFERENTIALS: leptospirosis; acute liver failure; babesiosis; sepsis
+PRIMARY_CONDITION_CLASS: Infectious systemic hepatopathy
+FINAL_DIAGNOSIS: Suspected leptospirosis with hepatic involvement
+SEVERITY: High
+EMERGENCY_FLAGS: jaundice; possible renal-hepatic compromise
+SUPPORTING_EVIDENCE: fever plus jaundice plus hepatic injury profile
+RECOMMENDED_TESTS: CBC; biochemistry; urinalysis; leptospira testing; coagulation profile
+INITIAL_MANAGEMENT: supportive care; targeted anti-infective plan; fluid therapy
+PROGNOSIS: Guarded
+SOURCE_TOPIC: Acute liver failure in dogs and cats
+
+CASE_ID: AFLA-001
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Fed cereal-based feed stored under warm humid conditions. Several days of progressive illness.
+PRESENTING_COMPLAINT: Vomiting, anorexia, jaundice, bleeding tendency
+SYMPTOM_VECTOR: dullness; anorexia; vomiting; icterus; bloody diarrhea; polyuria; polydipsia; epistaxis
+PHYSICAL_EXAM: jaundice; weakness; mucosal petechiation
+LAB_FINDINGS: hepatic injury profile; coagulopathy
+RISK_FACTORS: moldy feed; aflatoxin exposure
+DIFFERENTIALS: acute liver failure; anticoagulant toxicity; severe hepatotoxicity; leptospirosis
+PRIMARY_CONDITION_CLASS: Toxic hepatopathy
+FINAL_DIAGNOSIS: Canine aflatoxicosis
+SEVERITY: High
+EMERGENCY_FLAGS: hemorrhagic diathesis; icterus
+SUPPORTING_EVIDENCE: feed exposure history; liver-dominant signs; bleeding manifestations
+RECOMMENDED_TESTS: CBC; serum biochemistry; coagulation profile; feed history review
+INITIAL_MANAGEMENT: remove contaminated feed; symptomatic care; nutritional support
+PROGNOSIS: Variable
+SOURCE_TOPIC: Canine aflatoxicosis
+
+CASE_ID: AFLA-002
+SPECIES: Dog
+BREED: Local Breed
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Long-term intake of poor-quality stored feed. Gradual decline over weeks.
+PRESENTING_COMPLAINT: Weight loss, poor growth, abdominal enlargement
+SYMPTOM_VECTOR: decreased growth; poor weight gain; edema; ascites
+PHYSICAL_EXAM: poor body condition; abdominal distension
+LAB_FINDINGS: chronic hepatopathy pattern
+RISK_FACTORS: prolonged aflatoxin exposure
+DIFFERENTIALS: chronic hepatopathy; malnutrition; chronic parasitism; protein-losing disease
+PRIMARY_CONDITION_CLASS: Chronic hepatopathy
+FINAL_DIAGNOSIS: Chronic aflatoxicosis
+SEVERITY: Moderate
+EMERGENCY_FLAGS: none immediate
+SUPPORTING_EVIDENCE: chronic feed exposure; progressive decline; edema/ascites pattern
+RECOMMENDED_TESTS: serum biochemistry; albumin; abdominal imaging
+INITIAL_MANAGEMENT: remove toxin source; improve diet quality; supportive care
+PROGNOSIS: Guarded
+SOURCE_TOPIC: Canine aflatoxicosis
+
+CASE_ID: BABE-001
+SPECIES: Dog
+BREED: German Shepherd
+AGE_GROUP: Young Adult
+SEX: Male
+HISTORY: Heavy recent tick exposure. Two days of lethargy and anorexia.
+PRESENTING_COMPLAINT: Fever, weakness, pale mucous membranes
+SYMPTOM_VECTOR: lethargy; abnormal appetite; fever; anemia; jaundice; hemoglobinuria
+PHYSICAL_EXAM: pyrexia; pallor; icterus
+LAB_FINDINGS: anemia; blood smear positive for Babesia organisms
+RISK_FACTORS: tick infestation
+DIFFERENTIALS: ehrlichiosis; hemotropic mycoplasmosis; immune-mediated hemolytic anemia; leptospirosis
+PRIMARY_CONDITION_CLASS: Hemoparasitic disease
+FINAL_DIAGNOSIS: Canine babesiosis
+SEVERITY: High
+EMERGENCY_FLAGS: severe anemia; hemoglobinuria
+SUPPORTING_EVIDENCE: tick exposure; fever; anemia; jaundice; hemoglobinuria
+RECOMMENDED_TESTS: blood smear; PCR; CBC
+INITIAL_MANAGEMENT: anti-babesia therapy; supportive fluids; monitor anemia
+PROGNOSIS: Variable
+SOURCE_TOPIC: Canine babesiosis
+
+CASE_ID: BABE-002
+SPECIES: Dog
+BREED: Boerboel
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Sudden collapse after brief lethargy. Tick exposure present.
+PRESENTING_COMPLAINT: Collapse with severe systemic illness
+SYMPTOM_VECTOR: collapse; hypotension; hypoxemia; neurological dysfunction; coagulopathy; respiratory distress
+PHYSICAL_EXAM: shock; weakness; altered mentation
+LAB_FINDINGS: severe anemia; systemic inflammatory picture
+RISK_FACTORS: tick exposure
+DIFFERENTIALS: hyperacute babesiosis; sepsis; acute intoxication; heat stroke
+PRIMARY_CONDITION_CLASS: Systemic collapse syndrome
+FINAL_DIAGNOSIS: Hyperacute babesiosis
+SEVERITY: Critical
+EMERGENCY_FLAGS: collapse; shock; coagulopathy; neurological dysfunction
+SUPPORTING_EVIDENCE: hyperacute progression plus tick exposure plus anemia pattern
+RECOMMENDED_TESTS: CBC; blood smear; PCR; blood gas if available
+INITIAL_MANAGEMENT: emergency stabilization; oxygen support; targeted therapy
+PROGNOSIS: Poor without rapid treatment
+SOURCE_TOPIC: Canine babesiosis
+
+CASE_ID: BABE-003
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Several days of low-grade illness and reduced activity.
+PRESENTING_COMPLAINT: Mild fever and weakness
+SYMPTOM_VECTOR: low fever; anemia; lethargy
+PHYSICAL_EXAM: mild pallor; reduced activity
+LAB_FINDINGS: mild anemia
+RISK_FACTORS: endemic tick area
+DIFFERENTIALS: chronic babesiosis; ehrlichiosis; chronic inflammatory disease
+PRIMARY_CONDITION_CLASS: Chronic infectious disease
+FINAL_DIAGNOSIS: Chronic babesiosis
+SEVERITY: Moderate
+EMERGENCY_FLAGS: none immediate
+SUPPORTING_EVIDENCE: endemic exposure; anemia; chronicity
+RECOMMENDED_TESTS: blood smear; PCR; CBC
+INITIAL_MANAGEMENT: specific anti-babesia treatment; supportive care
+PROGNOSIS: Fair
+SOURCE_TOPIC: Canine babesiosis
+
+CASE_ID: HEMO-001
+SPECIES: Cat
+BREED: Domestic Short Hair
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Outdoor roaming cat with possible flea exposure and fighting history.
+PRESENTING_COMPLAINT: Lethargy, anorexia, weight loss
+SYMPTOM_VECTOR: anemia; lethargy; anorexia; dehydration; weight loss
+PHYSICAL_EXAM: pallor; weakness
+LAB_FINDINGS: anemia; possible PCR positivity for hemoplasma
+RISK_FACTORS: flea exposure; aggressive contact; outdoor lifestyle
+DIFFERENTIALS: feline hemoplasmosis; retroviral disease; chronic infection; immune-mediated anemia
+PRIMARY_CONDITION_CLASS: Hemotropic infectious anemia
+FINAL_DIAGNOSIS: Feline hemoplasmosis
+SEVERITY: High
+EMERGENCY_FLAGS: severe anemia
+SUPPORTING_EVIDENCE: anemia with epidemiologic exposure profile
+RECOMMENDED_TESTS: CBC; blood smear; PCR
+INITIAL_MANAGEMENT: doxycycline or appropriate antimicrobial therapy; supportive care
+PROGNOSIS: Variable
+SOURCE_TOPIC: Hemotropic mycoplasmas of the dog and cat
+
+CASE_ID: HEMO-002
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Previous tick-borne disease suspicion with persistent weakness.
+PRESENTING_COMPLAINT: Chronic weakness and anemia
+SYMPTOM_VECTOR: lethargy; anemia; weakness
+PHYSICAL_EXAM: pallor
+LAB_FINDINGS: anemia; possible co-infection evidence
+RISK_FACTORS: co-infection with ehrlichia or babesia; immune compromise
+DIFFERENTIALS: canine hemoplasmosis; babesiosis; ehrlichiosis; chronic blood loss
+PRIMARY_CONDITION_CLASS: Infectious hematologic disease
+FINAL_DIAGNOSIS: Suspected canine hemoplasmosis
+SEVERITY: Moderate
+EMERGENCY_FLAGS: worsening anemia
+SUPPORTING_EVIDENCE: chronic anemia with co-infection context
+RECOMMENDED_TESTS: CBC; smear; PCR
+INITIAL_MANAGEMENT: antimicrobial therapy; evaluate co-infections
+PROGNOSIS: Fair to guarded
+SOURCE_TOPIC: Hemotropic mycoplasmas of the dog and cat
+
+CASE_ID: HYPOCA-001
+SPECIES: Dog
+BREED: Toy Poodle
+AGE_GROUP: Adult Postpartum
+SEX: Female
+HISTORY: Lactating bitch within first weeks postpartum. Neonates thriving.
+PRESENTING_COMPLAINT: Panting, tremors, restlessness
+SYMPTOM_VECTOR: panting; restlessness; tremors; twitching; muscle spasms; stiffness; ataxia; hypersensitivity
+PHYSICAL_EXAM: tachycardia; neuromuscular excitability; stiff gait
+LAB_FINDINGS: calcium low
+RISK_FACTORS: lactation; small breed
+DIFFERENTIALS: eclampsia; seizure disorder; toxin exposure; hypoglycemia
+PRIMARY_CONDITION_CLASS: Metabolic electrolyte emergency
+FINAL_DIAGNOSIS: Eclampsia
+SEVERITY: Critical
+EMERGENCY_FLAGS: tetany; seizure risk
+SUPPORTING_EVIDENCE: postpartum lactation state; classic neuromuscular signs; hypocalcemia
+RECOMMENDED_TESTS: serum calcium; serum chemistry; ECG
+INITIAL_MANAGEMENT: slow intravenous calcium gluconate; cardiac monitoring; correct concurrent hypoglycemia if present
+PROGNOSIS: Good with rapid intervention
+SOURCE_TOPIC: Hypocalcemia in dogs and cats / Eclampsia
+
+CASE_ID: HYPOCA-002
+SPECIES: Dog
+BREED: Chihuahua
+AGE_GROUP: Adult Postpartum
+SEX: Female
+HISTORY: Lactating bitch with rapidly worsening tremors and excitability.
+PRESENTING_COMPLAINT: Seizures and hyperthermia
+SYMPTOM_VECTOR: severe tremors; tetany; generalized seizures; hyperthermia; vomiting; disorientation
+PHYSICAL_EXAM: hyperthermia; tachycardia; rigidity
+LAB_FINDINGS: calcium markedly low; possible concurrent hypoglycemia
+RISK_FACTORS: early lactation; small breed
+DIFFERENTIALS: severe eclampsia; toxin-induced seizure disorder; primary epilepsy
+PRIMARY_CONDITION_CLASS: Neuromuscular metabolic emergency
+FINAL_DIAGNOSIS: Severe puerperal hypocalcemia
+SEVERITY: Critical
+EMERGENCY_FLAGS: generalized seizures; hyperthermia; coma risk
+SUPPORTING_EVIDENCE: postpartum state; calcium deficit; neuromuscular crisis
+RECOMMENDED_TESTS: serum calcium; glucose; ECG
+INITIAL_MANAGEMENT: IV calcium gluconate; seizure control after calcium correction; cooling if necessary
+PROGNOSIS: Good if treated early
+SOURCE_TOPIC: Hypocalcemia in dogs and cats / Eclampsia
+
+CASE_ID: HYPOCA-003
+SPECIES: Cat
+BREED: Domestic Short Hair
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: History compatible with renal dysfunction.
+PRESENTING_COMPLAINT: Weakness and twitching
+SYMPTOM_VECTOR: weakness; twitching; neuromuscular irritability
+PHYSICAL_EXAM: weakness
+LAB_FINDINGS: calcium low; possible renal abnormalities
+RISK_FACTORS: renal failure
+DIFFERENTIALS: renal-associated hypocalcemia; hypoparathyroidism; pancreatitis
+PRIMARY_CONDITION_CLASS: Metabolic electrolyte disorder
+FINAL_DIAGNOSIS: Hypocalcemia secondary to renal disease
+SEVERITY: Moderate
+EMERGENCY_FLAGS: worsening neuromuscular signs
+SUPPORTING_EVIDENCE: low calcium with renal context
+RECOMMENDED_TESTS: serum calcium; renal profile; electrolytes
+INITIAL_MANAGEMENT: stabilize calcium; address underlying cause
+PROGNOSIS: Depends on primary disease
+SOURCE_TOPIC: Hypocalcemia in dogs and cats
+
+CASE_ID: HEP-001
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Progressive liver-related illness with altered behavior.
+PRESENTING_COMPLAINT: Aimless pacing, head pressing, ataxia
+SYMPTOM_VECTOR: behavior change; circling; ataxia; pacing; head pressing; tremors
+PHYSICAL_EXAM: abnormal mentation; neurologic dysfunction
+LAB_FINDINGS: ammonia elevated; bilirubin elevated; liver dysfunction pattern
+RISK_FACTORS: underlying hepatic disease
+DIFFERENTIALS: hepatic encephalopathy; seizure disorder; intracranial disease; toxin exposure
+PRIMARY_CONDITION_CLASS: Neurometabolic syndrome
+FINAL_DIAGNOSIS: Hepatic encephalopathy
+SEVERITY: High
+EMERGENCY_FLAGS: severe neurologic dysfunction
+SUPPORTING_EVIDENCE: liver disease context plus neurologic signs
+RECOMMENDED_TESTS: ammonia; bile acids; biochemistry; coagulation profile
+INITIAL_MANAGEMENT: support hepatic function; maintain hemodynamic stability; manage complications
+PROGNOSIS: Guarded
+SOURCE_TOPIC: Diseases of the liver in small animals
+
+CASE_ID: HEP-002
+SPECIES: Dog
+BREED: Cocker Spaniel
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Gradual decline over weeks to months.
+PRESENTING_COMPLAINT: Weight loss and abdominal enlargement
+SYMPTOM_VECTOR: anorexia; lethargy; weight loss; abdominal distension; polydipsia; polyuria
+PHYSICAL_EXAM: ascites; poor haircoat; depression
+LAB_FINDINGS: chronic hepatic dysfunction pattern; albumin low
+RISK_FACTORS: chronic liver disease
+DIFFERENTIALS: chronic hepatopathy; right-sided heart failure; neoplasia; protein-losing disease
+PRIMARY_CONDITION_CLASS: Chronic hepatic disease
+FINAL_DIAGNOSIS: Chronic hepatopathy with hepatic failure features
+SEVERITY: High
+EMERGENCY_FLAGS: ascites; coagulopathy risk
+SUPPORTING_EVIDENCE: chronic liver syndrome plus abdominal fluid accumulation
+RECOMMENDED_TESTS: serum biochemistry; albumin; coagulation profile; ultrasound
+INITIAL_MANAGEMENT: supportive hepatic care; manage ascites; nutritional support
+PROGNOSIS: Guarded
+SOURCE_TOPIC: Diseases of the liver in small animals
+
+CASE_ID: PAROX-001
+SPECIES: Dog
+BREED: Boxer
+AGE_GROUP: Adult
+SEX: Male
+HISTORY: Episodes associated with exercise or movement. Rapid recovery after collapse.
+PRESENTING_COMPLAINT: Sudden transient collapse
+SYMPTOM_VECTOR: loss of consciousness; flaccid collapse; brief myoclonic jerk
+PHYSICAL_EXAM: normal between episodes
+LAB_FINDINGS: no specific laboratory abnormality at presentation
+RISK_FACTORS: exertion-triggered event
+DIFFERENTIALS: syncope; seizure; narcolepsy/cataplexy
+PRIMARY_CONDITION_CLASS: Cardiovascular-neurologic episodic disorder
+FINAL_DIAGNOSIS: Syncope pattern
+SEVERITY: High
+EMERGENCY_FLAGS: recurrent collapse
+SUPPORTING_EVIDENCE: exercise-associated onset; brief duration; near-instant recovery
+RECOMMENDED_TESTS: cardiovascular evaluation; neurologic screening
+INITIAL_MANAGEMENT: stabilize if actively collapsing; identify underlying cause
+PROGNOSIS: Depends on cause
+SOURCE_TOPIC: Approach to paroxysmal episodic disorders
+
+CASE_ID: PAROX-002
+SPECIES: Dog
+BREED: Mixed Breed
+AGE_GROUP: Adult
+SEX: Female
+HISTORY: Recurrent episodes at rest or during sleep with post-event disorientation.
+PRESENTING_COMPLAINT: Generalized seizure episodes
+SYMPTOM_VECTOR: tonic phase; tonic-clonic movements; impaired consciousness; post-ictal disorientation; pacing
+PHYSICAL_EXAM: may be normal between episodes
+LAB_FINDINGS: no defining laboratory findings initially
+RISK_FACTORS: brain dysfunction
+DIFFERENTIALS: seizure disorder; toxin exposure; metabolic encephalopathy
+PRIMARY_CONDITION_CLASS: Forebrain seizure disorder
+FINAL_DIAGNOSIS: Seizure pattern
+SEVERITY: High
+EMERGENCY_FLAGS: prolonged seizure activity
+SUPPORTING_EVIDENCE: impaired consciousness; stereotyped ictal event; post-ictal changes
+RECOMMENDED_TESTS: neurologic examination; metabolic screening; imaging if indicated
+INITIAL_MANAGEMENT: anticonvulsant stabilization if needed; investigate cause
+PROGNOSIS: Variable
+SOURCE_TOPIC: Approach to paroxysmal episodic disorders
+
+CASE_ID: ONC-001
+SPECIES: Dog
+BREED: Golden Retriever
+AGE_GROUP: Senior
+SEX: Male
+HISTORY: Progressive weight loss with declining condition.
+PRESENTING_COMPLAINT: Weight loss, lethargy, abdominal enlargement
+SYMPTOM_VECTOR: weight loss; lethargy; abdominal enlargement; poor appetite
+PHYSICAL_EXAM: hepatomegaly
+LAB_FINDINGS: hepatic dysfunction profile
+RISK_FACTORS: neoplasia possibility
+DIFFERENTIALS: hepatic neoplasia; lymphoma; chronic hepatopathy; metastatic disease
+PRIMARY_CONDITION_CLASS: Neoplastic hepatobiliary disease
+FINAL_DIAGNOSIS: Suspected hepatic neoplasia
+SEVERITY: High
+EMERGENCY_FLAGS: progressive systemic decline
+SUPPORTING_EVIDENCE: hepatomegaly with chronic systemic deterioration
+RECOMMENDED_TESTS: imaging; cytology or histopathology; CBC; biochemistry
+INITIAL_MANAGEMENT: staging workup; supportive care
+PROGNOSIS: Guarded to poor
+SOURCE_TOPIC: Introduction to oncology / Diseases of the liver in small animals

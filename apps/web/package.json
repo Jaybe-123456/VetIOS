@@ -17,6 +17,7 @@
         "test:control-plane-simulation": "node scripts/test-control-plane-simulation.cjs && node scripts/test-simulation-runtime.cjs",
         "test:simulation-runtime": "node scripts/test-simulation-runtime.cjs",
         "test:registry": "node scripts/test-registry-control-plane.cjs",
+        "import:supervised-cases": "node scripts/import-supervised-cases.cjs",
         "test:api": "bash scripts/test-api-local.sh",
         "test:load": "bash scripts/load-test.sh",
         "test:shadow": "bash scripts/shadow-mode.sh"
