@@ -238,24 +238,20 @@ export async function startSimulationRun(
     const canonicalMode = normalizeSimulationMode(input.mode);
     const normalizedConfig: Record<string, unknown> = { ...input.config, mode: canonicalMode };
     const now = new Date().toISOString();
-    const { data, error } = await client
-        .from('simulations')
-        .insert({
-            tenant_id: input.tenantId,
-            scenario_name: input.scenarioName,
-            mode: canonicalMode,
-            status: 'running',
-            config: normalizedConfig,
-            summary: {},
-            results: {},
-            completed: 0,
-            total: 0,
-            candidate_model_version: input.candidateModelVersion ?? readText(normalizedConfig.candidate_model) ?? readText(normalizedConfig.candidate_model_version),
-            started_at: now,
-            created_by: input.actor.userId ?? 'simulation_runner',
-        })
-        .select('*')
-        .single();
+    const { data, error } = await insertSimulationRecord(client, {
+        tenant_id: input.tenantId,
+        scenario_name: input.scenarioName,
+        mode: canonicalMode,
+        status: 'running',
+        config: normalizedConfig,
+        summary: {},
+        results: {},
+        completed: 0,
+        total: 0,
+        candidate_model_version: input.candidateModelVersion ?? readText(normalizedConfig.candidate_model) ?? readText(normalizedConfig.candidate_model_version),
+        started_at: now,
+        created_by: input.actor.userId ?? 'simulation_runner',
+    });
 
     if (error || !data) {
         throw new Error(`Failed to create simulation record: ${error?.message ?? 'Unknown error'}`);
@@ -1788,8 +1784,9 @@ export async function runInferenceInternal(
         persistInference: boolean;
     },
 ): Promise<InternalInferenceResult> {
+    const resolvedProviderModel = await resolveSimulationProviderModel(client, input.tenantId, input.modelVersion);
     const requestPayload = buildSimulationInferenceRequest({
-        modelVersion: input.modelVersion,
+        modelVersion: resolvedProviderModel,
         prompt: input.prompt,
         species: input.species ?? inferSpeciesFromPrompt(input.prompt),
         breed: input.breed ?? null,
@@ -1847,7 +1844,7 @@ export async function runInferenceInternal(
 
     const startedAt = Date.now();
     const inferenceResult = await runInferencePipeline({
-        model: input.modelVersion,
+        model: resolvedProviderModel,
         rawInput: asRecord(requestPayload.input),
         inputMode: 'json',
     });
@@ -1973,9 +1970,9 @@ export async function runInferenceInternal(
         flywheelError,
         inferenceEventId,
         outcomeId,
-        modelVersion: input.modelVersion,
-    };
-}
+            modelVersion: input.modelVersion,
+        };
+    }
 
 async function assertModelExists(
     client: SupabaseClient,
@@ -2868,6 +2865,82 @@ async function listRows(
         throw new Error(`Failed to read ${table}: ${error.message}`);
     }
     return (data ?? []) as Array<Record<string, unknown>>;
+}
+
+async function insertSimulationRecord(
+    client: SupabaseClient,
+    row: Record<string, unknown>,
+) {
+    let payload = { ...row };
+    let result = await client
+        .from('simulations')
+        .insert(payload)
+        .select('*')
+        .single();
+
+    while (result.error) {
+        const missingColumn = resolveMissingSimulationColumn(result.error, payload);
+        if (!missingColumn) {
+            break;
+        }
+        delete payload[missingColumn];
+        result = await client
+            .from('simulations')
+            .insert(payload)
+            .select('*')
+            .single();
+    }
+
+    return result;
+}
+
+function resolveMissingSimulationColumn(
+    error: { message?: string | null } | null | undefined,
+    payload: Record<string, unknown>,
+): 'created_by' | 'candidate_model_version' | 'summary' | 'completed' | 'total' | 'scenario_name' | null {
+    for (const column of ['created_by', 'candidate_model_version', 'summary', 'completed', 'total', 'scenario_name'] as const) {
+        if (column in payload && isMissingSimulationColumnError(error, column)) {
+            return column;
+        }
+    }
+    return null;
+}
+
+function isMissingSimulationColumnError(
+    error: { message?: string | null } | null | undefined,
+    column: 'created_by' | 'candidate_model_version' | 'summary' | 'completed' | 'total' | 'scenario_name',
+) {
+    const message = error?.message ?? '';
+    return message.includes(`Could not find the '${column}' column`)
+        || message.includes(`column simulations.${column} does not exist`)
+        || message.includes(`column public.simulations.${column} does not exist`);
+}
+
+async function resolveSimulationProviderModel(
+    client: SupabaseClient,
+    tenantId: string,
+    modelVersion: string,
+) {
+    const registryRows = await listRows(client, 'model_registry');
+    const registryRow = registryRows.find((row) =>
+        readText(row.tenant_id) === tenantId && readText(row.model_version) === modelVersion,
+    ) ?? null;
+
+    const modelName = readText(registryRow?.model_name);
+    if (looksLikeProviderModel(modelName)) {
+        return modelName!;
+    }
+    if (looksLikeProviderModel(modelVersion)) {
+        return modelVersion;
+    }
+    return process.env.AI_PROVIDER_DEFAULT_MODEL || 'gpt-4o-mini';
+}
+
+function looksLikeProviderModel(value: string | null | undefined) {
+    if (!value) return false;
+    const normalized = value.trim();
+    if (!normalized || normalized.includes(' ')) return false;
+    return /^(gpt-|o[1-9]|claude|gemini|mistral|llama|meta-|deepseek|xai|openai\/|anthropic\/)/i.test(normalized);
 }
 
 async function writeAdversarialPromptRow(
