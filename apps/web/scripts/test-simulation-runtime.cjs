@@ -122,6 +122,25 @@ exports.runInferenceFlywheel = async function(_client, input) {
     };
 };
 `);
+    const cirePackageDir = path.join(generatedDir, 'node_modules', '@vetios', 'cire-engine');
+    fs.mkdirSync(cirePackageDir, { recursive: true });
+    fs.writeFileSync(path.join(cirePackageDir, 'index.js'), `
+exports.computePhiHat = function(vector) {
+    const values = Array.isArray(vector) ? vector.filter((value) => Number.isFinite(value) && value > 0) : [];
+    if (values.length === 0) return 0;
+    if (values.length === 1) return 1;
+    const total = values.reduce((sum, value) => sum + value, 0);
+    const normalized = values.map((value) => value / total);
+    const entropy = normalized.reduce((sum, value) => sum - (value * Math.log(value)), 0);
+    return Math.max(0, Math.min(1, 1 - (entropy / Math.log(normalized.length))));
+};
+exports.extractProbabilityVectorFromOutput = function(output) {
+    const topDiffs = output?.diagnosis?.top_differentials;
+    return Array.isArray(topDiffs)
+        ? topDiffs.map((entry) => Number(entry?.probability ?? 0)).filter((value) => Number.isFinite(value) && value >= 0)
+        : [];
+};
+`, 'utf8');
     writeGeneratedModule(generatedDir, path.join('lib', 'platform', 'governance.js'), `
 exports.writeGovernanceAuditEvent = async (client, input) => {
     client.__auditEvents = client.__auditEvents || [];

@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { computePhiHat, extractProbabilityVectorFromOutput } from '@vetios/cire-engine';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { createPlatformAlert } from '@/lib/platform/alerts';
@@ -44,6 +45,18 @@ type SyntheticCase = {
     breed: string | null;
     ageYears: number | null;
     weightKg: number | null;
+    prompt: string;
+};
+
+type CireCalibrationStep = {
+    step_key: string;
+    capability: 'noise' | 'incompleteness' | 'contradiction';
+    phase: 'forward' | 'reverse';
+    m: number;
+    species: SpeciesBucket;
+    breed: string | null;
+    age_years: number | null;
+    weight_kg: number | null;
     prompt: string;
 };
 
@@ -974,6 +987,11 @@ async function runAdversarialSimulation(
         throw new Error('model_version is required for adversarial simulations.');
     }
 
+    if (readBoolean(config.cire_calibration) === true) {
+        await runCireCalibrationSimulation(client, actor, record, modelVersion, config);
+        return;
+    }
+
     await seedAdversarialPrompts(client, record.tenant_id);
     const library = await listAdversarialPrompts(client, {
         tenantId: record.tenant_id,
@@ -1229,6 +1247,195 @@ async function runAdversarialSimulation(
             metadata: {
                 simulation_id: record.id,
                 pass_rate: readNumber(finalResults.pass_rate),
+            },
+        }).catch(() => undefined);
+    }
+
+    getSimulationJobStore().delete(record.id);
+}
+
+async function runCireCalibrationSimulation(
+    client: SupabaseClient,
+    actor: PlatformActor,
+    record: SimulationRecord,
+    modelVersion: string,
+    config: Record<string, unknown>,
+) {
+    const mSteps = clampInteger(readNumber(config.m_steps), 5, 24, 12);
+    const samplesPerStep = clampInteger(readNumber(config.samples_per_step), 4, 24, 12);
+    const includeHysteresisTest = readBoolean(config.include_hysteresis_test) ?? true;
+    const capabilityModes = ['noise', 'incompleteness', 'contradiction'] as const;
+    const calibrationCases = buildSyntheticLoadCases(
+        {
+            prompt_distribution: {
+                canine: 55,
+                feline: 35,
+                equine: 5,
+                other: 5,
+            },
+        },
+        Math.max(samplesPerStep, 1),
+        `${record.id}:cire_calibration`,
+    );
+
+    const existingPlan = await findSimulationEventByType(client, record.tenant_id, record.id, 'cire_calibration_plan');
+    const calibrationPlan = existingPlan
+        ? normalizeCalibrationPlan(asArray(asRecord(existingPlan.payload).steps))
+        : buildCireCalibrationPlan(record.id, capabilityModes, calibrationCases, {
+            mSteps,
+            samplesPerStep,
+            includeHysteresisTest,
+        });
+
+    if (!existingPlan) {
+        await appendSimulationEvent(client, {
+            simulation_id: record.id,
+            tenant_id: record.tenant_id,
+            event_type: 'cire_calibration_plan',
+            payload: {
+                steps: calibrationPlan,
+            },
+        });
+    }
+
+    const totalSteps = calibrationPlan.length;
+    const completedStepEvents = await listSimulationEventsFor(client, record.tenant_id, record.id, 'prompt_complete');
+    const completedStepKeys = new Set(
+        completedStepEvents
+            .map((event) => readText(asRecord(event.payload).step_key))
+            .filter((value): value is string => Boolean(value)),
+    );
+    const aggregates = buildCalibrationAggregatesFromEvents(completedStepEvents);
+    let completedCount = completedStepKeys.size;
+
+    await updateSimulationRecord(client, record, {
+        total: totalSteps,
+        completed: completedCount,
+        results: buildCireCalibrationResults(aggregates, totalSteps),
+    });
+
+    for (const step of calibrationPlan) {
+        if (completedStepKeys.has(step.step_key)) {
+            continue;
+        }
+
+        assertSimulationActive(record.id);
+        const inference = await runInferenceInternal(client, {
+            actor,
+            tenantId: record.tenant_id,
+            simulationId: record.id,
+            mode: 'adversarial',
+            modelVersion,
+            prompt: step.prompt,
+            species: step.species,
+            breed: step.breed,
+            ageYears: step.age_years,
+            weightKg: step.weight_kg,
+            persistInference: false,
+        });
+
+        completedCount += 1;
+        const phiHat = computePhiHat(extractProbabilityVectorFromOutput(inference.prediction, 'diagnosis.top_differentials'));
+        const resultType: AdversarialResultType = inference.blocked
+            ? 'blocked'
+            : inference.status >= 400
+                ? 'failed'
+                : 'passed';
+
+        registerCalibrationObservation(aggregates, {
+            capability: step.capability,
+            phase: step.phase,
+            m: step.m,
+            phiHat,
+            resultType,
+        });
+
+        await appendSimulationEvent(client, {
+            simulation_id: record.id,
+            tenant_id: record.tenant_id,
+            event_type: 'prompt_complete',
+            payload: {
+                step_key: step.step_key,
+                category: step.capability,
+                phase: step.phase,
+                m: step.m,
+                prompt_index: completedCount,
+                total_prompts: totalSteps,
+                result_type: resultType,
+                evaluation_score: toFixedNumber(inference.evaluation?.score ?? 0, 4),
+                latency_ms: inference.inferenceLatencyMs,
+                phi_hat: toFixedNumber(phiHat, 6),
+                overall_pct_complete: totalSteps > 0 ? toFixedNumber((completedCount / totalSteps) * 100, 2) : 100,
+            },
+        });
+
+        completedStepKeys.add(step.step_key);
+        await updateSimulationRecord(client, record, {
+            total: totalSteps,
+            completed: completedCount,
+            results: buildCireCalibrationResults(aggregates, totalSteps),
+        });
+    }
+
+    const profile = finalizeCireCalibrationProfile(aggregates);
+    await persistCireCollapseProfile(client, {
+        tenantId: record.tenant_id,
+        modelVersion,
+        simulationId: record.id,
+        phiBaseline: profile.phiBaseline,
+        phiCurve: profile.phiCurve,
+        mThresholdMap: profile.mThresholdMap,
+        hii: profile.hii,
+    });
+
+    const finalResults = buildCireCalibrationResults(aggregates, totalSteps, profile);
+    await appendSimulationEvent(client, {
+        simulation_id: record.id,
+        tenant_id: record.tenant_id,
+        event_type: 'complete',
+        payload: {
+            status: 'complete',
+            results: finalResults,
+        },
+    });
+
+    await finalizeSimulation(client, record, {
+        status: 'complete',
+        results: finalResults,
+    });
+
+    await writeSimulationAuditEvent(client, {
+        tenantId: record.tenant_id,
+        actor: actor.userId,
+        eventType: 'simulation_complete',
+        simulationId: record.id,
+        payload: finalResults,
+    }).catch(() => undefined);
+
+    await writeSimulationAuditEvent(client, {
+        tenantId: record.tenant_id,
+        actor: actor.userId,
+        eventType: 'cire_calibrated',
+        simulationId: record.id,
+        payload: {
+            model_version: modelVersion,
+            phi_baseline: profile.phiBaseline,
+            hii: profile.hii,
+            m_threshold_map: profile.mThresholdMap,
+        },
+    }).catch(() => undefined);
+
+    if (profile.hii != null && profile.hii > 0.3) {
+        await createPlatformAlert(client, {
+            tenantId: record.tenant_id,
+            type: 'cire_hysteresis_warning',
+            severity: 'high',
+            title: 'CIRE HII RETRAINING ALERT',
+            message: `Collapse hysteresis irreversibility index reached ${toFixedNumber(profile.hii, 4)}.`,
+            metadata: {
+                simulation_id: record.id,
+                model_version: modelVersion,
+                hii: profile.hii,
             },
         }).catch(() => undefined);
     }
@@ -1910,6 +2117,325 @@ function buildSyntheticLoadCases(config: Record<string, unknown>, total: number,
     return cases;
 }
 
+function buildCireCalibrationPlan(
+    simulationId: string,
+    capabilities: ReadonlyArray<'noise' | 'incompleteness' | 'contradiction'>,
+    baseCases: SyntheticCase[],
+    input: {
+        mSteps: number;
+        samplesPerStep: number;
+        includeHysteresisTest: boolean;
+    },
+): CireCalibrationStep[] {
+    const steps: CireCalibrationStep[] = [];
+    const forwardMs = Array.from({ length: input.mSteps }, (_, index) =>
+        input.mSteps === 1 ? 0 : toFixedNumber(index / (input.mSteps - 1), 4),
+    );
+    const reverseMs = [...forwardMs].reverse();
+
+    for (const capability of capabilities) {
+        for (const m of forwardMs) {
+            for (let sampleIndex = 0; sampleIndex < input.samplesPerStep; sampleIndex += 1) {
+                const baseCase = baseCases[sampleIndex % baseCases.length] ?? baseCases[0];
+                if (!baseCase) continue;
+                steps.push({
+                    step_key: `${simulationId}:${capability}:forward:${m}:${sampleIndex}`,
+                    capability,
+                    phase: 'forward',
+                    m,
+                    species: baseCase.species,
+                    breed: baseCase.breed,
+                    age_years: baseCase.ageYears,
+                    weight_kg: baseCase.weightKg,
+                    prompt: applyCalibrationPromptPerturbation(baseCase.prompt, capability, m, sampleIndex, 'forward'),
+                });
+            }
+        }
+    }
+
+    if (input.includeHysteresisTest) {
+        for (const m of reverseMs) {
+            for (let sampleIndex = 0; sampleIndex < input.samplesPerStep; sampleIndex += 1) {
+                const baseCase = baseCases[sampleIndex % baseCases.length] ?? baseCases[0];
+                if (!baseCase) continue;
+                steps.push({
+                    step_key: `${simulationId}:mixed:reverse:${m}:${sampleIndex}`,
+                    capability: 'noise',
+                    phase: 'reverse',
+                    m,
+                    species: baseCase.species,
+                    breed: baseCase.breed,
+                    age_years: baseCase.ageYears,
+                    weight_kg: baseCase.weightKg,
+                    prompt: applyCalibrationPromptPerturbation(
+                        applyCalibrationPromptPerturbation(
+                            applyCalibrationPromptPerturbation(baseCase.prompt, 'noise', m, sampleIndex, 'reverse'),
+                            'incompleteness',
+                            m,
+                            sampleIndex,
+                            'reverse',
+                        ),
+                        'contradiction',
+                        m,
+                        sampleIndex,
+                        'reverse',
+                    ),
+                });
+            }
+        }
+    }
+
+    return steps;
+}
+
+function normalizeCalibrationPlan(value: unknown[]): CireCalibrationStep[] {
+    return value
+        .map((entry) => asRecord(entry))
+        .map((entry) => ({
+            step_key: readText(entry.step_key) ?? randomUUID(),
+            capability: (readText(entry.capability) ?? 'noise') as CireCalibrationStep['capability'],
+            phase: (readText(entry.phase) ?? 'forward') as CireCalibrationStep['phase'],
+            m: readNumber(entry.m) ?? 0,
+            species: (readText(entry.species) ?? 'canine') as SpeciesBucket,
+            breed: readText(entry.breed),
+            age_years: readNumber(entry.age_years),
+            weight_kg: readNumber(entry.weight_kg),
+            prompt: readText(entry.prompt) ?? '',
+        }))
+        .filter((entry) => entry.prompt.length > 0);
+}
+
+function buildCalibrationAggregatesFromEvents(events: Array<Record<string, unknown>>) {
+    const aggregates = new Map<string, {
+        capability: string;
+        phase: string;
+        m: number;
+        phiValues: number[];
+        blocked: number;
+        failed: number;
+        passed: number;
+    }>();
+
+    for (const event of events) {
+        const payload = asRecord(event.payload);
+        const capability = readText(payload.category);
+        const phase = readText(payload.phase) ?? 'forward';
+        const m = readNumber(payload.m);
+        const phiHat = readNumber(payload.phi_hat);
+        const resultType = readText(payload.result_type);
+        if (!capability || m == null) continue;
+
+        registerCalibrationObservation(aggregates, {
+            capability,
+            phase,
+            m,
+            phiHat: phiHat ?? 0,
+            resultType: (resultType ?? 'passed') as AdversarialResultType,
+        });
+    }
+
+    return aggregates;
+}
+
+function registerCalibrationObservation(
+    aggregates: Map<string, {
+        capability: string;
+        phase: string;
+        m: number;
+        phiValues: number[];
+        blocked: number;
+        failed: number;
+        passed: number;
+    }>,
+    input: {
+        capability: string;
+        phase: string;
+        m: number;
+        phiHat: number;
+        resultType: AdversarialResultType;
+    },
+) {
+    const key = `${input.capability}:${input.phase}:${input.m.toFixed(4)}`;
+    const bucket = aggregates.get(key) ?? {
+        capability: input.capability,
+        phase: input.phase,
+        m: input.m,
+        phiValues: [],
+        blocked: 0,
+        failed: 0,
+        passed: 0,
+    };
+    bucket.phiValues.push(input.phiHat);
+    if (input.resultType === 'blocked') bucket.blocked += 1;
+    if (input.resultType === 'failed') bucket.failed += 1;
+    if (input.resultType === 'passed') bucket.passed += 1;
+    aggregates.set(key, bucket);
+}
+
+function buildCireCalibrationResults(
+    aggregates: Map<string, {
+        capability: string;
+        phase: string;
+        m: number;
+        phiValues: number[];
+        blocked: number;
+        failed: number;
+        passed: number;
+    }>,
+    totalSteps: number,
+    profile?: {
+        phiBaseline: number;
+        phiCurve: Array<Record<string, unknown>>;
+        mThresholdMap: Record<string, number>;
+        hii: number | null;
+    },
+) {
+    const buckets = Array.from(aggregates.values());
+    const passed = buckets.reduce((sum, bucket) => sum + bucket.passed, 0);
+    const blocked = buckets.reduce((sum, bucket) => sum + bucket.blocked, 0);
+    const failed = buckets.reduce((sum, bucket) => sum + bucket.failed, 0);
+    const calibrationRows = buckets
+        .sort((left, right) => left.m - right.m)
+        .map((bucket) => ({
+            category: bucket.capability,
+            phase: bucket.phase,
+            m: toFixedNumber(bucket.m, 4),
+            mean_phi: toFixedNumber(meanNumbers(bucket.phiValues), 6),
+            passed: bucket.passed,
+            blocked: bucket.blocked,
+            failed: bucket.failed,
+        }));
+
+    return {
+        total_prompts: totalSteps,
+        passed,
+        flagged: 0,
+        blocked,
+        failed,
+        pass_rate: totalSteps > 0 ? toFixedNumber((passed / totalSteps) * 100, 2) : 100,
+        categories: calibrationRows,
+        calibration: true,
+        phi_baseline: profile?.phiBaseline ?? null,
+        phi_curve: profile?.phiCurve ?? [],
+        collapse_profile: profile?.mThresholdMap ?? {},
+        hii: profile?.hii ?? null,
+    };
+}
+
+function finalizeCireCalibrationProfile(
+    aggregates: Map<string, {
+        capability: string;
+        phase: string;
+        m: number;
+        phiValues: number[];
+        blocked: number;
+        failed: number;
+        passed: number;
+    }>,
+) {
+    const buckets = Array.from(aggregates.values());
+    const forwardBuckets = buckets.filter((bucket) => bucket.phase === 'forward');
+    const reverseBuckets = buckets.filter((bucket) => bucket.phase === 'reverse');
+    const groupedByM = new Map<number, number[]>();
+
+    for (const bucket of forwardBuckets) {
+        const current = groupedByM.get(bucket.m) ?? [];
+        current.push(meanNumbers(bucket.phiValues));
+        groupedByM.set(bucket.m, current);
+    }
+
+    const phiCurve = Array.from(groupedByM.entries())
+        .sort((left, right) => left[0] - right[0])
+        .map(([m, values]) => ({
+            m: toFixedNumber(m, 4),
+            phi_hat: toFixedNumber(meanNumbers(values), 6),
+        }));
+
+    const phiBaseline = Math.max(readNumber(phiCurve[0]?.phi_hat) ?? 1, 0.0001);
+    const threshold = phiBaseline * 0.5;
+    const mThresholdMap = forwardBuckets.reduce<Record<string, number>>((accumulator, bucket) => {
+        const currentValue = accumulator[bucket.capability];
+        const meanPhi = meanNumbers(bucket.phiValues);
+        if (meanPhi <= threshold && (currentValue == null || bucket.m < currentValue)) {
+            accumulator[bucket.capability] = toFixedNumber(bucket.m, 4);
+        } else if (currentValue == null) {
+            accumulator[bucket.capability] = 1;
+        }
+        return accumulator;
+    }, {});
+
+    const reverseRecovery = reverseBuckets
+        .filter((bucket) => bucket.m === 0)
+        .map((bucket) => meanNumbers(bucket.phiValues));
+    const recoveredPhi = reverseRecovery.length > 0 ? meanNumbers(reverseRecovery) : phiBaseline;
+    const hii = toFixedNumber(clampNumber(1 - (recoveredPhi / phiBaseline), 0, 1), 6);
+
+    return {
+        phiBaseline: toFixedNumber(phiBaseline, 6),
+        phiCurve,
+        mThresholdMap,
+        hii,
+    };
+}
+
+async function persistCireCollapseProfile(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        modelVersion: string;
+        simulationId: string;
+        phiBaseline: number;
+        mThresholdMap: Record<string, number>;
+        hii: number | null;
+        phiCurve: Array<Record<string, unknown>>;
+    },
+) {
+    const { error } = await client
+        .from('cire_collapse_profiles')
+        .insert({
+            tenant_id: input.tenantId,
+            model_version: input.modelVersion,
+            phi_baseline: input.phiBaseline,
+            m_threshold_map: input.mThresholdMap,
+            hii: input.hii,
+            phi_curve: input.phiCurve,
+            simulation_id: input.simulationId,
+        });
+
+    if (error) {
+        throw new Error(`Failed to persist CIRE collapse profile: ${error.message}`);
+    }
+}
+
+function applyCalibrationPromptPerturbation(
+    prompt: string,
+    capability: 'noise' | 'incompleteness' | 'contradiction',
+    m: number,
+    sampleIndex: number,
+    phase: 'forward' | 'reverse',
+) {
+    if (capability === 'noise') {
+        const repeats = Math.max(1, Math.round(m * 12));
+        const noise = Array.from({ length: repeats }, (_, index) => `@@noise_${phase}_${sampleIndex}_${index}##`).join(' ');
+        return `${prompt} ${noise}`.trim();
+    }
+
+    if (capability === 'incompleteness') {
+        const sentences = prompt.split('.').map((entry) => entry.trim()).filter(Boolean);
+        const keepCount = Math.max(1, Math.round(sentences.length * Math.max(0.15, 1 - m)));
+        return `${sentences.slice(0, keepCount).join('. ')}.`;
+    }
+
+    const contradictionFragments = [
+        'Species: cat. Breed: Golden Retriever.',
+        'Age: -3 years.',
+        'Weight: 450 kg for a cat.',
+        'Symptoms: healthy and critical emergency at the same time.',
+    ];
+    const contradictionCount = Math.max(1, Math.round(m * contradictionFragments.length));
+    return `${prompt} ${contradictionFragments.slice(0, contradictionCount).join(' ')}`.trim();
+}
+
 function normalizeLoadDistribution(value: unknown) {
     const record = asRecord(value);
     const canine = clampNumber(readNumber(record.canine) ?? 25, 0, 100);
@@ -2406,6 +2932,11 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asArray(value: unknown) {
     return Array.isArray(value) ? value : [];
+}
+
+function meanNumbers(values: number[]) {
+    if (values.length === 0) return 0;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function asStringArray(value: unknown) {

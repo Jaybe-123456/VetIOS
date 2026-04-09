@@ -56,6 +56,15 @@ interface OutcomeState {
     errorMessage?: string;
 }
 
+interface CireState {
+    phi_hat: number;
+    cps: number;
+    safety_state: 'nominal' | 'warning' | 'critical' | 'blocked';
+    reliability_badge: 'HIGH' | 'REVIEW' | 'CAUTION' | 'SUPPRESSED';
+    input_quality: number;
+    incident_id?: string | null;
+}
+
 interface InferenceState {
     status: 'idle' | 'previewing' | 'computing' | 'success' | 'error';
     eventId: string | null;
@@ -76,6 +85,8 @@ interface InferenceState {
     normalizedInput: NormalizedInput | null;
     diagnosticImages: UploadedArtifact[];
     labResults: UploadedArtifact[];
+    cire: CireState | null;
+    cireMessage: string | null;
 }
 
 export default function InferenceConsole() {
@@ -96,6 +107,8 @@ export default function InferenceConsole() {
         normalizedInput: null,
         diagnosticImages: [],
         labResults: [],
+        cire: null,
+        cireMessage: null,
     });
 
     const [inputMode, setInputMode] = useState<InputMode>('structured');
@@ -177,6 +190,8 @@ export default function InferenceConsole() {
                 diagnosticImages,
                 labResults,
                 errorMessage: null,
+                cire: null,
+                cireMessage: null,
             }));
             setOutcomeState({ status: 'idle' });
         } catch (err: unknown) {
@@ -254,7 +269,17 @@ export default function InferenceConsole() {
                 throw new Error('Inference succeeded but returned an invalid inference_event_id.');
             }
 
-            const output = (result.output ?? result.prediction) as Record<string, unknown> | undefined;
+            const cire = result.cire && typeof result.cire === 'object'
+                ? result.cire as CireState
+                : null;
+            const dataPayload = result.data && typeof result.data === 'object'
+                ? result.data as Record<string, unknown>
+                : null;
+            const output = (
+                dataPayload?.output
+                ?? result.output
+                ?? result.prediction
+            ) as Record<string, unknown> | undefined;
             const diagnosis = output?.diagnosis as Record<string, unknown> | undefined;
             const riskAssessment = output?.risk_assessment as Record<string, unknown> | undefined;
             const riskModelOutput = output?.risk_model_output as Record<string, unknown> | undefined;
@@ -301,6 +326,8 @@ export default function InferenceConsole() {
                 normalizedInput: finalInput,
                 diagnosticImages: [],
                 labResults: [],
+                cire,
+                cireMessage: result.error?.message ?? null,
             });
             setActiveTab('vectors');
         } catch (err: unknown) {
@@ -310,7 +337,7 @@ export default function InferenceConsole() {
     }
 
     function handleCancelPreview() {
-        setState(prev => ({ ...prev, status: 'idle', normalizedInput: null }));
+        setState(prev => ({ ...prev, status: 'idle', normalizedInput: null, cire: null, cireMessage: null }));
     }
 
     async function handleCopyEventId() {
@@ -322,6 +349,39 @@ export default function InferenceConsole() {
         } catch {
             setCopyStatus('error');
             window.setTimeout(() => setCopyStatus('idle'), 2000);
+        }
+    }
+
+    async function handleCireOverride() {
+        if (!state.cire?.incident_id) return;
+        const confirmed = window.confirm('Log a CIRE override for this suppressed inference and continue with manual review?');
+        if (!confirmed) return;
+
+        try {
+            const response = await fetch(`/api/cire/incidents/${state.cire.incident_id}/resolve`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                cache: 'no-store',
+                body: JSON.stringify({
+                    override_action: true,
+                    resolution_notes: 'Operator override from inference console',
+                }),
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                throw new Error(result.error?.message || 'Failed to log override.');
+            }
+
+            setState((previous) => ({
+                ...previous,
+                cireMessage: 'Override logged to audit trail. Proceed with manual review.',
+            }));
+        } catch (error) {
+            setState((previous) => ({
+                ...previous,
+                cireMessage: error instanceof Error ? error.message : 'Failed to log override.',
+            }));
         }
     }
 
@@ -485,9 +545,50 @@ export default function InferenceConsole() {
                                     {state.status === 'previewing' && 'INPUT NORMALIZED — REVIEW & CONFIRM'}
                                     {state.status === 'computing' && 'CALCULATING PROBABILITIES...'}
                                     {state.status === 'error' && `ERR: ${state.errorMessage}`}
-                                    {state.status === 'success' && 'VECTORS GENERATED'}
+                                    {state.status === 'success' && (state.cire?.safety_state === 'blocked' ? 'OUTPUT SUPPRESSED BY CIRE' : 'VECTORS GENERATED')}
                                 </div>
                             </ConsoleCard>
+
+                            {state.cire && (
+                                <ConsoleCard title="CIRE Reliability">
+                                    <div className="grid grid-cols-[88px,1fr] gap-4 items-center">
+                                        <div className="relative w-[88px] h-[88px] rounded-full border border-accent/30 flex items-center justify-center">
+                                            <div
+                                                className={`absolute inset-2 rounded-full border-2 ${state.cire.safety_state === 'blocked' ? 'border-danger' : state.cire.safety_state === 'critical' ? 'border-orange-500' : state.cire.safety_state === 'warning' ? 'border-yellow-400' : 'border-accent'}`}
+                                                style={{
+                                                    clipPath: `inset(${Math.max(0, 100 - (state.cire.phi_hat * 100))}% 0 0 0)`,
+                                                    opacity: 0.2 + (state.cire.phi_hat * 0.8),
+                                                }}
+                                            />
+                                            <div className="font-mono text-xs text-accent">
+                                                {state.cire.phi_hat.toFixed(2)}
+                                            </div>
+                                        </div>
+                                        <div className="space-y-3">
+                                            <div className="flex items-center justify-between gap-3 font-mono text-xs uppercase tracking-widest">
+                                                <span className="text-muted">Badge</span>
+                                                <span className={cireTone(state.cire.reliability_badge)}>
+                                                    {renderCireBadge(state.cire.reliability_badge)}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-widest text-muted">
+                                                    <span>CPS</span>
+                                                    <span>{(state.cire.cps * 100).toFixed(1)}%</span>
+                                                </div>
+                                                <div className="mt-2 h-2 bg-dim border border-grid overflow-hidden">
+                                                    <div
+                                                        className={state.cire.safety_state === 'blocked' ? 'h-full bg-danger' : state.cire.safety_state === 'critical' ? 'h-full bg-orange-500' : state.cire.safety_state === 'warning' ? 'h-full bg-yellow-400' : 'h-full bg-accent'}
+                                                        style={{ width: `${Math.min(100, state.cire.cps * 100)}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                            <DataRow label="Input Quality" value={`${(state.cire.input_quality * 100).toFixed(1)}%`} />
+                                            <DataRow label="Safety State" value={state.cire.safety_state.toUpperCase()} />
+                                        </div>
+                                    </div>
+                                </ConsoleCard>
+                            )}
 
                             {state.status === 'success' && (
                                 <div className="p-6 border border-accent/20 bg-accent/5 text-center space-y-4 animate-in fade-in zoom-in duration-500">
@@ -496,8 +597,14 @@ export default function InferenceConsole() {
                                             <CheckCircle2 className="w-6 h-6" />
                                         </div>
                                     </div>
-                                    <h3 className="font-mono text-sm uppercase tracking-widest text-accent">Inference Complete</h3>
-                                    <p className="text-xs text-muted font-mono">Statistical vectors and diagnostic weights are now available for review.</p>
+                                    <h3 className="font-mono text-sm uppercase tracking-widest text-accent">
+                                        {state.cire?.safety_state === 'blocked' ? 'Inference Suppressed' : 'Inference Complete'}
+                                    </h3>
+                                    <p className="text-xs text-muted font-mono">
+                                        {state.cire?.safety_state === 'blocked'
+                                            ? 'CIRE suppressed the output and logged an incident for manual review.'
+                                            : 'Statistical vectors and diagnostic weights are now available for review.'}
+                                    </p>
                                     <button
                                         onClick={() => setActiveTab('vectors')}
                                         className="inline-block border border-accent px-6 py-2 font-mono text-xs uppercase tracking-widest text-accent hover:bg-accent/10 transition-colors"
@@ -516,6 +623,37 @@ export default function InferenceConsole() {
                             <div className="text-muted font-mono text-xs text-center py-12 border border-dashed border-grid">
                                 AWAITING GENERATED VECTORS...
                             </div>
+                        ) : state.cire?.safety_state === 'blocked' ? (
+                            <ConsoleCard title="Inference Output Suppressed" className="border-danger bg-danger/5">
+                                <div className="space-y-4 font-mono text-xs text-danger">
+                                    <div className="text-sm uppercase tracking-[0.2em]">Inference output suppressed</div>
+                                    <p>
+                                        Collapse proximity score: {state.cire.cps.toFixed(3)}. Input quality score: {state.cire.input_quality.toFixed(3)}.
+                                        {state.cire.incident_id ? ` Incident ${state.cire.incident_id} logged.` : ''}
+                                    </p>
+                                    {state.cireMessage ? (
+                                        <div className="border border-danger/40 bg-black/20 p-3 text-[11px]">
+                                            {state.cireMessage}
+                                        </div>
+                                    ) : null}
+                                    <div className="flex flex-wrap gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => window.open('/dashboard', '_self')}
+                                            className="border border-accent/50 bg-accent/10 px-4 py-2 text-accent uppercase tracking-widest"
+                                        >
+                                            Review Incident
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={handleCireOverride}
+                                            className="border border-danger/50 bg-danger/10 px-4 py-2 text-danger uppercase tracking-widest"
+                                        >
+                                            Override - Proceed Anyway
+                                        </button>
+                                    </div>
+                                </div>
+                            </ConsoleCard>
                         ) : state.eventId && (
                             <>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -597,6 +735,17 @@ export default function InferenceConsole() {
                                                 <div className="text-muted uppercase text-[9px] mb-1">Alignment</div>
                                                 <div className="text-accent text-sm font-bold">{outcomeState.evaluation.outcome_alignment_delta != null ? `Δ${(outcomeState.evaluation.outcome_alignment_delta * 100).toFixed(1)}%` : 'N/A'}</div>
                                             </div>
+                                        </div>
+                                    </ConsoleCard>
+                                )}
+
+                                {state.cire && (
+                                    <ConsoleCard title="Reliability Posture">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 font-mono text-xs">
+                                            <DataRow label="Badge" value={state.cire.reliability_badge} />
+                                            <DataRow label="Safety" value={state.cire.safety_state.toUpperCase()} />
+                                            <DataRow label="Phi Hat" value={state.cire.phi_hat.toFixed(4)} />
+                                            <DataRow label="CPS" value={state.cire.cps.toFixed(4)} />
                                         </div>
                                     </ConsoleCard>
                                 )}
@@ -734,4 +883,18 @@ export default function InferenceConsole() {
             </div>
         </Container>
     );
+}
+
+function renderCireBadge(badge: CireState['reliability_badge']) {
+    if (badge === 'HIGH') return 'GREEN CIRCLE  HIGH';
+    if (badge === 'REVIEW') return 'AMBER DIAMOND  REVIEW';
+    if (badge === 'CAUTION') return 'RED TRIANGLE  CAUTION';
+    return 'RED X BLOCK  SUPPRESSED';
+}
+
+function cireTone(badge: CireState['reliability_badge']) {
+    if (badge === 'HIGH') return 'text-accent';
+    if (badge === 'REVIEW') return 'text-yellow-400';
+    if (badge === 'CAUTION') return 'text-orange-500';
+    return 'text-danger';
 }

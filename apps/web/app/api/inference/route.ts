@@ -46,6 +46,7 @@ import { PlatformAuthError } from '@/lib/platform/tenantContext';
 import { recordPlatformTelemetry } from '@/lib/platform/telemetry';
 import { runInferenceFlywheel } from '@/lib/platform/flywheel';
 import { dispatchWebhookEvent } from '@/lib/platform/webhooks';
+import { evaluateInferenceReliability } from '@/lib/cire/engine';
 import type { PlatformActor } from '@/lib/platform/types';
 import {
     buildRoutingTelemetryMetadata,
@@ -517,6 +518,23 @@ export async function POST(req: Request) {
             console.error(`[${requestId}] Inference flywheel failed:`, error);
         }
 
+        const cireResult = await evaluateInferenceReliability(supabase, {
+            inferenceId: persistedInferenceEventId,
+            tenantId,
+            actor,
+            inputPayload: rawBody,
+            outputPayload: inferenceResult.output_payload,
+            modelVersion: routedModel.model_version,
+        });
+        const cirePayload = {
+            phi_hat: cireResult.snapshot.phi_hat,
+            cps: cireResult.snapshot.cps,
+            safety_state: cireResult.snapshot.safety_state,
+            reliability_badge: cireResult.snapshot.reliability_badge,
+            input_quality: cireResult.input_quality,
+            incident_id: cireResult.incident?.id ?? null,
+        };
+
         await Promise.all([
             settleNonCriticalEffect(
                 requestId,
@@ -581,6 +599,7 @@ export async function POST(req: Request) {
                             pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
                                 ? inferenceResult.output_payload.pipeline_trace
                                 : [],
+                            cire: cirePayload,
                             ...routingTelemetryMetadata,
                         },
                     }),
@@ -620,6 +639,7 @@ export async function POST(req: Request) {
                             pipeline_stage_completion: Array.isArray(inferenceResult.output_payload.pipeline_trace)
                                 ? inferenceResult.output_payload.pipeline_trace
                                 : [],
+                            cire: cirePayload,
                             ...routingTelemetryMetadata,
                         },
                     }),
@@ -666,6 +686,79 @@ export async function POST(req: Request) {
             ),
         ]);
 
+        const responseData = {
+            inference_event_id: persistedInferenceEventId,
+            clinical_case_id: finalizedClinicalCase.id,
+            episode_id: episodeId,
+            episode_reconcile_error: episodeReconcileError,
+            output: inferenceResult.output_payload,
+            differentials: Array.isArray(asRecord(inferenceResult.output_payload.diagnosis).top_differentials)
+                ? asRecord(inferenceResult.output_payload.diagnosis).top_differentials
+                : [],
+            confidence_score: inferenceResult.confidence_score,
+            uncertainty_metrics: inferenceResult.uncertainty_metrics,
+            contradiction_analysis: inferenceResult.contradiction_analysis,
+            differential_spread: inferenceResult.output_payload.differential_spread ?? null,
+            inference_latency_ms: measuredLatencyMs,
+            integrity: {
+                perturbation_score_m: integrityEvaluation.integrity.perturbation.m,
+                global_phi: integrityEvaluation.integrity.global_phi,
+                state: integrityEvaluation.integrity.state,
+                collapse_risk: integrityEvaluation.integrity.collapse_risk,
+                precliff_detected: integrityEvaluation.integrity.precliff_detected,
+                instability: integrityEvaluation.integrity.instability,
+                capabilities: integrityEvaluation.integrity.capabilities.map((capability) => ({
+                    name: capability.name,
+                    phi: capability.phi,
+                })),
+            },
+            safety_policy: integrityEvaluation.safetyPolicy,
+            evaluation: flywheelEvaluation?.evaluation ?? null,
+            auto_outcome: flywheelEvaluation?.outcome ?? null,
+            flywheel_error: flywheelError,
+            ml_risk: inferenceResult.mlRisk,
+            routing: {
+                routing_decision_id: routingPlan.routing_decision_id,
+                requested_model_name: body.model.name,
+                requested_model_version: body.model.version,
+                selected_model_id: routedModel.model_id,
+                selected_model_name: routedModel.model_name,
+                selected_provider_model: routedModel.provider_model,
+                selected_model_version: routedModel.model_version,
+                route_mode: routingExecution.route_mode,
+                fallback_used: routingExecution.fallback_used,
+                attempts: routingExecution.attempts,
+                analysis: routingPlan.analysis,
+                reason: routingPlan.reason,
+            },
+        };
+
+        if (cirePayload.safety_state === 'blocked') {
+            const response = NextResponse.json({
+                inference_event_id: persistedInferenceEventId,
+                clinical_case_id: finalizedClinicalCase.id,
+                episode_id: episodeId,
+                episode_reconcile_error: episodeReconcileError,
+                prediction: null,
+                output: null,
+                data: null,
+                cire: cirePayload,
+                meta: {
+                    tenant_id: tenantId,
+                    timestamp: new Date().toISOString(),
+                    request_id: requestId,
+                    inference_id: persistedInferenceEventId,
+                },
+                error: {
+                    code: 'INFERENCE_SUPPRESSED',
+                    message: `Output suppressed by CIRE safety layer. Collapse proximity score: ${cirePayload.cps}. Manual review required.`,
+                },
+                request_id: requestId,
+            });
+            withRequestHeaders(response.headers, requestId, startTime);
+            return response;
+        }
+
         const response = NextResponse.json({
             inference_event_id: persistedInferenceEventId,
             clinical_case_id: finalizedClinicalCase.id,
@@ -673,6 +766,15 @@ export async function POST(req: Request) {
             episode_reconcile_error: episodeReconcileError,
             prediction: inferenceResult.output_payload,
             output: inferenceResult.output_payload,
+            data: responseData,
+            cire: cirePayload,
+            meta: {
+                tenant_id: tenantId,
+                timestamp: new Date().toISOString(),
+                request_id: requestId,
+                inference_id: persistedInferenceEventId,
+            },
+            error: null,
             confidence_score: inferenceResult.confidence_score,
             uncertainty_metrics: inferenceResult.uncertainty_metrics,
             contradiction_analysis: inferenceResult.contradiction_analysis,

@@ -8,6 +8,13 @@ type SimulationSignal = {
     status?: string | null;
 };
 
+type SovereignSignal = {
+    run_id: string;
+    client_id: string;
+    status?: string | null;
+    type?: string | null;
+};
+
 declare global {
     // eslint-disable-next-line no-var
     var __vetiosPlatformEventBus: EventEmitter | undefined;
@@ -50,6 +57,24 @@ export function subscribeSimulationSignal(
 ) {
     const bus = getPlatformEventBus();
     const eventName = `simulation:${tenantId}:${simulationId}`;
+    bus.on(eventName, listener);
+
+    return () => {
+        bus.off(eventName, listener);
+    };
+}
+
+export function publishSovereignSignal(signal: SovereignSignal) {
+    getPlatformEventBus().emit(`sovereign:${signal.client_id}:${signal.run_id}`, signal);
+}
+
+export function subscribeSovereignSignal(
+    clientId: string,
+    runId: string,
+    listener: (signal: SovereignSignal) => void,
+) {
+    const bus = getPlatformEventBus();
+    const eventName = `sovereign:${clientId}:${runId}`;
     bus.on(eventName, listener);
 
     return () => {

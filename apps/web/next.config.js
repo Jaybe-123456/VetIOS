@@ -1,5 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+    transpilePackages: ['@vetios/cire-engine'],
     // ── Security Headers ──────────────────────────────────────────────────────
     async headers() {
         return [
