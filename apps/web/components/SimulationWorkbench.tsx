@@ -40,6 +40,11 @@ const ADVERSARIAL_CATEGORIES = [
 ] as const;
 
 const STREAM_FALLBACK_MESSAGE = 'Live progress stream interrupted. Switching to polling.';
+const FALLBACK_MODEL_OPTION: ModelOption = {
+    model_version: 'gpt-4o-mini',
+    source: 'inference',
+    preferred: false,
+};
 
 export default function SimulationWorkbench() {
     const [mode, setMode] = useState<SimulationMode>('scenario_load');
@@ -83,16 +88,16 @@ export default function SimulationWorkbench() {
                 typeof entry?.model_version === 'string' && entry.model_version.trim().length > 0,
             );
 
-            const nextModels = resolvedModels.length > 0
+            const nextModels: ModelOption[] = resolvedModels.length > 0
                 ? resolvedModels
-                : [{ model_version: 'gpt-4o-mini', source: 'inference', preferred: false }];
+                : [FALLBACK_MODEL_OPTION];
             const preferredModelVersion = nextModels[0]?.model_version ?? 'gpt-4o-mini';
             setModels(nextModels);
             setSelectedModelVersion(preferredModelVersion);
             setCandidateModelVersion(preferredModelVersion);
         } catch (loadError) {
             setError(loadError instanceof Error ? loadError.message : 'Failed to load available model versions.');
-            setModels([{ model_version: 'gpt-4o-mini', source: 'inference', preferred: false }]);
+            setModels([FALLBACK_MODEL_OPTION]);
         } finally {
             setLoadingModels(false);
         }
