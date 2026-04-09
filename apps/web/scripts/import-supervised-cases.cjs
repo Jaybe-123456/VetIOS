@@ -28,6 +28,43 @@ const SUPPORTED_FIELDS = [
     'PROGNOSIS',
     'SOURCE_TOPIC',
 ];
+const ADVERSARIAL_VARIANTS = [
+    {
+        caseId: 'ADV-ALF-001',
+        baseCaseId: 'ALF-001',
+        contradictorySignals: ['normal bilirubin despite marked icterus', 'missing ammonia value'],
+        noiseLevel: 0.70,
+        expectedBehavior: 'confidence_drop_or_abstain',
+    },
+    {
+        caseId: 'ADV-AFLA-001',
+        baseCaseId: 'AFLA-001',
+        contradictorySignals: ['vomiting and diarrhea only', 'bleeding signs removed', 'no feed history provided'],
+        noiseLevel: 0.60,
+        expectedBehavior: 'reduce_confidence_and_expand_differentials',
+    },
+    {
+        caseId: 'ADV-BABE-001',
+        baseCaseId: 'BABE-001',
+        contradictorySignals: ['tick exposure omitted', 'hemoglobinuria omitted', 'fever retained'],
+        noiseLevel: 0.55,
+        expectedBehavior: 'consider_tick_borne_overlap_not_overconfident',
+    },
+    {
+        caseId: 'ADV-HYPOCA-001',
+        baseCaseId: 'HYPOCA-001',
+        contradictorySignals: ['postpartum history omitted', 'panting only', 'calcium value missing'],
+        noiseLevel: 0.65,
+        expectedBehavior: 'avoid_false_positive_eclampsia',
+    },
+    {
+        caseId: 'ADV-PAROX-002',
+        baseCaseId: 'PAROX-002',
+        contradictorySignals: ['post-ictal phase omitted', 'owner reports brief collapse only'],
+        noiseLevel: 0.50,
+        expectedBehavior: 'differentiate_seizure_vs_syncope',
+    },
+];
 
 main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
@@ -47,8 +84,14 @@ async function main() {
     }
 
     const normalized = parsedCases.map((entry) => normalizeCase(entry, args));
+    const adversarialRows = buildAdversarialRows(normalized, args);
+    if (args.emitSql) {
+        emitSql(normalized, adversarialRows, args);
+        return;
+    }
+
     if (args.dryRun) {
-        printDryRunSummary(normalized, args);
+        printDryRunSummary(normalized, adversarialRows, args);
         return;
     }
 
@@ -61,6 +104,8 @@ async function main() {
     let updatedCases = 0;
     let insertedInferences = 0;
     let insertedOutcomes = 0;
+    let insertedAdversarialEvents = 0;
+    let skippedAdversarialEvents = 0;
 
     for (const item of normalized) {
         const existing = await supabase
@@ -143,6 +188,34 @@ async function main() {
         }
     }
 
+    const edgeSimulationAvailable = await canAccessEdgeSimulationEvents(supabase);
+    if (edgeSimulationAvailable) {
+        for (const item of adversarialRows) {
+            const simulationUpsert = await supabase
+                .from('edge_simulation_events')
+                .upsert(item.simulationRow, { onConflict: 'id' });
+
+            if (simulationUpsert.error) {
+                throw new Error(`Failed to upsert adversarial event ${item.caseId}: ${simulationUpsert.error.message}`);
+            }
+            insertedAdversarialEvents += 1;
+
+            const simulationLink = await supabase
+                .from('clinical_cases')
+                .update({
+                    latest_simulation_event_id: item.simulationRow.id,
+                    updated_at: item.importedAt,
+                })
+                .eq('id', item.baseCaseUuid);
+
+            if (simulationLink.error && !/column .*latest_simulation_event_id/i.test(simulationLink.error.message)) {
+                throw new Error(`Failed to link adversarial event ${item.caseId}: ${simulationLink.error.message}`);
+            }
+        }
+    } else {
+        skippedAdversarialEvents = adversarialRows.length;
+    }
+
     console.log(JSON.stringify({
         tenant_id: args.tenantId,
         source_file: args.inputPath,
@@ -151,6 +224,8 @@ async function main() {
         clinical_cases_updated: updatedCases,
         inference_events_upserted: insertedInferences,
         outcome_events_upserted: insertedOutcomes,
+        adversarial_events_upserted: insertedAdversarialEvents,
+        adversarial_events_skipped: skippedAdversarialEvents,
     }, null, 2));
 }
 
@@ -160,6 +235,8 @@ function parseArgs(argv) {
         clinicId: null,
         inputPath: DEFAULT_INPUT,
         dryRun: false,
+        emitSql: false,
+        outputPath: null,
         sourceModule: 'supervised_import',
         modelName: 'supervised_seed',
         modelVersion: 'expert_curated_v1',
@@ -178,6 +255,11 @@ function parseArgs(argv) {
             index += 1;
         } else if (token === '--dry-run') {
             parsed.dryRun = true;
+        } else if (token === '--emit-sql') {
+            parsed.emitSql = true;
+        } else if (token === '--output') {
+            parsed.outputPath = path.resolve(process.cwd(), argv[index + 1] ?? '');
+            index += 1;
         } else if (token === '--source-module') {
             parsed.sourceModule = argv[index + 1] ?? parsed.sourceModule;
             index += 1;
@@ -199,11 +281,12 @@ function parseArgs(argv) {
 function printHelp() {
     console.log([
         'Usage:',
-        '  node scripts/import-supervised-cases.cjs --tenant-id <uuid> [--clinic-id <uuid>] [--input <path>] [--dry-run]',
+        '  node scripts/import-supervised-cases.cjs --tenant-id <uuid> [--clinic-id <uuid>] [--input <path>] [--dry-run] [--emit-sql] [--output <path>]',
         '',
         'Examples:',
         '  node scripts/import-supervised-cases.cjs --tenant-id 11111111-1111-1111-1111-111111111111 --dry-run',
         '  pnpm --filter @vetios/web run import:supervised-cases -- --tenant-id 11111111-1111-1111-1111-111111111111',
+        '  pnpm --filter @vetios/web run import:supervised-cases -- --tenant-id 11111111-1111-1111-1111-111111111111 --emit-sql --output ../../infra/supabase/seeds/002_supervised_training_pack.sql',
     ].join('\n'));
 }
 
@@ -436,6 +519,56 @@ function normalizeCase(entry, args) {
     };
 }
 
+function buildAdversarialRows(rows, args) {
+    const byCaseId = new Map(rows.map((row) => [row.caseId, row]));
+
+    return ADVERSARIAL_VARIANTS
+        .map((variant) => {
+            const base = byCaseId.get(variant.baseCaseId);
+            if (!base) {
+                return null;
+            }
+
+            return {
+                caseId: variant.caseId,
+                baseCaseId: variant.baseCaseId,
+                baseCaseUuid: base.caseRow.id,
+                importedAt: base.importedAt,
+                simulationRow: {
+                    id: deterministicUuid(`${args.tenantId}:simulation:${variant.caseId}`),
+                    tenant_id: args.tenantId,
+                    user_id: args.tenantId,
+                    clinic_id: args.clinicId,
+                    case_id: base.caseRow.id,
+                    source_module: args.sourceModule,
+                    simulation_type: 'seeded_adversarial_case',
+                    simulation_parameters: {
+                        seed_case_id: variant.caseId,
+                        base_case_id: variant.baseCaseId,
+                        noise_level: variant.noiseLevel,
+                        expected_behavior: variant.expectedBehavior,
+                        imported_supervised_case: true,
+                    },
+                    scenario: {
+                        contradictory_signals: variant.contradictorySignals,
+                        target_diagnosis: base.caseRow.confirmed_diagnosis,
+                        base_case_key: base.caseKey,
+                        source_topic: base.caseRow.metadata?.source_topic || null,
+                    },
+                    triggered_inference_id: base.inferenceRow.id,
+                    inference_output: {
+                        expected_behavior: variant.expectedBehavior,
+                        reference_output: base.inferenceRow.output_payload,
+                        simulation_seed: true,
+                    },
+                    failure_mode: null,
+                    created_at: base.importedAt,
+                },
+            };
+        })
+        .filter(Boolean);
+}
+
 function buildSyntheticOutput(input) {
     const weightedDiffs = assignProbabilities(input.differentials).map((entry) => ({
         name: entry.name,
@@ -622,7 +755,25 @@ function round(value, precision) {
     return Number(value.toFixed(precision));
 }
 
-function printDryRunSummary(rows, args) {
+async function canAccessEdgeSimulationEvents(supabase) {
+    const probe = await supabase
+        .from('edge_simulation_events')
+        .select('id')
+        .limit(1);
+
+    if (!probe.error) {
+        return true;
+    }
+
+    if (/Could not find the table|relation .* does not exist|schema cache/i.test(probe.error.message)) {
+        console.warn('Skipping adversarial event import: edge_simulation_events is missing in the target database.');
+        return false;
+    }
+
+    throw new Error(`Failed to probe edge_simulation_events: ${probe.error.message}`);
+}
+
+function printDryRunSummary(rows, adversarialRows, args) {
     const bySpecies = {};
     const byClass = {};
     for (const row of rows) {
@@ -637,8 +788,478 @@ function printDryRunSummary(rows, args) {
         source_file: args.inputPath,
         dry_run: true,
         cases_parsed: rows.length,
+        adversarial_variants: adversarialRows.length,
         species_breakdown: bySpecies,
         condition_class_breakdown: byClass,
         sample_case_ids: rows.slice(0, 5).map((row) => row.caseId),
     }, null, 2));
+}
+
+function emitSql(rows, adversarialRows, args) {
+    const sql = buildSeedSql(rows, adversarialRows, args);
+    if (args.outputPath) {
+        fs.writeFileSync(args.outputPath, sql, 'utf8');
+        console.log(JSON.stringify({
+            tenant_id: args.tenantId,
+            source_file: args.inputPath,
+            emitted_sql: true,
+            output_path: args.outputPath,
+            cases_serialized: rows.length,
+            adversarial_events_serialized: adversarialRows.length,
+        }, null, 2));
+        return;
+    }
+
+    process.stdout.write(sql);
+}
+
+function buildSeedSql(rows, adversarialRows, args) {
+    const sections = [
+        '-- =========================================================',
+        '-- VETIOS SUPERVISED TRAINING PACK (SCHEMA-SAFE)',
+        '-- Generated by apps/web/scripts/import-supervised-cases.cjs',
+        '-- Maps structured rows into:',
+        '--   1) public.clinical_cases',
+        '--   2) public.ai_inference_events',
+        '--   3) public.clinical_outcome_events',
+        '--   4) public.edge_simulation_events (adversarial variants)',
+        '-- =========================================================',
+        '',
+        `-- Tenant ID: ${args.tenantId}`,
+        `-- Source file: ${args.inputPath}`,
+        `-- Cases: ${rows.length}`,
+        `-- Adversarial variants: ${adversarialRows.length}`,
+        '',
+        'begin;',
+        '',
+    ];
+
+    if (adversarialRows.length > 0) {
+        sections.push(renderEdgeSimulationSchemaPreamble());
+        sections.push('');
+    }
+
+    for (const row of rows) {
+        sections.push(renderCaseSql(row));
+    }
+
+    for (const row of adversarialRows) {
+        sections.push(renderAdversarialSql(row));
+    }
+
+    sections.push('commit;');
+    sections.push('');
+
+    return sections.join('\n');
+}
+
+function renderCaseSql(row) {
+    const caseRow = row.caseRow;
+    const inferenceRow = row.inferenceRow;
+    const outcomeRow = row.outcomeRow;
+
+    return [
+        `-- ${row.caseId}`,
+        'WITH upsert_case AS (',
+        '    INSERT INTO public.clinical_cases (',
+        '        tenant_id,',
+        '        user_id,',
+        '        clinic_id,',
+        '        source_module,',
+        '        case_key,',
+        '        source_case_reference,',
+        '        species,',
+        '        species_raw,',
+        '        species_canonical,',
+        '        species_display,',
+        '        breed,',
+        '        symptom_vector,',
+        '        symptom_summary,',
+        '        symptom_text_raw,',
+        '        symptoms_raw,',
+        '        symptoms_normalized,',
+        '        symptom_vector_normalized,',
+        '        metadata,',
+        '        patient_metadata,',
+        '        latest_input_signature,',
+        '        primary_condition_class,',
+        '        top_diagnosis,',
+        '        predicted_diagnosis,',
+        '        confirmed_diagnosis,',
+        '        label_type,',
+        '        diagnosis_confidence,',
+        '        severity_score,',
+        '        emergency_level,',
+        '        triage_priority,',
+        '        contradiction_score,',
+        '        contradiction_flags,',
+        '        adversarial_case,',
+        '        adversarial_case_type,',
+        '        uncertainty_notes,',
+        '        case_cluster,',
+        '        model_version,',
+        '        telemetry_status,',
+        '        ingestion_status,',
+        '        invalid_case,',
+        '        validation_error_code,',
+        '        inference_event_count,',
+        '        first_inference_at,',
+        '        last_inference_at,',
+        '        created_at,',
+        '        updated_at',
+        '    ) VALUES (',
+        `        ${sqlUuid(caseRow.tenant_id)},`,
+        `        ${sqlUuid(caseRow.user_id)},`,
+        `        ${sqlUuid(caseRow.clinic_id)},`,
+        `        ${sqlText(caseRow.source_module)},`,
+        `        ${sqlText(caseRow.case_key)},`,
+        `        ${sqlText(caseRow.source_case_reference)},`,
+        `        ${sqlText(caseRow.species)},`,
+        `        ${sqlText(caseRow.species_raw)},`,
+        `        ${sqlText(caseRow.species_canonical)},`,
+        `        ${sqlText(caseRow.species_display)},`,
+        `        ${sqlText(caseRow.breed)},`,
+        `        ${sqlTextArray(caseRow.symptom_vector)},`,
+        `        ${sqlText(caseRow.symptom_summary)},`,
+        `        ${sqlText(caseRow.symptom_text_raw)},`,
+        `        ${sqlText(caseRow.symptoms_raw)},`,
+        `        ${sqlTextArray(caseRow.symptoms_normalized)},`,
+        `        ${sqlJson(caseRow.symptom_vector_normalized)},`,
+        `        ${sqlJson(caseRow.metadata)},`,
+        `        ${sqlJson(caseRow.patient_metadata)},`,
+        `        ${sqlJson(caseRow.latest_input_signature)},`,
+        `        ${sqlText(caseRow.primary_condition_class)},`,
+        `        ${sqlText(caseRow.top_diagnosis)},`,
+        `        ${sqlText(caseRow.predicted_diagnosis)},`,
+        `        ${sqlText(caseRow.confirmed_diagnosis)},`,
+        `        ${sqlText(caseRow.label_type)},`,
+        `        ${sqlNumber(caseRow.diagnosis_confidence)},`,
+        `        ${sqlNumber(caseRow.severity_score)},`,
+        `        ${sqlText(caseRow.emergency_level)},`,
+        `        ${sqlText(caseRow.triage_priority)},`,
+        `        ${sqlNumber(caseRow.contradiction_score)},`,
+        `        ${sqlTextArray(caseRow.contradiction_flags)},`,
+        `        ${sqlBoolean(caseRow.adversarial_case)},`,
+        `        ${sqlText(caseRow.adversarial_case_type)},`,
+        `        ${sqlTextArray(caseRow.uncertainty_notes)},`,
+        `        ${sqlText(caseRow.case_cluster)},`,
+        `        ${sqlText(caseRow.model_version)},`,
+        `        ${sqlText(caseRow.telemetry_status)},`,
+        `        ${sqlText(caseRow.ingestion_status)},`,
+        `        ${sqlBoolean(caseRow.invalid_case)},`,
+        `        ${sqlText(caseRow.validation_error_code)},`,
+        `        ${sqlInteger(caseRow.inference_event_count)},`,
+        `        ${sqlTimestamp(caseRow.first_inference_at)},`,
+        `        ${sqlTimestamp(caseRow.last_inference_at)},`,
+        `        ${sqlTimestamp(caseRow.created_at)},`,
+        `        ${sqlTimestamp(caseRow.updated_at)}`,
+        '    )',
+        '    ON CONFLICT (tenant_id, case_key) DO UPDATE SET',
+        '        user_id = EXCLUDED.user_id,',
+        '        clinic_id = EXCLUDED.clinic_id,',
+        '        source_module = EXCLUDED.source_module,',
+        '        source_case_reference = EXCLUDED.source_case_reference,',
+        '        species = EXCLUDED.species,',
+        '        species_raw = EXCLUDED.species_raw,',
+        '        species_canonical = EXCLUDED.species_canonical,',
+        '        species_display = EXCLUDED.species_display,',
+        '        breed = EXCLUDED.breed,',
+        '        symptom_vector = EXCLUDED.symptom_vector,',
+        '        symptom_summary = EXCLUDED.symptom_summary,',
+        '        symptom_text_raw = EXCLUDED.symptom_text_raw,',
+        '        symptoms_raw = EXCLUDED.symptoms_raw,',
+        '        symptoms_normalized = EXCLUDED.symptoms_normalized,',
+        '        symptom_vector_normalized = EXCLUDED.symptom_vector_normalized,',
+        '        metadata = EXCLUDED.metadata,',
+        '        patient_metadata = EXCLUDED.patient_metadata,',
+        '        latest_input_signature = EXCLUDED.latest_input_signature,',
+        '        primary_condition_class = EXCLUDED.primary_condition_class,',
+        '        top_diagnosis = EXCLUDED.top_diagnosis,',
+        '        predicted_diagnosis = EXCLUDED.predicted_diagnosis,',
+        '        confirmed_diagnosis = EXCLUDED.confirmed_diagnosis,',
+        '        label_type = EXCLUDED.label_type,',
+        '        diagnosis_confidence = EXCLUDED.diagnosis_confidence,',
+        '        severity_score = EXCLUDED.severity_score,',
+        '        emergency_level = EXCLUDED.emergency_level,',
+        '        triage_priority = EXCLUDED.triage_priority,',
+        '        contradiction_score = EXCLUDED.contradiction_score,',
+        '        contradiction_flags = EXCLUDED.contradiction_flags,',
+        '        adversarial_case = EXCLUDED.adversarial_case,',
+        '        adversarial_case_type = EXCLUDED.adversarial_case_type,',
+        '        uncertainty_notes = EXCLUDED.uncertainty_notes,',
+        '        case_cluster = EXCLUDED.case_cluster,',
+        '        model_version = EXCLUDED.model_version,',
+        '        telemetry_status = EXCLUDED.telemetry_status,',
+        '        ingestion_status = EXCLUDED.ingestion_status,',
+        '        invalid_case = EXCLUDED.invalid_case,',
+        '        validation_error_code = EXCLUDED.validation_error_code,',
+        '        inference_event_count = EXCLUDED.inference_event_count,',
+        '        first_inference_at = EXCLUDED.first_inference_at,',
+        '        last_inference_at = EXCLUDED.last_inference_at,',
+        '        updated_at = EXCLUDED.updated_at',
+        '    RETURNING id',
+        '),',
+        'upsert_inference AS (',
+        '    INSERT INTO public.ai_inference_events (',
+        '        id,',
+        '        tenant_id,',
+        '        user_id,',
+        '        clinic_id,',
+        '        case_id,',
+        '        source_module,',
+        '        model_name,',
+        '        model_version,',
+        '        input_signature,',
+        '        output_payload,',
+        '        confidence_score,',
+        '        uncertainty_metrics,',
+        '        inference_latency_ms,',
+        '        created_at',
+        '    )',
+        '    SELECT',
+        `        ${sqlUuid(inferenceRow.id)},`,
+        `        ${sqlUuid(inferenceRow.tenant_id)},`,
+        `        ${sqlUuid(inferenceRow.user_id)},`,
+        `        ${sqlUuid(inferenceRow.clinic_id)},`,
+        '        upsert_case.id,',
+        `        ${sqlText(inferenceRow.source_module)},`,
+        `        ${sqlText(inferenceRow.model_name)},`,
+        `        ${sqlText(inferenceRow.model_version)},`,
+        `        ${sqlJson(inferenceRow.input_signature)},`,
+        `        ${sqlJson(inferenceRow.output_payload)},`,
+        `        ${sqlNumber(inferenceRow.confidence_score)},`,
+        `        ${sqlJson(inferenceRow.uncertainty_metrics)},`,
+        `        ${sqlInteger(inferenceRow.inference_latency_ms)},`,
+        `        ${sqlTimestamp(inferenceRow.created_at)}`,
+        '    FROM upsert_case',
+        '    ON CONFLICT (id) DO UPDATE SET',
+        '        tenant_id = EXCLUDED.tenant_id,',
+        '        user_id = EXCLUDED.user_id,',
+        '        clinic_id = EXCLUDED.clinic_id,',
+        '        case_id = EXCLUDED.case_id,',
+        '        source_module = EXCLUDED.source_module,',
+        '        model_name = EXCLUDED.model_name,',
+        '        model_version = EXCLUDED.model_version,',
+        '        input_signature = EXCLUDED.input_signature,',
+        '        output_payload = EXCLUDED.output_payload,',
+        '        confidence_score = EXCLUDED.confidence_score,',
+        '        uncertainty_metrics = EXCLUDED.uncertainty_metrics,',
+        '        inference_latency_ms = EXCLUDED.inference_latency_ms,',
+        '        created_at = EXCLUDED.created_at',
+        '    RETURNING id',
+        '),',
+        'upsert_outcome AS (',
+        '    INSERT INTO public.clinical_outcome_events (',
+        '        id,',
+        '        tenant_id,',
+        '        user_id,',
+        '        clinic_id,',
+        '        case_id,',
+        '        source_module,',
+        '        inference_event_id,',
+        '        outcome_type,',
+        '        outcome_payload,',
+        '        outcome_timestamp,',
+        '        label_type,',
+        '        created_at',
+        '    )',
+        '    SELECT',
+        `        ${sqlUuid(outcomeRow.id)},`,
+        `        ${sqlUuid(outcomeRow.tenant_id)},`,
+        `        ${sqlUuid(outcomeRow.user_id)},`,
+        `        ${sqlUuid(outcomeRow.clinic_id)},`,
+        '        upsert_case.id,',
+        `        ${sqlText(outcomeRow.source_module)},`,
+        '        upsert_inference.id,',
+        `        ${sqlText(outcomeRow.outcome_type)},`,
+        `        ${sqlJson(outcomeRow.outcome_payload)},`,
+        `        ${sqlTimestamp(outcomeRow.outcome_timestamp)},`,
+        `        ${sqlText(outcomeRow.label_type)},`,
+        `        ${sqlTimestamp(outcomeRow.created_at)}`,
+        '    FROM upsert_case',
+        '    CROSS JOIN upsert_inference',
+        '    ON CONFLICT (id) DO UPDATE SET',
+        '        tenant_id = EXCLUDED.tenant_id,',
+        '        user_id = EXCLUDED.user_id,',
+        '        clinic_id = EXCLUDED.clinic_id,',
+        '        case_id = EXCLUDED.case_id,',
+        '        source_module = EXCLUDED.source_module,',
+        '        inference_event_id = EXCLUDED.inference_event_id,',
+        '        outcome_type = EXCLUDED.outcome_type,',
+        '        outcome_payload = EXCLUDED.outcome_payload,',
+        '        outcome_timestamp = EXCLUDED.outcome_timestamp,',
+        '        label_type = EXCLUDED.label_type,',
+        '        created_at = EXCLUDED.created_at',
+        '    RETURNING id',
+        ')',
+        'UPDATE public.clinical_cases',
+        'SET',
+        '    latest_inference_event_id = (SELECT id FROM upsert_inference),',
+        '    latest_outcome_event_id = (SELECT id FROM upsert_outcome),',
+        `    last_inference_at = ${sqlTimestamp(row.importedAt)},`,
+        `    updated_at = ${sqlTimestamp(row.importedAt)}`,
+        'WHERE id = (SELECT id FROM upsert_case);',
+        '',
+    ].join('\n');
+}
+
+function renderAdversarialSql(row) {
+    const simulationRow = row.simulationRow;
+
+    return [
+        `-- ${row.caseId}`,
+        'INSERT INTO public.edge_simulation_events (',
+        '    id,',
+        '    tenant_id,',
+        '    user_id,',
+        '    clinic_id,',
+        '    case_id,',
+        '    source_module,',
+        '    simulation_type,',
+        '    simulation_parameters,',
+        '    scenario,',
+        '    triggered_inference_id,',
+        '    inference_output,',
+        '    failure_mode,',
+        '    created_at',
+        ') VALUES (',
+        `    ${sqlUuid(simulationRow.id)},`,
+        `    ${sqlUuid(simulationRow.tenant_id)},`,
+        `    ${sqlUuid(simulationRow.user_id)},`,
+        `    ${sqlUuid(simulationRow.clinic_id)},`,
+        `    ${sqlUuid(simulationRow.case_id)},`,
+        `    ${sqlText(simulationRow.source_module)},`,
+        `    ${sqlText(simulationRow.simulation_type)},`,
+        `    ${sqlJson(simulationRow.simulation_parameters)},`,
+        `    ${sqlJson(simulationRow.scenario)},`,
+        `    ${sqlUuid(simulationRow.triggered_inference_id)},`,
+        `    ${sqlJson(simulationRow.inference_output)},`,
+        `    ${sqlText(simulationRow.failure_mode)},`,
+        `    ${sqlTimestamp(simulationRow.created_at)}`,
+        ')',
+        'ON CONFLICT (id) DO UPDATE SET',
+        '    tenant_id = EXCLUDED.tenant_id,',
+        '    user_id = EXCLUDED.user_id,',
+        '    clinic_id = EXCLUDED.clinic_id,',
+        '    case_id = EXCLUDED.case_id,',
+        '    source_module = EXCLUDED.source_module,',
+        '    simulation_type = EXCLUDED.simulation_type,',
+        '    simulation_parameters = EXCLUDED.simulation_parameters,',
+        '    scenario = EXCLUDED.scenario,',
+        '    triggered_inference_id = EXCLUDED.triggered_inference_id,',
+        '    inference_output = EXCLUDED.inference_output,',
+        '    failure_mode = EXCLUDED.failure_mode,',
+        '    created_at = EXCLUDED.created_at;',
+        '',
+        'UPDATE public.clinical_cases',
+        'SET',
+        `    latest_simulation_event_id = ${sqlUuid(simulationRow.id)},`,
+        `    updated_at = ${sqlTimestamp(row.importedAt)}`,
+        `WHERE id = ${sqlUuid(row.baseCaseUuid)};`,
+        '',
+    ].join('\n');
+}
+
+function renderEdgeSimulationSchemaPreamble() {
+    return [
+        'create extension if not exists pgcrypto;',
+        '',
+        'create table if not exists public.edge_simulation_events (',
+        '    id uuid primary key default gen_random_uuid(),',
+        '    tenant_id uuid references public.tenants(id) on delete cascade,',
+        '    user_id uuid,',
+        '    clinic_id uuid,',
+        '    case_id uuid references public.clinical_cases(id) on delete set null,',
+        '    source_module text,',
+        '    simulation_type text not null,',
+        "    simulation_parameters jsonb not null default '{}'::jsonb,",
+        "    scenario jsonb not null default '{}'::jsonb,",
+        '    triggered_inference_id uuid references public.ai_inference_events(id) on delete set null,',
+        '    inference_output jsonb,',
+        '    failure_mode text,',
+        '    created_at timestamptz not null default now()',
+        ');',
+        '',
+        'alter table public.edge_simulation_events',
+        '    add column if not exists tenant_id uuid,',
+        '    add column if not exists user_id uuid,',
+        '    add column if not exists clinic_id uuid,',
+        '    add column if not exists case_id uuid,',
+        '    add column if not exists source_module text,',
+        '    add column if not exists simulation_type text,',
+        "    add column if not exists simulation_parameters jsonb default '{}'::jsonb,",
+        "    add column if not exists scenario jsonb default '{}'::jsonb,",
+        '    add column if not exists triggered_inference_id uuid,',
+        '    add column if not exists inference_output jsonb,',
+        '    add column if not exists failure_mode text,',
+        '    add column if not exists created_at timestamptz default now();',
+        '',
+        'alter table public.clinical_cases',
+        '    add column if not exists latest_simulation_event_id uuid;',
+        '',
+        'create index if not exists idx_edge_simulation_events_tenant_case_seed',
+        '    on public.edge_simulation_events (tenant_id, case_id, created_at desc);',
+        '',
+        "notify pgrst, 'reload schema';",
+    ].join('\n');
+}
+
+function sqlUuid(value) {
+    if (!value) {
+        return 'null';
+    }
+    return `${sqlQuote(value)}::uuid`;
+}
+
+function sqlTimestamp(value) {
+    if (!value) {
+        return 'null';
+    }
+    return `${sqlQuote(value)}::timestamptz`;
+}
+
+function sqlText(value) {
+    if (value === null || value === undefined) {
+        return 'null';
+    }
+    return sqlQuote(value);
+}
+
+function sqlNumber(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+        return 'null';
+    }
+    return String(Number(value));
+}
+
+function sqlInteger(value) {
+    if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+        return 'null';
+    }
+    return String(Math.trunc(Number(value)));
+}
+
+function sqlBoolean(value) {
+    if (value === null || value === undefined) {
+        return 'null';
+    }
+    return value ? 'true' : 'false';
+}
+
+function sqlTextArray(values) {
+    if (!Array.isArray(values) || values.length === 0) {
+        return 'ARRAY[]::text[]';
+    }
+    return `ARRAY[${values.map((value) => sqlQuote(String(value))).join(', ')}]::text[]`;
+}
+
+function sqlJson(value) {
+    if (value === null || value === undefined) {
+        return 'null';
+    }
+    return `${sqlQuote(JSON.stringify(value))}::jsonb`;
+}
+
+function sqlQuote(value) {
+    return `'${String(value).replace(/'/g, "''")}'`;
 }
