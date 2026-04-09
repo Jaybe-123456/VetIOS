@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-const appRoot = path.join(process.cwd(), 'apps', 'web');
+const loaderDirectory = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(loaderDirectory, '..', '..');
+const appRoot = path.join(repoRoot, 'apps', 'web');
 
 export async function resolve(specifier, context, nextResolve) {
     if (specifier.startsWith('@/')) {
@@ -24,6 +26,20 @@ export async function resolve(specifier, context, nextResolve) {
     }
 
     return nextResolve(specifier, context);
+}
+
+export async function load(url, context, nextLoad) {
+    if (url.endsWith('.json')) {
+        const filePath = fileURLToPath(url);
+        const source = fs.readFileSync(filePath, 'utf8');
+        return {
+            format: 'module',
+            shortCircuit: true,
+            source: `export default ${source};`,
+        };
+    }
+
+    return nextLoad(url, context);
 }
 
 function resolveWithExtensions(basePath, throwIfMissing = true) {
