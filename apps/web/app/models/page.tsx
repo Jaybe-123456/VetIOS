@@ -35,7 +35,12 @@ export default async function ModelRegistryPage() {
         )
         : createEmptySnapshot();
 
-    return <ModelRegistryControlPlaneClient initialSnapshot={initialSnapshot} />;
+    return (
+        <ModelRegistryControlPlaneClient
+            initialSnapshot={initialSnapshot}
+            canSystemAdminOverride={permissionSet.can_manage_models}
+        />
+    );
 }
 
 function createEmptySnapshot(): ModelRegistryControlPlaneSnapshot {

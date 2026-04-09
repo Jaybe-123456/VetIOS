@@ -278,7 +278,15 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
             void refreshPrimaryCards();
         }, 30_000);
 
-        return () => window.clearInterval(interval);
+        const handleSimulationMetricsRefresh = () => {
+            void refreshAllMetrics();
+        };
+        window.addEventListener('vetios:simulation-metrics-refresh', handleSimulationMetricsRefresh);
+
+        return () => {
+            window.clearInterval(interval);
+            window.removeEventListener('vetios:simulation-metrics-refresh', handleSimulationMetricsRefresh);
+        };
     }, [refreshAllMetrics, refreshPrimaryCards]);
 
     useEffect(() => () => {

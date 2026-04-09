@@ -24,8 +24,10 @@ type RegistryAction = 'promote_to_staging' | 'promote_to_production' | 'set_manu
 
 export function ModelRegistryControlPlaneClient({
     initialSnapshot,
+    canSystemAdminOverride = false,
 }: {
     initialSnapshot: ModelRegistryControlPlaneSnapshot;
+    canSystemAdminOverride?: boolean;
 }) {
     const router = useRouter();
     const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
@@ -33,6 +35,7 @@ export function ModelRegistryControlPlaneClient({
     const [verificationBusy, setVerificationBusy] = useState(false);
     const [refreshBusy, setRefreshBusy] = useState(false);
     const [pendingRunId, setPendingRunId] = useState<string | null>(null);
+    const [unblockBusyVersion, setUnblockBusyVersion] = useState<string | null>(null);
     const [isRefreshing, startRefreshTransition] = useTransition();
 
     const totalEntries = initialSnapshot.families.reduce((sum, family) => sum + family.entries.length, 0);
@@ -221,6 +224,38 @@ export function ModelRegistryControlPlaneClient({
         });
     };
 
+    const handleUnblockRegistryModel = (entry: ModelRegistryControlPlaneEntry) => {
+        startRefreshTransition(() => {
+            void (async () => {
+                setUnblockBusyVersion(entry.registry.model_version);
+                setMessage(null);
+                try {
+                    const response = await fetch(`/api/models/${encodeURIComponent(entry.registry.model_version)}/unblock`, {
+                        method: 'PATCH',
+                        credentials: 'include',
+                    });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(typeof payload?.error === 'string' ? payload.error : 'Model unblock failed.');
+                    }
+
+                    setMessage({
+                        tone: 'success',
+                        text: `Simulation block override applied to ${entry.registry.model_version}.`,
+                    });
+                    router.refresh();
+                } catch (error) {
+                    setMessage({
+                        tone: 'error',
+                        text: error instanceof Error ? error.message : 'Model unblock failed.',
+                    });
+                } finally {
+                    setUnblockBusyVersion(null);
+                }
+            })();
+        });
+    };
+
     return (
         <Container className="max-w-[112rem]">
             <PageHeader
@@ -386,11 +421,14 @@ export function ModelRegistryControlPlaneClient({
                                         onPromote={() => submitAction(entry.registry.run_id, 'promote_to_production')}
                                         onRefreshGovernance={() => handleRefreshRunGovernance(entry)}
                                         onRollback={() => handleRollback(entry)}
+                                        onUnblock={() => handleUnblockRegistryModel(entry)}
                                         onRevokeApproval={() => submitAction(entry.registry.run_id, 'set_manual_approval', {
                                             manualApproval: false,
                                             reason: 'Manual production approval revoked from registry control plane.',
                                         })}
                                         onStage={() => submitAction(entry.registry.run_id, 'promote_to_staging')}
+                                        canSystemAdminOverride={canSystemAdminOverride}
+                                        isUnblockPending={unblockBusyVersion === entry.registry.model_version && isRefreshing}
                                     />
                                 ))}
                             </div>
@@ -436,23 +474,29 @@ export function ModelRegistryControlPlaneClient({
 }
 
 function RegistryEntryCard({
+    canSystemAdminOverride,
     entry,
     isPending,
+    isUnblockPending,
     onArchive,
     onGrantApproval,
     onPromote,
     onRefreshGovernance,
     onRollback,
+    onUnblock,
     onRevokeApproval,
     onStage,
 }: {
+    canSystemAdminOverride: boolean;
     entry: ModelRegistryControlPlaneEntry;
     isPending: boolean;
+    isUnblockPending: boolean;
     onArchive: () => void;
     onGrantApproval: () => void;
     onPromote: () => void;
     onRefreshGovernance: () => void;
     onRollback: () => void;
+    onUnblock: () => void;
     onRevokeApproval: () => void;
     onStage: () => void;
 }) {
@@ -470,6 +514,7 @@ function RegistryEntryCard({
     const canArchive = !(registry.lifecycle_status === 'production' && registry.registry_role === 'champion');
     const approvalGranted = entry.promotion_requirements?.manual_approval === true;
     const showApprovalControls = registry.lifecycle_status !== 'production' && registry.lifecycle_status !== 'archived';
+    const isSimulationBlocked = registry.blocked === true;
 
     return (
         <div className="min-w-0 border border-grid bg-black/20 p-5">
@@ -495,10 +540,31 @@ function RegistryEntryCard({
                     <Badge className={lifecycleBadgeClass(registry.lifecycle_status)}>
                         {registry.lifecycle_status}
                     </Badge>
+                    {isSimulationBlocked ? (
+                        <Badge className="border-warning bg-warning/10 text-warning">
+                            BLOCKED
+                        </Badge>
+                    ) : null}
                 </div>
             </div>
 
             <LifecycleTimeline current={registry.lifecycle_status} />
+
+            {isSimulationBlocked ? (
+                <div className="mt-4 border border-warning/40 bg-warning/10 p-3 font-mono text-xs text-foreground/85">
+                    <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-warning">Regression Simulation Block</div>
+                    <div>Reason: {registry.block_reason ?? 'Regression simulation'}</div>
+                    <div>Blocked At: {registry.blocked_at ? formatDateTime(registry.blocked_at) : 'n/a'}</div>
+                    <div>
+                        Simulation:{' '}
+                        {registry.blocked_by_simulation_id ? (
+                            <a href={`/simulate?simulation_id=${registry.blocked_by_simulation_id}`} className="text-accent underline underline-offset-2">
+                                {registry.blocked_by_simulation_id}
+                            </a>
+                        ) : 'n/a'}
+                    </div>
+                </div>
+            ) : null}
 
             <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                 <Stat label="Run" value={registry.run_id} />
@@ -690,6 +756,12 @@ function RegistryEntryCard({
                     <Archive className="mr-2 h-3.5 w-3.5" />
                     Archive
                 </TerminalButton>
+                {isSimulationBlocked && canSystemAdminOverride ? (
+                    <TerminalButton variant="secondary" disabled={isPending || isUnblockPending} onClick={onUnblock} title="Clear the regression simulation block and re-enable this registry model for promotion workflows.">
+                        <ShieldAlert className={`mr-2 h-3.5 w-3.5 ${isUnblockPending ? 'animate-pulse' : ''}`} />
+                        {isUnblockPending ? 'OVERRIDING...' : 'System Admin Override'}
+                    </TerminalButton>
+                ) : null}
             </div>
 
             {entry.latest_registry_events.length > 0 ? (
