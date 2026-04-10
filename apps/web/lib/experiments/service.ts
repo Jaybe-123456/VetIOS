@@ -36,6 +36,7 @@ import type {
     RegistryAuditLogRecord,
     RegistryDecisionPanel,
     RegistryLineageRecord,
+    RegistryRoutingPointerRecord,
     SubgroupMetricRecord,
 } from '@/lib/experiments/types';
 
@@ -4359,7 +4360,7 @@ function evaluateRollbackReadiness(
 
 function validateRegistryConsistency(
     registryRecords: ModelRegistryRecord[],
-    routingPointers: Array<{ model_family: ModelFamily; active_registry_id: string | null }>,
+    routingPointers: RegistryRoutingPointerRecord[],
 ): RegistryConsistencyIssue[] {
     const issues: RegistryConsistencyIssue[] = [];
 
@@ -4452,19 +4453,9 @@ async function ensureRegistryRoutingPointersConsistent(
     store: ExperimentTrackingStore,
     tenantId: string,
     registryRecords: ModelRegistryRecord[],
-    routingPointers: Array<{
-        id?: string | null;
-        model_family: ModelFamily;
-        active_registry_id: string | null;
-        active_run_id?: string | null;
-    }>,
+    routingPointers: RegistryRoutingPointerRecord[],
     actor: string | null,
-): Promise<Array<{
-    id?: string | null;
-    model_family: ModelFamily;
-    active_registry_id: string | null;
-    active_run_id?: string | null;
-}>> {
+): Promise<RegistryRoutingPointerRecord[]> {
     const pointerByFamily = new Map(routingPointers.map((pointer) => [pointer.model_family, pointer]));
 
     for (const family of MODEL_FAMILY_ORDER) {
