@@ -245,13 +245,20 @@ export default function LoginPage() {
                                             Additional verification is required because this account or network has multiple recent failed sign-in attempts.
                                         </div>
                                         {turnstileSiteKey ? (
-                                            <TurnstileWidget
-                                                enabled={captchaRequired}
-                                                siteKey={turnstileSiteKey}
-                                                resetKey={captchaResetKey}
-                                                onTokenChange={setCaptchaToken}
-                                                onErrorChange={setCaptchaError}
-                                            />
+                                            <>
+                                                <TurnstileWidget
+                                                    enabled={captchaRequired}
+                                                    siteKey={turnstileSiteKey}
+                                                    resetKey={captchaResetKey}
+                                                    onTokenChange={setCaptchaToken}
+                                                    onErrorChange={setCaptchaError}
+                                                />
+                                                {!captchaToken && !captchaError ? (
+                                                    <div className="p-3 border border-grid text-muted font-mono text-[10px] leading-relaxed">
+                                                        Loading security challenge...
+                                                    </div>
+                                                ) : null}
+                                            </>
                                         ) : (
                                             <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
                                                 CAPTCHA is required, but the site key is not configured yet.

@@ -42,19 +42,29 @@ export function TurnstileWidget({
     const containerRef = useRef<HTMLDivElement | null>(null);
     const widgetIdRef = useRef<string | null>(null);
     const [scriptReady, setScriptReady] = useState(false);
+    const loadTimeoutRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        if (typeof window !== 'undefined' && window.turnstile) {
+            setScriptReady(true);
+        }
+    }, []);
 
     useEffect(() => {
         if (!enabled || !siteKey) {
             onTokenChange(null);
             onErrorChange?.(null);
+            clearLoadTimeout();
             destroyWidget();
             return;
         }
 
         if (!scriptReady || !window.turnstile || !containerRef.current) {
+            scheduleLoadTimeout();
             return;
         }
 
+        clearLoadTimeout();
         destroyWidget();
         widgetIdRef.current = window.turnstile.render(containerRef.current, {
             sitekey: siteKey,
@@ -86,9 +96,37 @@ export function TurnstileWidget({
         });
 
         return () => {
+            clearLoadTimeout();
             destroyWidget();
         };
-    }, [enabled, onTokenChange, resetKey, scriptReady, siteKey]);
+    }, [enabled, onErrorChange, onTokenChange, resetKey, scriptReady, siteKey]);
+
+    function scheduleLoadTimeout() {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        if (loadTimeoutRef.current != null) {
+            return;
+        }
+
+        loadTimeoutRef.current = window.setTimeout(() => {
+            loadTimeoutRef.current = null;
+            if (enabled && !window.turnstile) {
+                onTokenChange(null);
+                onErrorChange?.('Security challenge could not load. Check whether a blocker, CSP rule, or network filter is interfering.');
+            }
+        }, 6000);
+    }
+
+    function clearLoadTimeout() {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        if (loadTimeoutRef.current != null) {
+            window.clearTimeout(loadTimeoutRef.current);
+            loadTimeoutRef.current = null;
+        }
+    }
 
     function queueReset() {
         if (typeof window === 'undefined') {
@@ -129,6 +167,10 @@ export function TurnstileWidget({
                 src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit"
                 strategy="afterInteractive"
                 onLoad={() => setScriptReady(true)}
+                onError={() => {
+                    onTokenChange(null);
+                    onErrorChange?.('Security challenge script failed to load. Please retry or disable blockers for this site.');
+                }}
             />
             {enabled ? <div ref={containerRef} className="min-h-16" /> : null}
         </>
