@@ -1188,12 +1188,19 @@ export async function getModelRegistryControlPlaneSnapshot(
             store.listRegistryRoutingPointers(tenantId),
             store.listRegistryAuditLog(tenantId, 400),
         ]);
+        const reconciledRoutingPointers = await ensureRegistryRoutingPointersConsistent(
+            store,
+            tenantId,
+            registryRecords,
+            routingPointers,
+            'system:registry-self-heal',
+        );
 
         const dedupedRegistryAuditEvents = dedupeRegistryAuditEvents(registryAuditEvents);
         const runsById = new Map(runs.map((run) => [run.run_id, run]));
         const requirementsByRunId = new Map(promotionRequirements.map((requirement) => [requirement.run_id, requirement]));
-        const routingByFamily = new Map(routingPointers.map((pointer) => [pointer.model_family, pointer]));
-        const consistencyIssues = validateRegistryConsistency(registryRecords, routingPointers);
+        const routingByFamily = new Map(reconciledRoutingPointers.map((pointer) => [pointer.model_family, pointer]));
+        const consistencyIssues = validateRegistryConsistency(registryRecords, reconciledRoutingPointers);
 
         const entries = await Promise.all(
             registryRecords.map(async (registry) => {
@@ -1298,7 +1305,7 @@ export async function getModelRegistryControlPlaneSnapshot(
         const snapshot = {
             tenant_id: tenantId,
             families,
-            routing_pointers: routingPointers,
+            routing_pointers: reconciledRoutingPointers,
             audit_history: dedupedRegistryAuditEvents
                 .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
                 .slice(0, 50),
@@ -1373,8 +1380,15 @@ export async function verifyModelRegistryControlPlane(
         store.listRegistryRoutingPointers(tenantId),
         store.listRegistryAuditLog(tenantId, 400),
     ]);
+    const reconciledRoutingPointers = await ensureRegistryRoutingPointersConsistent(
+        store,
+        tenantId,
+        registryRecords,
+        routingPointers,
+        'system:registry-self-heal',
+    );
     const runsById = new Map(runs.map((run) => [run.run_id, run]));
-    const consistencyIssues = validateRegistryConsistency(registryRecords, routingPointers);
+    const consistencyIssues = validateRegistryConsistency(registryRecords, reconciledRoutingPointers);
 
     const registrationFailures: string[] = [];
     for (const registry of registryRecords) {
@@ -4434,6 +4448,69 @@ function validateRegistryConsistency(
     return dedupeRegistryConsistencyIssues(issues);
 }
 
+async function ensureRegistryRoutingPointersConsistent(
+    store: ExperimentTrackingStore,
+    tenantId: string,
+    registryRecords: ModelRegistryRecord[],
+    routingPointers: Array<{
+        id?: string | null;
+        model_family: ModelFamily;
+        active_registry_id: string | null;
+        active_run_id?: string | null;
+    }>,
+    actor: string | null,
+): Promise<Array<{
+    id?: string | null;
+    model_family: ModelFamily;
+    active_registry_id: string | null;
+    active_run_id?: string | null;
+}>> {
+    const pointerByFamily = new Map(routingPointers.map((pointer) => [pointer.model_family, pointer]));
+
+    for (const family of MODEL_FAMILY_ORDER) {
+        const champions = registryRecords.filter((record) =>
+            record.model_family === family &&
+            record.lifecycle_status === 'production' &&
+            record.registry_role === 'champion',
+        );
+        if (champions.length !== 1) {
+            continue;
+        }
+
+        const champion = champions[0];
+        const currentPointer = pointerByFamily.get(family) ?? null;
+        if ((currentPointer?.active_registry_id ?? null) === champion.registry_id) {
+            continue;
+        }
+
+        const updatedPointer = await store.upsertRegistryRoutingPointer({
+            id: currentPointer?.id,
+            tenant_id: tenantId,
+            model_family: family,
+            active_registry_id: champion.registry_id,
+            active_run_id: champion.run_id,
+            updated_by: actor ?? 'system:registry-self-heal',
+        });
+        pointerByFamily.set(family, updatedPointer);
+
+        await logRegistryAuditEvent(store, {
+            tenantId,
+            registryId: champion.registry_id,
+            runId: champion.run_id,
+            eventType: 'routing_pointer_repaired',
+            actor: actor ?? 'system:registry-self-heal',
+            metadata: {
+                model_family: family,
+                previous_active_registry_id: currentPointer?.active_registry_id ?? null,
+                repaired_active_registry_id: champion.registry_id,
+            },
+            deterministicKey: `routing-pointer-repaired:${family}:${champion.registry_id}`,
+        }).catch(() => undefined);
+    }
+
+    return Array.from(pointerByFamily.values());
+}
+
 async function ensureRegistryRollbackTargets(
     store: ExperimentTrackingStore,
     tenantId: string,
@@ -4700,7 +4777,14 @@ async function validateRegistryTransitionState(
         store.listModelRegistry(tenantId),
         store.listRegistryRoutingPointers(tenantId),
     ]);
-    const issues = validateRegistryConsistency(registryRecords, routingPointers);
+    const reconciledRoutingPointers = await ensureRegistryRoutingPointersConsistent(
+        store,
+        tenantId,
+        registryRecords,
+        routingPointers,
+        'system:registry-self-heal',
+    );
+    const issues = validateRegistryConsistency(registryRecords, reconciledRoutingPointers);
     const familyIssues = issues.filter((issue) =>
         issue.model_family === modelFamily &&
         (
@@ -4723,7 +4807,7 @@ async function validateRegistryTransitionState(
             registry_id: expectedChampionRegistryId,
         });
     }
-    const pointer = routingPointers.find((candidate) => candidate.model_family === modelFamily) ?? null;
+    const pointer = reconciledRoutingPointers.find((candidate) => candidate.model_family === modelFamily) ?? null;
     if ((pointer?.active_registry_id ?? null) !== expectedChampionRegistryId) {
         familyIssues.push({
             code: 'routing_pointer_mismatch',
