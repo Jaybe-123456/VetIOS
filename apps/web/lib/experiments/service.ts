@@ -4360,7 +4360,7 @@ function evaluateRollbackReadiness(
 
 function validateRegistryConsistency(
     registryRecords: ModelRegistryRecord[],
-    routingPointers: RegistryRoutingPointerRecord[],
+    routingPointers: Array<Pick<RegistryRoutingPointerRecord, 'model_family' | 'active_registry_id'>>,
 ): RegistryConsistencyIssue[] {
     const issues: RegistryConsistencyIssue[] = [];
 
