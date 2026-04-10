@@ -98,6 +98,9 @@ export interface PasswordLoginEventInput {
 }
 
 export function isCaptchaProtectionEnabled(): boolean {
+    if (process.env.VETIOS_DEV_BYPASS === 'true') {
+        return false;
+    }
     return Boolean(process.env.TURNSTILE_SECRET_KEY && process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY);
 }
 
@@ -269,6 +272,19 @@ export async function evaluatePasswordLoginProtection(
     email: string,
     clientIp: string,
 ): Promise<PasswordLoginProtectionState> {
+    if (process.env.VETIOS_DEV_BYPASS === 'true') {
+        return {
+            emailHash: 'dev',
+            ipHash: 'dev',
+            ipEmailHash: 'dev',
+            emailFailureCount: 0,
+            ipFailureCount: 0,
+            captchaRequired: false,
+            accountLockedUntil: null,
+            ipBlockedUntil: null,
+        };
+    }
+
     const now = Date.now();
     const accountCutoff = new Date(now - AUTH_FAILURE_LOOKBACK_MS).toISOString();
     const ipCutoff = new Date(now - AUTH_IP_BLOCK_LOOKBACK_MS).toISOString();
@@ -361,7 +377,6 @@ export async function logPasswordLoginEvent(input: PasswordLoginEventInput): Pro
 
 export async function verifyPasswordLoginCaptcha(
     token: string,
-    clientIp: string,
 ): Promise<{
     ok: boolean;
     errorCodes: string[];
@@ -386,10 +401,6 @@ export async function verifyPasswordLoginCaptcha(
         response: token,
     });
 
-    if (clientIp !== 'unknown') {
-        body.set('remoteip', clientIp);
-    }
-
     try {
         const response = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
             method: 'POST',
@@ -401,6 +412,7 @@ export async function verifyPasswordLoginCaptcha(
         });
 
         if (!response.ok) {
+            console.error(`Turnstile verification HTTP error: ${response.status}`);
             return {
                 ok: false,
                 errorCodes: [`http_${response.status}`],
@@ -411,11 +423,17 @@ export async function verifyPasswordLoginCaptcha(
             success?: boolean;
             ['error-codes']?: string[];
         };
+
+        if (payload.success !== true) {
+            console.warn('Turnstile verification failed with error codes:', payload['error-codes']);
+        }
+
         return {
             ok: payload.success === true,
             errorCodes: Array.isArray(payload['error-codes']) ? payload['error-codes'] : [],
         };
-    } catch {
+    } catch (error: any) {
+        console.error('Turnstile verification request failed:', error?.message || error);
         return {
             ok: false,
             errorCodes: ['request_failed'],

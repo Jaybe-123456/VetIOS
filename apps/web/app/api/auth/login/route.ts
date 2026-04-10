@@ -128,7 +128,7 @@ export async function POST(req: Request) {
                 });
             }
 
-            const captchaVerification = await verifyPasswordLoginCaptcha(captchaToken, clientIp);
+            const captchaVerification = await verifyPasswordLoginCaptcha(captchaToken);
             if (!captchaVerification.ok) {
                 console.warn(
                     `[${requestId}] CAPTCHA verification failed`,
