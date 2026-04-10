@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
+import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
 import { AuthDomainNotice } from '@/components/auth/AuthDomainNotice';
 import { buildClientAuthCallbackUrl } from '@/lib/site';
 import {
@@ -21,21 +22,47 @@ export default function ForgotPasswordPage() {
     const [email, setEmail] = useState('');
     const [status, setStatus] = useState<'idle' | 'submitting' | 'sent' | 'error'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [captchaRequired, setCaptchaRequired] = useState(false);
+    const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+    const [captchaResetKey, setCaptchaResetKey] = useState(0);
+    const [captchaError, setCaptchaError] = useState<string | null>(null);
+
     const isGoogleEmail = isGoogleMailAddress(email);
+    const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '';
+    const isWaitingOnCaptcha = captchaRequired && Boolean(turnstileSiteKey) && !captchaToken;
+
+    useEffect(() => {
+        const isBypassEnabled = process.env.NEXT_PUBLIC_VETIOS_DEV_BYPASS === 'true';
+        if (turnstileSiteKey && !isBypassEnabled) {
+            setCaptchaRequired(true);
+        }
+    }, [turnstileSiteKey]);
 
     async function handleResetRequest(e: React.FormEvent) {
         e.preventDefault();
+
+        if (isWaitingOnCaptcha) {
+            setStatus('error');
+            setErrorMessage(captchaError ?? 'Complete the CAPTCHA challenge to continue.');
+            return;
+        }
+
         setStatus('submitting');
         setErrorMessage(null);
+        setCaptchaError(null);
 
         const supabase = getSupabaseBrowser();
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
             redirectTo: buildResetRedirectUrl(),
+            captchaToken: captchaToken ?? undefined,
         });
 
         if (error) {
             setStatus('error');
             setErrorMessage(error.message);
+            // Reset CAPTCHA on error to allow retry
+            setCaptchaToken(null);
+            setCaptchaResetKey((prev) => prev + 1);
             return;
         }
 
@@ -123,7 +150,40 @@ export default function ForgotPasswordPage() {
                                     )}
                                 </div>
 
-                                <TerminalButton type="submit" disabled={status === 'submitting'}>
+                                {captchaRequired && (
+                                    <div className="space-y-3">
+                                        <div className="p-3 border border-accent/60 bg-accent/5 font-mono text-[10px] leading-relaxed text-accent">
+                                            Security verification is required to request a reset.
+                                        </div>
+                                        {turnstileSiteKey ? (
+                                            <>
+                                                <TurnstileWidget
+                                                    enabled={captchaRequired}
+                                                    siteKey={turnstileSiteKey}
+                                                    resetKey={captchaResetKey}
+                                                    onTokenChange={setCaptchaToken}
+                                                    onErrorChange={setCaptchaError}
+                                                />
+                                                {!captchaToken && !captchaError ? (
+                                                    <div className="p-3 border border-grid text-muted font-mono text-[10px] leading-relaxed">
+                                                        Loading security challenge...
+                                                    </div>
+                                                ) : null}
+                                            </>
+                                        ) : (
+                                            <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                CAPTCHA is required, but the site key is not configured yet.
+                                            </div>
+                                        )}
+                                        {captchaError ? (
+                                            <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                ERR: {captchaError}
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                )}
+
+                                <TerminalButton type="submit" disabled={status === 'submitting' || isWaitingOnCaptcha}>
                                     {status === 'submitting' ? 'SENDING RESET LINK...' : 'SEND PASSWORD RESET EMAIL'}
                                 </TerminalButton>
 
