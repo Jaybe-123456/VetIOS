@@ -128,8 +128,12 @@ export async function POST(req: Request) {
                 });
             }
 
-            const captchaVerified = await verifyPasswordLoginCaptcha(captchaToken, clientIp);
-            if (!captchaVerified) {
+            const captchaVerification = await verifyPasswordLoginCaptcha(captchaToken, clientIp);
+            if (!captchaVerification.ok) {
+                console.warn(
+                    `[${requestId}] CAPTCHA verification failed`,
+                    { errorCodes: captchaVerification.errorCodes },
+                );
                 await safeLogLoginEvent({
                     emailHash: protection.emailHash,
                     ipHash: protection.ipHash,
@@ -138,15 +142,26 @@ export async function POST(req: Request) {
                     reason: 'captcha_failed',
                     requestId,
                     userAgentHash,
+                    metadata: {
+                        error_codes: captchaVerification.errorCodes,
+                    },
                 });
 
+                const captchaError = captchaVerification.errorCodes.includes('timeout-or-duplicate')
+                    ? 'CAPTCHA expired. Complete the challenge again and resubmit.'
+                    : captchaVerification.errorCodes.includes('invalid-input-response')
+                        ? 'CAPTCHA verification failed. Please retry the challenge.'
+                        : captchaVerification.errorCodes.includes('invalid-input-secret')
+                            || captchaVerification.errorCodes.includes('missing-input-secret')
+                            ? 'Security challenge is misconfigured. Please contact support.'
+                            : 'CAPTCHA verification failed. Try the challenge again.';
                 return createLoginResponse({
                     status: 400,
                     requestId,
                     startTime,
                     remainingAttempts: Math.max(0, AUTH_MAX_FAILURES - protection.emailFailureCount),
                     body: {
-                        error: 'CAPTCHA verification failed. Try the challenge again.',
+                        error: captchaError,
                         code: 'captcha_failed',
                         captcha_required: true,
                     },

@@ -27,6 +27,7 @@ export default function LoginPage() {
     const [captchaRequired, setCaptchaRequired] = useState(false);
     const [captchaToken, setCaptchaToken] = useState<string | null>(null);
     const [captchaResetKey, setCaptchaResetKey] = useState(0);
+    const [captchaError, setCaptchaError] = useState<string | null>(null);
     const [nextPath, setNextPath] = useState('/inference');
     const [rememberMe, setRememberMe] = useState(false);
     const isGoogleEmail = isGoogleMailAddress(email);
@@ -45,12 +46,13 @@ export default function LoginPage() {
         e.preventDefault();
         if (isWaitingOnCaptcha) {
             setStatus('error');
-            setErrorMessage('Complete the CAPTCHA challenge to continue.');
+            setErrorMessage(captchaError ?? 'Complete the CAPTCHA challenge to continue.');
             return;
         }
 
         setStatus('submitting');
         setErrorMessage(null);
+        setCaptchaError(null);
 
         try {
             const response = await fetch('/api/auth/login', {
@@ -89,6 +91,7 @@ export default function LoginPage() {
             setStatus('success');
             setCaptchaRequired(false);
             setCaptchaToken(null);
+            setCaptchaError(null);
 
             // Persist the "Remember Me" preference for the Supabase client
             if (typeof window !== 'undefined') {
@@ -247,12 +250,18 @@ export default function LoginPage() {
                                                 siteKey={turnstileSiteKey}
                                                 resetKey={captchaResetKey}
                                                 onTokenChange={setCaptchaToken}
+                                                onErrorChange={setCaptchaError}
                                             />
                                         ) : (
                                             <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
                                                 CAPTCHA is required, but the site key is not configured yet.
                                             </div>
                                         )}
+                                        {captchaError ? (
+                                            <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                ERR: {captchaError}
+                                            </div>
+                                        ) : null}
                                     </div>
                                 )}
 

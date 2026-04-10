@@ -362,14 +362,23 @@ export async function logPasswordLoginEvent(input: PasswordLoginEventInput): Pro
 export async function verifyPasswordLoginCaptcha(
     token: string,
     clientIp: string,
-): Promise<boolean> {
+): Promise<{
+    ok: boolean;
+    errorCodes: string[];
+}> {
     if (!isCaptchaProtectionEnabled()) {
-        return true;
+        return {
+            ok: true,
+            errorCodes: [],
+        };
     }
 
     const secret = process.env.TURNSTILE_SECRET_KEY;
     if (!secret) {
-        return false;
+        return {
+            ok: false,
+            errorCodes: ['missing-input-secret'],
+        };
     }
 
     const body = new URLSearchParams({
@@ -392,13 +401,25 @@ export async function verifyPasswordLoginCaptcha(
         });
 
         if (!response.ok) {
-            return false;
+            return {
+                ok: false,
+                errorCodes: [`http_${response.status}`],
+            };
         }
 
-        const payload = await response.json() as { success?: boolean };
-        return payload.success === true;
+        const payload = await response.json() as {
+            success?: boolean;
+            ['error-codes']?: string[];
+        };
+        return {
+            ok: payload.success === true,
+            errorCodes: Array.isArray(payload['error-codes']) ? payload['error-codes'] : [],
+        };
     } catch {
-        return false;
+        return {
+            ok: false,
+            errorCodes: ['request_failed'],
+        };
     }
 }
 
