@@ -38,7 +38,8 @@ export default function SignupPage() {
     useEffect(() => {
         // We pro-actively require CAPTCHA for signups if the site key is configured.
         // This prevents bot spam and avoids the "captcha verification process failed" error from Supabase.
-        if (turnstileSiteKey) {
+        const isBypassEnabled = process.env.NEXT_PUBLIC_VETIOS_DEV_BYPASS === 'true';
+        if (turnstileSiteKey && !isBypassEnabled) {
             setCaptchaRequired(true);
         }
     }, [turnstileSiteKey]);
