@@ -305,9 +305,15 @@ export function createSupabaseExperimentTrackingStore(
         },
 
         async upsertModelRegistry(record) {
+            const normalizedRecord = {
+                ...record,
+                clinical_metrics: record.clinical_metrics ?? {},
+                lineage: record.lineage ?? {},
+                rollback_metadata: record.rollback_metadata ?? {},
+            };
             const { data, error } = await client
                 .from(MODEL_REGISTRY.TABLE)
-                .upsert(stripUndefined(record), {
+                .upsert(stripUndefined(normalizedRecord), {
                     onConflict: `${MODEL_REGISTRY.COLUMNS.registry_id}`,
                 })
                 .select('*')
