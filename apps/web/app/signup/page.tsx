@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
 import { validatePasswordPolicy } from '@/lib/auth/passwordPolicy';
+import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
 import { AuthDomainNotice } from '@/components/auth/AuthDomainNotice';
 import { buildClientAuthCallbackUrl } from '@/lib/site';
 import {
@@ -24,13 +25,36 @@ export default function SignupPage() {
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [status, setStatus] = useState<'idle' | 'submitting' | 'sent' | 'success' | 'error'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
+    const [captchaRequired, setCaptchaRequired] = useState(false);
+    const [captchaToken, setCaptchaToken] = useState<string | null>(null);
+    const [captchaResetKey, setCaptchaResetKey] = useState(0);
+    const [captchaError, setCaptchaError] = useState<string | null>(null);
+
+    const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '';
+    const isWaitingOnCaptcha = captchaRequired && Boolean(turnstileSiteKey) && !captchaToken;
     const isGoogleEmail = isGoogleMailAddress(email);
     const showGooglePasswordWarning = isGoogleEmail && password.trim().length > 0;
 
+    useEffect(() => {
+        // We pro-actively require CAPTCHA for signups if the site key is configured.
+        // This prevents bot spam and avoids the "captcha verification process failed" error from Supabase.
+        if (turnstileSiteKey) {
+            setCaptchaRequired(true);
+        }
+    }, [turnstileSiteKey]);
+
     async function handleEmailPasswordSignup(e: React.FormEvent) {
         e.preventDefault();
+
+        if (isWaitingOnCaptcha) {
+            setStatus('error');
+            setErrorMessage(captchaError ?? 'Complete the CAPTCHA challenge to continue.');
+            return;
+        }
+
         setStatus('submitting');
         setErrorMessage(null);
+        setCaptchaError(null);
 
         if (password !== confirmPassword) {
             setStatus('error');
@@ -51,12 +75,16 @@ export default function SignupPage() {
             password,
             options: {
                 emailRedirectTo: buildClientAuthCallbackUrl(window.location.origin),
+                captchaToken: captchaToken ?? undefined,
             },
         });
 
         if (error) {
             setStatus('error');
             setErrorMessage(error.message);
+            // Reset CAPTCHA on error to allow retry
+            setCaptchaToken(null);
+            setCaptchaResetKey((prev) => prev + 1);
         } else if (data.session) {
             setStatus('success');
             router.push('/inference');
@@ -224,7 +252,40 @@ export default function SignupPage() {
                                     </div>
                                 </div>
 
-                                <TerminalButton type="submit" disabled={status === 'submitting'}>
+                                {captchaRequired && (
+                                    <div className="space-y-3">
+                                        <div className="p-3 border border-accent/60 bg-accent/5 font-mono text-[10px] leading-relaxed text-accent">
+                                            Security verification is required to create an account.
+                                        </div>
+                                        {turnstileSiteKey ? (
+                                            <>
+                                                <TurnstileWidget
+                                                    enabled={captchaRequired}
+                                                    siteKey={turnstileSiteKey}
+                                                    resetKey={captchaResetKey}
+                                                    onTokenChange={setCaptchaToken}
+                                                    onErrorChange={setCaptchaError}
+                                                />
+                                                {!captchaToken && !captchaError ? (
+                                                    <div className="p-3 border border-grid text-muted font-mono text-[10px] leading-relaxed">
+                                                        Loading security challenge...
+                                                    </div>
+                                                ) : null}
+                                            </>
+                                        ) : (
+                                            <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                CAPTCHA is required, but the site key is not configured yet.
+                                            </div>
+                                        )}
+                                        {captchaError ? (
+                                            <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                ERR: {captchaError}
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                )}
+
+                                <TerminalButton type="submit" disabled={status === 'submitting' || isWaitingOnCaptcha}>
                                     {status === 'submitting' ? 'CREATING ACCOUNT...' : 'CREATE VETIOS PASSWORD ACCOUNT'}
                                 </TerminalButton>
 
