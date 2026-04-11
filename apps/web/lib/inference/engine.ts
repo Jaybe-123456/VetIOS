@@ -11,6 +11,18 @@ import {
 import { applyEtiologicalPlausibilityGate } from './plausibility-gate';
 import { applyRegionalExposurePriors } from './regional-priors';
 import { applySyndromePatterns } from './syndrome-recogniser';
+import {
+    buildClinicalSignalProfile,
+    domainsForSignal,
+    formatClinicalSignalLabel,
+    normalizeCanonicalSignalArray,
+    specificityForSignal,
+    specificityWeight,
+    type ClinicalSignalClusterScores,
+    type ClinicalSignalDomain,
+    type ClinicalSignalProfile,
+    type ClinicalSignalSpecificity,
+} from './clinical-signal-ontology';
 import { selectTreatmentProtocol, type TreatmentContext } from '../treatment/treatment-engine';
 import type {
     AbstainDecision,
@@ -40,15 +52,12 @@ interface CandidateState {
     recommendedNextSteps: Set<string>;
 }
 
-type SymptomCluster = 'respiratory' | 'gastrointestinal' | 'neurologic' | 'systemic';
-
-interface SignalProfile {
-    positiveFeatures: Set<string>;
-    positiveFamilies: Set<string>;
-    absentFeatures: Set<string>;
-    absentFamilies: Set<string>;
-    clusterCounts: Record<SymptomCluster, number>;
-    dominantCluster: SymptomCluster | null;
+interface ConditionSignalDescriptor {
+    family: string;
+    domains: ClinicalSignalDomain[];
+    specificity: ClinicalSignalSpecificity;
+    weight: number;
+    label: string;
 }
 
 export interface ClinicalInferenceEngineResult extends InferenceResponse {
@@ -57,7 +66,9 @@ export interface ClinicalInferenceEngineResult extends InferenceResponse {
     severity: string | null;
     confidence: number;
     contradiction_score: number;
+    feature_importance: Record<string, number>;
     diagnosis_feature_importance: Record<string, number>;
+    cluster_scores: ClinicalSignalClusterScores;
     differential_spread: {
         top_1_probability: number | null;
         top_2_probability: number | null;
@@ -65,102 +76,6 @@ export interface ClinicalInferenceEngineResult extends InferenceResponse {
         spread: number | null;
     } | null;
     uncertainty_notes: string[];
-}
-
-const SIGNAL_FAMILY_ALIASES: Record<string, string> = {
-    acute_respiratory_distress: 'dyspnea',
-    anorexia: 'anorexia',
-    ataxia: 'neurological_signs',
-    bloody_diarrhea: 'diarrhea',
-    cachexia: 'weight_loss',
-    chronic_cough: 'cough',
-    circling: 'neurological_signs',
-    collapse: 'collapse',
-    conjunctivitis: 'conjunctivitis',
-    cough: 'cough',
-    dehydration: 'dehydration',
-    diarrhea: 'diarrhea',
-    dyspnea: 'dyspnea',
-    fever: 'fever',
-    head_tilt: 'neurological_signs',
-    honking_cough: 'cough',
-    lethargy: 'lethargy',
-    nasal_discharge: 'nasal_discharge',
-    neurological_signs: 'neurological_signs',
-    productive_cough: 'cough',
-    respiratory_distress: 'dyspnea',
-    seizures: 'neurological_signs',
-    sneezing: 'sneezing',
-    syncope: 'collapse',
-    tremors: 'neurological_signs',
-    unproductive_retching: 'unproductive_retching',
-    vomiting: 'vomiting',
-    weakness: 'weakness',
-    weight_loss: 'weight_loss',
-};
-
-const CLUSTER_FAMILIES: Record<SymptomCluster, Set<string>> = {
-    respiratory: new Set(['sneezing', 'nasal_discharge', 'conjunctivitis', 'cough', 'dyspnea']),
-    gastrointestinal: new Set(['vomiting', 'diarrhea', 'dehydration', 'unproductive_retching', 'abdominal_distension']),
-    neurologic: new Set(['neurological_signs']),
-    systemic: new Set(['fever', 'lethargy', 'weakness', 'weight_loss', 'collapse', 'anorexia']),
-};
-
-const HISTORY_SIGNAL_PATTERNS: Array<{ feature: string; phrases: string[] }> = [
-    { feature: 'sneezing', phrases: ['sneezing', 'sneezing episodes'] },
-    { feature: 'nasal_discharge', phrases: ['nasal discharge', 'runny nose'] },
-    { feature: 'conjunctivitis', phrases: ['conjunctivitis', 'red eyes', 'eye discharge', 'ocular discharge'] },
-    { feature: 'cough', phrases: ['cough', 'coughing'] },
-    { feature: 'vomiting', phrases: ['vomiting', 'vomit', 'emesis'] },
-    { feature: 'diarrhea', phrases: ['diarrhea', 'diarrhoea', 'loose stool', 'loose stools'] },
-    { feature: 'fever', phrases: ['fever', 'pyrexia', 'febrile'] },
-    { feature: 'lethargy', phrases: ['lethargy', 'lethargic'] },
-    { feature: 'weakness', phrases: ['weakness', 'weak'] },
-    { feature: 'weight_loss', phrases: ['weight loss', 'losing weight'] },
-    { feature: 'seizures', phrases: ['seizure', 'seizures'] },
-    { feature: 'ataxia', phrases: ['ataxia', 'ataxic'] },
-    { feature: 'circling', phrases: ['circling'] },
-    { feature: 'head_tilt', phrases: ['head tilt'] },
-    { feature: 'tremors', phrases: ['tremor', 'tremors'] },
-];
-
-function escapeRegExp(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function normalizeNarrative(value: string): string {
-    return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
-}
-
-function toSignalFamily(value: string): string {
-    const normalized = normalizeKey(value);
-    return SIGNAL_FAMILY_ALIASES[normalized] ?? normalized;
-}
-
-function hasPhrase(normalizedText: string, phrase: string): boolean {
-    const normalizedPhrase = normalizeNarrative(phrase);
-    if (!normalizedPhrase) return false;
-    const pattern = new RegExp(`\\b${escapeRegExp(normalizedPhrase).replace(/ /g, '\\s+')}\\b`);
-    return pattern.test(normalizedText);
-}
-
-function extractNegativeClauses(normalizedText: string): string[] {
-    const clauses: string[] = [];
-    const pattern = /\b(?:no|not|without|denies?|absence of)\b([^.;]+)/g;
-    let match: RegExpExecArray | null = pattern.exec(normalizedText);
-
-    while (match) {
-        const rawClause = normalizeNarrative(match[1] ?? '');
-        if (rawClause) {
-            clauses.push(rawClause);
-            for (const fragment of rawClause.split(/\b(?:and|or|but)\b|,/).map((entry) => normalizeNarrative(entry))) {
-                if (fragment) clauses.push(fragment);
-            }
-        }
-        match = pattern.exec(normalizedText);
-    }
-
-    return clauses;
 }
 
 function collectStringArray(...sources: unknown[]): string[] {
@@ -176,105 +91,98 @@ function collectStringArray(...sources: unknown[]): string[] {
     return output;
 }
 
-function scanHistorySignals(request: InferenceRequest): { present: Set<string>; absent: Set<string> } {
-    const present = new Set<string>();
-    const absent = new Set<string>();
-    const observations = request.history?.owner_observations ?? [];
+const LEGACY_CONDITION_SIGNAL_HINTS: Record<string, Array<{
+    family: string;
+    domains: ClinicalSignalDomain[];
+    specificity: ClinicalSignalSpecificity;
+}>> = {
+    abdominal_distension: [{ family: 'abdominal_pain', domains: ['gi'], specificity: 'high' }],
+    ascites: [{ family: 'ascites', domains: ['cardio', 'gi'], specificity: 'medium' }],
+    collapse: [{ family: 'syncope', domains: ['cardio', 'systemic'], specificity: 'medium' }],
+    hepatomegaly: [{ family: 'abdominal_pain', domains: ['gi'], specificity: 'low' }],
+    neurological_signs: [{ family: 'neurologic_signal', domains: ['neuro'], specificity: 'medium' }],
+    pleural_effusion: [{ family: 'dyspnea', domains: ['respiratory', 'cardio'], specificity: 'medium' }],
+    respiratory_signs: [{ family: 'respiratory_signal', domains: ['respiratory'], specificity: 'low' }],
+    systemic_signs: [{ family: 'systemic_signal', domains: ['systemic'], specificity: 'low' }],
+    unproductive_retching: [{ family: 'abdominal_pain', domains: ['gi'], specificity: 'high' }],
+};
 
-    for (const observation of observations) {
-        const normalizedObservation = normalizeNarrative(observation);
-        if (!normalizedObservation) continue;
-        const negativeClauses = extractNegativeClauses(normalizedObservation);
-
-        for (const descriptor of HISTORY_SIGNAL_PATTERNS) {
-            if (!descriptor.phrases.some((phrase) => hasPhrase(normalizedObservation, phrase))) continue;
-
-            if (negativeClauses.some((clause) => descriptor.phrases.some((phrase) => hasPhrase(clause, phrase)))) {
-                absent.add(normalizeKey(descriptor.feature));
-                present.delete(normalizeKey(descriptor.feature));
-                continue;
-            }
-
-            present.add(normalizeKey(descriptor.feature));
-        }
-    }
-
-    return { present, absent };
-}
-
-function featureIsAbsent(value: string, signalProfile: SignalProfile): boolean {
-    const normalized = normalizeKey(value);
-    const family = toSignalFamily(normalized);
-    return signalProfile.absentFeatures.has(normalized) || signalProfile.absentFamilies.has(family);
-}
-
-function featureIsPresent(value: string, signalProfile: SignalProfile): boolean {
-    const normalized = normalizeKey(value);
-    const family = toSignalFamily(normalized);
-    return signalProfile.positiveFeatures.has(normalized) || signalProfile.positiveFamilies.has(family);
-}
-
-function buildSignalProfile(request: InferenceRequest): SignalProfile {
-    const historySignals = scanHistorySignals(request);
-    const absentFeatures = new Set<string>([...historySignals.absent].map((feature) => normalizeKey(feature)));
-    const absentFamilies = new Set<string>([...absentFeatures].map((feature) => toSignalFamily(feature)));
-    const positiveFeatures = new Set<string>();
-
-    for (const feature of [
-        ...request.presenting_signs.map((entry) => normalizeKey(entry)),
-        ...[...historySignals.present].map((entry) => normalizeKey(entry)),
-    ]) {
-        const family = toSignalFamily(feature);
-        if (absentFeatures.has(feature) || absentFamilies.has(family)) continue;
-        positiveFeatures.add(feature);
-    }
-
-    const positiveFamilies = new Set<string>([...positiveFeatures].map((feature) => toSignalFamily(feature)));
-    const clusterCounts: Record<SymptomCluster, number> = {
-        respiratory: 0,
-        gastrointestinal: 0,
-        neurologic: 0,
-        systemic: 0,
-    };
-
-    for (const family of positiveFamilies) {
-        for (const [cluster, families] of Object.entries(CLUSTER_FAMILIES) as Array<[SymptomCluster, Set<string>]>) {
-            if (families.has(family)) {
-                clusterCounts[cluster] += 1;
-            }
-        }
-    }
-
-    const rankedClusters = (Object.entries(clusterCounts) as Array<[SymptomCluster, number]>)
-        .sort((left, right) => right[1] - left[1]);
-    const [topCluster, topCount] = rankedClusters[0] ?? [null, 0];
-    const secondCount = rankedClusters[1]?.[1] ?? 0;
-    const dominantCluster = topCluster && topCount > 0 && topCount > secondCount ? topCluster : null;
-
+function emptyClusterScores(): ClinicalSignalClusterScores {
     return {
-        positiveFeatures,
-        positiveFamilies,
-        absentFeatures,
-        absentFamilies,
-        clusterCounts,
-        dominantCluster,
+        respiratory: 0,
+        gi: 0,
+        neuro: 0,
+        cardio: 0,
+        systemic: 0,
     };
 }
 
-function determineConditionCluster(condition: VeterinaryCondition): SymptomCluster {
-    const weightedCounts: Record<SymptomCluster, number> = {
-        respiratory: 0,
-        gastrointestinal: 0,
-        neurologic: 0,
-        systemic: 0,
-    };
+function descriptorWeight(specificity: ClinicalSignalSpecificity): number {
+    switch (specificity) {
+        case 'high':
+            return 3;
+        case 'medium':
+            return 2;
+        default:
+            return 1;
+    }
+}
+
+function resolveConditionSignalDescriptors(rawSignal: string): ConditionSignalDescriptor[] {
+    const canonicalSignals = normalizeCanonicalSignalArray([rawSignal]);
+    if (canonicalSignals.length > 0) {
+        return canonicalSignals.map((signal) => ({
+            family: formatClinicalSignalLabel(signal).replace(/ /g, '_'),
+            domains: domainsForSignal(signal),
+            specificity: specificityForSignal(signal),
+            weight: specificityWeight(signal),
+            label: formatClinicalSignalLabel(signal),
+        })).map((descriptor) => ({
+            ...descriptor,
+            family: descriptor.family === 'nasal_discharge_serous' || descriptor.family === 'nasal_discharge_mucopurulent'
+                ? 'nasal_discharge'
+                : descriptor.family,
+        }));
+    }
+
+    const fallback = LEGACY_CONDITION_SIGNAL_HINTS[normalizeKey(rawSignal)] ?? [];
+    return fallback.map((descriptor) => ({
+        ...descriptor,
+        weight: descriptorWeight(descriptor.specificity),
+        label: formatClinicalSignalLabel(descriptor.family),
+    }));
+}
+
+function featureIsAbsent(value: string, signalProfile: ClinicalSignalProfile): boolean {
+    return resolveConditionSignalDescriptors(value).some((descriptor) => signalProfile.negativeFamilies.has(descriptor.family));
+}
+
+function featureIsPresent(
+    value: string,
+    signalProfile: ClinicalSignalProfile,
+    options?: { conditionCluster?: ClinicalSignalDomain },
+): boolean {
+    const descriptors = resolveConditionSignalDescriptors(value);
+    return descriptors.some((descriptor) => {
+        if (
+            options?.conditionCluster === 'gi'
+            && descriptor.family === 'fever'
+            && signalProfile.clusterScores.gi === 0
+        ) {
+            return false;
+        }
+        return signalProfile.positiveFamilies.has(descriptor.family);
+    });
+}
+
+function determineConditionCluster(condition: VeterinaryCondition): ClinicalSignalDomain {
+    const weightedCounts = emptyClusterScores();
 
     const addWeightedSigns = (signs: string[], weight: number) => {
         for (const sign of signs) {
-            const family = toSignalFamily(sign);
-            for (const [cluster, families] of Object.entries(CLUSTER_FAMILIES) as Array<[SymptomCluster, Set<string>]>) {
-                if (families.has(family)) {
-                    weightedCounts[cluster] += weight;
+            for (const descriptor of resolveConditionSignalDescriptors(sign)) {
+                for (const cluster of descriptor.domains) {
+                    weightedCounts[cluster] += weight * descriptor.weight;
                 }
             }
         }
@@ -284,7 +192,7 @@ function determineConditionCluster(condition: VeterinaryCondition): SymptomClust
     addWeightedSigns(condition.common_signs, 1);
     addWeightedSigns(condition.rare_signs, 0.5);
 
-    const ranked = (Object.entries(weightedCounts) as Array<[SymptomCluster, number]>)
+    const ranked = (Object.entries(weightedCounts) as Array<[ClinicalSignalDomain, number]>)
         .sort((left, right) => right[1] - left[1]);
     const [topCluster, topCount] = ranked[0] ?? [null, 0];
     const secondCount = ranked[1]?.[1] ?? 0;
@@ -294,32 +202,135 @@ function determineConditionCluster(condition: VeterinaryCondition): SymptomClust
         case 'respiratory_structural':
             return 'respiratory';
         case 'gastrointestinal_structural':
-            return 'gastrointestinal';
+            return 'gi';
         case 'neurological':
-            return 'neurologic';
+            return 'neuro';
+        case 'cardiovascular_structural':
+            return 'cardio';
         default:
             return 'systemic';
     }
 }
 
-function signalFindingLabel(value: string): string {
-    return value.replace(/_/g, ' ');
+function getSupportingMatches(
+    signs: string[],
+    signalProfile: ClinicalSignalProfile,
+    conditionCluster: ClinicalSignalDomain,
+): ConditionSignalDescriptor[] {
+    const matches = new Map<string, ConditionSignalDescriptor>();
+    for (const sign of signs) {
+        if (!featureIsPresent(sign, signalProfile, { conditionCluster })) continue;
+        for (const descriptor of resolveConditionSignalDescriptors(sign)) {
+            if (!signalProfile.positiveFamilies.has(descriptor.family)) continue;
+            if (
+                conditionCluster === 'gi'
+                && descriptor.family === 'fever'
+                && signalProfile.clusterScores.gi === 0
+            ) {
+                continue;
+            }
+            const current = matches.get(descriptor.family);
+            if (!current || descriptor.weight > current.weight) {
+                matches.set(descriptor.family, descriptor);
+            }
+        }
+    }
+    return [...matches.values()]
+        .sort((left, right) => right.weight - left.weight);
 }
 
-function getSupportingMatches(signs: string[], signalProfile: SignalProfile, allowFever: boolean): string[] {
-    return signs
-        .map((sign) => normalizeKey(sign))
-        .filter((sign) => (allowFever || sign !== 'fever') && featureIsPresent(sign, signalProfile));
+function getAbsentMatches(signs: string[], signalProfile: ClinicalSignalProfile): ConditionSignalDescriptor[] {
+    const matches = new Map<string, ConditionSignalDescriptor>();
+    for (const sign of signs) {
+        if (!featureIsAbsent(sign, signalProfile)) continue;
+        for (const descriptor of resolveConditionSignalDescriptors(sign)) {
+            if (!signalProfile.negativeFamilies.has(descriptor.family)) continue;
+            const current = matches.get(descriptor.family);
+            if (!current || descriptor.weight > current.weight) {
+                matches.set(descriptor.family, descriptor);
+            }
+        }
+    }
+    return [...matches.values()]
+        .sort((left, right) => right.weight - left.weight);
 }
 
-function getAbsentMatches(signs: string[], signalProfile: SignalProfile): string[] {
-    return signs
-        .map((sign) => normalizeKey(sign))
-        .filter((sign) => featureIsAbsent(sign, signalProfile));
+function weightedMatchScore(matches: ConditionSignalDescriptor[], multiplier: number): number {
+    return matches.reduce((sum, match) => sum + (match.weight * multiplier), 0);
+}
+
+function hasStrongClusterEvidence(signalProfile: ClinicalSignalProfile, cluster: ClinicalSignalDomain): boolean {
+    return signalProfile.strongSignalCounts[cluster] >= 2 || signalProfile.clusterScores[cluster] >= 4;
+}
+
+function isLowSpecificityOnly(matches: ConditionSignalDescriptor[]): boolean {
+    return matches.length > 0 && matches.every((match) => match.specificity === 'low');
+}
+
+function featureImportance(
+    entries: DifferentialEntry[],
+    signalProfile: ClinicalSignalProfile,
+): Record<string, number> {
+    const importance = new Map<string, number>();
+    for (const signal of signalProfile.positiveSignals) {
+        const label = formatClinicalSignalLabel(signal);
+        importance.set(label, Number(((importance.get(label) ?? 0) + (specificityWeight(signal) / 10)).toFixed(3)));
+    }
+    for (const signal of signalProfile.negativeSignals) {
+        const label = `absence: ${formatClinicalSignalLabel(signal)}`;
+        importance.set(label, Number(((importance.get(label) ?? 0) + (specificityWeight(signal) / 12)).toFixed(3)));
+    }
+    for (const entry of entries.slice(0, 5)) {
+        for (const evidence of entry.supporting_evidence) {
+            importance.set(evidence.finding, Number(((importance.get(evidence.finding) ?? 0) + entry.probability).toFixed(3)));
+        }
+    }
+    return Object.fromEntries([...importance.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10));
 }
 
 function computeReportedConfidence(probability: number, contradictionScore: number): number {
-    return Number(Math.max(0, probability - (contradictionScore * 0.2)).toFixed(3));
+    let adjusted = probability;
+    if (contradictionScore > 0.85) {
+        adjusted *= 0.25;
+    } else if (contradictionScore > 0.7) {
+        adjusted *= 0.45;
+    } else {
+        adjusted *= 1 - (contradictionScore * 0.45);
+    }
+    return Number(Math.max(0, Math.min(1, adjusted)).toFixed(3));
+}
+
+function formatClusterLabel(cluster: ClinicalSignalDomain): string {
+    switch (cluster) {
+        case 'gi':
+            return 'gastrointestinal';
+        case 'neuro':
+            return 'neurologic';
+        case 'cardio':
+            return 'cardiovascular';
+        default:
+            return cluster;
+    }
+}
+
+function buildSignalUncertaintyNotes(signalProfile: ClinicalSignalProfile): string[] {
+    const notes: string[] = [];
+    if (signalProfile.mixedClusters.length > 1) {
+        notes.push(`Signals are distributed across ${signalProfile.mixedClusters.map(formatClusterLabel).join(', ')} domains, so broader differentials should remain open.`);
+    }
+    if (signalProfile.totalStrongSignals === 0 && signalProfile.positiveSignals.size > 0) {
+        notes.push('Only low-specificity systemic signals were captured, so the differential remains broad.');
+    }
+    if (signalProfile.ignoredInputs.length > 0) {
+        notes.push(`Ignored non-canonical inputs: ${signalProfile.ignoredInputs.join(', ')}`);
+    }
+    return notes;
+}
+
+function mappedSignalCount(signs: string[]): number {
+    return signs
+        .filter((sign) => resolveConditionSignalDescriptors(sign).length > 0)
+        .length;
 }
 
 function resolveSeverity(
@@ -337,7 +348,7 @@ function resolveSeverity(
 function analyzeContradictions(
     request: InferenceRequest,
     differentials: DifferentialEntry[],
-    signalProfile: SignalProfile,
+    signalProfile: ClinicalSignalProfile,
 ): ContradictionAnalysis {
     const reasons: string[] = [];
     let score = 0;
@@ -349,7 +360,11 @@ function analyzeContradictions(
         request.diagnostic_tests?.serology?.t4_total === 'low'
         || request.diagnostic_tests?.serology?.free_t4 === 'low';
 
-    if (diabetesConfirmed && hypothyroidConfirmed && request.presenting_signs.includes('weight_loss')) {
+    if (
+        diabetesConfirmed
+        && hypothyroidConfirmed
+        && (request.symptom_vector?.includes('weight_loss') || request.presenting_signs.includes('weight_loss'))
+    ) {
         score = Math.max(score, 0.75);
         reasons.push('Confirmed diabetes and hypothyroid evidence are pulling in opposite metabolic directions for the current weight-loss presentation.');
     }
@@ -368,25 +383,59 @@ function analyzeContradictions(
         const absentCardinalSignals = getAbsentMatches(topCondition.cardinal_signs, signalProfile);
         const absentCommonSignals = getAbsentMatches(topCondition.common_signs, signalProfile);
         if (absentCardinalSignals.length > 0 || absentCommonSignals.length > 0) {
-            const contradictionSignals = [...new Set([...absentCardinalSignals, ...absentCommonSignals])];
+            const contradictionSignals = [...new Set(
+                [...absentCardinalSignals, ...absentCommonSignals].map((signal) => signal.label),
+            )];
             const contradictionPenalty = Math.min(
-                0.85,
-                (absentCardinalSignals.length * 0.24) + (absentCommonSignals.length * 0.12),
+                0.9,
+                weightedMatchScore(absentCardinalSignals, 0.12) + weightedMatchScore(absentCommonSignals, 0.07),
             );
             score = Math.max(score, contradictionPenalty);
             reasons.push(
-                `${topCondition.canonical_name} depends on ${contradictionSignals.map(signalFindingLabel).join(', ')}, but the history explicitly marks those signals as absent.`,
+                `${topCondition.canonical_name} depends on ${contradictionSignals.join(', ')}, but the history explicitly marks those signals as absent.`,
             );
         }
 
         const topCluster = determineConditionCluster(topCondition);
+        const giFamilies = ['vomiting', 'diarrhea', 'bloody_diarrhea', 'melena', 'hematemesis', 'abdominal_pain', 'tenesmus', 'inappetence', 'weight_loss'];
+        const hasPositiveGiEvidence = giFamilies.some((family) => signalProfile.positiveFamilies.has(family)) || signalProfile.clusterScores.gi > 0;
+        const explicitGiAbsence = ['vomiting', 'diarrhea', 'bloody_diarrhea'].some((family) => signalProfile.negativeFamilies.has(family));
+        const explicitNormalThoracicImaging =
+            request.diagnostic_tests?.thoracic_radiograph?.pulmonary_pattern === 'normal'
+            && request.diagnostic_tests?.thoracic_radiograph?.pulmonary_artery_enlargement === 'absent'
+            && request.diagnostic_tests?.thoracic_radiograph?.pleural_effusion === 'absent';
+
         if (
             signalProfile.dominantCluster === 'respiratory'
-            && topCluster === 'gastrointestinal'
-            && signalProfile.clusterCounts.gastrointestinal < 2
+            && topCluster === 'gi'
+            && !hasStrongClusterEvidence(signalProfile, 'gi')
         ) {
-            score = Math.max(score, 0.52);
+            score = Math.max(score, 0.78);
             reasons.push('Respiratory signals dominate this case, while the leading diagnosis is gastrointestinal without strong GI evidence.');
+        }
+        if (
+            signalProfile.dominantCluster === 'gi'
+            && topCluster === 'respiratory'
+            && !hasStrongClusterEvidence(signalProfile, 'respiratory')
+        ) {
+            score = Math.max(score, 0.78);
+            reasons.push('Gastrointestinal signals dominate this case, while the leading diagnosis is respiratory without strong respiratory evidence.');
+        }
+        if (topCluster === 'gi' && !hasPositiveGiEvidence) {
+            score = Math.max(score, 0.72);
+            reasons.push('The leading diagnosis is gastrointestinal, but no validated gastrointestinal signals were observed.');
+        }
+        if (topCluster === 'gi' && explicitGiAbsence) {
+            score = Math.max(score, 0.88);
+            reasons.push('The leading gastrointestinal diagnosis conflicts with explicitly absent vomiting or diarrhea signals.');
+        }
+        if (
+            topCluster === 'respiratory'
+            && top?.clinical_urgency === 'urgent'
+            && explicitNormalThoracicImaging
+        ) {
+            score = Math.max(score, 0.58);
+            reasons.push('An urgent respiratory diagnosis is leading despite explicitly normal thoracic imaging markers.');
         }
     }
 
@@ -401,11 +450,22 @@ function shouldAbstain(
     _request: InferenceRequest,
     contradictionAnalysis: ContradictionAnalysis,
 ): AbstainDecision {
+    if (
+        contradictionAnalysis.contradiction_score > 0.85
+        && contradictionAnalysis.contradiction_reasons.length > 0
+    ) {
+        return {
+            abstain: true,
+            reason: 'genuine_clinical_contradiction',
+            details: contradictionAnalysis.contradiction_reasons,
+        };
+    }
+
     const pathognomicCount = differentials.filter(
         (entry) => entry.determination_basis === 'pathognomonic_test',
     ).length;
     const hasMetabolicConflict =
-        contradictionAnalysis.contradiction_score > 0.60
+        contradictionAnalysis.contradiction_score > 0.7
         && contradictionAnalysis.contradiction_reasons.some((reason) =>
             reason.toLowerCase().includes('diabetes') && reason.toLowerCase().includes('hypothyroid'),
         );
@@ -418,7 +478,7 @@ function shouldAbstain(
     }
     if (
         pathognomicCount > 1
-        && contradictionAnalysis.contradiction_score > 0.60
+        && contradictionAnalysis.contradiction_score > 0.7
         && contradictionAnalysis.contradiction_reasons.length > 0
     ) {
         return {
@@ -432,13 +492,16 @@ function shouldAbstain(
     }
 
     if (
-        contradictionAnalysis.contradiction_score > 0.60
+        contradictionAnalysis.contradiction_score > 0.7
         && contradictionAnalysis.contradiction_reasons.length > 0
     ) {
         return {
-            abstain: true,
-            reason: 'genuine_clinical_contradiction',
+            abstain: false,
+            reason: null,
             details: contradictionAnalysis.contradiction_reasons,
+            competitive_differential: true,
+            confirmatory_testing_urgent: true,
+            message: 'Clinical contradictions remain unresolved - confirmatory testing is required before committing to the leading diagnosis.',
         };
     }
 
@@ -460,7 +523,7 @@ function shouldAbstain(
             reason: null,
             competitive_differential: true,
             confirmatory_testing_urgent: true,
-            message: 'Differential is competitive — confirmatory testing required to distinguish the top diagnoses',
+            message: 'Differential is competitive - confirmatory testing required to distinguish the top diagnoses',
         };
     }
 
@@ -490,6 +553,7 @@ function coerceInferenceRequest(raw: InferenceRequest | Record<string, unknown>)
             .filter((entry): entry is string => typeof entry === 'string')
             .map((entry) => normalizeKey(entry)),
     )];
+    const canonicalSymptomVector = normalizeCanonicalSignalArray(presenting);
 
     return {
         species: typeof candidate.species === 'string' ? candidate.species : typeof metadata.species === 'string' ? metadata.species : 'canine',
@@ -508,7 +572,7 @@ function coerceInferenceRequest(raw: InferenceRequest | Record<string, unknown>)
                 : undefined,
         sex: typeof candidate.sex === 'string' ? candidate.sex : typeof metadata.sex === 'string' ? metadata.sex : undefined,
         region: typeof candidate.region === 'string' ? candidate.region : typeof metadata.region === 'string' ? metadata.region : undefined,
-        symptom_vector: normalizedPresenting,
+        symptom_vector: canonicalSymptomVector,
         presenting_signs: normalizedPresenting,
         history: mergeObject(candidate.history as InferenceRequest['history'] | undefined, metadata.history as InferenceRequest['history'] | undefined),
         preventive_history: mergeObject(candidate.preventive_history as InferenceRequest['preventive_history'] | undefined, metadata.preventive_history as InferenceRequest['preventive_history'] | undefined),
@@ -563,80 +627,129 @@ function applyAdjustments(states: Map<string, CandidateState>, adjustments: Scor
     }
 }
 
-function scoreSymptoms(states: Map<string, CandidateState>, signalProfile: SignalProfile) {
+function scoreSymptoms(states: Map<string, CandidateState>, signalProfile: ClinicalSignalProfile) {
     for (const state of states.values()) {
         const condition = state.condition;
         const conditionCluster = determineConditionCluster(condition);
-        const allowGiFeverWeight = !(
-            conditionCluster === 'gastrointestinal'
-            && signalProfile.clusterCounts.gastrointestinal === 0
-        );
         let delta = 0;
 
-        const cardinalHits = getSupportingMatches(condition.cardinal_signs, signalProfile, allowGiFeverWeight);
-        const commonHits = getSupportingMatches(condition.common_signs, signalProfile, allowGiFeverWeight);
-        const rareHits = getSupportingMatches(condition.rare_signs, signalProfile, allowGiFeverWeight);
-        const exclusionHits = getSupportingMatches(condition.signs_that_exclude, signalProfile, true);
+        const cardinalHits = getSupportingMatches(condition.cardinal_signs, signalProfile, conditionCluster);
+        const commonHits = getSupportingMatches(condition.common_signs, signalProfile, conditionCluster);
+        const rareHits = getSupportingMatches(condition.rare_signs, signalProfile, conditionCluster);
+        const exclusionHits = getSupportingMatches(condition.signs_that_exclude, signalProfile, conditionCluster);
         const absentCardinalSignals = getAbsentMatches(condition.cardinal_signs, signalProfile);
         const absentCommonSignals = getAbsentMatches(condition.common_signs, signalProfile);
+        const positiveHits = [...cardinalHits, ...commonHits, ...rareHits];
+        const allowLowSpecificityContribution = positiveHits.some((match) => match.specificity !== 'low') || signalProfile.totalStrongSignals > 0;
 
-        delta += cardinalHits.length * 0.16;
-        delta += commonHits.length * 0.08;
-        delta += rareHits.length * 0.03;
-        delta -= exclusionHits.length * 0.12;
-        delta -= absentCardinalSignals.length * 0.22;
-        delta -= absentCommonSignals.length * 0.12;
+        delta += weightedMatchScore(cardinalHits.filter((match) => match.specificity !== 'low'), 0.08);
+        delta += weightedMatchScore(commonHits.filter((match) => match.specificity !== 'low'), 0.04);
+        delta += weightedMatchScore(rareHits.filter((match) => match.specificity !== 'low'), 0.015);
+        if (allowLowSpecificityContribution) {
+            delta += weightedMatchScore(cardinalHits.filter((match) => match.specificity === 'low'), 0.02);
+            delta += weightedMatchScore(commonHits.filter((match) => match.specificity === 'low'), 0.015);
+            delta += weightedMatchScore(rareHits.filter((match) => match.specificity === 'low'), 0.01);
+        }
+        delta -= weightedMatchScore(exclusionHits, 0.08);
+        delta -= weightedMatchScore(absentCardinalSignals, 0.10);
+        delta -= weightedMatchScore(absentCommonSignals, 0.055);
 
-        if (condition.cardinal_signs.length > 0 && cardinalHits.length === 0) {
-            delta -= 0.05;
+        if (mappedSignalCount(condition.cardinal_signs) > 0 && cardinalHits.length === 0) {
+            delta -= 0.06;
+        }
+        if (isLowSpecificityOnly(positiveHits)) {
+            delta -= 0.04;
         }
 
         if (signalProfile.dominantCluster === 'respiratory') {
             if (conditionCluster === 'respiratory') {
-                delta += 0.12;
+                delta += 0.16;
             } else if (
-                conditionCluster === 'gastrointestinal'
-                && signalProfile.clusterCounts.gastrointestinal < 2
+                conditionCluster === 'gi'
+                && !hasStrongClusterEvidence(signalProfile, 'gi')
             ) {
-                delta -= 0.18;
+                delta -= 0.22;
+            } else if (!signalProfile.mixedClusters.includes(conditionCluster)) {
+                delta -= 0.06;
+            }
+        }
+        if (signalProfile.dominantCluster === 'gi') {
+            if (conditionCluster === 'gi') {
+                delta += 0.16;
+            } else if (
+                conditionCluster === 'respiratory'
+                && !hasStrongClusterEvidence(signalProfile, 'respiratory')
+            ) {
+                delta -= 0.22;
+            } else if (!signalProfile.mixedClusters.includes(conditionCluster)) {
+                delta -= 0.06;
             }
         }
 
         if (delta > 0) {
-            state.supporting.push(...cardinalHits.map((finding) => ({ finding: `Presenting sign: ${signalFindingLabel(finding)}`, weight: 'supportive' as const })));
-            state.supporting.push(...commonHits.map((finding) => ({ finding: `Presenting sign: ${signalFindingLabel(finding)}`, weight: 'minor' as const })));
-            if (signalProfile.dominantCluster === 'respiratory' && conditionCluster === 'respiratory') {
+            state.supporting.push(...cardinalHits.map((finding) => ({
+                finding: `Presenting sign: ${finding.label}`,
+                weight: finding.specificity === 'low' ? 'minor' as const : 'supportive' as const,
+            })));
+            state.supporting.push(...commonHits.map((finding) => ({
+                finding: `Presenting sign: ${finding.label}`,
+                weight: finding.specificity === 'high' ? 'supportive' as const : 'minor' as const,
+            })));
+            state.supporting.push(...rareHits.map((finding) => ({
+                finding: `Presenting sign: ${finding.label}`,
+                weight: 'minor' as const,
+            })));
+            if (signalProfile.dominantCluster && conditionCluster === signalProfile.dominantCluster) {
                 state.supporting.push({
-                    finding: 'Dominant respiratory cluster aligns with this diagnosis',
+                    finding: `Dominant ${formatClusterLabel(conditionCluster)} cluster aligns with this diagnosis`,
                     weight: 'supportive',
                 });
             }
         }
         if (delta < 0 && exclusionHits.length > 0) {
-            state.contradicting.push(...exclusionHits.map((finding) => ({ finding: `Sign pattern weakens this diagnosis: ${signalFindingLabel(finding)}`, weight: 'weakens' as const })));
+            state.contradicting.push(...exclusionHits.map((finding) => ({
+                finding: `Sign pattern weakens this diagnosis: ${finding.label}`,
+                weight: 'weakens' as const,
+            })));
         }
         if (absentCardinalSignals.length > 0 || absentCommonSignals.length > 0) {
             state.contradicting.push(...absentCardinalSignals.map((finding) => ({
-                finding: `History explicitly denies required signal: ${signalFindingLabel(finding)}`,
+                finding: `History explicitly denies required signal: ${finding.label}`,
                 weight: 'excludes' as const,
             })));
             state.contradicting.push(...absentCommonSignals.map((finding) => ({
-                finding: `History explicitly denies supporting signal: ${signalFindingLabel(finding)}`,
+                finding: `History explicitly denies supporting signal: ${finding.label}`,
                 weight: 'weakens' as const,
             })));
         }
         if (
             signalProfile.dominantCluster === 'respiratory'
-            && conditionCluster === 'gastrointestinal'
-            && signalProfile.clusterCounts.gastrointestinal < 2
+            && conditionCluster === 'gi'
+            && !hasStrongClusterEvidence(signalProfile, 'gi')
         ) {
             state.contradicting.push({
                 finding: 'Respiratory cluster dominates without strong gastrointestinal evidence',
                 weight: 'weakens',
             });
         }
+        if (
+            signalProfile.dominantCluster === 'gi'
+            && conditionCluster === 'respiratory'
+            && !hasStrongClusterEvidence(signalProfile, 'respiratory')
+        ) {
+            state.contradicting.push({
+                finding: 'Gastrointestinal cluster dominates without strong respiratory evidence',
+                weight: 'weakens',
+            });
+        }
+        if (isLowSpecificityOnly(positiveHits)) {
+            state.contradicting.push({
+                finding: 'Only low-specificity systemic signals support this diagnosis',
+                weight: 'weakens',
+            });
+        }
 
-        state.score = Math.max(0, state.score + delta);
+        state.score = Math.max(0, Number((state.score + delta).toFixed(3)));
     }
 }
 
@@ -863,16 +976,6 @@ function buildDiagnosisSummary(entries: DifferentialEntry[]): InferenceResponse[
     };
 }
 
-function featureImportance(entries: DifferentialEntry[]): Record<string, number> {
-    const importance = new Map<string, number>();
-    for (const entry of entries.slice(0, 5)) {
-        for (const evidence of entry.supporting_evidence) {
-            importance.set(evidence.finding, Number(((importance.get(evidence.finding) ?? 0) + entry.probability).toFixed(3)));
-        }
-    }
-    return Object.fromEntries([...importance.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8));
-}
-
 function computeDifferentialSpread(entries: DifferentialEntry[]) {
     return {
         top_1_probability: entries[0]?.probability ?? null,
@@ -886,7 +989,8 @@ function buildStructuredSummary(
     entries: DifferentialEntry[],
     treatmentPlans: Record<string, SelectedTreatmentPlan>,
     contradictionAnalysis: ContradictionAnalysis,
-): Pick<ClinicalInferenceEngineResult, 'top_diagnosis' | 'condition_class' | 'severity' | 'confidence' | 'contradiction_score'> {
+    signalProfile: ClinicalSignalProfile,
+): Pick<ClinicalInferenceEngineResult, 'top_diagnosis' | 'condition_class' | 'severity' | 'confidence' | 'contradiction_score' | 'cluster_scores'> {
     const top = entries[0];
     const topCondition = top?.condition_id ? getConditionById(top.condition_id) : undefined;
     return {
@@ -895,6 +999,7 @@ function buildStructuredSummary(
         severity: resolveSeverity(entries, treatmentPlans),
         confidence: computeReportedConfidence(top?.probability ?? 0, contradictionAnalysis.contradiction_score),
         contradiction_score: contradictionAnalysis.contradiction_score,
+        cluster_scores: { ...signalProfile.clusterScores },
     };
 }
 
@@ -902,7 +1007,10 @@ export function runClinicalInferenceEngine(
     rawRequest: InferenceRequest | Record<string, unknown>,
 ): ClinicalInferenceEngineResult {
     const request = coerceInferenceRequest(rawRequest);
-    const signalProfile = buildSignalProfile(request);
+    const signalProfile = buildClinicalSignalProfile(
+        request.symptom_vector,
+        request.history?.owner_observations,
+    );
     const candidates = getConditionsForSpecies(normalizeSpecies(request.species));
     const regionalScores = applyRegionalExposurePriors(candidates, request);
     const breedAdjustedScores = applyBreedSpecificPriors(candidates, regionalScores, request);
@@ -924,6 +1032,14 @@ export function runClinicalInferenceEngine(
         );
         const contradictionAnalysis = analyzeContradictions(request, confirmed, signalProfile);
         const abstainDecision = shouldAbstain(confirmed, request, contradictionAnalysis);
+        const outputFeatureImportance = featureImportance(confirmed, signalProfile);
+        const uncertaintyNotes = [
+            ...pathognomicResult.anomalyNotes,
+            ...buildSignalUncertaintyNotes(signalProfile),
+        ];
+        if (abstainDecision.message) {
+            uncertaintyNotes.push(abstainDecision.message);
+        }
         return {
             differentials: confirmed,
             inference_explanation: explanation,
@@ -935,10 +1051,11 @@ export function runClinicalInferenceEngine(
             abstain_reason: abstainDecision.reason,
             competitive_differential: abstainDecision.competitive_differential,
             urgent_confirmatory_testing: abstainDecision.confirmatory_testing_urgent,
-            ...buildStructuredSummary(confirmed, treatmentPlans, contradictionAnalysis),
-            diagnosis_feature_importance: featureImportance(confirmed),
+            ...buildStructuredSummary(confirmed, treatmentPlans, contradictionAnalysis, signalProfile),
+            feature_importance: outputFeatureImportance,
+            diagnosis_feature_importance: outputFeatureImportance,
             differential_spread: computeDifferentialSpread(confirmed),
-            uncertainty_notes: pathognomicResult.anomalyNotes,
+            uncertainty_notes: uncertaintyNotes,
         };
     }
 
@@ -963,7 +1080,7 @@ export function runClinicalInferenceEngine(
         top?.supporting_evidence[0]?.finding ?? 'No single confirmatory finding available',
     );
 
-    const uncertaintyNotes: string[] = [];
+    const uncertaintyNotes: string[] = buildSignalUncertaintyNotes(signalProfile);
     if ((top?.probability ?? 0) < 0.55) {
         uncertaintyNotes.push('No pathognomonic finding was present, so probabilities remain provisional until confirmatory testing is completed.');
     }
@@ -975,6 +1092,7 @@ export function runClinicalInferenceEngine(
     if (abstainDecision.message) {
         uncertaintyNotes.push(abstainDecision.message);
     }
+    const outputFeatureImportance = featureImportance(differentials, signalProfile);
 
     return {
         differentials,
@@ -987,8 +1105,9 @@ export function runClinicalInferenceEngine(
         abstain_reason: abstainDecision.reason,
         competitive_differential: abstainDecision.competitive_differential,
         urgent_confirmatory_testing: abstainDecision.confirmatory_testing_urgent,
-        ...buildStructuredSummary(differentials, treatmentPlans, contradictionAnalysis),
-        diagnosis_feature_importance: featureImportance(differentials),
+        ...buildStructuredSummary(differentials, treatmentPlans, contradictionAnalysis, signalProfile),
+        feature_importance: outputFeatureImportance,
+        diagnosis_feature_importance: outputFeatureImportance,
         differential_spread: computeDifferentialSpread(differentials),
         uncertainty_notes: uncertaintyNotes,
     };
