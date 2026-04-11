@@ -20,7 +20,7 @@ export default function DeveloperInfraSection() {
                     ))}
                 </div>
 
-                <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <div className="mt-6 grid grid-cols-2 gap-4 xl:grid-cols-4">
                     {[
                         { icon: Gauge, label: 'latency channel', value: 'p95 218 ms' },
                         { icon: Network, label: 'event throughput', value: '18.4k spans / min' },
@@ -30,12 +30,12 @@ export default function DeveloperInfraSection() {
                         const Icon = item.icon;
 
                         return (
-                            <div key={item.label} className="rounded-[24px] border border-white/10 bg-[#0E141B]/92 p-5">
+                            <div key={item.label} className="rounded-[24px] border border-white/10 bg-[#0E141B]/92 p-4 sm:p-5">
                                 <div className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.03] text-[#9AE4D1]">
                                     <Icon className="h-4 w-4" />
                                 </div>
                                 <div className="mt-4 text-[10px] uppercase tracking-[0.24em] text-white/35">{item.label}</div>
-                                <div className="mt-2 text-sm font-medium text-white/85">{item.value}</div>
+                                <div className="mt-2 text-xs font-medium text-white/85 sm:text-sm">{item.value}</div>
                             </div>
                         );
                     })}

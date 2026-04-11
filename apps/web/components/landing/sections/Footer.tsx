@@ -5,7 +5,7 @@ import { BrandMark, FooterLink } from '../shared';
 
 export default function Footer() {
     return (
-        <footer className="border-t border-white/8 px-6 py-8 md:px-10 xl:px-20">
+        <footer className="border-t border-white/8 px-4 py-8 sm:px-6 md:px-10 xl:px-20">
             <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
                 <div className="flex items-center gap-3">
                     <BrandMark compact />
@@ -15,7 +15,7 @@ export default function Footer() {
                     </div>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-white/48">
+                <div className="flex flex-col gap-3 text-sm text-white/48 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-6 sm:gap-y-2">
                     {footerLinks.map((link) => (
                         <FooterLink key={link.label} {...link} />
                     ))}
