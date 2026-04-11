@@ -90,7 +90,8 @@ RULES:
 16. If a classic GDV pattern is present, strongly favor GDV above simple gastric dilatation and above benign vomiting syndromes.
 17. If input_signature.metadata.signal_weight_profile is present, preserve its red_flag and emergency_override signals as dominant evidence anchors; contextual signals modify interpretation but must not erase those anchors.
 18. If input_signature.metadata.signal_weight_profile.system_dominance identifies a dominant organ system, prioritize diseases affecting that system and actively suppress unrelated categories that only share vomiting, diarrhea, lethargy, or other generic symptoms unless those competing categories have their own strong anchor signals.
-19. Example rule: jaundice, bilirubin/ALT/AST elevation, or hepatic dysfunction must push hepatotoxic and hepatic encephalopathy differentials above simple gastroenteritis or uncomplicated obstruction unless a true GI emergency anchor cluster is also present.${contradictionBlock}`;
+19. Example rule: jaundice, bilirubin/ALT/AST elevation, or hepatic dysfunction must push hepatotoxic and hepatic encephalopathy differentials above simple gastroenteritis or uncomplicated obstruction unless a true GI emergency anchor cluster is also present.
+20. Feline respiratory rule: if species is cat and sneezing, nasal discharge, ocular discharge, conjunctivitis, or oral ulceration form the dominant cluster without strong lower-airway evidence, prioritize "Feline Upper Respiratory Disease Complex" with FHV-1, FCV, and Chlamydophila-associated URI in the differential; do not rank pneumonia or bronchitis above that cluster without lower-airway evidence.${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];

@@ -9,8 +9,13 @@ export type SignalKey =
     | 'cyanosis'
     | 'honking_cough'
     | 'cough'
+    | 'sneezing'
     | 'myoclonus'
     | 'dyspnea'
+    | 'tachypnea'
+    | 'abnormal_lung_sounds'
+    | 'thoracic_imaging_abnormality'
+    | 'poor_oxygenation'
     | 'tachycardia'
     | 'pale_mucous_membranes'
     | 'productive_vomiting'
@@ -40,6 +45,8 @@ export type SignalKey =
     | 'seizures'
     | 'nasal_discharge'
     | 'ocular_discharge'
+    | 'conjunctivitis'
+    | 'oral_ulceration'
     | 'pneumonia'
     | 'recent_meal'
     | 'acute_onset';
@@ -131,6 +138,12 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
         tier: 2,
         terms: ['cough', 'coughing'],
     },
+    sneezing: {
+        label: 'sneezing',
+        tier: 1,
+        terms: ['sneezing', 'sneeze', 'sneezing fits'],
+        structured_fields: ['sneezing'],
+    },
     myoclonus: {
         label: 'myoclonus',
         tier: 1,
@@ -140,6 +153,30 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
         label: 'dyspnea',
         tier: 2,
         terms: ['dyspnea', 'difficulty breathing', 'respiratory distress', 'labored breathing', 'shortness of breath', 'breathing hard', 'trouble breathing', 'struggling to breathe'],
+    },
+    tachypnea: {
+        label: 'tachypnea',
+        tier: 2,
+        terms: ['tachypnea', 'rapid breathing', 'breathing fast', 'panting fast'],
+        structured_fields: ['tachypnea'],
+    },
+    abnormal_lung_sounds: {
+        label: 'abnormal lung sounds',
+        tier: 1,
+        terms: ['abnormal lung sounds', 'harsh lung sounds', 'increased lung sounds', 'crackles', 'wheezes'],
+        structured_fields: ['abnormal_lung_sounds', 'increased_lung_sounds'],
+    },
+    thoracic_imaging_abnormality: {
+        label: 'thoracic imaging abnormality',
+        tier: 1,
+        terms: ['thoracic imaging abnormality', 'thoracic imaging abnormalities', 'thoracic radiograph abnormal', 'alveolar pattern', 'interstitial lung pattern', 'lung infiltrates'],
+        structured_fields: ['thoracic_imaging_abnormality'],
+    },
+    poor_oxygenation: {
+        label: 'poor oxygenation',
+        tier: 1,
+        terms: ['poor oxygenation', 'hypoxemia', 'low oxygen saturation', 'blood gas abnormality'],
+        structured_fields: ['poor_oxygenation'],
     },
     tachycardia: {
         label: 'tachycardia',
@@ -297,12 +334,26 @@ const SIGNAL_DEFINITIONS: Record<SignalKey, SignalDefinition> = {
     nasal_discharge: {
         label: 'nasal discharge',
         tier: 2,
-        terms: ['nasal discharge', 'runny nose', 'snotty nose'],
+        terms: ['nasal discharge', 'runny nose', 'snotty nose', 'rhinitis', 'mucopurulent nasal discharge', 'serous nasal discharge', 'nasal discharge mucopurulent'],
+        structured_fields: ['nasal_discharge'],
     },
     ocular_discharge: {
         label: 'ocular discharge',
         tier: 2,
         terms: ['ocular discharge', 'eye discharge', 'watery eyes', 'eyes watery', 'conjunctival discharge'],
+        structured_fields: ['ocular_discharge'],
+    },
+    conjunctivitis: {
+        label: 'conjunctivitis',
+        tier: 1,
+        terms: ['conjunctivitis', 'pink eye', 'red eyes', 'inflamed conjunctiva'],
+        structured_fields: ['conjunctivitis'],
+    },
+    oral_ulceration: {
+        label: 'oral ulceration',
+        tier: 1,
+        terms: ['oral ulceration', 'oral ulcers', 'mouth ulcers', 'tongue ulcers', 'ulcers in mouth'],
+        structured_fields: ['oral_ulceration'],
     },
     pneumonia: {
         label: 'pneumonia',
@@ -463,19 +514,23 @@ export function extractClinicalSignals(input: Record<string, unknown>): Clinical
         'fever',
     ]);
     const upperAirwayPatternStrength = weightedPresence(evidence, [
-        'honking_cough',
-        'cough',
+        'sneezing',
         'nasal_discharge',
         'ocular_discharge',
-        'dyspnea',
-    ]);
+        'conjunctivitis',
+        'oral_ulceration',
+        'hypersalivation',
+    ]) + (evidence.honking_cough.present ? 0.08 : 0);
     const respiratoryInfectionPatternStrength = weightedPresence(evidence, [
-        'honking_cough',
-        'cough',
+        'sneezing',
         'nasal_discharge',
         'ocular_discharge',
+        'conjunctivitis',
+        'oral_ulceration',
+        'hypersalivation',
         'fever',
         'lethargy',
+        'anorexia',
     ]);
     const hasAcuteOnset = Boolean(
         evidence.acute_onset.present

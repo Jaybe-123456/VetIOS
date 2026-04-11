@@ -828,8 +828,13 @@ function buildOntologyObservationHints(signals: ClinicalSignals): string[] {
         ['pale_mucous_membranes', 'pale_mucous_membranes'],
         ['tachycardia', 'tachycardia'],
         ['dyspnea', 'dyspnea'],
+        ['tachypnea', 'tachypnea'],
+        ['abnormal_lung_sounds', 'abnormal_lung_sounds'],
+        ['thoracic_imaging_abnormality', 'thoracic_imaging_abnormality'],
+        ['poor_oxygenation', 'poor_oxygenation'],
         ['cough', 'cough'],
         ['honking_cough', 'honking_cough'],
+        ['sneezing', 'sneezing'],
         ['seizures', 'seizures'],
         ['myoclonus', 'myoclonus'],
         ['alopecia', 'alopecia'],
@@ -848,8 +853,10 @@ function buildOntologyObservationHints(signals: ClinicalSignals): string[] {
         ['glucosuria', 'glucosuria'],
         ['ketonuria', 'ketonuria'],
         ['diabetic_metabolic_profile', 'diabetic_metabolic_profile'],
-        ['nasal_discharge', 'cough'],
-        ['ocular_discharge', 'cough'],
+        ['nasal_discharge', 'nasal_discharge'],
+        ['ocular_discharge', 'ocular_discharge'],
+        ['conjunctivitis', 'conjunctivitis'],
+        ['oral_ulceration', 'oral_ulceration'],
         ['pneumonia', 'pneumonia'],
         ['recent_meal', 'recent_meal'],
         ['acute_onset', 'acute_onset'],
@@ -992,6 +999,7 @@ function mergeDifferentials(params: {
 
     applyPersistenceProtection(combined, params);
     applyAnchorFeatureProtection(combined, params.signals);
+    applyFelineRespiratoryPriority(combined, params.signals);
     applyConditionClassStabilization(combined, params.signals);
     applyEndocrineDifferentialLogic(combined, params.signals);
     applyOrganSystemDominanceReranking(combined, params);
@@ -1032,6 +1040,122 @@ function getCanonicalNameSet(names: string[]): Set<string> {
         .map((name) => toCanonicalName(name))
         .filter((name): name is string => Boolean(name));
     return new Set(canonicalNames);
+}
+
+function countPositiveSignals(signals: ClinicalSignals, keys: SignalKey[]): number {
+    return keys.reduce((count, key) => count + (signals.evidence[key].present ? 1 : 0), 0);
+}
+
+function countNegativeSignals(signals: ClinicalSignals, keys: SignalKey[]): number {
+    return keys.reduce((count, key) => count + (signals.evidence[key].negated_terms.length > 0 ? 1 : 0), 0);
+}
+
+function isFelineUpperRespiratoryCase(signals: ClinicalSignals): boolean {
+    if (signals.species !== 'cat') {
+        return false;
+    }
+
+    return countPositiveSignals(signals, [
+        'sneezing',
+        'nasal_discharge',
+        'ocular_discharge',
+        'conjunctivitis',
+        'oral_ulceration',
+        'hypersalivation',
+    ]) >= 3;
+}
+
+function getFelineLowerAirwayEvidenceCount(signals: ClinicalSignals): number {
+    return countPositiveSignals(signals, [
+        'dyspnea',
+        'tachypnea',
+        'abnormal_lung_sounds',
+        'cyanosis',
+        'thoracic_imaging_abnormality',
+        'poor_oxygenation',
+    ]);
+}
+
+function getFelineLowerAirwayNegativeCount(signals: ClinicalSignals): number {
+    return countNegativeSignals(signals, [
+        'cough',
+        'dyspnea',
+        'tachypnea',
+        'abnormal_lung_sounds',
+        'cyanosis',
+        'thoracic_imaging_abnormality',
+        'poor_oxygenation',
+    ]);
+}
+
+function getFelineUpperRespiratoryLeaderNames(): string[] {
+    return [...getCanonicalNameSet([
+        'Feline Upper Respiratory Disease Complex',
+        'FHV-1 Infection',
+        'FCV Infection',
+        'Chlamydophila-associated URI',
+        'Secondary Bacterial Upper Respiratory Infection',
+    ])];
+}
+
+function applyFelineRespiratoryPriority(
+    combined: Map<string, DifferentialEntry>,
+    signals: ClinicalSignals,
+) {
+    if (!isFelineUpperRespiratoryCase(signals)) {
+        return;
+    }
+
+    const lowerEvidenceCount = getFelineLowerAirwayEvidenceCount(signals);
+    const lowerNegativeCount = getFelineLowerAirwayNegativeCount(signals);
+    const noLowerAirwayEvidence = lowerEvidenceCount === 0;
+    const strictLowerGate = lowerEvidenceCount < 2;
+
+    setCanonicalFloor(combined, 'Feline Upper Respiratory Disease Complex', noLowerAirwayEvidence ? 0.34 : 0.24);
+    setCanonicalFloor(combined, 'FHV-1 Infection', 0.15);
+    setCanonicalFloor(combined, 'FCV Infection', 0.15);
+    setCanonicalFloor(combined, 'Chlamydophila-associated URI', 0.14);
+    setCanonicalFloor(combined, 'Secondary Bacterial Upper Respiratory Infection', 0.12);
+
+    if (signals.evidence.oral_ulceration.present || signals.evidence.hypersalivation.present) {
+        setCanonicalFloor(combined, 'FCV Infection', 0.2);
+    }
+    if (signals.evidence.conjunctivitis.present && signals.evidence.nasal_discharge.present) {
+        setCanonicalFloor(combined, 'FHV-1 Infection', 0.18);
+        setCanonicalFloor(combined, 'Chlamydophila-associated URI', 0.18);
+    }
+
+    const lowerAirwayNames = [
+        'Pneumonia',
+        'Feline Bacterial Pneumonia',
+        'Bronchitis',
+        'Feline Chronic Bronchitis',
+        'Canine Infectious Tracheobronchitis',
+        'Tracheal Collapse',
+    ];
+
+    for (const rawName of lowerAirwayNames) {
+        const name = toCanonicalName(rawName);
+        if (!name) continue;
+        const entry = combined.get(name);
+        if (!entry) continue;
+
+        let factor = 1;
+        if (strictLowerGate) {
+            factor *= name.includes('Pneumonia') ? 0.38 : 0.44;
+        }
+        if (noLowerAirwayEvidence) {
+            factor *= 0.72;
+        }
+        if (lowerNegativeCount > 0) {
+            factor *= 0.8;
+        }
+        if (name === 'Canine Infectious Tracheobronchitis' || name === 'Tracheal Collapse') {
+            factor *= 0.42;
+        }
+
+        entry.probability *= factor;
+    }
 }
 
 function applyPersistenceProtection(
@@ -1078,6 +1202,7 @@ function applyAnchorFeatureProtection(
     signals: ClinicalSignals,
 ) {
     const floors = new Map<string, number>();
+    const felineUpperRespiratoryCase = isFelineUpperRespiratoryCase(signals);
 
     if (signals.evidence.unproductive_retching.present) {
         floors.set('Gastric Dilatation-Volvulus (GDV)', 0.15);
@@ -1090,8 +1215,17 @@ function applyAnchorFeatureProtection(
     }
 
     if (signals.evidence.ocular_discharge.present && signals.evidence.nasal_discharge.present) {
-        floors.set('Canine Infectious Tracheobronchitis', Math.max(floors.get('Canine Infectious Tracheobronchitis') ?? 0, 0.15));
-        floors.set('Pneumonia', Math.max(floors.get('Pneumonia') ?? 0, 0.12));
+        if (felineUpperRespiratoryCase) {
+            floors.set('Feline Upper Respiratory Disease Complex', Math.max(floors.get('Feline Upper Respiratory Disease Complex') ?? 0, 0.26));
+            floors.set('FHV-1 Infection', Math.max(floors.get('FHV-1 Infection') ?? 0, 0.16));
+            floors.set('Chlamydophila-associated URI', Math.max(floors.get('Chlamydophila-associated URI') ?? 0, 0.16));
+            if (signals.evidence.oral_ulceration.present || signals.evidence.hypersalivation.present) {
+                floors.set('FCV Infection', Math.max(floors.get('FCV Infection') ?? 0, 0.18));
+            }
+        } else {
+            floors.set('Canine Infectious Tracheobronchitis', Math.max(floors.get('Canine Infectious Tracheobronchitis') ?? 0, 0.15));
+            floors.set('Pneumonia', Math.max(floors.get('Pneumonia') ?? 0, 0.12));
+        }
     }
 
     for (const [name, floor] of floors.entries()) {
@@ -1107,27 +1241,50 @@ function applyConditionClassStabilization(
         return;
     }
 
-    const boostNames = getCanonicalNameSet([
-        'Canine Infectious Tracheobronchitis',
-        'Tracheal Collapse',
-        'Bronchitis',
-        'Pneumonia',
-    ]);
+    const felineUpperRespiratoryCase = isFelineUpperRespiratoryCase(signals);
+    const lowerAirwayEvidenceCount = getFelineLowerAirwayEvidenceCount(signals);
+    const boostNames = felineUpperRespiratoryCase
+        ? new Set(getFelineUpperRespiratoryLeaderNames())
+        : getCanonicalNameSet([
+            'Canine Infectious Tracheobronchitis',
+            'Tracheal Collapse',
+            'Bronchitis',
+            'Pneumonia',
+        ]);
     const dampenedClasses = new Set<ConditionClass>([
         'Neoplastic',
         'Toxic',
         'Metabolic / Endocrine',
     ]);
+    const lowerAirwaySuppressedNames = felineUpperRespiratoryCase
+        ? getCanonicalNameSet([
+            'Pneumonia',
+            'Feline Bacterial Pneumonia',
+            'Bronchitis',
+            'Feline Chronic Bronchitis',
+            'Canine Infectious Tracheobronchitis',
+            'Tracheal Collapse',
+        ])
+        : new Set<string>();
 
     for (const entry of combined.values()) {
         const definition = CANDIDATE_LOOKUP.get(entry.name);
         if (definition == null) continue;
 
         if (boostNames.has(entry.name)) {
-            const boost = definition.conditionClass === 'Infectious'
-                ? (signals.respiratory_infection_pattern_strength >= 2.4 ? 0.08 : 0.05)
-                : 0.04;
+            const boost = felineUpperRespiratoryCase
+                ? (definition.conditionClass === 'Infectious'
+                    ? (signals.respiratory_infection_pattern_strength >= 2.4 ? 0.12 : 0.08)
+                    : 0.04)
+                : (definition.conditionClass === 'Infectious'
+                    ? (signals.respiratory_infection_pattern_strength >= 2.4 ? 0.08 : 0.05)
+                    : 0.04);
             entry.probability += boost;
+            continue;
+        }
+
+        if (lowerAirwaySuppressedNames.has(entry.name) && lowerAirwayEvidenceCount < 2) {
+            entry.probability *= lowerAirwayEvidenceCount === 0 ? 0.42 : 0.68;
             continue;
         }
 
@@ -1334,12 +1491,14 @@ function enforceDominantClusterConsistency(
         return;
     }
 
-    const respiratoryLeaders = [...getCanonicalNameSet([
-        'Canine Infectious Tracheobronchitis',
-        'Tracheal Collapse',
-        'Bronchitis',
-        'Pneumonia',
-    ])];
+    const respiratoryLeaders = isFelineUpperRespiratoryCase(signals)
+        ? getFelineUpperRespiratoryLeaderNames()
+        : [...getCanonicalNameSet([
+            'Canine Infectious Tracheobronchitis',
+            'Tracheal Collapse',
+            'Bronchitis',
+            'Pneumonia',
+        ])];
     const ranked = [...combined.values()].sort((left, right) => right.probability - left.probability);
     const top = ranked[0];
     if (top && respiratoryLeaders.includes(top.name)) {
@@ -1349,7 +1508,7 @@ function enforceDominantClusterConsistency(
     for (const name of respiratoryLeaders) {
         const entry = combined.get(name);
         if (!entry) continue;
-        entry.probability = Math.max(entry.probability, 0.14);
+        entry.probability = Math.max(entry.probability, name === 'Feline Upper Respiratory Disease Complex' ? 0.18 : 0.14);
     }
 }
 
