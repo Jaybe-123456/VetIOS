@@ -88,6 +88,17 @@ class PredictResponse(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+@app.api_route("/", methods=["GET", "HEAD"])
+async def root():
+    """Render-friendly root endpoint for health probes and quick inspection."""
+    return {
+        "service": "vetios-ml-inference",
+        "status": "healthy",
+        "model_loaded": _model is not None,
+        "health_path": "/health",
+    }
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""
