@@ -9,6 +9,7 @@
  */
 
 import { createServerClient } from '@supabase/ssr';
+import type { EmailOtpType } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { NextResponse, type NextRequest } from 'next/server';
 import { buildVerifyEmailPath, getEmailVerificationState, isLikelyFirstGoogleSignIn } from '@/lib/auth/emailVerification';
@@ -21,6 +22,8 @@ export async function GET(request: NextRequest) {
     const code = searchParams.get('code');
     const mode = searchParams.get('mode');
     const next = sanitizeInternalPath(searchParams.get('next'), '/inference');
+    const tokenHash = searchParams.get('token_hash');
+    const emailOtpType = normalizeEmailOtpType(searchParams.get('type'));
 
     if (shouldRedirectPreviewAuthHost(requestUrl.host, requestUrl.pathname)) {
         const redirectTarget = buildConfiguredAbsoluteUrl(requestUrl.pathname, requestUrl.search);
@@ -29,7 +32,7 @@ export async function GET(request: NextRequest) {
         }
     }
 
-    if (code) {
+    if (code || (tokenHash && emailOtpType)) {
         const cookieStore = await cookies();
 
         const supabase = createServerClient(
@@ -53,7 +56,12 @@ export async function GET(request: NextRequest) {
             }
         );
 
-        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        const { error } = code
+            ? await supabase.auth.exchangeCodeForSession(code)
+            : await supabase.auth.verifyOtp({
+                token_hash: tokenHash!,
+                type: emailOtpType!,
+            });
 
         if (!error) {
             const { data: { user } } = await supabase.auth.getUser();
@@ -108,4 +116,16 @@ export async function GET(request: NextRequest) {
 function buildAbsoluteRedirectTarget(pathWithSearch: string, fallbackOrigin: string): string {
     const configuredBase = buildConfiguredAbsoluteUrl('/', '', fallbackOrigin) ?? `${fallbackOrigin}/`;
     return new URL(pathWithSearch, configuredBase).toString();
+}
+
+function normalizeEmailOtpType(value: string | null): EmailOtpType | null {
+    if (value === 'email' || value === 'recovery' || value === 'invite' || value === 'email_change') {
+        return value;
+    }
+
+    if (value === 'signup' || value === 'magiclink') {
+        return 'email';
+    }
+
+    return null;
 }
