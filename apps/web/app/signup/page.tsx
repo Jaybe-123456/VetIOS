@@ -21,6 +21,7 @@ export default function SignupPage() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
+    const [gmailPasswordOverride, setGmailPasswordOverride] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [status, setStatus] = useState<'idle' | 'submitting' | 'sent' | 'success' | 'error'>('idle');
@@ -31,21 +32,35 @@ export default function SignupPage() {
     const [captchaError, setCaptchaError] = useState<string | null>(null);
 
     const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '';
-    const isWaitingOnCaptcha = captchaRequired && Boolean(turnstileSiteKey) && !captchaToken;
+    const isBypassEnabled = process.env.NEXT_PUBLIC_VETIOS_DEV_BYPASS === 'true';
     const isGoogleEmail = isGoogleMailAddress(email);
+    const isGoogleManagedFlow = isGoogleEmail && !gmailPasswordOverride;
+    const canRenderCaptcha = !isGoogleManagedFlow && Boolean(turnstileSiteKey) && !isBypassEnabled;
+    const isWaitingOnCaptcha = captchaRequired && canRenderCaptcha && !captchaToken;
     const showGooglePasswordWarning = isGoogleEmail && password.trim().length > 0;
 
     useEffect(() => {
-        // We pro-actively require CAPTCHA for signups if the site key is configured.
-        // This prevents bot spam and avoids the "captcha verification process failed" error from Supabase.
-        const isBypassEnabled = process.env.NEXT_PUBLIC_VETIOS_DEV_BYPASS === 'true';
-        if (turnstileSiteKey && !isBypassEnabled) {
-            setCaptchaRequired(true);
+        if (!isGoogleEmail) {
+            setGmailPasswordOverride(false);
         }
-    }, [turnstileSiteKey]);
+    }, [isGoogleEmail]);
+
+    useEffect(() => {
+        if (isGoogleManagedFlow) {
+            setCaptchaRequired(false);
+            setCaptchaToken(null);
+            setCaptchaError(null);
+            setCaptchaResetKey((value) => value + 1);
+        }
+    }, [isGoogleManagedFlow]);
 
     async function handleEmailPasswordSignup(e: React.FormEvent) {
         e.preventDefault();
+
+        if (isGoogleManagedFlow) {
+            await handleGoogleOAuth();
+            return;
+        }
 
         if (isWaitingOnCaptcha) {
             setStatus('error');
@@ -70,37 +85,75 @@ export default function SignupPage() {
             return;
         }
 
-        const supabase = getSupabaseBrowser();
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                emailRedirectTo: buildClientAuthCallbackUrl(window.location.origin),
-                captchaToken: captchaToken ?? undefined,
-            },
-        });
+        try {
+            const response = await fetch('/api/auth/signup', {
+                method: 'POST',
+                headers: {
+                    'content-type': 'application/json',
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    email,
+                    password,
+                    captchaToken,
+                    allowSeparatePassword: gmailPasswordOverride,
+                }),
+            });
 
-        if (error) {
-            setStatus('error');
-            setErrorMessage(error.message);
-            // Reset CAPTCHA on error to allow retry
+            let payload: {
+                error?: string;
+                code?: string;
+                captcha_required?: boolean;
+                next?: string;
+            } | null = null;
+
+            try {
+                payload = await response.json();
+            } catch {
+                payload = null;
+            }
+
+            if (!response.ok) {
+                if (payload?.code === 'google_auth_recommended' && isGoogleEmail && !gmailPasswordOverride) {
+                    await handleGoogleOAuth();
+                    return;
+                }
+
+                setStatus('error');
+                setErrorMessage(payload?.error ?? 'Unable to create your account right now.');
+                setCaptchaRequired(Boolean(payload?.captcha_required));
+                if (payload?.captcha_required || captchaToken) {
+                    setCaptchaToken(null);
+                    setCaptchaResetKey((prev) => prev + 1);
+                }
+                return;
+            }
+
+            const nextStep = typeof payload?.next === 'string' ? payload.next : '/inference';
+            setStatus(nextStep.startsWith('/verify-email') ? 'sent' : 'success');
+            setCaptchaRequired(false);
             setCaptchaToken(null);
-            setCaptchaResetKey((prev) => prev + 1);
-        } else if (data.session) {
-            setStatus('success');
-            router.push('/inference');
+            setCaptchaError(null);
+            router.push(nextStep);
             router.refresh();
-        } else {
-            setStatus('sent');
+        } catch {
+            setStatus('error');
+            setCaptchaRequired(false);
+            setCaptchaToken(null);
+            setErrorMessage('Unable to reach the sign-up service right now.');
         }
     }
 
     async function handleGoogleOAuth() {
         const supabase = getSupabaseBrowser();
+        const normalizedEmail = email.trim().toLowerCase();
         await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
                 redirectTo: buildClientAuthCallbackUrl(window.location.origin),
+                queryParams: normalizedEmail
+                    ? { login_hint: normalizedEmail }
+                    : undefined,
             },
         });
     }
@@ -195,100 +248,142 @@ export default function SignupPage() {
                                     )}
                                 </div>
 
-                                <div>
-                                    <TerminalLabel htmlFor="password">VetIOS Password</TerminalLabel>
-                                    <div className="relative">
-                                        <TerminalInput
-                                            id="password"
-                                            name="password"
-                                            type={showPassword ? 'text' : 'password'}
-                                            placeholder="Create a strong password"
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            autoComplete="new-password"
-                                            className="pr-20"
-                                            required
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowPassword((value) => !value)}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] uppercase tracking-widest text-muted hover:text-accent transition-colors"
-                                            aria-label={showPassword ? 'Hide password' : 'Show password'}
-                                        >
-                                            {showPassword ? 'Hide' : 'Show'}
-                                        </button>
-                                    </div>
-                                    <p className="mt-2 font-mono text-[10px] text-muted">
-                                        Use 10+ characters with uppercase, lowercase, number, and symbol.
-                                    </p>
-                                    {showGooglePasswordWarning && (
-                                        <div className="mt-2 p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
-                                            Do not reuse your Google password here. This creates a separate VetIOS password account, not a Google sign-in.
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div>
-                                    <TerminalLabel htmlFor="confirmPassword">Confirm Password</TerminalLabel>
-                                    <div className="relative">
-                                        <TerminalInput
-                                            id="confirmPassword"
-                                            name="confirmPassword"
-                                            type={showConfirmPassword ? 'text' : 'password'}
-                                            placeholder="Repeat your password"
-                                            value={confirmPassword}
-                                            onChange={(e) => setConfirmPassword(e.target.value)}
-                                            autoComplete="new-password"
-                                            className="pr-20"
-                                            required
-                                        />
-                                        <button
-                                            type="button"
-                                            onClick={() => setShowConfirmPassword((value) => !value)}
-                                            className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] uppercase tracking-widest text-muted hover:text-accent transition-colors"
-                                            aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                                        >
-                                            {showConfirmPassword ? 'Hide' : 'Show'}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                {captchaRequired && (
+                                {isGoogleManagedFlow ? (
                                     <div className="space-y-3">
-                                        <div className="p-3 border border-accent/60 bg-accent/5 font-mono text-[10px] leading-relaxed text-accent">
-                                            Security verification is required to create an account.
+                                        <div className="p-4 border border-accent/60 bg-accent/5 space-y-2">
+                                            <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
+                                                Google Sign-In Recommended
+                                            </div>
+                                            <p className="font-mono text-xs text-muted leading-relaxed">
+                                                This Gmail address can create a VetIOS account through Google directly,
+                                                which avoids the separate password and CAPTCHA path.
+                                            </p>
                                         </div>
-                                        {turnstileSiteKey ? (
-                                            <>
-                                                <TurnstileWidget
-                                                    enabled={captchaRequired}
-                                                    siteKey={turnstileSiteKey}
-                                                    resetKey={captchaResetKey}
-                                                    onTokenChange={setCaptchaToken}
-                                                    onErrorChange={setCaptchaError}
-                                                />
-                                                {!captchaToken && !captchaError ? (
-                                                    <div className="p-3 border border-grid text-muted font-mono text-[10px] leading-relaxed">
-                                                        Loading security challenge...
-                                                    </div>
-                                                ) : null}
-                                            </>
-                                        ) : (
-                                            <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
-                                                CAPTCHA is required, but the site key is not configured yet.
+                                        <button
+                                            type="button"
+                                            onClick={() => setGmailPasswordOverride(true)}
+                                            className="w-full font-mono text-[10px] uppercase tracking-widest px-4 py-3 border border-grid text-muted hover:border-accent hover:text-accent transition-colors"
+                                        >
+                                            Create a separate VetIOS password instead
+                                        </button>
+                                    </div>
+                                ) : (
+                                    <>
+                                        {isGoogleEmail && gmailPasswordOverride && (
+                                            <div className="p-4 border border-grid bg-dim/50 space-y-2">
+                                                <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
+                                                    Separate Password Mode
+                                                </div>
+                                                <p className="font-mono text-xs text-muted leading-relaxed">
+                                                    You are creating a dedicated VetIOS password for this Gmail address.
+                                                    If you want the lower-friction Gmail path instead, switch back to Google sign-in.
+                                                </p>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setGmailPasswordOverride(false)}
+                                                    className="font-mono text-[10px] uppercase tracking-widest text-accent hover:text-foreground transition-colors"
+                                                >
+                                                    Use Google sign-in instead
+                                                </button>
                                             </div>
                                         )}
-                                        {captchaError ? (
-                                            <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
-                                                ERR: {captchaError}
-                                            </div>
-                                        ) : null}
-                                    </div>
-                                )}
 
-                                <TerminalButton type="submit" disabled={status === 'submitting' || isWaitingOnCaptcha}>
-                                    {status === 'submitting' ? 'CREATING ACCOUNT...' : 'CREATE VETIOS PASSWORD ACCOUNT'}
-                                </TerminalButton>
+                                        <div>
+                                            <TerminalLabel htmlFor="password">VetIOS Password</TerminalLabel>
+                                            <div className="relative">
+                                                <TerminalInput
+                                                    id="password"
+                                                    name="password"
+                                                    type={showPassword ? 'text' : 'password'}
+                                                    placeholder="Create a strong password"
+                                                    value={password}
+                                                    onChange={(e) => setPassword(e.target.value)}
+                                                    autoComplete="new-password"
+                                                    className="pr-20"
+                                                    required
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowPassword((value) => !value)}
+                                                    className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] uppercase tracking-widest text-muted hover:text-accent transition-colors"
+                                                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                                >
+                                                    {showPassword ? 'Hide' : 'Show'}
+                                                </button>
+                                            </div>
+                                            <p className="mt-2 font-mono text-[10px] text-muted">
+                                                Use 10+ characters with uppercase, lowercase, number, and symbol.
+                                            </p>
+                                            {showGooglePasswordWarning && (
+                                                <div className="mt-2 p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                    Do not reuse your Google password here. This creates a separate VetIOS password account, not a Google sign-in.
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div>
+                                            <TerminalLabel htmlFor="confirmPassword">Confirm Password</TerminalLabel>
+                                            <div className="relative">
+                                                <TerminalInput
+                                                    id="confirmPassword"
+                                                    name="confirmPassword"
+                                                    type={showConfirmPassword ? 'text' : 'password'}
+                                                    placeholder="Repeat your password"
+                                                    value={confirmPassword}
+                                                    onChange={(e) => setConfirmPassword(e.target.value)}
+                                                    autoComplete="new-password"
+                                                    className="pr-20"
+                                                    required
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowConfirmPassword((value) => !value)}
+                                                    className="absolute right-3 top-1/2 -translate-y-1/2 font-mono text-[10px] uppercase tracking-widest text-muted hover:text-accent transition-colors"
+                                                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                                                >
+                                                    {showConfirmPassword ? 'Hide' : 'Show'}
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {captchaRequired && (
+                                            <div className="space-y-3">
+                                                <div className="p-3 border border-accent/60 bg-accent/5 font-mono text-[10px] leading-relaxed text-accent">
+                                                    Security verification is required to create an account.
+                                                </div>
+                                                {canRenderCaptcha ? (
+                                                    <>
+                                                        <TurnstileWidget
+                                                            enabled={captchaRequired}
+                                                            siteKey={turnstileSiteKey}
+                                                            resetKey={captchaResetKey}
+                                                            onTokenChange={setCaptchaToken}
+                                                            onErrorChange={setCaptchaError}
+                                                        />
+                                                        {!captchaToken && !captchaError ? (
+                                                            <div className="p-3 border border-grid text-muted font-mono text-[10px] leading-relaxed">
+                                                                Loading security challenge...
+                                                            </div>
+                                                        ) : null}
+                                                    </>
+                                                ) : (
+                                                    <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                        CAPTCHA is required, but the site key is not configured yet.
+                                                    </div>
+                                                )}
+                                                {captchaError ? (
+                                                    <div className="p-3 border border-danger text-danger font-mono text-[10px] leading-relaxed">
+                                                        ERR: {captchaError}
+                                                    </div>
+                                                ) : null}
+                                            </div>
+                                        )}
+
+                                        <TerminalButton type="submit" disabled={status === 'submitting' || isWaitingOnCaptcha}>
+                                            {status === 'submitting' ? 'CREATING ACCOUNT...' : 'CREATE VETIOS PASSWORD ACCOUNT'}
+                                        </TerminalButton>
+                                    </>
+                                )}
 
                                 {status === 'error' && errorMessage && (
                                     <div className="p-3 border border-danger text-danger font-mono text-xs">

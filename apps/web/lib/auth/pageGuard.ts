@@ -1,5 +1,6 @@
 import { redirect } from 'next/navigation';
-import { resolveSessionTenant } from '@/lib/supabaseServer';
+import { buildVerifyEmailPath } from '@/lib/auth/emailVerification';
+import { resolveSessionState } from '@/lib/supabaseServer';
 
 function resolveDevBypassTenantId(): string | null {
     if (process.env.VETIOS_DEV_BYPASS !== 'true') {
@@ -11,9 +12,13 @@ function resolveDevBypassTenantId(): string | null {
 }
 
 export async function requirePageSession(nextPath: string) {
-    const session = await resolveSessionTenant();
-    if (session) {
-        return session;
+    const sessionState = await resolveSessionState();
+    if (sessionState.status === 'authenticated') {
+        return sessionState;
+    }
+
+    if (sessionState.status === 'pending_email_verification') {
+        redirect(buildVerifyEmailPath(nextPath));
     }
 
     if (resolveDevBypassTenantId()) {
@@ -22,4 +27,3 @@ export async function requirePageSession(nextPath: string) {
 
     redirect(`/login?next=${encodeURIComponent(nextPath)}`);
 }
-
