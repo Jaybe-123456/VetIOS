@@ -107,4 +107,52 @@ describe('system gating engine', () => {
         ].includes(name))).toBe(true);
         expect(topNames(result).some((name) => name.includes('Diabetes') || name.includes('Hypocalcemia') || name.includes('Hypoadrenocorticism'))).toBe(false);
     });
+
+    it('keeps feline upper-airway syndromes ahead of pneumonia and bronchitis', () => {
+        const result = runSafetyCase(
+            {
+                species: 'feline',
+                presenting_signs: [
+                    'sneezing',
+                    'mucopurulent nasal discharge',
+                    'conjunctivitis',
+                    'oral ulceration',
+                    'fever',
+                    'not eating',
+                    'lethargic',
+                ],
+                symptoms: [
+                    'sneezing',
+                    'mucopurulent nasal discharge',
+                    'conjunctivitis',
+                    'oral ulceration',
+                    'fever',
+                    'not eating',
+                    'lethargic',
+                ],
+                history: 'Contact with other cats. No cough. No dyspnea. No abnormal lung sounds. No cyanosis.',
+            },
+            [
+                { name: 'Pneumonia', probability: 0.51 },
+                { name: 'Bronchitis', probability: 0.23 },
+                { name: 'Canine Infectious Tracheobronchitis', probability: 0.14 },
+            ],
+        );
+
+        const topDifferentials = (result.diagnosis.top_differentials as DifferentialEntry[]) ?? [];
+        expect(topDifferentials[0]?.name).toBe('Feline Upper Respiratory Disease Complex');
+        expect(topNames(result, 4)).toEqual(
+            expect.arrayContaining([
+                'Feline Upper Respiratory Disease Complex',
+                'FHV-1 Infection',
+                'FCV Infection',
+                'Chlamydophila-associated URI',
+            ]),
+        );
+
+        const pneumoniaRank = topDifferentials.findIndex((entry) => entry.name === 'Pneumonia');
+        const bronchitisRank = topDifferentials.findIndex((entry) => entry.name === 'Bronchitis');
+        expect(pneumoniaRank === -1 || pneumoniaRank > 2).toBe(true);
+        expect(bronchitisRank === -1 || bronchitisRank > 2).toBe(true);
+    });
 });
