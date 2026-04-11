@@ -99,6 +99,77 @@ describe('clinical inference engine deep upgrade', () => {
         ).toBeLessThan(0.02);
     });
 
+    it('routes a cat upper-airway syndrome to FURDC instead of lower-airway disease', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'cat',
+            symptom_vector: [
+                'sneezing',
+                'mucopurulent nasal discharge',
+                'conjunctivitis',
+                'oral ulceration',
+                'fever',
+                'not eating',
+                'weak',
+            ],
+            history: {
+                owner_observations: [
+                    'Contact with other cats at home.',
+                    'No cough, no dyspnea, and no cyanosis observed.',
+                ],
+            },
+            diagnostic_tests: {
+                thoracic_radiograph: {
+                    pulmonary_pattern: 'normal',
+                    pulmonary_artery_enlargement: 'absent',
+                    pleural_effusion: 'absent',
+                },
+            },
+        });
+
+        expect(result.top_diagnosis).toContain('Feline Upper Respiratory Disease Complex');
+        expect(result.condition_class).toBe('Upper respiratory viral-bacterial syndrome');
+        expect(result.species_gate).toBe('feline_upper_airway_priority');
+        expect(result.airway_level).toBe('upper');
+        expect(result.cluster_scores.feline_upper_respiratory).toBeGreaterThan(result.cluster_scores.lower_respiratory);
+        expect(result.differentials[1]?.condition).toContain('FHV-1');
+        expect(result.differentials.some((entry) => entry.condition.includes('FCV'))).toBe(true);
+        expect(result.differentials.some((entry) => entry.condition.includes('Chlamydophila'))).toBe(true);
+        expect(
+            result.differentials.find((entry) => entry.condition.includes('Pneumonia'))?.probability ?? 0,
+        ).toBeLessThan(0.08);
+        expect(
+            result.differentials.find((entry) => entry.condition.includes('Bronchitis'))?.probability ?? 0,
+        ).toBeLessThan(0.08);
+    });
+
+    it('allows feline pneumonia to rise only when lower-airway evidence is actually present', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'feline',
+            age_years: 0.5,
+            symptom_vector: [
+                'cough',
+                'dyspnea',
+                'panting',
+                'crackles',
+                'fever',
+            ],
+            diagnostic_tests: {
+                thoracic_radiograph: {
+                    pulmonary_pattern: 'alveolar',
+                    pleural_effusion: 'absent',
+                },
+            },
+            history: {
+                owner_observations: ['No conjunctivitis or oral ulceration noted.'],
+            },
+        });
+
+        expect(result.airway_level).toBe('lower');
+        expect(result.cluster_scores.lower_respiratory).toBeGreaterThanOrEqual(2);
+        expect(result.differentials[0]?.condition).toContain('Feline Bacterial Pneumonia');
+        expect(result.differentials.find((entry) => entry.condition.includes('Feline Upper Respiratory Disease Complex'))?.rank ?? 99).toBeGreaterThan(1);
+    });
+
     it('normalizes raw synonyms into canonical clinical signals without duplicating semantics', () => {
         const result = runClinicalInferenceEngine({
             species: 'canine',
