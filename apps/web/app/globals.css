@@ -22,6 +22,25 @@
   .border-grid {
     @apply border border-muted;
   }
+
+  .landing-section {
+    @apply relative px-6 py-24 md:px-10 md:py-32 xl:px-20;
+  }
+
+  .landing-panel {
+    @apply rounded-[32px] border border-white/10 bg-white/[0.04] shadow-[0_22px_80px_rgba(0,0,0,0.36)] backdrop-blur-md;
+  }
+
+  .landing-eyebrow {
+    @apply inline-flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.28em] text-white/48;
+  }
+
+  .landing-grid {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
+    background-size: 44px 44px;
+  }
 }
 
 /* ── Animations ────────────────────────────────────────────────────────────── */
@@ -56,12 +75,18 @@
   50%      { box-shadow: 0 0 20px rgba(0, 255, 65, 0.6); }
 }
 
+@keyframes landingPulse {
+  0%, 100% { transform: scale(0.96); opacity: 0.18; }
+  50% { transform: scale(1.08); opacity: 0.42; }
+}
+
 .animate-slide-in  { animation: slideInLeft 0.25s ease-out forwards; }
 .animate-slide-out { animation: slideOutLeft 0.2s ease-in forwards; }
 .animate-fade-in   { animation: fadeIn 0.2s ease-out forwards; }
 .animate-fade-out  { animation: fadeOut 0.15s ease-in forwards; }
 .animate-scale-in  { animation: scaleIn 0.3s ease-out forwards; }
 .animate-pulse-glow { animation: pulseGlow 2s ease-in-out infinite; }
+.animate-landing-pulse { animation: landingPulse 4.2s ease-in-out infinite; }
 
 /* ── Sidebar Overlay ───────────────────────────────────────────────────────── */
 

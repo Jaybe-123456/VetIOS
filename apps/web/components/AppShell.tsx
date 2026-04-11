@@ -19,7 +19,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     if (isShelllessSurface) {
         return (
-            <div className="flex-1 flex flex-col h-full overflow-auto bg-background">
+            <div
+                data-shellless-scroll="true"
+                className="flex-1 flex flex-col h-full overflow-auto scroll-smooth bg-background"
+            >
                 {children}
             </div>
         );
