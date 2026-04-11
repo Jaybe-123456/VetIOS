@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { buildVerifyEmailPath } from '@/lib/auth/emailVerification';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import { isGoogleMailAddress } from '@/lib/auth/emailProviderHints';
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget';
@@ -23,6 +24,10 @@ export default function LoginPage() {
     const [status, setStatus] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle');
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const [showResetSuccess, setShowResetSuccess] = useState(false);
+    const [showSignupSuccess, setShowSignupSuccess] = useState(false);
+    const [showVerificationRequired, setShowVerificationRequired] = useState(false);
+    const [successMode, setSuccessMode] = useState<'authenticated' | 'email_verification_required'>('authenticated');
+    const [redirectPath, setRedirectPath] = useState<string | null>(null);
     const [authError, setAuthError] = useState<string | null>(null);
     const [captchaRequired, setCaptchaRequired] = useState(false);
     const [captchaToken, setCaptchaToken] = useState<string | null>(null);
@@ -38,9 +43,26 @@ export default function LoginPage() {
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
         setShowResetSuccess(params.get('reset') === 'success');
+        setShowSignupSuccess(params.get('signup') === 'success');
+        setShowVerificationRequired(params.get('verification') === 'required');
         setAuthError(params.get('error'));
         setNextPath(sanitizeNextPath(params.get('next')));
     }, []);
+
+    useEffect(() => {
+        if (status !== 'success' || !redirectPath) {
+            return;
+        }
+
+        const timeoutId = window.setTimeout(() => {
+            router.push(redirectPath);
+            router.refresh();
+        }, successMode === 'email_verification_required' ? 900 : 150);
+
+        return () => {
+            window.clearTimeout(timeoutId);
+        };
+    }, [redirectPath, router, status, successMode]);
 
     async function handleEmailPasswordLogin(e: React.FormEvent) {
         e.preventDefault();
@@ -51,6 +73,8 @@ export default function LoginPage() {
         }
 
         setStatus('submitting');
+        setSuccessMode('authenticated');
+        setRedirectPath(null);
         setErrorMessage(null);
         setCaptchaError(null);
 
@@ -65,12 +89,15 @@ export default function LoginPage() {
                     email,
                     password,
                     captchaToken,
+                    rememberMe,
                 }),
             });
 
             let payload: {
+                code?: string;
                 error?: string;
                 captcha_required?: boolean;
+                email_verification_required?: boolean;
             } | null = null;
 
             try {
@@ -98,8 +125,14 @@ export default function LoginPage() {
                 localStorage.setItem('vetios_remember_me', rememberMe ? 'true' : 'false');
             }
 
-            router.push(nextPath);
-            router.refresh();
+            if (payload?.email_verification_required || payload?.code === 'email_verification_required') {
+                setSuccessMode('email_verification_required');
+                setRedirectPath(buildVerifyEmailPath(nextPath));
+                return;
+            }
+
+            setSuccessMode('authenticated');
+            setRedirectPath(nextPath);
         } catch {
             setStatus('error');
             setErrorMessage('Unable to reach the sign-in service right now.');
@@ -109,10 +142,14 @@ export default function LoginPage() {
 
     async function handleGoogleOAuth() {
         const supabase = getSupabaseBrowser();
+        const normalizedEmail = email.trim().toLowerCase();
         await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
                 redirectTo: buildClientAuthCallbackUrl(window.location.origin, nextPath),
+                queryParams: normalizedEmail
+                    ? { login_hint: normalizedEmail }
+                    : undefined,
             },
         });
     }
@@ -134,10 +171,14 @@ export default function LoginPage() {
                     {status === 'success' ? (
                         <div className="p-6 border border-accent bg-accent/5 text-center space-y-4">
                             <div className="text-accent font-mono text-sm uppercase tracking-widest">
-                                Authentication successful
+                                {successMode === 'email_verification_required'
+                                    ? 'Email verification still required'
+                                    : 'Authentication successful'}
                             </div>
                             <p className="font-mono text-xs text-muted">
-                                Redirecting you into the VetIOS console.
+                                {successMode === 'email_verification_required'
+                                    ? 'Your sign-in worked. Check your inbox for the VetIOS confirmation link. Redirecting you to the verification page now.'
+                                    : 'Redirecting you into the VetIOS console.'}
                             </p>
                         </div>
                     ) : (
@@ -157,6 +198,20 @@ export default function LoginPage() {
                             {showResetSuccess && (
                                 <div className="p-3 border border-accent text-accent font-mono text-xs">
                                     Password reset complete. Sign in with your new VetIOS password.
+                                </div>
+                            )}
+
+                            {showSignupSuccess && (
+                                <div className="p-3 border border-accent text-accent font-mono text-xs">
+                                    {showVerificationRequired
+                                        ? 'Account created. Check your email and confirm your inbox before VetIOS unlocks access.'
+                                        : 'Account created. Sign in with your new VetIOS password to continue.'}
+                                </div>
+                            )}
+
+                            {!showSignupSuccess && showVerificationRequired && (
+                                <div className="p-3 border border-accent text-accent font-mono text-xs">
+                                    This account is waiting on email confirmation. Sign in, then open the VetIOS verification email to finish access.
                                 </div>
                             )}
 

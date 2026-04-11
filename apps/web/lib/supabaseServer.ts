@@ -11,8 +11,10 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
+import { getEmailVerificationState } from '@/lib/auth/emailVerification';
 
 let _client: SupabaseClient | null = null;
+let _publicClient: SupabaseClient | null = null;
 
 function resolveEnv(primary: string, fallback: string, label: string): string {
     const value = process.env[primary] || process.env[fallback];
@@ -51,27 +53,52 @@ export function getSupabaseServer(): SupabaseClient {
     return _client;
 }
 
-/**
- * Resolves the current authenticated user's tenant_id from cookies.
- *
- * V1 Tenant Model: tenant_id = auth.uid() (1 user = 1 tenant).
- *
- * Returns null if the user is not authenticated.
- * API routes should return 401 when this returns null.
- */
-export async function resolveSessionTenant(): Promise<{
-    supabase: SupabaseClient;
-    tenantId: string;
-    userId: string;
-} | null> {
+export function getSupabasePublicServer(): SupabaseClient {
+    if (_publicClient) return _publicClient;
+
+    const url = resolveEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL', 'Supabase URL');
+    const anonKey = resolveEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY', 'Supabase anon key');
+
+    _publicClient = createClient(url, anonKey, {
+        auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+        },
+    });
+
+    return _publicClient;
+}
+
+export async function resolveSessionState(): Promise<
+    | {
+        status: 'authenticated';
+        supabase: SupabaseClient;
+        tenantId: string;
+        userId: string;
+        email: string;
+    }
+    | {
+        status: 'pending_email_verification';
+        supabase: SupabaseClient;
+        userId: string;
+        email: string;
+    }
+    | {
+        status: 'unauthenticated';
+    }
+> {
     const cookieStore = await cookies();
     const authCookies = cookieStore.getAll();
 
     const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-    if (!url || !anonKey) return null;
-    if (!hasSupabaseAuthCookies(authCookies)) return null;
+    if (!url || !anonKey) {
+        return { status: 'unauthenticated' };
+    }
+    if (!hasSupabaseAuthCookies(authCookies)) {
+        return { status: 'unauthenticated' };
+    }
 
     const supabase = createServerClient(url, anonKey, {
         cookies: {
@@ -91,14 +118,49 @@ export async function resolveSessionTenant(): Promise<{
     });
 
     const { data: { user }, error } = await supabase.auth.getUser();
+    if (error || !user) {
+        return { status: 'unauthenticated' };
+    }
 
-    if (error || !user) return null;
+    const verificationState = getEmailVerificationState(user);
+    if (verificationState.requiresVerification) {
+        return {
+            status: 'pending_email_verification',
+            supabase,
+            userId: user.id,
+            email: user.email ?? '',
+        };
+    }
 
     return {
+        status: 'authenticated',
         supabase,
         tenantId: user.id, // V1: tenant_id = auth.uid()
         userId: user.id,
+        email: user.email ?? '',
     };
+}
+
+/**
+ * Resolves the current authenticated user's tenant_id from cookies.
+ *
+ * V1 Tenant Model: tenant_id = auth.uid() (1 user = 1 tenant).
+ *
+ * Returns null if the user is not authenticated.
+ * API routes should return 401 when this returns null.
+ */
+export async function resolveSessionTenant(): Promise<{
+    supabase: SupabaseClient;
+    tenantId: string;
+    userId: string;
+    email: string;
+} | null> {
+    const sessionState = await resolveSessionState();
+    if (sessionState.status !== 'authenticated') {
+        return null;
+    }
+
+    return sessionState;
 }
 
 function hasSupabaseAuthCookies(cookieEntries: Array<{ name: string }>): boolean {

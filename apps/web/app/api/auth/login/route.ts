@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
+import { getEmailVerificationState } from '@/lib/auth/emailVerification';
 import {
     AUTH_MAX_FAILURES,
     evaluatePasswordLoginProtection,
@@ -230,6 +231,11 @@ export async function POST(req: Request) {
             });
         }
 
+        const {
+            data: { user },
+        } = await supabase.auth.getUser();
+        const verificationState = getEmailVerificationState(user);
+
         await safeLogLoginEvent({
             emailHash: protection.emailHash,
             ipHash: protection.ipHash,
@@ -240,6 +246,7 @@ export async function POST(req: Request) {
             userAgentHash,
             metadata: {
                 provider: 'password',
+                email_verification_required: verificationState.requiresVerification,
             },
         });
 
@@ -250,8 +257,11 @@ export async function POST(req: Request) {
             remainingAttempts: AUTH_MAX_FAILURES,
             body: {
                 ok: true,
-                code: 'authenticated',
+                code: verificationState.requiresVerification
+                    ? 'email_verification_required'
+                    : 'authenticated',
                 captcha_required: false,
+                email_verification_required: verificationState.requiresVerification,
             },
         });
     } catch (error) {

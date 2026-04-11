@@ -47,6 +47,7 @@ function main() {
     assert(site.shouldRedirectPreviewAuthHost('vet-ios-preview.vercel.app', '/login') === true, 'Preview login host should redirect to canonical domain.');
     assert(site.shouldRedirectPreviewAuthHost('vet-ios-preview.vercel.app', '/dashboard') === false, 'Non-auth routes should not be forced to canonical auth host.');
     assert(site.shouldRedirectPreviewAuthHost('app.vetios.example', '/login') === false, 'Canonical host should not redirect.');
+    assert(site.isPublicAuthPath('/verify-email') === true, 'Verify-email route should stay publicly accessible.');
     assert(site.buildClientAuthCallbackUrl('https://vet-ios-preview.vercel.app', '/inference') === 'https://app.vetios.example/auth/callback?next=%2Finference', 'Client auth callback should prefer the configured public origin.');
     assert(site.sanitizeInternalPath('//evil.example', '/inference') === '/inference', 'Double-slash redirect targets must be rejected.');
     assert(site.shouldIndexSite() === true, 'Configured production site should allow indexing.');
