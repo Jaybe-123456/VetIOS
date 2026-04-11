@@ -183,10 +183,11 @@ async function trySendEmailVerificationViaResend(input: {
         throw new Error(`Failed to generate custom verification link: ${error.message}`);
     }
 
-    const actionLink = readString(data?.properties?.action_link);
-    if (!actionLink) {
-        throw new Error('Supabase did not return an email verification action link.');
+    const tokenHash = readString(data?.properties?.hashed_token);
+    if (!tokenHash) {
+        throw new Error('Supabase did not return an email verification token hash.');
     }
+    const callbackUrl = buildVerificationCallbackUrl(input.redirectTo, tokenHash);
 
     const response = await fetch(RESEND_API_URL, {
         method: 'POST',
@@ -199,8 +200,8 @@ async function trySendEmailVerificationViaResend(input: {
             to: [normalizedEmail],
             ...(replyTo ? { reply_to: replyTo } : {}),
             subject: 'Verify your VetIOS email',
-            text: buildVerificationEmailText(actionLink),
-            html: buildVerificationEmailHtml(actionLink),
+            text: buildVerificationEmailText(callbackUrl),
+            html: buildVerificationEmailHtml(callbackUrl),
         }),
     }).catch((error: unknown) => ({
         ok: false,
@@ -218,18 +219,25 @@ async function trySendEmailVerificationViaResend(input: {
     );
 }
 
-function buildVerificationEmailText(actionLink: string): string {
+function buildVerificationCallbackUrl(baseCallbackUrl: string, tokenHash: string): string {
+    const callbackUrl = new URL(baseCallbackUrl);
+    callbackUrl.searchParams.set('token_hash', tokenHash);
+    callbackUrl.searchParams.set('type', 'email');
+    return callbackUrl.toString();
+}
+
+function buildVerificationEmailText(callbackUrl: string): string {
     return [
         'Verify your VetIOS email',
         '',
         'Open the link below to confirm your inbox and unlock access:',
-        actionLink,
+        callbackUrl,
         '',
         'If you did not request this, you can ignore this email.',
     ].join('\n');
 }
 
-function buildVerificationEmailHtml(actionLink: string): string {
+function buildVerificationEmailHtml(callbackUrl: string): string {
     return [
         '<div style="background:#0B0F14;color:#E8EDF2;padding:32px;font-family:Inter,Arial,sans-serif;">',
         '<div style="max-width:560px;margin:0 auto;border:1px solid rgba(255,255,255,0.1);border-radius:24px;background:rgba(255,255,255,0.03);padding:32px;">',
@@ -238,11 +246,11 @@ function buildVerificationEmailHtml(actionLink: string): string {
         '<p style="margin:0 0 24px;font-size:16px;line-height:1.7;color:rgba(232,237,242,0.72);">',
         'Confirm your inbox to unlock your VetIOS account.',
         '</p>',
-        `<a href="${escapeHtml(actionLink)}" style="display:inline-block;background:#E8EDF2;color:#0B0F14;padding:14px 20px;border-radius:999px;text-decoration:none;font-weight:600;">Verify email</a>`,
+        `<a href="${escapeHtml(callbackUrl)}" style="display:inline-block;background:#E8EDF2;color:#0B0F14;padding:14px 20px;border-radius:999px;text-decoration:none;font-weight:600;">Verify email</a>`,
         '<p style="margin:24px 0 0;font-size:13px;line-height:1.7;color:rgba(232,237,242,0.5);">',
         'If the button does not work, copy and paste this link into your browser:',
         '</p>',
-        `<p style="margin:12px 0 0;font-size:13px;line-height:1.7;word-break:break-all;color:#7CFF4E;">${escapeHtml(actionLink)}</p>`,
+        `<p style="margin:12px 0 0;font-size:13px;line-height:1.7;word-break:break-all;color:#7CFF4E;">${escapeHtml(callbackUrl)}</p>`,
         '</div>',
         '</div>',
     ].join('');
