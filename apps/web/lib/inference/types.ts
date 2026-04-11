@@ -414,6 +414,7 @@ export interface InferenceRequest {
     weight_kg?: number;
     sex?: string;
     region?: string;
+    symptom_vector?: string[];
     presenting_signs: string[];
     history?: StructuredHistory;
     preventive_history?: PreventiveHistory;
@@ -574,6 +575,7 @@ export const StructuredInferenceRequestSchema = z.strictObject({
     weight_kg: z.number().min(0).optional(),
     sex: z.string().optional(),
     region: z.string().optional(),
+    symptom_vector: z.array(z.string()).optional(),
     presenting_signs: z.array(z.string()).optional().default([]),
     history: z.object({
         duration_days: z.number().int().min(0).optional(),

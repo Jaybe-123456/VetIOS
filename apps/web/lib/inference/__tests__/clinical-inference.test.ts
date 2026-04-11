@@ -79,6 +79,60 @@ describe('clinical inference engine deep upgrade', () => {
         expect(diabetes?.probability ?? 0).toBeLessThan(0.02);
     });
 
+    it('uses symptom_vector, detects a respiratory dominant cluster, and suppresses GI diagnoses', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            symptom_vector: ['cough', 'nasal discharge', 'fever'],
+            history: {
+                owner_observations: ['No vomiting or diarrhea reported at home.'],
+            },
+        });
+
+        expect(result.top_diagnosis).toContain('Pneumonia');
+        expect(result.condition_class).toBe('Infectious');
+        expect(result.severity).toBeTruthy();
+        expect(result.confidence).toBeGreaterThan(0);
+        expect(result.contradiction_score).toBe(0);
+        expect(
+            result.differentials.find((entry) => entry.condition.includes('Parvoviral Enteritis'))?.probability ?? 0,
+        ).toBeLessThan(0.02);
+    });
+
+    it('zeros negated GI signals and penalises diseases that require vomiting or diarrhea', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            symptom_vector: ['vomiting', 'diarrhea', 'lethargy'],
+            history: {
+                owner_observations: ['No vomiting. No diarrhea.'],
+            },
+        });
+
+        expect(
+            result.differentials.find((entry) => entry.condition.includes('Parvoviral Enteritis'))?.probability ?? 0,
+        ).toBeLessThan(0.05);
+        expect(result.differentials[0]?.condition.includes('Parvoviral Enteritis')).toBe(false);
+    });
+
+    it('raises contradiction score and lowers reported confidence when absent required features conflict with the top diagnosis', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            symptom_vector: ['lethargy', 'fever'],
+            history: {
+                owner_observations: ['No vomiting or diarrhea observed.'],
+            },
+            diagnostic_tests: {
+                serology: {
+                    parvovirus_antigen: 'positive',
+                },
+            },
+        });
+
+        expect(result.top_diagnosis).toContain('Parvoviral Enteritis');
+        expect(result.contradiction_score).toBeGreaterThan(0.4);
+        expect(result.confidence).toBeLessThan(result.differentials[0]?.probability ?? 0);
+        expect(result.contradiction_analysis?.contradiction_reasons.join(' ')).toContain('absent');
+    });
+
     it('flags right-sided CHF as incomplete when no primary cause is identified', () => {
         const request: InferenceRequest = {
             species: 'canine',
