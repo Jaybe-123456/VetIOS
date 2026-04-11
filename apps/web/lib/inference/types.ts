@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { ClinicalSignalClusterScores } from './clinical-signal-ontology';
 
 export type DiagnosticResult = 'positive' | 'negative' | 'equivocal' | 'not_done';
 export type LowHighDiagnosticResult = DiagnosticResult | 'low' | 'normal' | 'high';
@@ -518,6 +519,8 @@ export interface InferenceResponse {
     abstain_reason?: InferenceAbstainReason;
     competitive_differential?: boolean;
     urgent_confirmatory_testing?: boolean;
+    feature_importance?: Record<string, number>;
+    cluster_scores?: ClinicalSignalClusterScores;
 }
 
 export interface SelectedTreatmentPlan {

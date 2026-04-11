@@ -82,7 +82,7 @@ describe('clinical inference engine deep upgrade', () => {
     it('uses symptom_vector, detects a respiratory dominant cluster, and suppresses GI diagnoses', () => {
         const result = runClinicalInferenceEngine({
             species: 'canine',
-            symptom_vector: ['cough', 'nasal discharge', 'fever'],
+            symptom_vector: ['cough', 'runny nose', 'crackles'],
             history: {
                 owner_observations: ['No vomiting or diarrhea reported at home.'],
             },
@@ -93,9 +93,29 @@ describe('clinical inference engine deep upgrade', () => {
         expect(result.severity).toBeTruthy();
         expect(result.confidence).toBeGreaterThan(0);
         expect(result.contradiction_score).toBe(0);
+        expect(result.cluster_scores.respiratory).toBeGreaterThan(result.cluster_scores.gi);
         expect(
             result.differentials.find((entry) => entry.condition.includes('Parvoviral Enteritis'))?.probability ?? 0,
         ).toBeLessThan(0.02);
+    });
+
+    it('normalizes raw synonyms into canonical clinical signals without duplicating semantics', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            symptom_vector: ['runny nose', 'eye discharge', 'panting'],
+            history: {
+                owner_observations: ['Weak and not eating today.'],
+            },
+        });
+
+        const featureKeys = Object.keys(result.feature_importance);
+
+        expect(featureKeys).toContain('nasal discharge serous');
+        expect(featureKeys).toContain('ocular discharge');
+        expect(featureKeys).toContain('tachypnea');
+        expect(featureKeys).toContain('anorexia');
+        expect(featureKeys).toContain('lethargy');
+        expect(result.cluster_scores.respiratory).toBeGreaterThan(result.cluster_scores.systemic);
     });
 
     it('zeros negated GI signals and penalises diseases that require vomiting or diarrhea', () => {
@@ -111,6 +131,18 @@ describe('clinical inference engine deep upgrade', () => {
             result.differentials.find((entry) => entry.condition.includes('Parvoviral Enteritis'))?.probability ?? 0,
         ).toBeLessThan(0.05);
         expect(result.differentials[0]?.condition.includes('Parvoviral Enteritis')).toBe(false);
+        expect(result.cluster_scores.gi).toBe(0);
+    });
+
+    it('prioritises GI diagnoses only when validated GI evidence is strong', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            symptom_vector: ['vomiting', 'diarrhea', 'bloody diarrhea'],
+        });
+
+        expect(result.top_diagnosis).toContain('Parvoviral Enteritis');
+        expect(result.cluster_scores.gi).toBeGreaterThan(result.cluster_scores.respiratory);
+        expect(result.condition_class).toBe('Infectious');
     });
 
     it('raises contradiction score and lowers reported confidence when absent required features conflict with the top diagnosis', () => {
@@ -128,9 +160,22 @@ describe('clinical inference engine deep upgrade', () => {
         });
 
         expect(result.top_diagnosis).toContain('Parvoviral Enteritis');
-        expect(result.contradiction_score).toBeGreaterThan(0.4);
+        expect(result.contradiction_score).toBeGreaterThan(0.7);
         expect(result.confidence).toBeLessThan(result.differentials[0]?.probability ?? 0);
+        expect(result.abstain_recommendation).toBe(true);
         expect(result.contradiction_analysis?.contradiction_reasons.join(' ')).toContain('absent');
+    });
+
+    it('does not let low-specificity systemic signals drive GI prioritization on their own', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            symptom_vector: ['fever', 'lethargy', 'not eating'],
+        });
+
+        expect(result.cluster_scores.systemic).toBeGreaterThan(0);
+        expect(result.cluster_scores.gi).toBe(0);
+        expect(result.top_diagnosis?.includes('Parvoviral Enteritis')).toBe(false);
+        expect(Boolean(result.competitive_differential || result.abstain_recommendation)).toBe(true);
     });
 
     it('flags right-sided CHF as incomplete when no primary cause is identified', () => {
