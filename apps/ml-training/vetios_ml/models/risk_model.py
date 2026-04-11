@@ -22,7 +22,7 @@ class VetRiskModel(tf.keras.Model):
     def __init__(self, input_dim: int, dropout_rate: float = 0.3):
         super().__init__()
         self.net = tf.keras.Sequential([
-            tf.keras.layers.InputLayer(input_shape=(input_dim,)),
+            tf.keras.layers.InputLayer(shape=(input_dim,)),
             tf.keras.layers.Dense(128, activation="relu"),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.Dropout(dropout_rate),
