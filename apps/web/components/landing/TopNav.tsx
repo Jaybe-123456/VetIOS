@@ -29,12 +29,12 @@ export default function TopNav({
                         : 'border-b border-transparent bg-transparent',
                 )}
             >
-                <div className="mx-auto flex h-[72px] max-w-[1600px] items-center justify-between px-6 md:px-10 xl:px-20">
-                    <Link href="/" className="flex items-center gap-3">
-                        <BrandMark />
+                <div className="mx-auto flex h-[64px] max-w-[1600px] items-center justify-between px-4 sm:h-[72px] sm:px-6 md:px-10 xl:px-20">
+                    <Link href="/" className="flex items-center gap-2.5 sm:gap-3">
+                        <BrandMark compact />
                         <div className="flex flex-col">
-                            <span className="text-sm font-semibold tracking-[0.28em] text-white/55">VETIOS</span>
-                            <span className="text-xs text-white/35">veterinary intelligence platform</span>
+                            <span className="text-xs font-semibold tracking-[0.24em] text-white/55 sm:text-sm sm:tracking-[0.28em]">VETIOS</span>
+                            <span className="hidden text-xs text-white/35 sm:block">veterinary intelligence platform</span>
                         </div>
                     </Link>
 
@@ -82,7 +82,7 @@ export default function TopNav({
 
             <div
                 className={joinClasses(
-                    'fixed bottom-0 right-0 top-0 z-50 flex w-[86vw] max-w-sm flex-col border-l border-white/10 bg-[#0A0E13]/96 p-6 shadow-[0_24px_64px_rgba(0,0,0,0.45)] transition-transform duration-300 lg:hidden',
+                    'fixed bottom-0 right-0 top-0 z-50 flex w-full max-w-none flex-col overflow-y-auto border-l border-white/10 bg-[#0A0E13]/96 p-5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] transition-transform duration-300 sm:w-[86vw] sm:max-w-sm sm:p-6 lg:hidden',
                     menuOpen ? 'translate-x-0' : 'translate-x-full',
                 )}
             >
@@ -101,7 +101,7 @@ export default function TopNav({
                     </button>
                 </div>
 
-                <div className="mt-12 flex flex-col gap-5 text-base text-white/75">
+                <div className="mt-10 flex flex-col gap-4 text-base text-white/75 sm:mt-12 sm:gap-5">
                     {navigationItems.map((item) => (
                         <Link
                             key={item.label}
@@ -121,7 +121,7 @@ export default function TopNav({
                     <Link
                         href="/signup"
                         onClick={onCloseMenu}
-                        className="mt-5 inline-flex items-center gap-2 rounded-full border border-[#6BF7CF]/35 bg-[#6BF7CF]/10 px-4 py-2 text-sm font-medium text-[#C9FFF0]"
+                        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full border border-[#6BF7CF]/35 bg-[#6BF7CF]/10 px-4 py-3 text-sm font-medium text-[#C9FFF0] sm:w-auto sm:justify-start sm:py-2"
                     >
                         Access Platform
                         <ArrowRight className="h-4 w-4" />

@@ -16,10 +16,10 @@ export function SectionHeader(props: {
     return (
         <div className="max-w-3xl">
             <div className="landing-eyebrow">{props.eyebrow}</div>
-            <h2 className="mt-6 text-4xl font-semibold tracking-[-0.05em] text-white md:text-5xl">
+            <h2 className="mt-5 text-[2.35rem] font-semibold leading-[1.02] tracking-[-0.05em] text-white sm:mt-6 sm:text-4xl md:text-5xl">
                 {props.title}
             </h2>
-            <p className="mt-5 text-lg leading-8 text-white/62">{props.description}</p>
+            <p className="mt-4 text-base leading-7 text-white/62 sm:mt-5 sm:text-lg sm:leading-8">{props.description}</p>
         </div>
     );
 }
@@ -94,21 +94,21 @@ export function EndpointCard(props: {
     response: string;
 }) {
     return (
-        <div className="rounded-[28px] border border-white/10 bg-[#0E141B]/92 p-5">
-            <div className="flex items-center justify-between">
-                <div className="inline-flex items-center gap-2 rounded-full border border-[#38DCC6]/24 bg-[#38DCC6]/10 px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[#B9FFF0]">
+        <div className="rounded-[24px] border border-white/10 bg-[#0E141B]/92 p-4 sm:rounded-[28px] sm:p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="inline-flex max-w-full flex-wrap items-center gap-2 rounded-full border border-[#38DCC6]/24 bg-[#38DCC6]/10 px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-[#B9FFF0] sm:text-[11px] sm:tracking-[0.18em]">
                     <span>{props.method}</span>
-                    <span>{props.path}</span>
+                    <span className="break-all">{props.path}</span>
                 </div>
                 <span className="text-[10px] uppercase tracking-[0.24em] text-white/28">json</span>
             </div>
 
-            <div className="mt-5 rounded-[22px] border border-white/8 bg-[#090D12] p-4 font-mono text-[11px] leading-6 text-[#9FB0C0]">
+            <div className="mt-4 overflow-x-auto rounded-[20px] border border-white/8 bg-[#090D12] p-4 font-mono text-[10px] leading-6 text-[#9FB0C0] sm:mt-5 sm:rounded-[22px] sm:text-[11px]">
                 <div className="mb-3 text-[#38DCC6]">{'// request'}</div>
                 <pre className="whitespace-pre-wrap">{props.payload}</pre>
             </div>
 
-            <div className="mt-4 rounded-[22px] border border-white/8 bg-[#090D12] p-4 font-mono text-[11px] leading-6 text-[#A9F7D7]">
+            <div className="mt-4 overflow-x-auto rounded-[20px] border border-white/8 bg-[#090D12] p-4 font-mono text-[10px] leading-6 text-[#A9F7D7] sm:rounded-[22px] sm:text-[11px]">
                 <div className="mb-3 text-[#7CFF4E]">{'// response'}</div>
                 <pre className="whitespace-pre-wrap">{props.response}</pre>
             </div>

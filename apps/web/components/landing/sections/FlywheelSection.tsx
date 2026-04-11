@@ -8,15 +8,15 @@ export default function FlywheelSection() {
             <Reveal>
                 <div className="mx-auto max-w-5xl text-center">
                     <div className="landing-eyebrow justify-center">compounding moat</div>
-                    <h2 className="mt-6 text-4xl font-semibold tracking-[-0.05em] text-white md:text-5xl">
+                    <h2 className="mt-6 text-[2.35rem] font-semibold tracking-[-0.05em] text-white sm:text-4xl md:text-5xl">
                         The system gets stronger because the loop is the product.
                     </h2>
-                    <p className="mx-auto mt-5 max-w-2xl text-lg leading-8 text-white/62">
+                    <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-white/62 sm:mt-5 sm:text-lg sm:leading-8">
                         Every interaction strengthens the system.
                     </p>
                 </div>
 
-                <Panel className="relative mt-14 overflow-hidden px-6 py-8 md:px-10 md:py-14">
+                <Panel className="relative mt-14 overflow-hidden px-4 py-6 sm:px-6 sm:py-8 md:px-10 md:py-14">
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(21,230,195,0.1),transparent_60%)]" />
                     <div className="absolute left-1/2 top-1/2 hidden h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/6 lg:block" />
                     <div className="absolute left-1/2 top-1/2 hidden h-[280px] w-[280px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#38DCC6]/18 lg:block" />
@@ -51,6 +51,12 @@ export default function FlywheelSection() {
                     </div>
 
                     <div className="relative grid gap-4 lg:hidden">
+                        <div className="mx-auto mb-2 flex h-28 w-28 items-center justify-center rounded-full border border-[#7CFF4E]/25 bg-[#0B1117] shadow-[0_0_60px_rgba(21,230,195,0.12)]">
+                            <div className="flex h-[82%] w-[82%] flex-col items-center justify-center rounded-full border border-[#38DCC6]/18 text-center">
+                                <div className="text-[10px] uppercase tracking-[0.22em] text-white/35">core</div>
+                                <div className="mt-2 px-3 text-sm font-medium leading-5 text-white">Improved Intelligence</div>
+                            </div>
+                        </div>
                         {['Inference', 'Outcome', 'Simulation', 'Improved Intelligence'].map((item) => (
                             <div
                                 key={item}
