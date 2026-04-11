@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { User } from '@supabase/supabase-js';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
@@ -22,6 +22,28 @@ export default function VerifyEmailPage() {
     const [message, setMessage] = useState<string | null>(null);
     const [nextPath, setNextPath] = useState('/inference');
     const [sending, setSending] = useState(false);
+
+    const applyUserState = useCallback(async (user: User | null, requestedNextPath: string) => {
+        if (!user) {
+            setStatus('signed_out');
+            setEmail('');
+            setSource(null);
+            return;
+        }
+
+        const verificationState = getEmailVerificationState(user);
+        setEmail(user.email ?? '');
+        setSource(verificationState.source);
+
+        if (!verificationState.requiresVerification) {
+            setStatus('verified');
+            router.push(requestedNextPath);
+            router.refresh();
+            return;
+        }
+
+        setStatus('pending');
+    }, [router]);
 
     useEffect(() => {
         let active = true;
@@ -56,29 +78,7 @@ export default function VerifyEmailPage() {
             active = false;
             authListener.subscription.unsubscribe();
         };
-    }, [router]);
-
-    async function applyUserState(user: User | null, requestedNextPath: string) {
-        if (!user) {
-            setStatus('signed_out');
-            setEmail('');
-            setSource(null);
-            return;
-        }
-
-        const verificationState = getEmailVerificationState(user);
-        setEmail(user.email ?? '');
-        setSource(verificationState.source);
-
-        if (!verificationState.requiresVerification) {
-            setStatus('verified');
-            router.push(requestedNextPath);
-            router.refresh();
-            return;
-        }
-
-        setStatus('pending');
-    }
+    }, [applyUserState]);
 
     async function handleResend() {
         setSending(true);

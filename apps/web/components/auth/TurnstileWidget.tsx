@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Script from 'next/script';
 
 declare global {
@@ -43,6 +43,66 @@ export function TurnstileWidget({
     const widgetIdRef = useRef<string | null>(null);
     const [scriptReady, setScriptReady] = useState(false);
     const loadTimeoutRef = useRef<number | null>(null);
+
+    const clearLoadTimeout = useCallback(() => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        if (loadTimeoutRef.current != null) {
+            window.clearTimeout(loadTimeoutRef.current);
+            loadTimeoutRef.current = null;
+        }
+    }, []);
+
+    const destroyWidget = useCallback(() => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        if (widgetIdRef.current && window.turnstile) {
+            window.turnstile.remove(widgetIdRef.current);
+        }
+
+        widgetIdRef.current = null;
+
+        if (containerRef.current) {
+            containerRef.current.innerHTML = '';
+        }
+    }, []);
+
+    const queueReset = useCallback(() => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+
+        const widgetId = widgetIdRef.current;
+        if (!widgetId || !window.turnstile?.reset) {
+            return;
+        }
+
+        window.setTimeout(() => {
+            if (widgetIdRef.current === widgetId) {
+                window.turnstile?.reset(widgetId);
+            }
+        }, 250);
+    }, []);
+
+    const scheduleLoadTimeout = useCallback(() => {
+        if (typeof window === 'undefined') {
+            return;
+        }
+        if (loadTimeoutRef.current != null) {
+            return;
+        }
+
+        loadTimeoutRef.current = window.setTimeout(() => {
+            loadTimeoutRef.current = null;
+            if (enabled && !window.turnstile) {
+                onTokenChange(null);
+                onErrorChange?.('Security challenge could not load. Check whether a blocker, CSP rule, or network filter is interfering.');
+            }
+        }, 6000);
+    }, [enabled, onErrorChange, onTokenChange]);
 
     useEffect(() => {
         if (typeof window !== 'undefined' && window.turnstile) {
@@ -99,67 +159,18 @@ export function TurnstileWidget({
             clearLoadTimeout();
             destroyWidget();
         };
-    }, [enabled, onErrorChange, onTokenChange, resetKey, scriptReady, siteKey]);
-
-    function scheduleLoadTimeout() {
-        if (typeof window === 'undefined') {
-            return;
-        }
-        if (loadTimeoutRef.current != null) {
-            return;
-        }
-
-        loadTimeoutRef.current = window.setTimeout(() => {
-            loadTimeoutRef.current = null;
-            if (enabled && !window.turnstile) {
-                onTokenChange(null);
-                onErrorChange?.('Security challenge could not load. Check whether a blocker, CSP rule, or network filter is interfering.');
-            }
-        }, 6000);
-    }
-
-    function clearLoadTimeout() {
-        if (typeof window === 'undefined') {
-            return;
-        }
-        if (loadTimeoutRef.current != null) {
-            window.clearTimeout(loadTimeoutRef.current);
-            loadTimeoutRef.current = null;
-        }
-    }
-
-    function queueReset() {
-        if (typeof window === 'undefined') {
-            return;
-        }
-
-        const widgetId = widgetIdRef.current;
-        if (!widgetId || !window.turnstile?.reset) {
-            return;
-        }
-
-        window.setTimeout(() => {
-            if (widgetIdRef.current === widgetId) {
-                window.turnstile?.reset(widgetId);
-            }
-        }, 250);
-    }
-
-    function destroyWidget() {
-        if (typeof window === 'undefined') {
-            return;
-        }
-
-        if (widgetIdRef.current && window.turnstile) {
-            window.turnstile.remove(widgetIdRef.current);
-        }
-
-        widgetIdRef.current = null;
-
-        if (containerRef.current) {
-            containerRef.current.innerHTML = '';
-        }
-    }
+    }, [
+        clearLoadTimeout,
+        destroyWidget,
+        enabled,
+        onErrorChange,
+        onTokenChange,
+        queueReset,
+        resetKey,
+        scheduleLoadTimeout,
+        scriptReady,
+        siteKey,
+    ]);
 
     return (
         <>
