@@ -104,12 +104,12 @@ export function EndpointCard(props: {
             </div>
 
             <div className="mt-5 rounded-[22px] border border-white/8 bg-[#090D12] p-4 font-mono text-[11px] leading-6 text-[#9FB0C0]">
-                <div className="mb-3 text-[#38DCC6]">// request</div>
+                <div className="mb-3 text-[#38DCC6]">{'// request'}</div>
                 <pre className="whitespace-pre-wrap">{props.payload}</pre>
             </div>
 
             <div className="mt-4 rounded-[22px] border border-white/8 bg-[#090D12] p-4 font-mono text-[11px] leading-6 text-[#A9F7D7]">
-                <div className="mb-3 text-[#7CFF4E]">// response</div>
+                <div className="mb-3 text-[#7CFF4E]">{'// response'}</div>
                 <pre className="whitespace-pre-wrap">{props.response}</pre>
             </div>
         </div>

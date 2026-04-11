@@ -45,13 +45,13 @@ export default function InterfacePreviewSection() {
 
                                 <div className="mt-5 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
                                     <div className="rounded-[22px] border border-white/8 bg-[#090D12] p-4 font-mono text-[11px] leading-6 text-[#9FB0C0]">
-                                        <div className="mb-3 text-white/44">// case.input.json</div>
+                                        <div className="mb-3 text-white/44">{'// case.input.json'}</div>
                                         <div>{'{'}</div>
-                                        <div className="pl-4">"signal_id": "sig_49F2A8",</div>
-                                        <div className="pl-4">"species": "canine",</div>
-                                        <div className="pl-4">"symptoms": ["vomiting", "lethargy"],</div>
-                                        <div className="pl-4">"labs": {'{'} "wbc": 4.1, "pcv": 29 {'}'},</div>
-                                        <div className="pl-4">"context": {'{'} "hydration": "low" {'}'}</div>
+                                        <div className="pl-4">{'"signal_id": "sig_49F2A8",'}</div>
+                                        <div className="pl-4">{'"species": "canine",'}</div>
+                                        <div className="pl-4">{'"symptoms": ["vomiting", "lethargy"],'}</div>
+                                        <div className="pl-4">{'"labs": { "wbc": 4.1, "pcv": 29 },'}</div>
+                                        <div className="pl-4">{'"context": { "hydration": "low" }'}</div>
                                         <div>{'}'}</div>
                                     </div>
 
