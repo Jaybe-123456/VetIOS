@@ -38,6 +38,7 @@ import type {
     InferenceRequest,
     InferenceResponse,
     SelectedTreatmentPlan,
+    Species,
     VeterinaryCondition,
 } from './types';
 
@@ -60,15 +61,39 @@ interface ConditionSignalDescriptor {
     label: string;
 }
 
+type AirwayLevel = 'upper' | 'lower' | 'mixed';
+
+interface RespiratoryRoutingSummary {
+    species: Species;
+    speciesGate: string;
+    airwayLevel: AirwayLevel;
+    upperRespiratoryScore: number;
+    lowerRespiratoryScore: number;
+    systemicScore: number;
+    upperFeatureCount: number;
+    lowerEvidenceCount: number;
+    lowerNegativeCount: number;
+    upperComplexStrong: boolean;
+    lowerEvidenceStrong: boolean;
+    oralUlcerationPresent: boolean;
+    hypersalivationPresent: boolean;
+    conjunctivitisRhinitisDominant: boolean;
+    coughDominant: boolean;
+    kitten: boolean;
+    noLowerAirwayEvidence: boolean;
+}
+
 export interface ClinicalInferenceEngineResult extends InferenceResponse {
     top_diagnosis: string | null;
-    condition_class: ConditionClass;
+    condition_class: string;
     severity: string | null;
     confidence: number;
     contradiction_score: number;
     feature_importance: Record<string, number>;
     diagnosis_feature_importance: Record<string, number>;
-    cluster_scores: ClinicalSignalClusterScores;
+    cluster_scores: Record<string, number>;
+    species_gate: string;
+    airway_level: AirwayLevel;
     differential_spread: {
         top_1_probability: number | null;
         top_2_probability: number | null;
@@ -106,6 +131,37 @@ const LEGACY_CONDITION_SIGNAL_HINTS: Record<string, Array<{
     systemic_signs: [{ family: 'systemic_signal', domains: ['systemic'], specificity: 'low' }],
     unproductive_retching: [{ family: 'abdominal_pain', domains: ['gi'], specificity: 'high' }],
 };
+
+const UPPER_RESPIRATORY_FAMILIES = new Set([
+    'sneezing',
+    'nasal_discharge',
+    'ocular_discharge',
+    'conjunctivitis',
+    'oral_ulceration',
+    'hypersalivation',
+]);
+
+const LOWER_RESPIRATORY_FAMILIES = new Set([
+    'dyspnea',
+    'tachypnea',
+    'abnormal_lung_sounds',
+    'cyanosis',
+    'coughing',
+]);
+
+const FELINE_URI_COMPLEX_IDS = new Set([
+    'feline_upper_respiratory_complex',
+    'feline_herpesvirus_1_infection',
+    'feline_calicivirus_infection',
+    'chlamydophila_felis_upper_respiratory_infection',
+    'feline_secondary_bacterial_upper_respiratory_infection',
+    'bordetella_bronchiseptica_feline',
+]);
+
+const FELINE_LOWER_AIRWAY_IDS = new Set([
+    'feline_bacterial_pneumonia',
+    'feline_chronic_bronchitis',
+]);
 
 function emptyClusterScores(): ClinicalSignalClusterScores {
     return {
@@ -300,6 +356,38 @@ function computeReportedConfidence(probability: number, contradictionScore: numb
     return Number(Math.max(0, Math.min(1, adjusted)).toFixed(3));
 }
 
+function computeClinicalConfidence(
+    probability: number,
+    contradictionScore: number,
+    topCondition: VeterinaryCondition | undefined,
+    routingSummary: RespiratoryRoutingSummary,
+): number {
+    let confidence = computeReportedConfidence(probability, contradictionScore);
+
+    if (
+        routingSummary.species === 'feline'
+        && routingSummary.upperComplexStrong
+        && routingSummary.noLowerAirwayEvidence
+        && isFelineUpperRespiratoryCondition(topCondition?.id)
+    ) {
+        confidence = Math.min(1, confidence + 0.08);
+    }
+
+    if (routingSummary.airwayLevel === 'mixed') {
+        confidence = Math.max(0, confidence - 0.08);
+    }
+
+    if (
+        routingSummary.species === 'feline'
+        && routingSummary.noLowerAirwayEvidence
+        && isFelineLowerRespiratoryCondition(topCondition?.id)
+    ) {
+        confidence = Math.max(0, confidence - 0.18);
+    }
+
+    return Number(confidence.toFixed(3));
+}
+
 function formatClusterLabel(cluster: ClinicalSignalDomain): string {
     switch (cluster) {
         case 'gi':
@@ -327,10 +415,187 @@ function buildSignalUncertaintyNotes(signalProfile: ClinicalSignalProfile): stri
     return notes;
 }
 
+function appendFelineAirwayNotes(notes: string[], routingSummary: RespiratoryRoutingSummary) {
+    if (routingSummary.species !== 'feline') {
+        return;
+    }
+    if (routingSummary.airwayLevel === 'mixed') {
+        notes.push('Upper and lower respiratory signals are mixed in this feline case, so lower-airway complications should stay in the differential.');
+    } else if (routingSummary.upperComplexStrong && routingSummary.noLowerAirwayEvidence) {
+        notes.push('Feline upper-airway findings dominate while lower-airway evidence is absent.');
+    }
+}
+
 function mappedSignalCount(signs: string[]): number {
     return signs
         .filter((sign) => resolveConditionSignalDescriptors(sign).length > 0)
         .length;
+}
+
+function hasLowerRespiratoryImagingEvidence(request: InferenceRequest): boolean {
+    const pattern = request.diagnostic_tests?.thoracic_radiograph?.pulmonary_pattern;
+    return pattern != null && pattern !== 'normal';
+}
+
+function hasNegativeLowerRespiratoryImaging(request: InferenceRequest): boolean {
+    const thoracic = request.diagnostic_tests?.thoracic_radiograph;
+    return thoracic?.pulmonary_pattern === 'normal'
+        && thoracic.pulmonary_artery_enlargement !== 'present'
+        && thoracic.pleural_effusion !== 'present';
+}
+
+function hasBloodGasHypoxemia(request: InferenceRequest): boolean {
+    const bloodGas = (request.diagnostic_tests as { blood_gas?: Record<string, unknown> } | undefined)?.blood_gas;
+    if (!bloodGas || typeof bloodGas !== 'object') return false;
+    return bloodGas.oxygenation === 'hypoxemia'
+        || bloodGas.pao2 === 'low'
+        || bloodGas.spo2 === 'low';
+}
+
+function buildRespiratoryRoutingSummary(
+    request: InferenceRequest,
+    signalProfile: ClinicalSignalProfile,
+): RespiratoryRoutingSummary {
+    const species = normalizeSpecies(request.species);
+    const dominantDescriptorFamilies = request.presenting_signs.length > 0
+        ? resolveConditionSignalDescriptors(request.presenting_signs[0]).map((descriptor) => descriptor.family)
+        : [];
+    const coughDominant = dominantDescriptorFamilies.includes('coughing')
+        || (
+            signalProfile.positiveFamilies.has('coughing')
+            && !signalProfile.positiveFamilies.has('sneezing')
+            && !signalProfile.positiveFamilies.has('conjunctivitis')
+        );
+
+    let upperRespiratoryScore = 0;
+    for (const signal of signalProfile.positiveSignals) {
+        switch (signal) {
+            case 'conjunctivitis':
+            case 'oral_ulceration':
+            case 'hypersalivation':
+                upperRespiratoryScore += 4;
+                break;
+            case 'nasal_discharge_mucopurulent':
+                upperRespiratoryScore += 4;
+                break;
+            case 'sneezing':
+            case 'ocular_discharge':
+                upperRespiratoryScore += 3;
+                break;
+            case 'nasal_discharge_serous':
+                upperRespiratoryScore += 2.5;
+                break;
+            case 'fever':
+            case 'anorexia':
+            case 'lethargy':
+                upperRespiratoryScore += 1;
+                break;
+            default:
+                break;
+        }
+    }
+
+    let lowerRespiratoryScore = 0;
+    let lowerEvidenceCount = 0;
+    for (const family of ['dyspnea', 'tachypnea', 'abnormal_lung_sounds', 'cyanosis']) {
+        if (signalProfile.positiveFamilies.has(family)) {
+            lowerEvidenceCount += 1;
+        }
+    }
+    if (coughDominant) {
+        lowerEvidenceCount += 1;
+    }
+    if (hasLowerRespiratoryImagingEvidence(request)) {
+        lowerEvidenceCount += 1;
+    }
+    if (hasBloodGasHypoxemia(request)) {
+        lowerEvidenceCount += 1;
+    }
+
+    lowerRespiratoryScore += signalProfile.positiveFamilies.has('dyspnea') ? 4 : 0;
+    lowerRespiratoryScore += signalProfile.positiveFamilies.has('tachypnea') ? 3 : 0;
+    lowerRespiratoryScore += signalProfile.positiveFamilies.has('abnormal_lung_sounds') ? 4 : 0;
+    lowerRespiratoryScore += signalProfile.positiveFamilies.has('cyanosis') ? 5 : 0;
+    lowerRespiratoryScore += coughDominant ? 2.5 : 0;
+    lowerRespiratoryScore += hasLowerRespiratoryImagingEvidence(request) ? 4 : 0;
+    lowerRespiratoryScore += hasBloodGasHypoxemia(request) ? 4 : 0;
+
+    let lowerNegativeCount = 0;
+    for (const family of LOWER_RESPIRATORY_FAMILIES) {
+        if (signalProfile.negativeFamilies.has(family)) {
+            lowerNegativeCount += 1;
+        }
+    }
+    if (hasNegativeLowerRespiratoryImaging(request)) {
+        lowerNegativeCount += 1;
+    }
+
+    const upperFeatureCount = [...UPPER_RESPIRATORY_FAMILIES]
+        .filter((family) => signalProfile.positiveFamilies.has(family))
+        .length;
+    const upperComplexStrong = species === 'feline' && upperFeatureCount >= 3;
+    const lowerEvidenceStrong = lowerEvidenceCount >= 2;
+    const systemicScore = signalProfile.clusterScores.systemic;
+    let airwayLevel: AirwayLevel = 'mixed';
+
+    if (upperFeatureCount > 0 && !lowerEvidenceStrong) {
+        airwayLevel = 'upper';
+    } else if (lowerEvidenceStrong && upperFeatureCount < 2) {
+        airwayLevel = 'lower';
+    } else if (upperFeatureCount > 0 || lowerEvidenceStrong) {
+        airwayLevel = 'mixed';
+    }
+
+    return {
+        species,
+        speciesGate: species === 'feline'
+            ? (upperComplexStrong ? 'feline_upper_airway_priority' : 'feline_respiratory_priority')
+            : `${species}_standard_routing`,
+        airwayLevel,
+        upperRespiratoryScore: Number(upperRespiratoryScore.toFixed(3)),
+        lowerRespiratoryScore: Number(lowerRespiratoryScore.toFixed(3)),
+        systemicScore,
+        upperFeatureCount,
+        lowerEvidenceCount,
+        lowerNegativeCount,
+        upperComplexStrong,
+        lowerEvidenceStrong,
+        oralUlcerationPresent: signalProfile.positiveFamilies.has('oral_ulceration'),
+        hypersalivationPresent: signalProfile.positiveFamilies.has('hypersalivation'),
+        conjunctivitisRhinitisDominant:
+            signalProfile.positiveFamilies.has('conjunctivitis')
+            && signalProfile.positiveFamilies.has('nasal_discharge'),
+        coughDominant,
+        kitten: species === 'feline' && (request.age_years ?? 999) < 1,
+        noLowerAirwayEvidence: lowerEvidenceCount < 2,
+    };
+}
+
+function buildOutputClusterScores(
+    signalProfile: ClinicalSignalProfile,
+    routingSummary: RespiratoryRoutingSummary,
+): Record<string, number> {
+    return {
+        ...signalProfile.clusterScores,
+        feline_upper_respiratory: routingSummary.upperRespiratoryScore,
+        lower_respiratory: routingSummary.lowerRespiratoryScore,
+        systemic: routingSummary.systemicScore,
+    };
+}
+
+function isFelineUpperRespiratoryCondition(conditionId: string | undefined): boolean {
+    return conditionId != null && FELINE_URI_COMPLEX_IDS.has(conditionId);
+}
+
+function isFelineLowerRespiratoryCondition(conditionId: string | undefined): boolean {
+    return conditionId != null && FELINE_LOWER_AIRWAY_IDS.has(conditionId);
+}
+
+function reportedConditionClass(condition: VeterinaryCondition | undefined): string {
+    if (condition && (isFelineUpperRespiratoryCondition(condition.id) || condition.id === 'feline_upper_respiratory_complex')) {
+        return 'Upper respiratory viral-bacterial syndrome';
+    }
+    return classifyConditionClass(condition);
 }
 
 function resolveSeverity(
@@ -349,6 +614,7 @@ function analyzeContradictions(
     request: InferenceRequest,
     differentials: DifferentialEntry[],
     signalProfile: ClinicalSignalProfile,
+    routingSummary: RespiratoryRoutingSummary,
 ): ContradictionAnalysis {
     const reasons: string[] = [];
     let score = 0;
@@ -436,6 +702,26 @@ function analyzeContradictions(
         ) {
             score = Math.max(score, 0.58);
             reasons.push('An urgent respiratory diagnosis is leading despite explicitly normal thoracic imaging markers.');
+        }
+
+        if (
+            routingSummary.species === 'feline'
+            && routingSummary.upperComplexStrong
+            && routingSummary.noLowerAirwayEvidence
+            && isFelineLowerRespiratoryCondition(topCondition.id)
+        ) {
+            score = Math.max(score, 0.84);
+            reasons.push('This feline case has a strong upper respiratory syndrome without lower-airway evidence, so bronchitis or pneumonia should not lead.');
+        }
+
+        if (
+            routingSummary.species === 'feline'
+            && isFelineUpperRespiratoryCondition(topCondition.id)
+            && routingSummary.lowerEvidenceStrong
+            && routingSummary.airwayLevel === 'mixed'
+        ) {
+            score = Math.max(score, 0.42);
+            reasons.push('Upper and lower respiratory signals are mixed in this feline case, so a single upper-airway diagnosis should remain provisional.');
         }
     }
 
@@ -627,7 +913,134 @@ function applyAdjustments(states: Map<string, CandidateState>, adjustments: Scor
     }
 }
 
-function scoreSymptoms(states: Map<string, CandidateState>, signalProfile: ClinicalSignalProfile) {
+function applyFelineRespiratoryRouting(
+    states: Map<string, CandidateState>,
+    request: InferenceRequest,
+    signalProfile: ClinicalSignalProfile,
+    routingSummary: RespiratoryRoutingSummary,
+) {
+    if (routingSummary.species !== 'feline') {
+        return;
+    }
+
+    for (const state of states.values()) {
+        const conditionId = state.condition.id;
+        let delta = 0;
+
+        if (conditionId === 'feline_upper_respiratory_complex') {
+            if (routingSummary.upperComplexStrong) {
+                delta += 0.62;
+            }
+            if (routingSummary.airwayLevel === 'upper') {
+                delta += 0.18;
+            }
+            if (routingSummary.noLowerAirwayEvidence) {
+                delta += 0.12;
+            }
+            if (routingSummary.lowerNegativeCount > 0) {
+                delta += 0.08;
+            }
+        }
+
+        if (conditionId === 'feline_herpesvirus_1_infection' && routingSummary.conjunctivitisRhinitisDominant) {
+            delta += 0.24;
+            state.supporting.push({
+                finding: 'Conjunctivitis with rhinitis strongly routes toward feline herpesvirus involvement',
+                weight: 'supportive',
+            });
+        }
+
+        if (conditionId === 'feline_calicivirus_infection' && (routingSummary.oralUlcerationPresent || routingSummary.hypersalivationPresent)) {
+            delta += 0.28;
+            state.supporting.push({
+                finding: 'Oral ulceration or hypersalivation strongly routes toward feline calicivirus',
+                weight: 'supportive',
+            });
+        }
+
+        if (conditionId === 'chlamydophila_felis_upper_respiratory_infection' && routingSummary.conjunctivitisRhinitisDominant) {
+            delta += 0.2;
+            state.supporting.push({
+                finding: 'Conjunctivitis with rhinitis supports Chlamydophila-associated upper respiratory disease',
+                weight: 'supportive',
+            });
+        }
+
+        if (
+            conditionId === 'feline_secondary_bacterial_upper_respiratory_infection'
+            && signalProfile.positiveSignals.has('nasal_discharge_mucopurulent')
+        ) {
+            delta += 0.18;
+            state.supporting.push({
+                finding: 'Mucopurulent nasal discharge supports secondary bacterial upper respiratory infection',
+                weight: 'supportive',
+            });
+        }
+
+        if (
+            conditionId === 'bordetella_bronchiseptica_feline'
+            && routingSummary.kitten
+            && (routingSummary.coughDominant || routingSummary.lowerEvidenceStrong)
+        ) {
+            delta += 0.18;
+            state.supporting.push({
+                finding: 'Kitten lower-airway involvement keeps Bordetella in the differential',
+                weight: 'minor',
+            });
+        }
+
+        if (isFelineUpperRespiratoryCondition(conditionId) && routingSummary.upperComplexStrong) {
+            delta += 0.14;
+        }
+
+        if (isFelineLowerRespiratoryCondition(conditionId)) {
+            if (routingSummary.noLowerAirwayEvidence) {
+                delta -= 0.38;
+            }
+            if (routingSummary.upperComplexStrong) {
+                delta -= 0.22;
+            }
+            if (routingSummary.lowerNegativeCount > 0) {
+                delta -= 0.18;
+            }
+            if (
+                signalProfile.positiveFamilies.has('conjunctivitis')
+                || signalProfile.positiveFamilies.has('oral_ulceration')
+                || signalProfile.positiveFamilies.has('hypersalivation')
+            ) {
+                delta -= 0.12;
+            }
+            if (routingSummary.lowerEvidenceStrong) {
+                delta += 0.24;
+            }
+            if (routingSummary.airwayLevel === 'mixed') {
+                delta -= 0.08;
+            }
+
+            if (delta < 0) {
+                state.contradicting.push({
+                    finding: 'Feline upper-airway syndrome is stronger than lower-airway evidence in this case',
+                    weight: 'weakens',
+                });
+            }
+        }
+
+        if (delta > 0 && isFelineUpperRespiratoryCondition(conditionId)) {
+            state.supporting.push({
+                finding: 'Species gate prioritizes feline upper respiratory disease patterns',
+                weight: 'supportive',
+            });
+        }
+
+        state.score = Math.max(0, Number((state.score + delta).toFixed(3)));
+    }
+}
+
+function scoreSymptoms(
+    states: Map<string, CandidateState>,
+    signalProfile: ClinicalSignalProfile,
+    routingSummary: RespiratoryRoutingSummary,
+) {
     for (const state of states.values()) {
         const condition = state.condition;
         const conditionCluster = determineConditionCluster(condition);
@@ -683,6 +1096,15 @@ function scoreSymptoms(states: Map<string, CandidateState>, signalProfile: Clini
                 delta -= 0.22;
             } else if (!signalProfile.mixedClusters.includes(conditionCluster)) {
                 delta -= 0.06;
+            }
+        }
+
+        if (routingSummary.species === 'feline') {
+            if (isFelineUpperRespiratoryCondition(condition.id) && routingSummary.upperComplexStrong) {
+                delta += 0.16;
+            }
+            if (isFelineLowerRespiratoryCondition(condition.id) && routingSummary.noLowerAirwayEvidence) {
+                delta -= 0.2;
             }
         }
 
@@ -990,16 +1412,24 @@ function buildStructuredSummary(
     treatmentPlans: Record<string, SelectedTreatmentPlan>,
     contradictionAnalysis: ContradictionAnalysis,
     signalProfile: ClinicalSignalProfile,
-): Pick<ClinicalInferenceEngineResult, 'top_diagnosis' | 'condition_class' | 'severity' | 'confidence' | 'contradiction_score' | 'cluster_scores'> {
+    routingSummary: RespiratoryRoutingSummary,
+): Pick<ClinicalInferenceEngineResult, 'top_diagnosis' | 'condition_class' | 'severity' | 'confidence' | 'contradiction_score' | 'cluster_scores' | 'species_gate' | 'airway_level'> {
     const top = entries[0];
     const topCondition = top?.condition_id ? getConditionById(top.condition_id) : undefined;
     return {
         top_diagnosis: top?.condition ?? null,
-        condition_class: classifyConditionClass(topCondition),
+        condition_class: reportedConditionClass(topCondition),
         severity: resolveSeverity(entries, treatmentPlans),
-        confidence: computeReportedConfidence(top?.probability ?? 0, contradictionAnalysis.contradiction_score),
+        confidence: computeClinicalConfidence(
+            top?.probability ?? 0,
+            contradictionAnalysis.contradiction_score,
+            topCondition,
+            routingSummary,
+        ),
         contradiction_score: contradictionAnalysis.contradiction_score,
-        cluster_scores: { ...signalProfile.clusterScores },
+        cluster_scores: buildOutputClusterScores(signalProfile, routingSummary),
+        species_gate: routingSummary.speciesGate,
+        airway_level: routingSummary.airwayLevel,
     };
 }
 
@@ -1011,7 +1441,8 @@ export function runClinicalInferenceEngine(
         request.symptom_vector,
         request.history?.owner_observations,
     );
-    const candidates = getConditionsForSpecies(normalizeSpecies(request.species));
+    const routingSummary = buildRespiratoryRoutingSummary(request, signalProfile);
+    const candidates = getConditionsForSpecies(routingSummary.species);
     const regionalScores = applyRegionalExposurePriors(candidates, request);
     const breedAdjustedScores = applyBreedSpecificPriors(candidates, regionalScores, request);
     const states = new Map<string, CandidateState>(
@@ -1030,13 +1461,14 @@ export function runClinicalInferenceEngine(
             'pathognomonic_test',
             pathognomicResult.keyFinding,
         );
-        const contradictionAnalysis = analyzeContradictions(request, confirmed, signalProfile);
+        const contradictionAnalysis = analyzeContradictions(request, confirmed, signalProfile, routingSummary);
         const abstainDecision = shouldAbstain(confirmed, request, contradictionAnalysis);
         const outputFeatureImportance = featureImportance(confirmed, signalProfile);
         const uncertaintyNotes = [
             ...pathognomicResult.anomalyNotes,
             ...buildSignalUncertaintyNotes(signalProfile),
         ];
+        appendFelineAirwayNotes(uncertaintyNotes, routingSummary);
         if (abstainDecision.message) {
             uncertaintyNotes.push(abstainDecision.message);
         }
@@ -1051,7 +1483,7 @@ export function runClinicalInferenceEngine(
             abstain_reason: abstainDecision.reason,
             competitive_differential: abstainDecision.competitive_differential,
             urgent_confirmatory_testing: abstainDecision.confirmatory_testing_urgent,
-            ...buildStructuredSummary(confirmed, treatmentPlans, contradictionAnalysis, signalProfile),
+            ...buildStructuredSummary(confirmed, treatmentPlans, contradictionAnalysis, signalProfile, routingSummary),
             feature_importance: outputFeatureImportance,
             diagnosis_feature_importance: outputFeatureImportance,
             differential_spread: computeDifferentialSpread(confirmed),
@@ -1063,7 +1495,8 @@ export function runClinicalInferenceEngine(
     applyAdjustments(states, applyHaematologicalPriors(request));
     applyAdjustments(states, applyBiochemistryPriors(request));
     applyAdjustments(states, applyImagingPriors(request));
-    scoreSymptoms(states, signalProfile);
+    scoreSymptoms(states, signalProfile, routingSummary);
+    applyFelineRespiratoryRouting(states, request, signalProfile, routingSummary);
 
     let differentials = buildDifferentials(states);
     const plausibility = applyEtiologicalPlausibilityGate(differentials, request);
@@ -1081,13 +1514,14 @@ export function runClinicalInferenceEngine(
     );
 
     const uncertaintyNotes: string[] = buildSignalUncertaintyNotes(signalProfile);
+    appendFelineAirwayNotes(uncertaintyNotes, routingSummary);
     if ((top?.probability ?? 0) < 0.55) {
         uncertaintyNotes.push('No pathognomonic finding was present, so probabilities remain provisional until confirmatory testing is completed.');
     }
     if (request.diagnostic_tests?.serology?.dirofilaria_immitis_antigen == null && differentials.some((entry) => entry.condition_id === 'dirofilariosis_canine')) {
         uncertaintyNotes.push('Heartworm disease remains plausible; confirm with Dirofilaria immitis antigen testing.');
     }
-    const contradictionAnalysis = analyzeContradictions(request, differentials, signalProfile);
+    const contradictionAnalysis = analyzeContradictions(request, differentials, signalProfile, routingSummary);
     const abstainDecision = shouldAbstain(differentials, request, contradictionAnalysis);
     if (abstainDecision.message) {
         uncertaintyNotes.push(abstainDecision.message);
@@ -1105,7 +1539,7 @@ export function runClinicalInferenceEngine(
         abstain_reason: abstainDecision.reason,
         competitive_differential: abstainDecision.competitive_differential,
         urgent_confirmatory_testing: abstainDecision.confirmatory_testing_urgent,
-        ...buildStructuredSummary(differentials, treatmentPlans, contradictionAnalysis, signalProfile),
+        ...buildStructuredSummary(differentials, treatmentPlans, contradictionAnalysis, signalProfile, routingSummary),
         feature_importance: outputFeatureImportance,
         diagnosis_feature_importance: outputFeatureImportance,
         differential_spread: computeDifferentialSpread(differentials),
