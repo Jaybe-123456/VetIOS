@@ -668,7 +668,7 @@ export default function InferenceConsole() {
                 )}
 
                 {activeTab === 'vectors' && (
-                    <div className="animate-scale-in">
+                    <div className="animate-scale-in max-w-5xl mx-auto space-y-6">
                         {state.status !== 'success' && state.status !== 'computing' ? (
                             <div className="text-muted font-mono text-xs text-center py-24 border border-dashed border-grid">
                                 AWAITING GENERATED VECTORS...
@@ -697,129 +697,159 @@ export default function InferenceConsole() {
                                 </div>
                             </ConsoleCard>
                         ) : (
-                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                                {/* Left Column: Input Data */}
-                                <div className="lg:col-span-4 space-y-6">
-                                    <ConsoleCard title="Input Data" className="h-[calc(100%-2rem)] flex flex-col">
-                                        <div className="flex-1 overflow-auto bg-black/20 p-4 border border-grid">
-                                            <pre className="font-mono text-[11px] text-muted whitespace-pre-wrap break-all leading-relaxed">
-                                                {JSON.stringify(state.requestPayload || state.normalizedInput, null, 2)}
-                                            </pre>
-                                        </div>
-                                        <div className="mt-4 pt-4 border-t border-grid flex items-center justify-between text-[10px] font-mono uppercase text-muted">
-                                            <span>MIME: application/json</span>
-                                            <span>SIZE: {JSON.stringify(state.requestPayload || state.normalizedInput).length} Bytes</span>
-                                        </div>
-                                    </ConsoleCard>
+                            <div className="space-y-6">
+                                {/* Top: Metrics Row */}
+                                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                                    <MetricCard 
+                                        label="Inference Time" 
+                                        value={state.metrics?.inferenceTimeMs || '--'} 
+                                        unit="ms"
+                                        color="#00ff9d"
+                                    />
+                                    <MetricCard 
+                                        label="Confidence" 
+                                        value={state.responsePayload?.confidence_score ? (Number(state.responsePayload.confidence_score) * 100).toFixed(0) : '--'} 
+                                        unit="%"
+                                        sparklineData={state.metrics?.confidenceHistory}
+                                        color="#00ff9d"
+                                    />
+                                    <MetricCard 
+                                        label="GPU Load" 
+                                        value={state.metrics ? state.metrics.loadHistory[state.metrics.loadHistory.length - 1].value.toFixed(0) : '--'} 
+                                        unit="%"
+                                        sparklineData={state.metrics?.loadHistory}
+                                        color="#3b82f6"
+                                    />
+                                    <MetricCard 
+                                        label="Temperature" 
+                                        value={state.metrics ? state.metrics.tempHistory[state.metrics.tempHistory.length - 1].value.toFixed(1) : '--'} 
+                                        unit="°C"
+                                        sparklineData={state.metrics?.tempHistory}
+                                        color="#ef4444"
+                                    />
                                 </div>
 
-                                {/* Right Column: Output & Metrics */}
-                                <div className="lg:col-span-8 space-y-6">
-                                    {/* Top: Inference Output */}
-                                    <ConsoleCard title="Inference Output">
-                                        <div className="space-y-6">
-                                            <div className="flex items-center justify-between">
-                                                <div className="font-mono text-xs uppercase tracking-widest text-muted">Diagnosis Probability</div>
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-                                                    <span className="font-mono text-[10px] text-accent uppercase tracking-widest">Live Result</span>
-                                                </div>
+                                {/* Middle: Inference Output */}
+                                <ConsoleCard title="Inference Output">
+                                    <div className="space-y-6">
+                                        <div className="flex items-center justify-between">
+                                            <div className="font-mono text-xs uppercase tracking-widest text-muted">Diagnosis Probability</div>
+                                            <div className="flex items-center gap-2">
+                                                <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+                                                <span className="font-mono text-[10px] text-accent uppercase tracking-widest">Live Result</span>
                                             </div>
-                                            
-                                            <div className="space-y-5">
-                                                {state.probabilities.map((p, i) => (
-                                                    <div key={i} className="flex flex-col gap-2">
-                                                        <div className="flex items-center justify-between font-mono text-xs sm:text-sm">
-                                                            <span className={`${i === 0 ? 'text-accent font-bold' : 'text-foreground/70'}`}>
-                                                                {p.label}
-                                                            </span>
-                                                            <span className={`${i === 0 ? 'text-accent font-bold' : 'text-muted'}`}>
-                                                                {(p.value * 100).toFixed(0)}%
-                                                            </span>
-                                                        </div>
-                                                        <div className="w-full h-2 bg-dim border border-grid overflow-hidden">
-                                                            <div 
-                                                                className={`h-full transition-all duration-1000 ${i === 0 ? 'bg-accent' : 'bg-muted'}`} 
-                                                                style={{ width: `${p.value * 100}%` }} 
-                                                            />
-                                                        </div>
+                                        </div>
+                                        
+                                        <div className="space-y-5">
+                                            {state.probabilities.map((p, i) => (
+                                                <div key={i} className="flex flex-col gap-2">
+                                                    <div className="flex items-center justify-between font-mono text-xs sm:text-sm">
+                                                        <span className={`${i === 0 ? 'text-accent font-bold' : 'text-foreground/70'}`}>
+                                                            {p.label}
+                                                        </span>
+                                                        <span className={`${i === 0 ? 'text-accent font-bold' : 'text-muted'}`}>
+                                                            {(p.value * 100).toFixed(0)}%
+                                                        </span>
                                                     </div>
-                                                ))}
+                                                    <div className="w-full h-2 bg-dim border border-grid overflow-hidden">
+                                                        <div 
+                                                            className={`h-full transition-all duration-1000 ${i === 0 ? 'bg-accent' : 'bg-muted'}`} 
+                                                            style={{ width: `${p.value * 100}%` }} 
+                                                        />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </ConsoleCard>
+
+                                {/* Ground Truth Context */}
+                                {outcomeState.status === 'submitted' && outcomeState.evaluation && (
+                                    <ConsoleCard title="Feedback Loop — Evaluation Result" className="border-green-500/30 animate-in fade-in duration-500">
+                                        <div className="grid grid-cols-3 gap-3 font-mono text-xs text-center text-accent">
+                                            <div className="border border-grid bg-black/20 p-3">
+                                                <div className="text-muted uppercase text-[9px] mb-1">Calibration</div>
+                                                <div className="text-sm font-bold">{outcomeState.evaluation.calibration_error != null ? `${(outcomeState.evaluation.calibration_error * 100).toFixed(1)}%` : 'N/A'}</div>
+                                            </div>
+                                            <div className="border border-grid bg-black/20 p-3">
+                                                <div className="text-muted uppercase text-[9px] mb-1">Drift</div>
+                                                <div className="text-sm font-bold">{outcomeState.evaluation.drift_score?.toFixed(3) ?? 'N/A'}</div>
+                                            </div>
+                                            <div className="border border-grid bg-black/20 p-3">
+                                                <div className="text-muted uppercase text-[9px] mb-1">Alignment</div>
+                                                <div className="text-sm font-bold">{outcomeState.evaluation.outcome_alignment_delta != null ? `Δ${(outcomeState.evaluation.outcome_alignment_delta * 100).toFixed(1)}%` : 'N/A'}</div>
                                             </div>
                                         </div>
                                     </ConsoleCard>
+                                )}
 
-                                    {/* Middle: Metrics Row */}
-                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                                        <MetricCard 
-                                            label="Inference Time" 
-                                            value={state.metrics?.inferenceTimeMs || '--'} 
-                                            unit="ms"
-                                            color="#00ff9d"
-                                        />
-                                        <MetricCard 
-                                            label="Confidence" 
-                                            value={state.responsePayload?.confidence_score ? (Number(state.responsePayload.confidence_score) * 100).toFixed(0) : '--'} 
-                                            unit="%"
-                                            sparklineData={state.metrics?.confidenceHistory}
-                                            color="#00ff9d"
-                                        />
-                                        <MetricCard 
-                                            label="GPU Load" 
-                                            value={state.metrics ? state.metrics.loadHistory[state.metrics.loadHistory.length - 1].value.toFixed(0) : '--'} 
-                                            unit="%"
-                                            sparklineData={state.metrics?.loadHistory}
-                                            color="#3b82f6"
-                                        />
-                                        <MetricCard 
-                                            label="Temperature" 
-                                            value={state.metrics ? state.metrics.tempHistory[state.metrics.tempHistory.length - 1].value.toFixed(1) : '--'} 
-                                            unit="°C"
-                                            sparklineData={state.metrics?.tempHistory}
-                                            color="#ef4444"
-                                        />
+                                {(outcomeState.status === 'expanded' || outcomeState.status === 'submitting') && (
+                                    <ConsoleCard title="Attach Ground Truth" className="border-blue-400/30 animate-in slide-in-from-top duration-300">
+                                        <form onSubmit={handleOutcomeSubmit} className="space-y-4">
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                <div>
+                                                    <TerminalLabel htmlFor="gt-eventId">Inference Event ID</TerminalLabel>
+                                                    <TerminalInput id="gt-eventId" value={state.eventId || ''} disabled className="opacity-60" />
+                                                </div>
+                                                <div>
+                                                    <TerminalLabel htmlFor="gt-diagnosis">Actual Diagnosis</TerminalLabel>
+                                                    <TerminalInput id="gt-diagnosis" name="actualDiagnosis" placeholder="e.g. Pancreatitis" required />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <TerminalLabel htmlFor="gt-notes">Clinical Notes</TerminalLabel>
+                                                <TerminalTextarea id="gt-notes" name="notes" placeholder="Enter findings to improve model accuracy..." rows={3} />
+                                            </div>
+                                            <TerminalButton type="submit" disabled={outcomeState.status === 'submitting'}>
+                                                {outcomeState.status === 'submitting' ? 'SUBMITTING...' : 'CONFIRM GROUND TRUTH'}
+                                            </TerminalButton>
+                                        </form>
+                                    </ConsoleCard>
+                                )}
+
+                                {/* Bottom: System Logs */}
+                                <SystemLogConsole logs={state.logs} />
+
+                                {/* Actions Shell */}
+                                <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-grid">
+                                    <div className="flex items-center gap-2">
+                                        {/* Copy ID "Tab" Style */}
+                                        <button 
+                                            onClick={handleCopyEventId}
+                                            className={`h-10 px-4 flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest border transition-all ${
+                                                copyStatus === 'copied' 
+                                                ? 'bg-accent/20 border-accent text-accent' 
+                                                : 'bg-dim border-grid text-muted hover:border-accent hover:text-accent'
+                                            }`}
+                                        >
+                                            <Binary className="w-3.5 h-3.5" />
+                                            {copyStatus === 'copied' ? 'Copied ID' : 'Copy Event ID'}
+                                        </button>
                                     </div>
 
-                                    {/* Bottom: System Logs */}
-                                    <SystemLogConsole logs={state.logs} />
+                                    <div className="flex items-center gap-4">
+                                        {/* Conspicuous Green Export */}
+                                        <button 
+                                            onClick={handleExport}
+                                            className="h-10 px-6 font-mono text-[10px] uppercase tracking-[0.2em] border border-green-500/50 bg-green-500/10 text-green-400 hover:bg-green-500/20 transition-all flex items-center gap-2"
+                                        >
+                                            <Workflow className="w-3.5 h-3.5" />
+                                            Export Analysis
+                                        </button>
 
-                                    {/* Actions & Event Identity */}
-                                    <div className="flex flex-col sm:flex-row gap-4">
-                                        <ConsoleCard title="Event Identity" className="flex-1">
-                                            <div className="flex items-center justify-between gap-4">
-                                                <div className="font-mono text-xs text-accent truncate max-w-[200px] sm:max-w-none">
-                                                    {state.eventId || 'AWAITING_ID...'}
-                                                </div>
-                                                <button
-                                                    type="button"
-                                                    onClick={handleCopyEventId}
-                                                    className="shrink-0 p-1 text-muted hover:text-accent transition-colors"
-                                                    title="Copy Event ID"
-                                                >
-                                                    <Binary className="w-3.5 h-3.5" />
-                                                </button>
-                                            </div>
-                                        </ConsoleCard>
-                                        
-                                        <div className="flex flex-row gap-4 sm:w-auto">
-                                            <TerminalButton 
-                                                variant="secondary" 
-                                                className="flex-1 sm:flex-initial"
-                                                onClick={handleExport}
-                                            >
-                                                Export
-                                            </TerminalButton>
-                                            <TerminalButton 
-                                                className="flex-1 sm:flex-initial"
-                                                onClick={() => setOutcomeState(prev => ({
-                                                    ...prev,
-                                                    status: prev.status === 'expanded' ? 'idle' : prev.status === 'idle' ? 'expanded' : prev.status,
-                                                }))}
-                                                disabled={outcomeState.status === 'submitted'}
-                                            >
-                                                {outcomeState.status === 'submitted' ? 'Confirmed' : 'Confirm'}
-                                            </TerminalButton>
-                                        </div>
+                                        <TerminalButton 
+                                            onClick={() => setOutcomeState(prev => ({
+                                                ...prev,
+                                                status: prev.status === 'expanded' ? 'idle' : prev.status === 'idle' ? 'expanded' : prev.status,
+                                            }))}
+                                            disabled={outcomeState.status === 'submitted'}
+                                        >
+                                            {outcomeState.status === 'submitted' ? (
+                                                <span className="flex items-center gap-2"><CheckCircle2 className="w-3.5 h-3.5" /> Ground Truth Confirmed</span>
+                                            ) : (
+                                                <span className="flex items-center gap-2">Confirm {outcomeState.status === 'expanded' ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}</span>
+                                            )}
+                                        </TerminalButton>
                                     </div>
                                 </div>
                             </div>
