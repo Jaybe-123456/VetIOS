@@ -46,13 +46,16 @@ export default function SignupPage() {
     }, [isGoogleEmail]);
 
     useEffect(() => {
-        if (isGoogleManagedFlow) {
+        const isBypassEnabled = process.env.NEXT_PUBLIC_VETIOS_DEV_BYPASS === 'true';
+        if (!isGoogleManagedFlow && turnstileSiteKey && !isBypassEnabled) {
+            setCaptchaRequired(true);
+        } else {
             setCaptchaRequired(false);
             setCaptchaToken(null);
             setCaptchaError(null);
             setCaptchaResetKey((value) => value + 1);
         }
-    }, [isGoogleManagedFlow]);
+    }, [isGoogleManagedFlow, turnstileSiteKey]);
 
     async function handleEmailPasswordSignup(e: React.FormEvent) {
         e.preventDefault();
@@ -120,9 +123,17 @@ export default function SignupPage() {
                 }
 
                 setStatus('error');
-                setErrorMessage(payload?.error ?? 'Unable to create your account right now.');
-                setCaptchaRequired(Boolean(payload?.captcha_required));
-                if (payload?.captcha_required || captchaToken) {
+                
+                // Handle specific captcha errors with friendlier messages
+                const rawError = payload?.error ?? 'Unable to create your account right now.';
+                if (rawError.includes('invalid-input-response')) {
+                    setErrorMessage('Security challenge verification failed. Please retry the challenge.');
+                } else {
+                    setErrorMessage(rawError);
+                }
+
+                setCaptchaRequired(Boolean(payload?.captcha_required) || (turnstileSiteKey && !isBypassEnabled));
+                if (payload?.captcha_required || captchaToken || (turnstileSiteKey && !isBypassEnabled)) {
                     setCaptchaToken(null);
                     setCaptchaResetKey((prev) => prev + 1);
                 }

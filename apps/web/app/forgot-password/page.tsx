@@ -59,8 +59,17 @@ export default function ForgotPasswordPage() {
 
         if (error) {
             setStatus('error');
-            setErrorMessage(error.message);
-            // Reset CAPTCHA on error to allow retry
+            
+            // Handle specific captcha errors with friendlier messages
+            if (error.message.includes('invalid-input-response')) {
+                setErrorMessage('Security challenge verification failed. Please refresh the page and try again.');
+            } else if (error.message.includes('captcha')) {
+                setErrorMessage(`Security Error: ${error.message}. Ensure you complete the challenge fully.`);
+            } else {
+                setErrorMessage(error.message);
+            }
+
+            // Always reset CAPTCHA on error to allow retry
             setCaptchaToken(null);
             setCaptchaResetKey((prev) => prev + 1);
             return;
