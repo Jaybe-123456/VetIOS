@@ -54,7 +54,7 @@ export default function SignupPage() {
             setCaptchaError(null);
             setCaptchaResetKey((value) => value + 1);
         }
-    }, [isGoogleManagedFlow, turnstileSiteKey]);
+    }, [isGoogleManagedFlow, turnstileSiteKey, isBypassEnabled]);
 
     async function handleEmailPasswordSignup(e: React.FormEvent) {
         e.preventDefault();
