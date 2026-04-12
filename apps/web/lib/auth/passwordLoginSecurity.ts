@@ -390,6 +390,7 @@ export async function verifyPasswordLoginCaptcha(
 
     const secret = process.env.TURNSTILE_SECRET_KEY;
     if (!secret) {
+        console.error('TURNSTILE_SECRET_KEY is missing from environment variables.');
         return {
             ok: false,
             errorCodes: ['missing-input-secret'],
@@ -422,10 +423,16 @@ export async function verifyPasswordLoginCaptcha(
         const payload = await response.json() as {
             success?: boolean;
             ['error-codes']?: string[];
+            hostname?: string;
         };
 
         if (payload.success !== true) {
-            console.warn('Turnstile verification failed with error codes:', payload['error-codes']);
+            console.warn('[AUTH_SECURITY] Turnstile verification failed for token. Error codes:', payload['error-codes']);
+            
+            // If the error is 'invalid-input-secret', it's a critical configuration issue.
+            if (payload['error-codes']?.includes('invalid-input-secret')) {
+                console.error('[CRITICAL] TURNSTILE_SECRET_KEY is invalid according to Cloudflare.');
+            }
         }
 
         return {
@@ -433,7 +440,7 @@ export async function verifyPasswordLoginCaptcha(
             errorCodes: Array.isArray(payload['error-codes']) ? payload['error-codes'] : [],
         };
     } catch (error: any) {
-        console.error('Turnstile verification request failed:', error?.message || error);
+        console.error('[AUTH_SECURITY] Turnstile verification request failed:', error?.message || error);
         return {
             ok: false,
             errorCodes: ['request_failed'],

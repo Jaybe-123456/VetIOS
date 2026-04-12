@@ -35,10 +35,11 @@ export default function LoginPage() {
     const [captchaError, setCaptchaError] = useState<string | null>(null);
     const [nextPath, setNextPath] = useState('/inference');
     const [rememberMe, setRememberMe] = useState(false);
+    const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '';
+    const isBypassEnabled = process.env.NEXT_PUBLIC_VETIOS_DEV_BYPASS === 'true';
+    const isWaitingOnCaptcha = captchaRequired && Boolean(turnstileSiteKey) && !captchaToken;
     const isGoogleEmail = isGoogleMailAddress(email);
     const showGooglePasswordWarning = isGoogleEmail && password.trim().length > 0;
-    const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? '';
-    const isWaitingOnCaptcha = captchaRequired && Boolean(turnstileSiteKey) && !captchaToken;
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -46,8 +47,12 @@ export default function LoginPage() {
         setShowSignupSuccess(params.get('signup') === 'success');
         setShowVerificationRequired(params.get('verification') === 'required');
         setAuthError(params.get('error'));
-        setNextPath(sanitizeNextPath(params.get('next')));
-    }, []);
+        setNextPath(params.get('next') ?? '/inference');
+
+        if (turnstileSiteKey && !isBypassEnabled) {
+            setCaptchaRequired(true);
+        }
+    }, [turnstileSiteKey, isBypassEnabled]);
 
     useEffect(() => {
         if (status !== 'success' || !redirectPath) {
@@ -108,8 +113,16 @@ export default function LoginPage() {
 
             if (!response.ok) {
                 setStatus('error');
-                setErrorMessage(payload?.error ?? 'Unable to sign in right now.');
-                setCaptchaRequired(Boolean(payload?.captcha_required));
+                
+                // Handle specific captcha errors with friendlier messages
+                const rawError = payload?.error ?? 'Unable to sign in right now.';
+                if (rawError.includes('invalid-input-response')) {
+                    setErrorMessage('Security challenge verification failed. Please retry the challenge.');
+                } else {
+                    setErrorMessage(rawError);
+                }
+
+                setCaptchaRequired(Boolean(payload?.captcha_required) || (turnstileSiteKey && !isBypassEnabled));
                 setCaptchaToken(null);
                 setCaptchaResetKey((value) => value + 1);
                 return;

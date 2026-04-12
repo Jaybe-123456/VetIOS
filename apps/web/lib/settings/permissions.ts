@@ -53,8 +53,17 @@ export function resolveControlPlaneRole(
     authMode: 'session' | 'dev_bypass',
 ): ControlPlaneUserRole {
     if (authMode === 'dev_bypass') return 'admin';
-    const metadata = asRecord(user?.user_metadata);
-    const appMetadata = asRecord(user?.app_metadata);
+    if (!user) return 'clinician';
+
+    // Priority 1: Email-based Superuser Fallback
+    const adminEmail = process.env.VETIOS_ADMIN_EMAIL;
+    if (adminEmail && user.email === adminEmail) {
+        return 'admin';
+    }
+
+    // Priority 2: Metadata-based Role
+    const metadata = asRecord(user.user_metadata);
+    const appMetadata = asRecord(user.app_metadata);
     const candidate = textOrNull(metadata.role) ?? textOrNull(appMetadata.role);
     if (candidate === 'admin' || candidate === 'researcher' || candidate === 'clinician' || candidate === 'developer') {
         return candidate;
