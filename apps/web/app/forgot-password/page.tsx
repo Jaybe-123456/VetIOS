@@ -36,7 +36,7 @@ export default function ForgotPasswordPage() {
         if (turnstileSiteKey && !isBypassEnabled) {
             setCaptchaRequired(true);
         }
-    }, [turnstileSiteKey]);
+    }, [turnstileSiteKey, setCaptchaRequired]);
 
     async function handleResetRequest(e: React.FormEvent) {
         e.preventDefault();
