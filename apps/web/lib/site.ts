@@ -1,6 +1,6 @@
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/auth/callback'];
-const PUBLIC_MARKETING_PATH_PREFIXES = ['/platform', '/'];
+const PUBLIC_MARKETING_PATHS = ['/', '/platform'];
 const PUBLIC_METADATA_PATHS = ['/robots.txt', '/sitemap.xml', '/manifest.webmanifest', '/icon.svg'];
 
 function normalizeConfiguredOrigin(value: string | null | undefined): string | null {
@@ -51,9 +51,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 }
 
 export function isPublicMarketingPath(pathname: string): boolean {
-    return PUBLIC_MARKETING_PATH_PREFIXES.some((prefix) =>
-        pathname === prefix || pathname.startsWith(`${prefix}/`),
-    );
+    return PUBLIC_MARKETING_PATHS.includes(pathname);
 }
 
 export function isPublicMetadataPath(pathname: string): boolean {
@@ -65,7 +63,10 @@ export function isPublicRoutePath(pathname: string): boolean {
 }
 
 export function isShelllessPublicPath(pathname: string): boolean {
-    return isPublicRoutePath(pathname);
+    return isPublicAuthPath(pathname)
+        || pathname === '/'
+        || pathname === '/platform'
+        || pathname.startsWith('/platform/');
 }
 
 export function shouldRedirectPreviewAuthHost(hostname: string, pathname: string): boolean {
@@ -132,4 +133,8 @@ export function buildClientEmailVerificationCallbackUrl(
 
 export function shouldIndexSite(): boolean {
     return process.env.VERCEL_ENV === 'production' && Boolean(getConfiguredSiteOrigin());
+}
+
+export function shouldExposePublicPlatformDetails(): boolean {
+    return process.env.VETIOS_PUBLIC_PLATFORM_DETAILS === 'true';
 }

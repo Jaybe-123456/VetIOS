@@ -11,7 +11,7 @@ export const navigationItems = [
     { label: 'Architecture', href: '#architecture' },
     { label: 'Modules', href: '#modules' },
     { label: 'System', href: '#system' },
-    { label: 'Docs', href: '/platform/developers' },
+    { label: 'Docs', href: '/platform' },
 ] as const;
 
 export const architectureNodes = [
@@ -152,7 +152,7 @@ export const endpointCards = [
 ] as const;
 
 export const footerLinks = [
-    { label: 'Docs', href: '/platform/developers' },
+    { label: 'Docs', href: '/platform' },
     { label: 'Contact', href: 'mailto:platform@vetios.ai' },
 ] as const;
 

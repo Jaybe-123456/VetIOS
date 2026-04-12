@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getDeveloperPlatformSnapshot, getPublicDeveloperPlatformSnapshot, submitPartnerOnboardingRequest } from '@/lib/developerPlatform/service';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { safeJson } from '@/lib/http/safeJson';
+import { requirePublicPlatformDetailAccess } from '@/lib/platform/publicAccess';
 import { resolvePublicCatalogTenant } from '@/lib/platform/publicTenant';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
@@ -17,7 +18,10 @@ type PublicDeveloperOnboardingPayload = {
     requested_scopes?: string[];
 };
 
-export async function GET() {
+export async function GET(req: Request) {
+    const blocked = requirePublicPlatformDetailAccess(req);
+    if (blocked) return blocked;
+
     const snapshot = await getPublicDeveloperPlatformSnapshot();
     return NextResponse.json({
         generated_at: new Date().toISOString(),
@@ -28,6 +32,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+    const blocked = requirePublicPlatformDetailAccess(req);
+    if (blocked) return blocked;
+
     const guard = await apiGuard(req, { maxRequests: 6, windowMs: 3_600_000 });
     if (guard.blocked) return guard.response!;
 
