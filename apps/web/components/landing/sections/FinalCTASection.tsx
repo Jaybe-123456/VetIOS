@@ -28,10 +28,10 @@ export default function FinalCTASection() {
                             <ArrowRight className="h-4 w-4" />
                         </Link>
                         <Link
-                            href="/platform/developers"
+                            href="/platform"
                             className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.03] px-6 py-3.5 text-sm font-medium text-white/76 sm:w-auto"
                         >
-                            View Developer Surface
+                            View Platform Overview
                         </Link>
                     </div>
                 </div>

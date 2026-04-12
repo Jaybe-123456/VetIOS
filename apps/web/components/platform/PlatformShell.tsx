@@ -8,12 +8,14 @@ export function PlatformShell({
     description,
     actions,
     children,
+    showNav = true,
 }: {
     badge: string;
     title: string;
     description: string;
     actions?: ReactNode;
     children: ReactNode;
+    showNav?: boolean;
 }) {
     return (
         <div className="min-h-full bg-[#07101f] text-white">
@@ -28,7 +30,7 @@ export function PlatformShell({
                             <p className="mt-4 max-w-3xl text-base leading-8 text-slate-300">{description}</p>
                         </div>
                         <div className="flex flex-col items-start gap-4 lg:items-end">
-                            <PlatformNav />
+                            {showNav ? <PlatformNav /> : null}
                             <div className="flex flex-wrap gap-3">
                                 {actions}
                                 <Link
