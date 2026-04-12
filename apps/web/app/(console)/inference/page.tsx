@@ -67,6 +67,11 @@ interface CireState {
     incident_id?: string | null;
 }
 
+interface CorrectionData {
+    ranking_shift_explanation: string;
+    top_diagnosis_overridden: boolean;
+}
+
 interface InferenceState {
     status: 'idle' | 'previewing' | 'computing' | 'success' | 'error';
     eventId: string | null;
@@ -77,6 +82,7 @@ interface InferenceState {
         featureImportance: Array<{ feature: string; impact: number }>;
         severityFeatureImportance: Array<{ feature: string; impact: number }>;
     } | null;
+    correction: CorrectionData | null;
     mlRisk: MLRiskData | null;
     riskModelOutput: RiskModelOutputData | null;
     riskAssessment: {
@@ -109,6 +115,7 @@ export default function InferenceConsole() {
         responsePayload: null,
         probabilities: [],
         explainability: null,
+        correction: null,
         mlRisk: null,
         riskModelOutput: null,
         riskAssessment: null,
@@ -354,6 +361,9 @@ export default function InferenceConsole() {
                     featureImportance: mapFeatures(diagFeatures),
                     severityFeatureImportance: mapFeatures(sevFeatures),
                 },
+                correction: (output?.correction_layer && typeof output.correction_layer === 'object')
+                    ? output.correction_layer as CorrectionData
+                    : null,
                 mlRisk: result.ml_risk || null,
                 riskModelOutput: riskModelOutput ? {
                     definition: typeof riskModelOutput.definition === 'string' ? riskModelOutput.definition : '',
@@ -935,6 +945,45 @@ export default function InferenceConsole() {
                                         </ConsoleCard>
                                     )}
                                 </div>
+
+                                {state.correction && (
+                                    <ConsoleCard 
+                                        title="Correction Layer — Hierarchical Reasoning Insights" 
+                                        className={`mt-6 border-l-4 ${state.correction.top_diagnosis_overridden ? 'border-l-orange-500' : 'border-l-accent'}`}
+                                    >
+                                        <div className="space-y-4">
+                                            {state.correction.top_diagnosis_overridden && (
+                                                <div className="flex items-center gap-3 p-3 bg-orange-500/10 border border-orange-500/30 rounded">
+                                                    <AlertTriangle className="w-5 h-5 text-orange-500" />
+                                                    <div className="font-mono text-[11px] text-orange-400 uppercase tracking-wider">
+                                                        Clinical Override Detected: Biologically coherent ranking preferred over symptom frequency.
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
+                                            <div className="bg-black/20 p-4 border border-grid">
+                                                <div className="font-mono text-[10px] text-muted uppercase tracking-widest mb-3 flex items-center gap-2">
+                                                    <Brain className="w-3 h-3" />
+                                                    Diagnostic Weighting Logic
+                                                </div>
+                                                <p className="font-mono text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
+                                                    {state.correction.ranking_shift_explanation}
+                                                </p>
+                                            </div>
+
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div className="p-3 border border-grid bg-dim/50 rounded">
+                                                    <div className="text-[9px] uppercase tracking-widest text-muted mb-1">Signal Hierarchy</div>
+                                                    <div className="text-[11px] font-mono text-accent">Tier 1 Dominance enforced</div>
+                                                </div>
+                                                <div className="p-3 border border-grid bg-dim/50 rounded">
+                                                    <div className="text-[9px] uppercase tracking-widest text-muted mb-1">Consistency Check</div>
+                                                    <div className="text-[11px] font-mono text-green-400">Explanatory Coherence Reward applied</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </ConsoleCard>
+                                )}
                             </>
                         )}
                     </div>
