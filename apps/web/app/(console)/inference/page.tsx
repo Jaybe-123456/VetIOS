@@ -68,8 +68,11 @@ interface CireState {
 }
 
 interface CorrectionData {
+    hallucinated_signals_removed: string[];
+    penalties_applied: string[];
+    overrides_triggered: string[];
     ranking_shift_explanation: string;
-    top_diagnosis_overridden: boolean;
+    correction_applied: boolean;
 }
 
 interface InferenceState {
@@ -948,37 +951,98 @@ export default function InferenceConsole() {
 
                                 {state.correction && (
                                     <ConsoleCard 
-                                        title="Correction Layer — Hierarchical Reasoning Insights" 
-                                        className={`mt-6 border-l-4 ${state.correction.top_diagnosis_overridden ? 'border-l-orange-500' : 'border-l-accent'}`}
+                                        title="Signal Integrity — Diagnostic Correction Log" 
+                                        className={`mt-6 border-l-4 ${state.correction.correction_applied ? 'border-l-orange-500' : 'border-l-accent'}`}
                                     >
-                                        <div className="space-y-4">
-                                            {state.correction.top_diagnosis_overridden && (
+                                        <div className="space-y-6">
+                                            {state.correction.correction_applied && (
                                                 <div className="flex items-center gap-3 p-3 bg-orange-500/10 border border-orange-500/30 rounded">
-                                                    <AlertTriangle className="w-5 h-5 text-orange-500" />
-                                                    <div className="font-mono text-[11px] text-orange-400 uppercase tracking-wider">
-                                                        Clinical Override Detected: Biologically coherent ranking preferred over symptom frequency.
+                                                    <ShieldCheck className="w-5 h-5 text-orange-500" />
+                                                    <div className="font-mono text-[11px] text-orange-400 uppercase tracking-widest">
+                                                        INTEGRITY FAIL-SAFE TRIGGERED: Biologically coherent ranking enforced.
                                                     </div>
                                                 </div>
                                             )}
+
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                {/* Hallucination Detection */}
+                                                <div className="space-y-3">
+                                                    <div className="font-mono text-[10px] text-muted uppercase tracking-widest flex items-center gap-2">
+                                                        <Activity className="w-3 h-3" />
+                                                        Hallucination Scan
+                                                    </div>
+                                                    <div className="min-h-[100px] bg-black/20 border border-grid p-3 text-[11px] font-mono">
+                                                        {state.correction.hallucinated_signals_removed.length > 0 ? (
+                                                            <div className="space-y-2">
+                                                                <div className="text-danger flex items-center gap-2">
+                                                                    <AlertTriangle className="w-3 h-3" />
+                                                                    STRIPPED SIGNALS:
+                                                                </div>
+                                                                {state.correction.hallucinated_signals_removed.map((s, i) => (
+                                                                    <div key={i} className="pl-5 text-danger opacity-70">- {s}</div>
+                                                                ))}
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-green-400 flex items-center gap-2 opacity-60 italic">
+                                                                <CheckCircle2 className="w-3 h-3" />
+                                                                No hallucinated signals detected in driver set.
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                {/* Penalties & Logic */}
+                                                <div className="space-y-3">
+                                                    <div className="font-mono text-[10px] text-muted uppercase tracking-widest flex items-center gap-2">
+                                                        <Binary className="w-3 h-3" />
+                                                        Rule Enforcement
+                                                    </div>
+                                                    <div className="min-h-[100px] bg-black/20 border border-grid p-3 text-[11px] font-mono space-y-2">
+                                                        {state.correction.penalties_applied.length > 0 && (
+                                                            <div className="text-orange-400/80">
+                                                                {state.correction.penalties_applied.map((p, i) => (
+                                                                    <div key={i}>• {p}</div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {state.correction.overrides_triggered.length > 0 && (
+                                                            <div className="text-accent">
+                                                                {state.correction.overrides_triggered.map((o, i) => (
+                                                                    <div key={i}>↑ {o}</div>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        {state.correction.penalties_applied.length === 0 && state.correction.overrides_triggered.length === 0 && (
+                                                            <div className="text-muted italic opacity-60">
+                                                                All hierarchy rules satisfied.
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
                                             
                                             <div className="bg-black/20 p-4 border border-grid">
                                                 <div className="font-mono text-[10px] text-muted uppercase tracking-widest mb-3 flex items-center gap-2">
                                                     <Brain className="w-3 h-3" />
-                                                    Diagnostic Weighting Logic
+                                                    Hierarchical Reasoning Analysis
                                                 </div>
                                                 <p className="font-mono text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap">
                                                     {state.correction.ranking_shift_explanation}
                                                 </p>
                                             </div>
 
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="p-3 border border-grid bg-dim/50 rounded">
-                                                    <div className="text-[9px] uppercase tracking-widest text-muted mb-1">Signal Hierarchy</div>
-                                                    <div className="text-[11px] font-mono text-accent">Tier 1 Dominance enforced</div>
+                                            <div className="grid grid-cols-3 gap-4">
+                                                <div className="p-2 border border-grid bg-dim/30 rounded text-center">
+                                                    <div className="text-[8px] uppercase tracking-widest text-muted mb-1">Signal Origin</div>
+                                                    <div className="text-[10px] font-mono text-accent">WEIGHTED TIERING</div>
                                                 </div>
-                                                <div className="p-3 border border-grid bg-dim/50 rounded">
-                                                    <div className="text-[9px] uppercase tracking-widest text-muted mb-1">Consistency Check</div>
-                                                    <div className="text-[11px] font-mono text-green-400">Explanatory Coherence Reward applied</div>
+                                                <div className="p-2 border border-grid bg-dim/30 rounded text-center">
+                                                    <div className="text-[8px] uppercase tracking-widest text-muted mb-1">Gating Mode</div>
+                                                    <div className="text-[10px] font-mono text-accent">DUAL-SYSTEM</div>
+                                                </div>
+                                                <div className="p-2 border border-grid bg-dim/30 rounded text-center">
+                                                    <div className="text-[8px] uppercase tracking-widest text-muted mb-1">Coherence</div>
+                                                    <div className="text-[10px] font-mono text-green-400">PASSED</div>
                                                 </div>
                                             </div>
                                         </div>

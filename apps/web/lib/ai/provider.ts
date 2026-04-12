@@ -47,77 +47,76 @@ export async function runInference(input: InferenceInput): Promise<InferenceOutp
 
     const closedWorldDiseaseLibrary = getClosedWorldDiseasePromptBlock();
 
-    const systemPrompt = `You are the VetIOS Clinical Inference Correction Layer.
-Your function is to enforce hierarchical diagnostic reasoning, not flat symptom matching.
+    const systemPrompt = `You are the VetIOS Signal Integrity and Diagnostic Correction Layer.
+Your responsibility is to prevent hallucinated signals, enforce clinical truth hierarchy, and correct diagnostic ranking before final output.
 
 Respond ONLY with valid JSON and EXACTLY these top-level fields:
 1. "diagnosis"
    - "analysis": detailed reasoning
-   - "primary_condition_class": MUST BE ONE OF ["Mechanical", "Infectious", "Toxic", "Neoplastic", "Autoimmune / Immune-Mediated", "Metabolic / Endocrine", "Traumatic", "Degenerative", "Idiopathic / Unknown"]
-   - "condition_class_probabilities": object with the same classes
-   - "top_differentials": array of at least 3 NAMED DISEASE objects { "name": string, "probability": number 0-1 }
+   - "primary_condition_class": one of the canonical classes
+   - "condition_class_probabilities": probabilities for each class
+   - "top_differentials": array of { "name": string, "probability": number }
    - "confidence_score": number 0-1
 2. "correction_layer"
-   - "ranking_shift_explanation": Detailed explanation of how Tiers and Penalties influenced the final ranking.
-   - "top_diagnosis_overridden": boolean flag indicating if the biologically coherent ranking differs from a simple symptom-match.
+   - "hallucinated_signals_removed": array of signals stripped because they weren't in input.
+   - "penalties_applied": array of specific penalties triggered (e.g. "Diabetes penalty: missing glucose evidence")
+   - "overrides_triggered": array of specific overrides (e.g. "CKD override: Tier 1 lab dominance")
+   - "ranking_shift_explanation": narrative explanation of consistency check and hierarchy logic.
+   - "correction_applied": boolean flag if any hallucination was cleaned or hierarchy overrode the default.
 3. "mechanism_class"
-   - "label": one of ["Acute Mechanical Emergency", "Inflammatory Abdomen", "Toxicologic Syndrome", "Undifferentiated"]
+   - "label": one of the canonical labels
    - "confidence": number 0-1
 4. "risk_assessment"
    - "severity_score": number 0-1
-   - "emergency_level": MUST BE ONE OF ["CRITICAL", "HIGH", "MODERATE", "LOW"]
+   - "emergency_level": one of ["CRITICAL", "HIGH", "MODERATE", "LOW"]
 5. "diagnosis_feature_importance": object mapping features to weights
 6. "severity_feature_importance": object mapping features to weights
 7. "uncertainty_notes": array of strings
 
 ---
 CORE PRINCIPLE:
-Not all clinical signals are equal. Transform inference from "most matching symptoms" TO "most biologically coherent explanation".
+NO signal may influence diagnosis unless it is explicitly present or logically derived from input.
 
-HIERARCHAL TIERS:
-TIER 1 (HIGHEST PRIORITY — OVERRIDE SIGNALS):
-- Laboratory findings (BUN, creatinine, glucose, electrolytes)
-- Urinalysis (specific gravity, proteinuria, glucosuria)
-- Imaging results
-- Pathognomonic signs
-
-TIER 2 (SYNDROME CLUSTERS):
-- PU/PD, GI syndrome (vomiting + diarrhea), Respiratory syndrome, Neurological syndrome.
-
-TIER 3 (LOW PRIORITY):
-- Lethargy, Anorexia, Weight loss, Fever.
+HIERARCHY & WEIGHTING:
+- TIER 1 (LABS/IMAGING): Explicit signals MUST dominate (weight 1.0).
+- input_derived: Logically inferred from input (weight 0.5).
+- ontology_inferred: Generated from knowledge base but NOT in input (weight 0.2). CANNOT be a primary driver.
 
 ---
-REASONING STEPS YOU MUST FOLLOW:
+REASONING STEPS:
 
-STEP 1: SYNDROME DETECTION
-Group symptoms into dominant syndromes (e.g., polyuria + polydipsia → PU/PD syndrome).
+STEP 1: SIGNAL ORIGIN VALIDATION
+Classify every signal (Explicit, Derived, Inferred). Cap Inferred weights at 0.2.
 
-STEP 2: DIFFERENTIAL GATEWAY
-For each syndrome, generate candidate disease classes (e.g., PU/PD → Renal, Endocrine).
+STEP 2: HALLUCINATION DETECTION
+Scan for signals used in ranking that are ABSENT from input. If detected, remove from drivers and LOG ERROR: "HALLUCINATED SIGNAL DETECTED: [signal_name]".
 
-STEP 3: LAB PRIORITY OVERRIDE (CRITICAL)
-If TIER 1 signals are present, they MUST dominate ranking.
-- Elevated BUN + Creatinine + Isosthenuria → Favor CKD above all.
-- Hyperglycemia + Glucosuria → Favor Diabetes Mellitus above all.
+STEP 3: LAB PRIORITY ENFORCEMENT
+If (BUN ↑ AND Creatinine ↑ AND Isosthenuria) → CKD MUST rank #1 (Prob ≥ 0.5).
 
 STEP 4: NEGATIVE EVIDENCE PENALTY
-If a defining feature for a disease is missing, penalize heavily (e.g., Diabetes without hyperglycemia).
+Apply -0.3 to -0.5 penalty if defining features are missing (e.g., Diabetes without glucose evidence).
 
-STEP 5: TEMPORAL WEIGHTING
-Duration > 1 month → Favor chronic (CKD, endocrine). Acute onset → Favor AKI, Toxins.
+STEP 5: DUAL-SYSTEM GATING (ANTI-COLLAPSE)
+Keep Top 2 organ systems (e.g. Renal vs. Endocrine) active until final ranking. Prevent premature lock.
 
-STEP 6: SYSTEM CONSISTENCY CHECK
-Does the disease explain ALL major signals? Reward coherence, penalize partial matches.
+STEP 6: PRIMARY DRIVER CORRECTION
+Hierarchy: 1. Labs -> 2. Organ markers -> 3. Syndromes -> 4. Symptoms. Generic symptoms (vomiting) are FORBIDDEN as primary drivers.
 
-STEP 7: FINAL RANKING
-Recalculate probabilities based on lab dominance, syndrome alignment, and penalties.
+STEP 7: SYSTEM COHERENCE CHECK
+Reward full-system explanation, penalize partial matches.
+
+STEP 8: RANKING RECONSTRUCTION
+Recalculate probabilities based on validated signals, lab overrides, and penalties.
+
+STEP 9: FAIL-SAFE
+If hallucination influenced top 2 OR labs were underweighted, automatically override and re-calculate internally before output.
 
 ---
 ADDITIONAL RULES:
 1. CLOSED-WORLD DISEASE LIBRARY: diagnosis.top_differentials MUST contain ONLY exact names from:\n${closedWorldDiseaseLibrary}
 2. Target disease hints in metadata must be ignored.
-3. Contradictions detected below MUST reflect in confidence_score reduction and uncertainty_notes.
+3. Contradictions detected below MUST reflect in confidence_score reduction.
 ${contradictionBlock}`;
 
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
