@@ -52,7 +52,7 @@ export default function LoginPage() {
         if (turnstileSiteKey && !isBypassEnabled) {
             setCaptchaRequired(true);
         }
-    }, [turnstileSiteKey, isBypassEnabled]);
+    }, [turnstileSiteKey, isBypassEnabled, setCaptchaRequired]);
 
     useEffect(() => {
         if (status !== 'success' || !redirectPath) {
