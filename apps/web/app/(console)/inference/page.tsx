@@ -87,6 +87,8 @@ interface InferenceState {
     normalizedInput: NormalizedInput | null;
     diagnosticImages: UploadedArtifact[];
     labResults: UploadedArtifact[];
+    cire: CireState | null;
+    cireMessage: string | null;
     metrics: {
         inferenceTimeMs: number;
         confidenceHistory: { value: number }[];
@@ -264,6 +266,7 @@ export default function InferenceConsole() {
                 }
             };
 
+            const startTime = performance.now();
             const res = await fetch('/api/inference', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -279,6 +282,7 @@ export default function InferenceConsole() {
             } catch {
                 throw new Error(`Server returned HTTP ${res.status} without JSON. The request likely timed out or the API crashed before it could finish cleanly.`);
             }
+            const measuredLatencyMs = performance.now() - startTime;
 
             if (!res.ok) {
                 if (res.status === 401) {
@@ -337,7 +341,8 @@ export default function InferenceConsole() {
 
             pushLog('INFERENCE PIPELINE COMPLETE', 'success');
 
-            setState({
+            setState(prev => ({
+                ...prev,
                 status: 'success',
                 eventId: inferenceEventId,
                 requestPayload: data.input.input_signature as Record<string, unknown>,
@@ -373,8 +378,7 @@ export default function InferenceConsole() {
                     loadHistory: generateHistory(70, 20),
                     tempHistory: generateHistory(65, 5),
                 },
-                logs: state.logs, // Keep existing logs plus the ones we just added
-            });
+            }));
             setActiveTab('vectors');
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Unknown inference error.';
@@ -762,14 +766,14 @@ export default function InferenceConsole() {
                                         />
                                         <MetricCard 
                                             label="GPU Load" 
-                                            value={state.metrics?.loadHistory[state.metrics.loadHistory.length - 1]?.value.toFixed(0) || '--'} 
+                                            value={state.metrics ? state.metrics.loadHistory[state.metrics.loadHistory.length - 1].value.toFixed(0) : '--'} 
                                             unit="%"
                                             sparklineData={state.metrics?.loadHistory}
                                             color="#3b82f6"
                                         />
                                         <MetricCard 
                                             label="Temperature" 
-                                            value={state.metrics?.tempHistory[state.metrics.tempHistory.length - 1]?.value.toFixed(1) || '--'} 
+                                            value={state.metrics ? state.metrics.tempHistory[state.metrics.tempHistory.length - 1].value.toFixed(1) : '--'} 
                                             unit="°C"
                                             sparklineData={state.metrics?.tempHistory}
                                             color="#ef4444"
