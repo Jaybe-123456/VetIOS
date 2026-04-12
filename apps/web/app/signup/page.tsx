@@ -46,7 +46,6 @@ export default function SignupPage() {
     }, [isGoogleEmail]);
 
     useEffect(() => {
-        const isBypassEnabled = process.env.NEXT_PUBLIC_VETIOS_DEV_BYPASS === 'true';
         if (!isGoogleManagedFlow && turnstileSiteKey && !isBypassEnabled) {
             setCaptchaRequired(true);
         } else {
@@ -132,7 +131,7 @@ export default function SignupPage() {
                     setErrorMessage(rawError);
                 }
 
-                setCaptchaRequired(Boolean(payload?.captcha_required) || (turnstileSiteKey && !isBypassEnabled));
+                setCaptchaRequired(Boolean(payload?.captcha_required) || Boolean(turnstileSiteKey && !isBypassEnabled));
                 if (payload?.captcha_required || captchaToken || (turnstileSiteKey && !isBypassEnabled)) {
                     setCaptchaToken(null);
                     setCaptchaResetKey((prev) => prev + 1);
