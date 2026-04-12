@@ -122,9 +122,9 @@ export default function LoginPage() {
                     setErrorMessage(rawError);
                 }
 
-                setCaptchaRequired(Boolean(payload?.captcha_required) || (turnstileSiteKey && !isBypassEnabled));
+                setCaptchaRequired(Boolean(payload?.captcha_required) || Boolean(turnstileSiteKey && !isBypassEnabled));
                 setCaptchaToken(null);
-                setCaptchaResetKey((value) => value + 1);
+                setCaptchaResetKey((prev) => prev + 1);
                 return;
             }
 
