@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Database, Gauge, Network, ShieldCheck } from 'lucide-react';
 import { endpointCards } from '../data';
 import { EndpointCard, Reveal, SectionHeader } from '../shared';
@@ -13,6 +14,26 @@ export default function DeveloperInfraSection() {
                     title="API-first, typed, and observable."
                     description="The platform exposes clear runtime contracts, structured payloads, and direct operational signals for every major loop stage."
                 />
+
+                <p className="mt-5 max-w-3xl text-sm leading-7 text-white/55">
+                    Examples below match authenticated{' '}
+                    <code className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[11px] text-[#B9FFF0]">
+                        /api/*
+                    </code>{' '}
+                    routes (session cookies or platform scopes). External integrations typically use{' '}
+                    <code className="rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[11px] text-white/70">
+                        api.vetios.tech/v1
+                    </code>
+                    — see the{' '}
+                    <Link className="text-[#9AE4D1] underline decoration-[#38DCC6]/40 underline-offset-4 hover:text-white" href="/api-spec/openapi-v1.yaml">
+                        OpenAPI specification
+                    </Link>
+                    {' '}or{' '}
+                    <Link className="text-[#9AE4D1] underline decoration-[#38DCC6]/40 underline-offset-4 hover:text-white" href="/developer">
+                        developer hub
+                    </Link>
+                    .
+                </p>
 
                 <div className="mt-14 grid grid-cols-1 gap-6 xl:grid-cols-3">
                     {endpointCards.map((card) => (
@@ -40,6 +61,9 @@ export default function DeveloperInfraSection() {
                         );
                     })}
                 </div>
+                <p className="mt-4 text-center text-[11px] leading-relaxed text-white/38 sm:text-left">
+                    Throughput and retention figures are illustrative marketing examples, not live telemetry.
+                </p>
             </Reveal>
         </section>
     );
