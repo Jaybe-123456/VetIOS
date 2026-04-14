@@ -101,10 +101,10 @@ export const networkStats = [
 ] as const;
 
 export const systemMetrics = [
-    { label: 'P95 latency', value: '218 ms' },
-    { label: 'active traces', value: '18.4k' },
-    { label: 'simulation queue', value: '024' },
-    { label: 'model channel', value: 'v1.27' },
+    { label: 'P95 latency (illustrative)', value: '218 ms' },
+    { label: 'active traces (illustrative)', value: '18.4k' },
+    { label: 'simulation queue (illustrative)', value: '024' },
+    { label: 'model channel (illustrative)', value: 'v1.27' },
 ] as const;
 
 export const interfaceLogs = [
@@ -115,45 +115,79 @@ export const interfaceLogs = [
     '18:42:13 metrics.flushed     span=runtime.inference',
 ] as const;
 
+/**
+ * Shapes match Zod-validated Next.js routes (`lib/http/schemas.ts`).
+ * Production REST under `api.vetios.tech/v1` may differ — see OpenAPI.
+ */
 export const endpointCards = [
     {
         method: 'POST',
         path: '/api/inference',
         payload: `{
-  "signal_id": "sig_49F2A8",
-  "species": "canine",
-  "symptoms": ["vomiting", "lethargy"],
-  "labs": { "wbc": 4.1, "pcv": 29 }
+  "model": { "name": "VetIOS Diagnostics", "version": "latest" },
+  "input": {
+    "input_signature": {
+      "species": "canine",
+      "breed": "mixed",
+      "symptoms": ["vomiting", "lethargy"],
+      "metadata": { "age_years": 3, "labs": { "wbc": 4.1, "pcv": 29 } }
+    }
+  }
 }`,
-        response: '{ "run_id": "run_9A2C", "status": "accepted", "mode": "ranked_inference" }',
+        response: `{
+  "inference_event_id": "9f2c1b6a-…",
+  "data": { "confidence_score": 0.82, "differentials": [ … ] },
+  "cire": { "phi_hat": 0.71, "cps": 0.12, "safety_state": "nominal" },
+  "meta": { "tenant_id": "…", "request_id": "…" },
+  "error": null
+}`,
     },
     {
         method: 'POST',
         path: '/api/outcome',
         payload: `{
-  "case_id": "case_4XK3",
-  "resolution": "confirmed",
-  "label": "canine_parvovirus",
-  "confidence": 0.98
+  "inference_event_id": "11111111-1111-4111-8111-111111111111",
+  "outcome": {
+    "type": "confirmed_diagnosis",
+    "payload": {
+      "label": "canine_parvovirus",
+      "confidence": 0.98
+    },
+    "timestamp": "2026-04-14T12:00:00.000Z"
+  }
 }`,
-        response: '{ "event_id": "evt_2841", "status": "recorded", "learning_window": "open" }',
+        response: `{
+  "outcome_event_id": "evt_2841…",
+  "clinical_case_id": "case_4XK3…",
+  "linked_inference_event_id": "11111111-1111-4111-8111-111111111111",
+  "request_id": "…"
+}`,
     },
     {
         method: 'POST',
         path: '/api/simulate',
         payload: `{
-  "model": "inference-v1.27",
-  "scenario": "overlap_pressure",
-  "runs": 512,
-  "policy": "shadow"
+  "steps": 10,
+  "mode": "adaptive",
+  "base_case": {
+    "species": "canine",
+    "symptoms": ["vomiting", "lethargy"],
+    "metadata": { "wbc": 4.1, "pcv": 29 }
+  },
+  "inference": { "model": "gpt-4o-mini", "model_version": "gpt-4o-mini" }
 }`,
-        response: '{ "job_id": "sim_901A", "status": "queued", "estimated_seconds": 24 }',
+        response: `{
+  "simulation_event_id": "sim_901A…",
+  "clinical_case_id": "…",
+  "stability_report": { … },
+  "request_id": "…"
+}`,
     },
 ] as const;
 
 export const footerLinks = [
     { label: 'Docs', href: '/platform' },
-    { label: 'Contact', href: 'mailto:platform@vetios.ai' },
+    { label: 'Contact', href: 'mailto:platform@vetios.tech' },
 ] as const;
 
 export const networkPoints = [

@@ -45,13 +45,19 @@ export default function InterfacePreviewSection() {
 
                                 <div className="mt-5 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
                                     <div className="overflow-x-auto rounded-[22px] border border-white/8 bg-[#090D12] p-4 font-mono text-[10px] leading-6 text-[#9FB0C0] sm:text-[11px]">
-                                        <div className="mb-3 text-white/44">{'// case.input.json'}</div>
+                                        <div className="mb-3 text-white/44">{'// case.input.json (illustrative)'}</div>
                                         <div>{'{'}</div>
-                                        <div className="pl-4">{'"signal_id": "sig_49F2A8",'}</div>
-                                        <div className="pl-4">{'"species": "canine",'}</div>
-                                        <div className="pl-4">{'"symptoms": ["vomiting", "lethargy"],'}</div>
-                                        <div className="pl-4">{'"labs": { "wbc": 4.1, "pcv": 29 },'}</div>
-                                        <div className="pl-4">{'"context": { "hydration": "low" }'}</div>
+                                        <div className="pl-4">{'"model": { "name": "VetIOS Diagnostics", "version": "latest" },'}</div>
+                                        <div className="pl-4">{'"input": {'}</div>
+                                        <div className="pl-8">{'"input_signature": {'}</div>
+                                        <div className="pl-12">{'"species": "canine",'}</div>
+                                        <div className="pl-12">{'"symptoms": ["vomiting", "lethargy"],'}</div>
+                                        <div className="pl-12">{'"metadata": {'}</div>
+                                        <div className="pl-16">{'"labs": { "wbc": 4.1, "pcv": 29 },'}</div>
+                                        <div className="pl-16">{'"hydration": "low"'}</div>
+                                        <div className="pl-12">{'}'}</div>
+                                        <div className="pl-8">{'}'}</div>
+                                        <div className="pl-4">{'}'}</div>
                                         <div>{'}'}</div>
                                     </div>
 
@@ -84,15 +90,20 @@ export default function InterfacePreviewSection() {
                                 </div>
                             </Panel>
 
-                            <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                                {systemMetrics.map((metric) => (
-                                    <div key={metric.label} className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
-                                        <div className="text-[10px] uppercase tracking-[0.24em] text-white/35">{metric.label}</div>
-                                        <div className="mt-3 text-lg font-medium tracking-[-0.03em] text-white sm:text-xl">
-                                            {metric.value}
+                            <div>
+                                <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+                                    {systemMetrics.map((metric) => (
+                                        <div key={metric.label} className="rounded-[24px] border border-white/10 bg-white/[0.03] p-4">
+                                            <div className="text-[10px] uppercase tracking-[0.24em] text-white/35">{metric.label}</div>
+                                            <div className="mt-3 text-lg font-medium tracking-[-0.03em] text-white sm:text-xl">
+                                                {metric.value}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
+                                <p className="mt-3 text-[10px] text-white/35 sm:text-[11px]">
+                                    Console metrics above are static examples for the landing preview, not real-time production numbers.
+                                </p>
                             </div>
                         </div>
 
