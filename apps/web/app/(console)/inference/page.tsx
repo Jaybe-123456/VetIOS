@@ -613,7 +613,7 @@ export default function InferenceConsole() {
                             </ConsoleCard>
 
                             {state.cire && (
-                                <ConsoleCard title="CIRE Reliability">
+                                <ConsoleCard title="CIRE RELIABILITY">
                                     <div className="grid grid-cols-[88px,1fr] gap-4 items-center">
                                         <div className="relative w-[88px] h-[88px] rounded-full border border-accent/30 flex items-center justify-center">
                                             <div
@@ -630,8 +630,9 @@ export default function InferenceConsole() {
                                         <div className="space-y-3">
                                             <div className="flex items-center justify-between gap-3 font-mono text-xs uppercase tracking-widest">
                                                 <span className="text-muted">Badge</span>
-                                                <span className={cireTone(state.cire.reliability_badge)}>
-                                                    {renderCireBadge(state.cire.reliability_badge)}
+                                                <span className={`flex items-center gap-2 ${cireTone(state.cire.reliability_badge)}`}>
+                                                    <CireReliabilityGlyph badge={state.cire.reliability_badge} />
+                                                    {cireBadgeLabel(state.cire.reliability_badge)}
                                                 </span>
                                             </div>
                                             <div>
@@ -700,7 +701,7 @@ export default function InferenceConsole() {
                                         </div>
                                     ) : null}
                                     <div className="flex flex-wrap gap-3">
-                                        <TerminalButton onClick={() => window.open('/dashboard', '_self')}>
+                                        <TerminalButton onClick={() => window.open('/dashboard?tab=cire', '_self')}>
                                             Review Incident
                                         </TerminalButton>
                                         <TerminalButton variant="danger" onClick={handleCireOverride}>
@@ -756,11 +757,16 @@ export default function InferenceConsole() {
                                         <div className="space-y-5">
                                             {state.probabilities.map((p, i) => (
                                                 <div key={i} className="flex flex-col gap-2">
-                                                    <div className="flex items-center justify-between font-mono text-xs sm:text-sm">
-                                                        <span className={`${i === 0 ? 'text-accent font-bold' : 'text-foreground/70'}`}>
-                                                            {p.label}
+                                                    <div className="flex items-center justify-between font-mono text-xs sm:text-sm gap-2">
+                                                        <span className={`flex items-center gap-2 min-w-0 ${i === 0 ? 'text-accent font-bold' : 'text-foreground/70'}`}>
+                                                            {state.cire ? (
+                                                                <span className="shrink-0" title={`CIRE ${state.cire.reliability_badge}`}>
+                                                                    <CireReliabilityGlyph badge={state.cire.reliability_badge} />
+                                                                </span>
+                                                            ) : null}
+                                                            <span className="truncate">{p.label}</span>
                                                         </span>
-                                                        <span className={`${i === 0 ? 'text-accent font-bold' : 'text-muted'}`}>
+                                                        <span className={`shrink-0 ${i === 0 ? 'text-accent font-bold' : 'text-muted'}`}>
                                                             {(p.value * 100).toFixed(0)}%
                                                         </span>
                                                     </div>
@@ -1085,11 +1091,41 @@ export default function InferenceConsole() {
     );
 }
 
-function renderCireBadge(badge: CireState['reliability_badge']) {
-    if (badge === 'HIGH') return 'GREEN CIRCLE  HIGH';
-    if (badge === 'REVIEW') return 'AMBER DIAMOND  REVIEW';
-    if (badge === 'CAUTION') return 'RED TRIANGLE  CAUTION';
-    return 'RED X BLOCK  SUPPRESSED';
+function cireBadgeLabel(badge: CireState['reliability_badge']) {
+    if (badge === 'HIGH') return 'HIGH';
+    if (badge === 'REVIEW') return 'REVIEW';
+    if (badge === 'CAUTION') return 'CAUTION';
+    return 'SUPPRESSED';
+}
+
+function CireReliabilityGlyph({ badge }: { badge: CireState['reliability_badge'] }) {
+    const common = 'shrink-0';
+    if (badge === 'HIGH') {
+        return (
+            <svg className={`${common} text-emerald-400`} width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+                <circle cx="8" cy="8" r="6" fill="currentColor" />
+            </svg>
+        );
+    }
+    if (badge === 'REVIEW') {
+        return (
+            <svg className={`${common} text-amber-400`} width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+                <path fill="currentColor" d="M8 2l5 6-5 6-5-6z" />
+            </svg>
+        );
+    }
+    if (badge === 'CAUTION') {
+        return (
+            <svg className={`${common} text-orange-500`} width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+                <path fill="currentColor" d="M8 1L15 14H1z" />
+            </svg>
+        );
+    }
+    return (
+        <svg className={`${common} text-red-500`} width="14" height="14" viewBox="0 0 16 16" aria-hidden>
+            <path stroke="currentColor" strokeWidth="2" fill="none" d="M4 4l8 8M12 4l-8 8" />
+        </svg>
+    );
 }
 
 function cireTone(badge: CireState['reliability_badge']) {

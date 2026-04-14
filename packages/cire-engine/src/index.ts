@@ -133,33 +133,39 @@ const BIOMARKER_RANGES: Record<string, [number, number]> = {
     sodium: [80, 220],
 };
 
+/**
+ * Φ̂ = 1 − H(D) / log(|D|), where |D| is the cardinality of the differential (input length).
+ * H(D) = −Σ pᵢ log pᵢ over normalized probabilities (zeros contribute nothing).
+ */
 export function computePhiHat(differentialVector: number[]): number {
-    const vector = differentialVector
-        .filter((value) => Number.isFinite(value) && value > 0);
-
-    if (vector.length === 0) {
+    const n = differentialVector.length;
+    if (n <= 0) {
         return 0;
     }
-    if (vector.length === 1) {
-        return 1;
+    if (n === 1) {
+        const v = differentialVector[0];
+        return Number.isFinite(v) && v > 0 ? 1 : 0;
     }
 
-    const total = vector.reduce((sum, value) => sum + value, 0);
+    const sanitized = differentialVector.map((value) =>
+        (Number.isFinite(value) && value > 0 ? value : 0),
+    );
+    const total = sanitized.reduce((sum, value) => sum + value, 0);
     if (total <= 0) {
         return 0;
     }
 
-    const normalized = vector.map((value) => value / total);
-    const entropy = normalized.reduce((sum, probability) => {
-        if (probability <= 0) return sum;
-        return sum - (probability * Math.log(probability));
+    const normalized = sanitized.map((value) => value / total);
+    const entropy = normalized.reduce((sum, p) => {
+        if (p <= 0) return sum;
+        return sum - (p * Math.log(p));
     }, 0);
-    const normalizer = Math.log(normalized.length);
-    if (!Number.isFinite(normalizer) || normalizer <= 0) {
+    const denom = Math.log(n);
+    if (!Number.isFinite(denom) || denom <= 0) {
         return 1;
     }
 
-    return clamp01(1 - (entropy / normalizer));
+    return clamp01(1 - (entropy / denom));
 }
 
 export function computeInputMHat(inputPayload: InferenceInput): number {

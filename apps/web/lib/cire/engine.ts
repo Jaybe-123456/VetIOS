@@ -282,7 +282,6 @@ export async function getCireStatus(
             blocked: countByState(last24h, 'blocked'),
         },
         incident_count_7d: incidentCount7d,
-        schema_available: !snapshotsError && !incidentsError,
         calibration_status: !profile
             ? 'uncalibrated'
             : activeModel && profile.model_version !== activeModel
