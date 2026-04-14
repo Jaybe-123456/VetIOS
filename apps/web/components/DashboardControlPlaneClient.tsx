@@ -166,6 +166,15 @@ export default function DashboardControlPlaneClient() {
     }, []);
 
     useEffect(() => {
+        if (typeof window !== 'undefined') {
+            const tab = new URLSearchParams(window.location.search).get('tab');
+            if (tab === 'cire') {
+                setActiveTab('cire');
+            }
+        }
+    }, []);
+
+    useEffect(() => {
         void refreshSnapshot(true);
         void refreshCire();
         const interval = window.setInterval(() => {

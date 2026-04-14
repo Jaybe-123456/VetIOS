@@ -744,7 +744,13 @@ export async function POST(req: Request) {
                 prediction: null,
                 output: null,
                 data: null,
-                cire: cirePayload,
+                cire: {
+                    phi_hat: cirePayload.phi_hat,
+                    cps: cirePayload.cps,
+                    safety_state: 'blocked' as const,
+                    reliability_badge: 'SUPPRESSED' as const,
+                    incident_id: cirePayload.incident_id,
+                },
                 meta: {
                     tenant_id: tenantId,
                     timestamp: new Date().toISOString(),
@@ -756,7 +762,7 @@ export async function POST(req: Request) {
                     message: `Output suppressed by CIRE safety layer. Collapse proximity score: ${cirePayload.cps}. Manual review required.`,
                 },
                 request_id: requestId,
-            });
+            }, { status: 200 });
             withRequestHeaders(response.headers, requestId, startTime);
             return response;
         }
