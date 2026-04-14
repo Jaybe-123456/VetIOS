@@ -144,7 +144,7 @@ export function computePhiHat(differentialVector: number[]): number {
     }
     if (n === 1) {
         const v = differentialVector[0];
-        return Number.isFinite(v) && v > 0 ? 1 : 0;
+        return v != null && Number.isFinite(v) && v > 0 ? 1 : 0;
     }
 
     const sanitized = differentialVector.map((value) =>
