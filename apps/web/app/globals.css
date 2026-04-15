@@ -76,9 +76,9 @@
   --text-primary: #f0fdf4;
   --text-secondary: #86efac;
   --text-muted: #4ade80;
-  --text-ghost: #166534;
-  --border-subtle: rgba(34, 197, 94, 0.12);
-  --border-default: rgba(34, 197, 94, 0.25);
+  --text-ghost: #2f7a4a;
+  --border-subtle: rgba(34, 197, 94, 0.2);
+  --border-default: rgba(34, 197, 94, 0.35);
   --border-active: rgba(34, 197, 94, 0.6);
   --border-bright: #22c55e;
 

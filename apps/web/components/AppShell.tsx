@@ -58,12 +58,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             <div className="flex-1 flex flex-col h-full overflow-hidden bg-background">
                 <header className="h-[52px] border-b border-grid bg-panel px-4 md:px-6 shrink-0 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-4 min-w-0">
-                        <button onClick={handleToggle} className="lg:hidden text-[var(--text-ghost)] hover:text-[var(--text-muted)] transition-all" aria-label="Toggle sidebar">
+                        <button onClick={handleToggle} className="lg:hidden text-[var(--text-secondary)]/70 hover:text-[var(--green-glow)] transition-all" aria-label="Toggle sidebar">
                             {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
                         </button>
                         <div className="hidden md:flex flex-col leading-none">
                             <span className="font-mono text-[18px] font-bold tracking-[0.06em] text-[var(--green-glow)]">VET_IOS //</span>
-                            <span className="text-[8px] tracking-[0.2em] text-[var(--text-ghost)]">V1.0 OMEGA</span>
+                            <span className="text-[8px] tracking-[0.2em] text-[var(--text-secondary)]/70">V1.0 OMEGA</span>
                         </div>
                         <div className="hidden md:block h-6 w-px bg-[var(--border-subtle)]" />
                         <div className="font-mono text-[10px] tracking-[0.14em] text-[var(--text-secondary)] truncate">

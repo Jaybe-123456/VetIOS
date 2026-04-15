@@ -79,13 +79,13 @@ export default function Sidebar({ onClose, isMobile }: SidebarProps) {
             <div className="h-[72px] px-4 py-3 border-b border-grid flex items-center justify-between">
                 <div className="leading-none">
                     <div className="font-mono text-[20px] font-bold tracking-[0.08em] text-[var(--green-glow)] sidebar-label">VET_IOS //</div>
-                    <div className="font-mono text-[9px] tracking-[0.2em] text-[var(--text-ghost)] sidebar-label">V1.0 OMEGA</div>
+                    <div className="font-mono text-[9px] tracking-[0.2em] text-[var(--text-secondary)]/60 sidebar-label">V1.0 OMEGA</div>
                 </div>
                 {isMobile && <button onClick={onClose} className="text-[var(--text-ghost)] hover:text-[var(--text-muted)]"><X className="w-4 h-4" /></button>}
             </div>
 
             <div className="pt-4">
-                <div className="px-4 pb-2 text-[8px] tracking-[0.2em] text-[var(--text-ghost)] sidebar-label">NAVIGATION</div>
+                <div className="px-4 pb-2 text-[8px] tracking-[0.2em] text-[var(--text-secondary)]/60 sidebar-label">NAVIGATION</div>
                 <nav className="flex flex-col">
                     {navItems.map((item) => {
                         const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -96,9 +96,9 @@ export default function Sidebar({ onClose, isMobile }: SidebarProps) {
                                 href={item.href}
                                 onClick={isMobile ? onClose : undefined}
                                 title={item.name.toUpperCase()}
-                                className={`relative h-10 px-4 flex items-center gap-2 transition-all duration-150 border-l-2 ${active ? 'bg-[var(--green-dim)] border-l-[var(--green-bright)] text-[var(--green-glow)]' : 'border-l-transparent text-[var(--text-ghost)] hover:text-[var(--text-muted)] hover:bg-[var(--bg-elevated)]'}`}
+                                className={`relative h-10 px-4 flex items-center gap-2 transition-all duration-150 border-l-2 ${active ? 'bg-[var(--green-dim)] border-l-[var(--green-bright)] text-[var(--green-glow)]' : 'border-l-transparent text-[var(--text-secondary)]/70 hover:text-[var(--green-glow)] hover:bg-[var(--bg-elevated)]'}`}
                             >
-                                <Icon className={`w-[14px] h-[14px] ${active ? 'text-[var(--green-bright)]' : 'text-[var(--text-ghost)]'}`} />
+                                <Icon className={`w-[14px] h-[14px] ${active ? 'text-[var(--green-bright)]' : 'text-[var(--text-secondary)]/70'}`} />
                                 <span className="sidebar-label font-mono text-[10px] tracking-[0.12em] uppercase">{item.name}</span>
                                 {active && <span className="absolute right-4 h-1 w-1 bg-[var(--green-bright)]" />}
                             </Link>
@@ -111,9 +111,9 @@ export default function Sidebar({ onClose, isMobile }: SidebarProps) {
                 <div className="flex items-center gap-2 text-[9px] font-mono tracking-[0.16em] text-[var(--text-secondary)]">
                     <span className="h-1 w-1 bg-[var(--green-bright)] animate-pulse-dot" />
                     <span className="sidebar-label">OPERATIONAL</span>
-                    <span className="text-[var(--text-ghost)] sidebar-label">{uptimeLabel}</span>
+                    <span className="text-[var(--text-secondary)]/70 sidebar-label">{uptimeLabel}</span>
                 </div>
-                <div className="mt-2 font-mono text-[9px] text-[var(--text-ghost)] sidebar-label">
+                <div className="mt-2 font-mono text-[9px] text-[var(--text-secondary)]/60 sidebar-label">
                     INF: {snapshotStats.inf} · EVT: {snapshotStats.evt} · ERR: {snapshotStats.err}
                 </div>
             </div>

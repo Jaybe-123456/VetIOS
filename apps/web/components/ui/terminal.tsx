@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
 
 export function TerminalLabel({ children, htmlFor }: { children: React.ReactNode, htmlFor?: string }) {
     return (
-        <label htmlFor={htmlFor} className="mb-2 block border-l-2 border-[var(--green-mid)] pl-2 font-mono text-[9px] uppercase tracking-[0.16em] text-[var(--text-ghost)]">
+        <label htmlFor={htmlFor} className="mb-2 block border-l-2 border-[var(--green-mid)] pl-2 font-mono text-[9px] uppercase tracking-[0.16em] text-[var(--text-secondary)]/75">
             {children}
         </label>
     );
@@ -14,7 +14,7 @@ export function TerminalLabel({ children, htmlFor }: { children: React.ReactNode
 export function TerminalInput({ className = '', ...props }: React.InputHTMLAttributes<HTMLInputElement>) {
     return (
         <input
-            className={`h-9 w-full rounded-[3px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 font-mono text-[12px] text-[var(--green-glow)] placeholder:text-[var(--text-ghost)] transition-all duration-150 focus:border-[var(--green-bright)] focus:bg-[var(--bg-overlay)] focus:outline-none ${className}`}
+            className={`h-9 w-full rounded-[3px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-3 font-mono text-[12px] text-[var(--green-glow)] placeholder:text-[var(--text-secondary)]/75 transition-all duration-150 focus:border-[var(--green-bright)] focus:bg-[var(--bg-overlay)] focus:outline-none ${className}`}
             {...props}
         />
     );
@@ -23,7 +23,7 @@ export function TerminalInput({ className = '', ...props }: React.InputHTMLAttri
 export function TerminalTextarea({ className = '', ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
     return (
         <textarea
-            className={`min-h-[120px] w-full resize-y rounded-[3px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 font-mono text-[12px] text-[var(--green-glow)] placeholder:text-[var(--text-ghost)] transition-all duration-150 focus:border-[var(--green-bright)] focus:bg-[var(--bg-overlay)] focus:outline-none ${className}`}
+            className={`min-h-[120px] w-full resize-y rounded-[3px] border border-[var(--border-subtle)] bg-[var(--bg-elevated)] p-3 font-mono text-[12px] text-[var(--green-glow)] placeholder:text-[var(--text-secondary)]/75 transition-all duration-150 focus:border-[var(--green-bright)] focus:bg-[var(--bg-overlay)] focus:outline-none ${className}`}
             {...props}
         />
     );
@@ -62,7 +62,7 @@ export function PageHeader({ title, description }: { title: string, description?
 export function DataRow({ label, value }: { label: string, value: React.ReactNode }) {
     return (
         <div className="flex min-w-0 items-start justify-between gap-4 border-b border-[var(--border-subtle)] py-2">
-            <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.16em] text-[var(--text-ghost)]">{label}</span>
+            <span className="shrink-0 font-mono text-[9px] uppercase tracking-[0.16em] text-[var(--text-secondary)]/75">{label}</span>
             <span className="min-w-0 flex-1 break-all text-right font-mono text-[11px] text-[var(--text-secondary)]">{value}</span>
         </div>
     );
@@ -97,11 +97,11 @@ export function ConsoleCard({
                     {(collapsible || maximized) ? (
                         <div className="flex items-center gap-1">
                             {collapsible ? (
-                                <button onClick={(e) => { e.stopPropagation(); setCollapsed((p) => !p); }} className="p-1 text-[var(--text-ghost)] hover:text-[var(--text-muted)]">
+                                <button onClick={(e) => { e.stopPropagation(); setCollapsed((p) => !p); }} className="p-1 text-[var(--text-secondary)]/75 hover:text-[var(--text-muted)]">
                                     {collapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
                                 </button>
                             ) : null}
-                            <button onClick={(e) => { e.stopPropagation(); setMaximized((p) => !p); }} className="hidden p-1 text-[var(--text-ghost)] hover:text-[var(--text-muted)] sm:block">
+                            <button onClick={(e) => { e.stopPropagation(); setMaximized((p) => !p); }} className="hidden p-1 text-[var(--text-secondary)]/75 hover:text-[var(--text-muted)] sm:block">
                                 {maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
                             </button>
                         </div>
@@ -131,7 +131,7 @@ export function TerminalTabs<T extends string>({ tabs, activeTab, onTabChange, c
                         key={tab.id}
                         type="button"
                         onClick={() => onTabChange(tab.id)}
-                        className={`inline-flex h-[34px] items-center gap-2 rounded-[3px] border px-4 font-mono text-[10px] uppercase tracking-[0.12em] transition-all duration-150 ${active ? 'border-[var(--green-mid)] bg-[var(--green-dim)] text-[var(--green-glow)]' : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-ghost)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text-muted)]'}`}
+                        className={`inline-flex h-[34px] items-center gap-2 rounded-[3px] border px-4 font-mono text-[10px] uppercase tracking-[0.12em] transition-all duration-150 ${active ? 'border-[var(--green-mid)] bg-[var(--green-dim)] text-[var(--green-glow)]' : 'border-[var(--border-subtle)] bg-[var(--bg-surface)] text-[var(--text-secondary)]/75 hover:bg-[var(--bg-elevated)] hover:text-[var(--text-muted)]'}`}
                     >
                         {tab.icon}
                         {tab.label}

@@ -38,14 +38,14 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                             key={m.key}
                             type="button"
                             onClick={() => onModeChange(m.key)}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 font-mono text-[10px] uppercase tracking-[0.14em] transition-all duration-150 ${inputMode === m.key ? 'bg-[var(--green-dim)] text-[var(--green-glow)] border-r border-[var(--green-bright)]' : 'bg-transparent text-[var(--text-ghost)] hover:bg-[var(--bg-elevated)]'}`}
+                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 font-mono text-[10px] uppercase tracking-[0.14em] transition-all duration-150 ${inputMode === m.key ? 'bg-[var(--green-dim)] text-[var(--green-glow)] border-r border-[var(--green-bright)]' : 'bg-transparent text-[var(--text-secondary)]/70 hover:bg-[var(--bg-elevated)]'}`}
                         >
                             {m.icon}
                             <span>{m.label}</span>
                         </button>
                     ))}
                 </div>
-                <p className="mt-1.5 font-sans text-[12px] text-[var(--text-ghost)]">{MODES.find((m) => m.key === inputMode)?.desc}</p>
+                <p className="mt-1.5 font-sans text-[12px] text-[var(--text-secondary)]/70">{MODES.find((m) => m.key === inputMode)?.desc}</p>
             </div>
 
             {inputMode === 'structured' && (
@@ -86,12 +86,12 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <label className="border border-dashed border-[var(--border-default)] bg-[var(--bg-elevated)] p-4 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-[var(--green-mid)] hover:bg-[var(--green-dim)] transition-all duration-150 group">
                             <input type="file" id="diagnostic-img" name="diagnostic-img" accept="image/*" className="hidden" onChange={(e) => setImgFile(e.target.files?.[0] || null)} />
-                            {imgFile ? <><ImageIcon className="w-5 h-5 text-[var(--green-glow)]" /><span className="font-mono text-[10px] text-[var(--green-glow)] truncate max-w-[160px]">{imgFile.name}</span></> : <><UploadCloud className="w-5 h-5 text-[var(--text-ghost)] group-hover:text-[var(--green-mid)]" /><span className="font-mono text-[10px] text-[var(--text-ghost)]">UPLOAD DIAGNOSTIC IMG</span></>}
+                            {imgFile ? <><ImageIcon className="w-5 h-5 text-[var(--green-glow)]" /><span className="font-mono text-[10px] text-[var(--green-glow)] truncate max-w-[160px]">{imgFile.name}</span></> : <><UploadCloud className="w-5 h-5 text-[var(--text-secondary)]/70 group-hover:text-[var(--green-mid)]" /><span className="font-mono text-[10px] text-[var(--text-secondary)]/70">UPLOAD DIAGNOSTIC IMG</span></>}
                         </label>
 
                         <label className="border border-dashed border-[var(--border-default)] bg-[var(--bg-elevated)] p-4 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-[var(--green-mid)] hover:bg-[var(--green-dim)] transition-all duration-150 group">
                             <input type="file" id="lab-results" name="lab-results" accept=".pdf,.xml,.json,.txt" className="hidden" onChange={(e) => setDocFile(e.target.files?.[0] || null)} />
-                            {docFile ? <><File className="w-5 h-5 text-[var(--green-glow)]" /><span className="font-mono text-[10px] text-[var(--green-glow)] truncate max-w-[160px]">{docFile.name}</span></> : <><UploadCloud className="w-5 h-5 text-[var(--text-ghost)] group-hover:text-[var(--green-mid)]" /><span className="font-mono text-[10px] text-[var(--text-ghost)]">ATTACH LAB RESULTS</span></>}
+                            {docFile ? <><File className="w-5 h-5 text-[var(--green-glow)]" /><span className="font-mono text-[10px] text-[var(--green-glow)] truncate max-w-[160px]">{docFile.name}</span></> : <><UploadCloud className="w-5 h-5 text-[var(--text-secondary)]/70 group-hover:text-[var(--green-mid)]" /><span className="font-mono text-[10px] text-[var(--text-secondary)]/70">ATTACH LAB RESULTS</span></>}
                         </label>
                     </div>
 
