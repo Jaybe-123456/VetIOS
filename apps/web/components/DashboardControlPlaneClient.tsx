@@ -361,35 +361,35 @@ export default function DashboardControlPlaneClient() {
                 </div>
 
                 {/* ── Control Plane Operations HUD ── */}
-                <ConsoleCard title="Control Plane Core Operations" className="mt-4 border-accent shadow-[0_0_15px_rgba(0,255,65,0.15)] bg-background" collapsible defaultCollapsed={false}>
+                <ConsoleCard title="CONTROL PLANE CORE OPERATIONS" className="mt-4" collapsible defaultCollapsed={false}>
                     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
-                        <button type="button" onClick={() => void refreshSnapshot(false)} className="col-span-2 xl:col-span-1 border border-accent/60 shadow-[0_0_10px_rgba(0,255,65,0.2)] bg-accent/5 hover:bg-accent hover:text-black text-accent flex flex-col items-center justify-center gap-2 h-full py-5 transition-all text-[10px] sm:text-xs font-mono uppercase tracking-widest disabled:opacity-50">
+                        <button type="button" onClick={() => void refreshSnapshot(false)} className="col-span-2 xl:col-span-1 h-[100px] rounded-[4px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-active)] hover:bg-[var(--bg-elevated)] text-[var(--green-glow)] flex flex-col items-center justify-center gap-2 py-5 transition-all duration-150 text-[10px] font-mono uppercase tracking-[0.1em] disabled:opacity-50">
                             <Activity className={`w-6 h-6 ${refreshing ? 'animate-spin' : ''}`} />
                             {refreshing ? 'REFRESHING...' : 'REFRESH\nSNAPSHOT'}
                         </button>
-                        <Link href="/settings" className="border border-grid hover:border-accent/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
-                            <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Route className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">Outbox Ops</div>
+                        <Link href="/settings" className="h-[100px] rounded-[4px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-active)] hover:bg-[var(--bg-elevated)] flex flex-col justify-between p-3 transition-all duration-150 group">
+                            <div className="text-[var(--green-bright)]"><Route className="w-6 h-6" /></div>
+                            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-secondary)]">Outbox Ops</div>
                         </Link>
-                        <Link href="/settings" className="border border-grid hover:border-accent/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
-                            <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Workflow className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">Federation Ops</div>
+                        <Link href="/settings" className="h-[100px] rounded-[4px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-active)] hover:bg-[var(--bg-elevated)] flex flex-col justify-between p-3 transition-all duration-150 group">
+                            <div className="text-[var(--green-bright)]"><Workflow className="w-6 h-6" /></div>
+                            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-secondary)]">Federation Ops</div>
                         </Link>
                         <Link href="/settings" className="border border-grid hover:border-[#ffcc00]/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
-                            <div className="text-[#ffcc00] group-hover:drop-shadow-[0_0_8px_rgba(255,204,0,0.8)]"><Database className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">PetPass Ops</div>
+                            <div className="text-[var(--amber-bright)]"><Database className="w-6 h-6" /></div>
+                            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-secondary)]">PetPass Ops</div>
                         </Link>
-                        <Link href="/settings" className="border border-grid hover:border-accent/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
-                            <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Network className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">Partner Ops</div>
+                        <Link href="/settings" className="h-[100px] rounded-[4px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-active)] hover:bg-[var(--bg-elevated)] flex flex-col justify-between p-3 transition-all duration-150 group">
+                            <div className="text-[var(--green-bright)]"><Network className="w-6 h-6" /></div>
+                            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-secondary)]">Partner Ops</div>
                         </Link>
-                        <Link href="/settings" className="border border-grid hover:border-accent/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
-                            <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><ShieldAlert className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">Trust Ops</div>
+                        <Link href="/settings" className="h-[100px] rounded-[4px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-active)] hover:bg-[var(--bg-elevated)] flex flex-col justify-between p-3 transition-all duration-150 group">
+                            <div className="text-[var(--green-bright)]"><ShieldAlert className="w-6 h-6" /></div>
+                            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-secondary)]">Trust Ops</div>
                         </Link>
-                        <Link href="/settings" className="border border-danger/50 hover:border-danger bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
-                            <div className="text-danger group-hover:drop-shadow-[0_0_8px_rgba(255,0,0,0.8)]"><Cpu className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-danger group-hover:text-white">Edge Ops</div>
+                        <Link href="/settings" className="h-[100px] rounded-[4px] border border-[var(--border-subtle)] bg-[var(--bg-surface)] hover:border-[var(--border-active)] hover:bg-[var(--bg-elevated)] flex flex-col justify-between p-3 transition-all duration-150 group">
+                            <div className="text-[var(--green-bright)]"><Cpu className="w-6 h-6" /></div>
+                            <div className="font-mono text-[10px] uppercase tracking-[0.1em] text-[var(--text-secondary)]">Edge Ops</div>
                         </Link>
                     </div>
 
@@ -402,8 +402,8 @@ export default function DashboardControlPlaneClient() {
                                 N-UPDATE: <span className="text-foreground">{formatTimestampOrState(lastTopologyUpdate, topologyStreamStatus)}</span>
                             </span>
                         </div>
-                        <div className="flex items-center gap-2 text-accent mt-2 sm:mt-0 drop-shadow-[0_0_3px_rgba(0,255,65,0.5)]">
-                            <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+                        <div className="flex items-center gap-2 text-[var(--green-glow)] mt-2 sm:mt-0">
+                            <div className="w-2 h-2 rounded-full bg-[var(--green-bright)] animate-pulse-dot" />
                             {snapshot?.refreshed_at
                                 ? `SYNCED ${new Date(snapshot.refreshed_at).toLocaleTimeString()}`
                                 : loadingWithoutData

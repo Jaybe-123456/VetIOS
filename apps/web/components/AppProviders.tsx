@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ThemeProvider } from 'next-themes';
 import { Toaster } from 'sonner';
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
@@ -20,10 +19,20 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
     return (
         <QueryClientProvider client={queryClient}>
-            <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false} forcedTheme="dark">
-                {children}
-                <Toaster richColors closeButton position="top-right" theme="dark" />
-            </ThemeProvider>
+            {children}
+            <Toaster
+                position="bottom-right"
+                toastOptions={{
+                    style: {
+                        background: 'hsl(var(--card))',
+                        border: '1px solid hsl(var(--border))',
+                        color: 'hsl(var(--foreground))',
+                        fontFamily: 'JetBrains Mono, monospace',
+                        fontSize: '12px',
+                        borderRadius: '8px',
+                    },
+                }}
+            />
         </QueryClientProvider>
     );
 }

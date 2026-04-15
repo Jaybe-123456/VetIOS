@@ -447,7 +447,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
             {isOpen && (
                 <>
                     <div
-                        className="fixed inset-0 z-40 bg-black/40 backdrop-blur-md animate-fade-in"
+                        className="fixed inset-0 z-40 bg-black/70 animate-fade-in"
                         onClick={() => setIsOpen(false)}
                         aria-hidden="true"
                     />

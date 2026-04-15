@@ -1,13 +1,9 @@
 import type { Metadata } from 'next';
-import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import AppShell from '@/components/AppShell';
 import { AppProviders } from '@/components/AppProviders';
 import { getConfiguredSiteOrigin, shouldIndexSite } from '@/lib/site';
-import { cn } from '@/lib/utils';
 
-const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
-const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-geist-mono' });
 const siteOrigin = getConfiguredSiteOrigin();
 const allowIndexing = shouldIndexSite();
 
@@ -40,13 +36,9 @@ export const metadata: Metadata = {
         },
 };
 
-export default function RootLayout({
-    children,
-}: {
-    children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
-        <html lang="en" suppressHydrationWarning className={cn(inter.variable, jetbrainsMono.variable, 'font-mono')}>
+        <html lang="en" suppressHydrationWarning className="dark font-mono">
             <body className="h-screen w-screen overflow-hidden flex bg-background text-foreground">
                 <AppProviders>
                     <AppShell>{children}</AppShell>
