@@ -18,13 +18,13 @@
 
 @layer base {
   body {
-    @apply font-sans antialiased selection:bg-accent selection:text-black bg-background text-foreground;
+    @apply font-mono antialiased selection:bg-accent selection:text-black bg-background text-foreground;
   }
   * {
     @apply border-border outline-ring/50;
   }
   html {
-    @apply font-sans;
+    @apply font-mono;
   }
 }
 
@@ -109,9 +109,7 @@
 .sidebar-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  background: rgba(0, 0, 0, 0.8);
   z-index: 40;
 }
 
