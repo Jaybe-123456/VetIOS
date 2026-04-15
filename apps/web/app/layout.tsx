@@ -2,7 +2,9 @@ import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import './globals.css';
 import AppShell from '@/components/AppShell';
+import { AppProviders } from '@/components/AppProviders';
 import { getConfiguredSiteOrigin, shouldIndexSite } from '@/lib/site';
+import { cn } from '@/lib/utils';
 
 const inter = Inter({ subsets: ['latin'], variable: '--font-inter' });
 const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-geist-mono' });
@@ -44,11 +46,11 @@ export default function RootLayout({
     children: React.ReactNode;
 }) {
     return (
-        <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+        <html lang="en" suppressHydrationWarning className={cn(inter.variable, jetbrainsMono.variable, 'font-sans')}>
             <body className="h-screen w-screen overflow-hidden flex bg-background text-foreground">
-                <AppShell>
-                    {children}
-                </AppShell>
+                <AppProviders>
+                    <AppShell>{children}</AppShell>
+                </AppProviders>
             </body>
         </html>
     );
