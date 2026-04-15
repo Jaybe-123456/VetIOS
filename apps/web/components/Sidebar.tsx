@@ -75,17 +75,17 @@ export default function Sidebar({ onClose, isMobile }: SidebarProps) {
     }, [uptimeSeconds]);
 
     return (
-        <aside className={`${isMobile ? 'w-full h-full' : 'w-[220px] xl:w-[220px] min-[1280px]:w-[48px] min-[1440px]:w-[220px]'} border-r border-grid bg-panel flex flex-col shrink-0`}>
-            <div className="h-[72px] px-4 py-3 border-b border-grid flex items-center justify-between">
+        <aside className={`${isMobile ? 'w-full h-full' : 'w-[220px] xl:w-[220px] min-[1280px]:w-[48px] min-[1440px]:w-[220px]'} border-grid bg-panel flex flex-col shrink-0 border-r`}>
+            <div className="border-grid flex h-[72px] items-center justify-between border-b px-4 py-3">
                 <div className="leading-none">
-                    <div className="font-mono text-[20px] font-bold tracking-[0.08em] text-[var(--green-glow)] sidebar-label">VET_IOS //</div>
-                    <div className="font-mono text-[9px] tracking-[0.2em] text-[var(--text-secondary)]/60 sidebar-label">V1.0 OMEGA</div>
+                    <div className="sidebar-label font-mono text-[20px] font-bold tracking-[0.08em] text-primary">VET_IOS //</div>
+                    <div className="sidebar-label font-mono text-[9px] tracking-[0.2em] text-muted-foreground">V1.0 OMEGA</div>
                 </div>
-                {isMobile && <button onClick={onClose} className="text-[var(--text-ghost)] hover:text-[var(--text-muted)]"><X className="w-4 h-4" /></button>}
+                {isMobile && <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>}
             </div>
 
             <div className="pt-4">
-                <div className="px-4 pb-2 text-[8px] tracking-[0.2em] text-[var(--text-secondary)]/60 sidebar-label">NAVIGATION</div>
+                <div className="sidebar-label px-4 pb-2 text-[8px] tracking-[0.2em] text-muted-foreground">NAVIGATION</div>
                 <nav className="flex flex-col">
                     {navItems.map((item) => {
                         const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -96,24 +96,24 @@ export default function Sidebar({ onClose, isMobile }: SidebarProps) {
                                 href={item.href}
                                 onClick={isMobile ? onClose : undefined}
                                 title={item.name.toUpperCase()}
-                                className={`relative h-10 px-4 flex items-center gap-2 transition-all duration-150 border-l-2 ${active ? 'bg-[var(--green-dim)] border-l-[var(--green-bright)] text-[var(--green-glow)]' : 'border-l-transparent text-[var(--text-secondary)]/70 hover:text-[var(--green-glow)] hover:bg-[var(--bg-elevated)]'}`}
+                                className={`relative flex h-10 items-center gap-2 border-l-2 px-4 transition-all duration-150 ${active ? 'border-l-primary bg-primary/10 text-primary shadow-glow' : 'border-l-transparent text-muted-foreground hover:bg-secondary hover:text-foreground'}`}
                             >
-                                <Icon className={`w-[14px] h-[14px] ${active ? 'text-[var(--green-bright)]' : 'text-[var(--text-secondary)]/70'}`} />
-                                <span className="sidebar-label font-mono text-[10px] tracking-[0.12em] uppercase">{item.name}</span>
-                                {active && <span className="absolute right-4 h-1 w-1 bg-[var(--green-bright)]" />}
+                                <Icon className={`h-[14px] w-[14px] ${active ? 'text-primary' : 'text-muted-foreground'}`} />
+                                <span className="sidebar-label font-mono text-[10px] uppercase tracking-[0.12em]">{item.name}</span>
+                                {active && <span className="absolute right-4 h-1 w-1 bg-primary" />}
                             </Link>
                         );
                     })}
                 </nav>
             </div>
 
-            <div className="mt-auto border-t border-grid px-4 py-3">
-                <div className="flex items-center gap-2 text-[9px] font-mono tracking-[0.16em] text-[var(--text-secondary)]">
-                    <span className="h-1 w-1 bg-[var(--green-bright)] animate-pulse-dot" />
+            <div className="border-grid mt-auto border-t px-4 py-3">
+                <div className="flex items-center gap-2 font-mono text-[9px] tracking-[0.16em] text-secondary-foreground">
+                    <span className="h-1 w-1 bg-primary animate-pulse-dot" />
                     <span className="sidebar-label">OPERATIONAL</span>
-                    <span className="text-[var(--text-secondary)]/70 sidebar-label">{uptimeLabel}</span>
+                    <span className="sidebar-label text-muted-foreground">{uptimeLabel}</span>
                 </div>
-                <div className="mt-2 font-mono text-[9px] text-[var(--text-secondary)]/60 sidebar-label">
+                <div className="sidebar-label mt-2 font-mono text-[9px] text-muted-foreground">
                     INF: {snapshotStats.inf} · EVT: {snapshotStats.evt} · ERR: {snapshotStats.err}
                 </div>
             </div>

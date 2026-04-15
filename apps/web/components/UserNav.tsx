@@ -32,20 +32,20 @@ export default function UserNav() {
     }
 
     if (loading) {
-        return <span className="font-mono text-[10px] text-[var(--text-secondary)]/75 animate-pulse">···</span>;
+        return <span className="font-mono text-[10px] text-muted-foreground animate-pulse">···</span>;
     }
 
     if (!user) return null;
 
     return (
         <div className="flex items-center gap-3">
-            <span className="font-sans text-[12px] text-[var(--text-secondary)]/75 truncate max-w-[200px]" title={user.email}>
+            <span className="font-sans text-[12px] text-muted-foreground truncate max-w-[200px]" title={user.email}>
                 {user.email}
             </span>
-            <span className="h-4 w-px bg-[var(--border-subtle)]" />
+            <span className="h-4 w-px bg-border" />
             <button
                 onClick={handleSignOut}
-                className="font-mono text-[10px] uppercase tracking-[0.14em] text-[var(--text-secondary)]/75 hover:text-[var(--green-glow)] transition-all"
+                className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground hover:text-foreground transition-all"
             >
                 Sign Out
             </button>

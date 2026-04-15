@@ -38,7 +38,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
     return (
-        <html lang="en" suppressHydrationWarning className="font-mono">
+        <html lang="en" suppressHydrationWarning className="dark font-mono">
             <body className="h-screen w-screen overflow-hidden flex bg-background text-foreground">
                 <AppProviders>
                     <AppShell>{children}</AppShell>

@@ -32,20 +32,20 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
         <form onSubmit={onSubmit} className="space-y-6">
             <div>
                 <TerminalLabel>Input Mode</TerminalLabel>
-                <div className="flex overflow-hidden rounded-[3px] border border-[var(--border-default)]">
+                <div className="flex overflow-hidden rounded-[3px] border border-border">
                     {MODES.map((m) => (
                         <button
                             key={m.key}
                             type="button"
                             onClick={() => onModeChange(m.key)}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 font-mono text-[10px] uppercase tracking-[0.14em] transition-all duration-150 ${inputMode === m.key ? 'bg-[var(--green-dim)] text-[var(--green-glow)] border-r border-[var(--green-bright)]' : 'bg-transparent text-[var(--text-secondary)]/70 hover:bg-[var(--bg-elevated)]'}`}
+                            className={`flex-1 flex items-center justify-center gap-2 py-2.5 px-3 font-mono text-[10px] uppercase tracking-[0.14em] transition-all duration-150 ${inputMode === m.key ? 'bg-primary/15 text-primary border-r border-primary' : 'bg-transparent text-muted-foreground hover:bg-secondary'}`}
                         >
                             {m.icon}
                             <span>{m.label}</span>
                         </button>
                     ))}
                 </div>
-                <p className="mt-1.5 font-sans text-[12px] text-[var(--text-secondary)]/70">{MODES.find((m) => m.key === inputMode)?.desc}</p>
+                <p className="mt-1.5 font-sans text-[12px] text-muted-foreground">{MODES.find((m) => m.key === inputMode)?.desc}</p>
             </div>
 
             {inputMode === 'structured' && (
@@ -74,7 +74,7 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                                             next.splice(index, 1);
                                             setSymptomText(next.join(', '));
                                         }}
-                                        className="inline-flex items-center gap-1 border border-[var(--green-mid)] bg-[var(--green-dim)] px-2 py-0.5 font-mono text-[10px] text-[var(--green-bright)]"
+                                        className="inline-flex items-center gap-1 border border-primary/60 bg-primary/10 px-2 py-0.5 font-mono text-[10px] text-primary"
                                     >
                                         {chip} <span>×</span>
                                     </button>
@@ -84,14 +84,14 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <label className="border border-dashed border-[var(--border-default)] bg-[var(--bg-elevated)] p-4 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-[var(--green-mid)] hover:bg-[var(--green-dim)] transition-all duration-150 group">
+                        <label className="border border-dashed border-border bg-secondary p-4 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-primary hover:bg-primary/10 transition-all duration-150 group">
                             <input type="file" id="diagnostic-img" name="diagnostic-img" accept="image/*" className="hidden" onChange={(e) => setImgFile(e.target.files?.[0] || null)} />
-                            {imgFile ? <><ImageIcon className="w-5 h-5 text-[var(--green-glow)]" /><span className="font-mono text-[10px] text-[var(--green-glow)] truncate max-w-[160px]">{imgFile.name}</span></> : <><UploadCloud className="w-5 h-5 text-[var(--text-secondary)]/70 group-hover:text-[var(--green-mid)]" /><span className="font-mono text-[10px] text-[var(--text-secondary)]/70">UPLOAD DIAGNOSTIC IMG</span></>}
+                            {imgFile ? <><ImageIcon className="w-5 h-5 text-primary" /><span className="font-mono text-[10px] text-primary truncate max-w-[160px]">{imgFile.name}</span></> : <><UploadCloud className="w-5 h-5 text-muted-foreground group-hover:text-primary" /><span className="font-mono text-[10px] text-muted-foreground">UPLOAD DIAGNOSTIC IMG</span></>}
                         </label>
 
-                        <label className="border border-dashed border-[var(--border-default)] bg-[var(--bg-elevated)] p-4 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-[var(--green-mid)] hover:bg-[var(--green-dim)] transition-all duration-150 group">
+                        <label className="border border-dashed border-border bg-secondary p-4 flex flex-col items-center justify-center gap-2 cursor-pointer hover:border-primary hover:bg-primary/10 transition-all duration-150 group">
                             <input type="file" id="lab-results" name="lab-results" accept=".pdf,.xml,.json,.txt" className="hidden" onChange={(e) => setDocFile(e.target.files?.[0] || null)} />
-                            {docFile ? <><File className="w-5 h-5 text-[var(--green-glow)]" /><span className="font-mono text-[10px] text-[var(--green-glow)] truncate max-w-[160px]">{docFile.name}</span></> : <><UploadCloud className="w-5 h-5 text-[var(--text-secondary)]/70 group-hover:text-[var(--green-mid)]" /><span className="font-mono text-[10px] text-[var(--text-secondary)]/70">ATTACH LAB RESULTS</span></>}
+                            {docFile ? <><File className="w-5 h-5 text-primary" /><span className="font-mono text-[10px] text-primary truncate max-w-[160px]">{docFile.name}</span></> : <><UploadCloud className="w-5 h-5 text-muted-foreground group-hover:text-primary" /><span className="font-mono text-[10px] text-muted-foreground">ATTACH LAB RESULTS</span></>}
                         </label>
                     </div>
 
@@ -122,7 +122,7 @@ export function InferenceForm({ onSubmit, isComputing, inputMode, onModeChange }
                 className="w-full h-11 overflow-hidden"
                 style={{ cursor: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16'%3E%3Cpath d='M8 1v14M1 8h14' stroke='%2322c55e' stroke-width='1.5'/%3E%3C/svg%3E") 8 8, pointer` }}
             >
-                {isComputing ? <><span className="absolute inset-0 bg-[var(--green-mid)] opacity-40 animate-pulse" /><span className="relative">PROCESSING VECTORS...</span></> : <><Play className="h-3.5 w-3.5" /> RUN INFERENCE ENGINE</>}
+                {isComputing ? <><span className="absolute inset-0 bg-primary opacity-40 animate-pulse" /><span className="relative">PROCESSING VECTORS...</span></> : <><Play className="h-3.5 w-3.5" /> RUN INFERENCE ENGINE</>}
             </TerminalButton>
         </form>
     );
