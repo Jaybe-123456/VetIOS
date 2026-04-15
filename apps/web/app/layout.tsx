@@ -46,7 +46,7 @@ export default function RootLayout({
     children: React.ReactNode;
 }) {
     return (
-        <html lang="en" suppressHydrationWarning className={cn(inter.variable, jetbrainsMono.variable, 'font-sans')}>
+        <html lang="en" suppressHydrationWarning className={cn(inter.variable, jetbrainsMono.variable, 'font-mono')}>
             <body className="h-screen w-screen overflow-hidden flex bg-background text-foreground">
                 <AppProviders>
                     <AppShell>{children}</AppShell>

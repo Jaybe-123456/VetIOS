@@ -52,7 +52,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             {/* ── Main Content Area ── */}
             <div className="flex-1 flex flex-col h-full overflow-hidden relative">
                 {/* Header */}
-                <header className="h-14 lg:h-16 border-b border-grid flex items-center justify-between px-4 lg:px-6 shrink-0 bg-background/80 backdrop-blur-md sticky top-0 z-30">
+                <header className="h-14 lg:h-16 border-b border-grid flex items-center justify-between px-4 lg:px-6 shrink-0 bg-background sticky top-0 z-30">
                     {/* Left: hamburger + branding on mobile, and back button */}
                     <div className="flex items-center gap-2 lg:gap-4">
                         <div className="flex items-center gap-3 lg:hidden">
@@ -72,7 +72,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         {/* Back Button */}
                         <button
                             onClick={() => router.back()}
-                            className="flex items-center gap-1.5 p-1.5 lg:px-2.5 lg:py-1.5 rounded-md text-muted hover:text-accent hover:bg-muted/10 transition-all text-sm font-medium group"
+                            className="flex items-center gap-1.5 p-1.5 lg:px-2.5 lg:py-1.5 text-muted hover:text-accent border border-transparent hover:border-grid transition-all text-sm font-mono uppercase tracking-widest group"
                             aria-label="Go back"
                             title="Go back"
                         >

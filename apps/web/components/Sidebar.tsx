@@ -75,10 +75,10 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
                             key={item.href}
                             href={item.href}
                             onClick={isMobile ? onClose : undefined}
-                            className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 rounded-sm font-mono text-xs uppercase tracking-wider transition-all duration-200 group
+                            className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 font-mono text-xs uppercase tracking-wider transition-all duration-200 group
                                 ${isActive
-                                    ? 'bg-accent/10 text-accent border border-accent/20'
-                                    : 'text-muted hover:text-foreground hover:bg-white/5 border border-transparent'
+                                    ? 'border border-accent text-accent shadow-[0_0_10px_rgba(0,255,65,0.1)]'
+                                    : 'border border-transparent text-muted hover:text-foreground hover:border-grid'
                                 }`}
                         >
                             <Icon className={`w-4 h-4 shrink-0 transition-colors ${isActive ? 'text-accent' : 'text-muted group-hover:text-foreground'}`} />
@@ -90,8 +90,8 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
 
             {/* System Status */}
             <div className="p-3 lg:p-4 border-t border-grid shrink-0">
-                <div className="flex items-center gap-3 p-3 bg-background border border-grid rounded-sm transition-colors hover:border-accent/30 cursor-crosshair">
-                    <div className="w-2 h-2 rounded-full bg-accent animate-pulse shadow-[0_0_8px_rgba(0,255,65,0.6)]" />
+                <div className="flex items-center gap-3 p-3 bg-background border border-grid transition-colors hover:border-accent cursor-crosshair">
+                    <div className="w-2 h-2 bg-accent animate-pulse shadow-[0_0_8px_rgba(0,255,65,0.6)]" />
                     <div className="flex flex-col w-full overflow-hidden">
                         <span className="font-mono text-[10px] text-muted uppercase">System Status</span>
                         <span className="font-mono text-xs text-accent uppercase truncate">Operational</span>
