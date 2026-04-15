@@ -1,32 +1,33 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import {
-    LayoutDashboard,
-    TerminalSquare,
-    GraduationCap,
-    ShieldAlert,
+    Activity,
+    Cpu,
     Database,
     FlaskConical,
+    GitMerge,
+    LayoutDashboard,
+    Layers,
     Network,
-    Activity,
-    Settings,
-    Cpu,
-    X
+    Settings2,
+    TestTube2,
+    X,
 } from 'lucide-react';
 
 const navItems = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Inference Console', href: '/inference', icon: TerminalSquare },
-    { name: 'Outcome Learning', href: '/outcome', icon: GraduationCap },
-    { name: 'Adversarial Sim', href: '/simulate', icon: ShieldAlert },
+    { name: 'Inference Console', href: '/inference', icon: Cpu },
+    { name: 'Outcome Learning', href: '/outcome', icon: GitMerge },
+    { name: 'Adversarial Sim', href: '/simulate', icon: FlaskConical },
     { name: 'Clinical Dataset', href: '/dataset', icon: Database },
-    { name: 'Experiment Track', href: '/experiments', icon: FlaskConical },
-    { name: 'Model Registry', href: '/models', icon: Cpu },
+    { name: 'Experiment Track', href: '/experiments', icon: TestTube2 },
+    { name: 'Model Registry', href: '/models', icon: Layers },
     { name: 'Telemetry', href: '/telemetry', icon: Activity },
     { name: 'Network', href: '/intelligence', icon: Network },
-    { name: 'Settings', href: '/settings', icon: Settings },
+    { name: 'Settings', href: '/settings', icon: Settings2 },
 ];
 
 interface SidebarProps {
@@ -35,67 +36,85 @@ interface SidebarProps {
     isMobile: boolean;
 }
 
-export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
+export default function Sidebar({ onClose, isMobile }: SidebarProps) {
     const pathname = usePathname();
+    const [uptimeSeconds, setUptimeSeconds] = useState(0);
+    const [snapshotStats, setSnapshotStats] = useState({ inf: 0, evt: 0, err: 0 });
+
+    useEffect(() => {
+        const mountedAt = Date.now();
+        const interval = window.setInterval(() => {
+            setUptimeSeconds(Math.floor((Date.now() - mountedAt) / 1000));
+        }, 1000);
+        return () => window.clearInterval(interval);
+    }, []);
+
+    useEffect(() => {
+        void (async () => {
+            try {
+                const res = await fetch('/api/diagnostic/snapshot', { cache: 'no-store' });
+                if (!res.ok) return;
+                const json = await res.json() as Record<string, unknown>;
+                const data = (json.snapshot ?? json.data ?? json) as Record<string, unknown>;
+                setSnapshotStats({
+                    inf: Number(data?.inference_count ?? data?.inferences_today ?? 0),
+                    evt: Number(data?.event_count ?? data?.events_total ?? 0),
+                    err: Number(data?.error_count ?? 0),
+                });
+            } catch {
+                setSnapshotStats((current) => ({ ...current, err: current.err || 0 }));
+            }
+        })();
+    }, []);
+
+    const uptimeLabel = useMemo(() => {
+        const d = Math.floor(uptimeSeconds / 86400);
+        const h = Math.floor((uptimeSeconds % 86400) / 3600);
+        const m = Math.floor((uptimeSeconds % 3600) / 60);
+        return `UP ${d}D ${h}H ${m}M`;
+    }, [uptimeSeconds]);
 
     return (
-        <aside className={`
-            ${isMobile ? 'w-full h-full' : 'w-64 h-full'}
-            border-r border-grid bg-dim flex flex-col shrink-0 select-none
-        `}>
-            {/* Header */}
-            <div className="h-14 lg:h-16 flex items-center justify-between px-5 border-b border-grid shrink-0">
-                <div className="flex flex-col">
-                    <span className="font-mono flex items-center gap-2 font-bold tracking-tight text-accent text-lg">
-                        <TerminalSquare className="w-5 h-5" />
-                        VET_IOS //
-                    </span>
-                    <span className="font-mono text-[10px] text-muted tracking-widest uppercase">
-                        V1.0 OMEGA
-                    </span>
+        <aside className={`${isMobile ? 'w-full h-full' : 'w-[220px] xl:w-[220px] min-[1280px]:w-[48px] min-[1440px]:w-[220px]'} border-r border-grid bg-panel flex flex-col shrink-0`}>
+            <div className="h-[72px] px-4 py-3 border-b border-grid flex items-center justify-between">
+                <div className="leading-none">
+                    <div className="font-mono text-[20px] font-bold tracking-[0.08em] text-[var(--green-glow)] sidebar-label">VET_IOS //</div>
+                    <div className="font-mono text-[9px] tracking-[0.2em] text-[var(--text-ghost)] sidebar-label">V1.0 OMEGA</div>
                 </div>
-                {isMobile && (
-                    <button
-                        onClick={onClose}
-                        className="p-2 -mr-2 text-muted hover:text-accent transition-colors"
-                        aria-label="Close sidebar"
-                    >
-                        <X className="w-5 h-5" />
-                    </button>
-                )}
+                {isMobile && <button onClick={onClose} className="text-[var(--text-ghost)] hover:text-[var(--text-muted)]"><X className="w-4 h-4" /></button>}
             </div>
 
-            {/* Navigation */}
-            <nav className="flex-1 overflow-y-auto py-4 lg:py-6 px-3 flex flex-col gap-0.5">
-                {navItems.map((item) => {
-                    const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                    const Icon = item.icon;
-                    return (
-                        <Link
-                            key={item.href}
-                            href={item.href}
-                            onClick={isMobile ? onClose : undefined}
-                            className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 font-mono text-xs uppercase tracking-wider transition-all duration-200 group
-                                ${isActive
-                                    ? 'border border-accent text-accent shadow-[0_0_10px_rgba(0,255,65,0.1)]'
-                                    : 'border border-transparent text-muted hover:text-foreground hover:border-grid'
-                                }`}
-                        >
-                            <Icon className={`w-4 h-4 shrink-0 transition-colors ${isActive ? 'text-accent' : 'text-muted group-hover:text-foreground'}`} />
-                            <span className="truncate">{item.name}</span>
-                        </Link>
-                    );
-                })}
-            </nav>
+            <div className="pt-4">
+                <div className="px-4 pb-2 text-[8px] tracking-[0.2em] text-[var(--text-ghost)] sidebar-label">NAVIGATION</div>
+                <nav className="flex flex-col">
+                    {navItems.map((item) => {
+                        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                        const Icon = item.icon;
+                        return (
+                            <Link
+                                key={item.href}
+                                href={item.href}
+                                onClick={isMobile ? onClose : undefined}
+                                title={item.name.toUpperCase()}
+                                className={`relative h-10 px-4 flex items-center gap-2 transition-all duration-150 border-l-2 ${active ? 'bg-[var(--green-dim)] border-l-[var(--green-bright)] text-[var(--green-glow)]' : 'border-l-transparent text-[var(--text-ghost)] hover:text-[var(--text-muted)] hover:bg-[var(--bg-elevated)]'}`}
+                            >
+                                <Icon className={`w-[14px] h-[14px] ${active ? 'text-[var(--green-bright)]' : 'text-[var(--text-ghost)]'}`} />
+                                <span className="sidebar-label font-mono text-[10px] tracking-[0.12em] uppercase">{item.name}</span>
+                                {active && <span className="absolute right-4 h-1 w-1 bg-[var(--green-bright)]" />}
+                            </Link>
+                        );
+                    })}
+                </nav>
+            </div>
 
-            {/* System Status */}
-            <div className="p-3 lg:p-4 border-t border-grid shrink-0">
-                <div className="flex items-center gap-3 p-3 bg-background border border-grid transition-colors hover:border-accent cursor-crosshair">
-                    <div className="w-2 h-2 bg-accent animate-pulse shadow-[0_0_8px_rgba(0,255,65,0.6)]" />
-                    <div className="flex flex-col w-full overflow-hidden">
-                        <span className="font-mono text-[10px] text-muted uppercase">System Status</span>
-                        <span className="font-mono text-xs text-accent uppercase truncate">Operational</span>
-                    </div>
+            <div className="mt-auto border-t border-grid px-4 py-3">
+                <div className="flex items-center gap-2 text-[9px] font-mono tracking-[0.16em] text-[var(--text-secondary)]">
+                    <span className="h-1 w-1 bg-[var(--green-bright)] animate-pulse-dot" />
+                    <span className="sidebar-label">OPERATIONAL</span>
+                    <span className="text-[var(--text-ghost)] sidebar-label">{uptimeLabel}</span>
+                </div>
+                <div className="mt-2 font-mono text-[9px] text-[var(--text-ghost)] sidebar-label">
+                    INF: {snapshotStats.inf} · EVT: {snapshotStats.evt} · ERR: {snapshotStats.err}
                 </div>
             </div>
         </aside>

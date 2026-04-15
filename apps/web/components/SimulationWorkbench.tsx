@@ -550,7 +550,7 @@ export default function SimulationWorkbench({
                 description="Run scenario load, adversarial prompt, and regression simulations through the live inference pipeline."
             />
 
-            <div className="mb-6 flex flex-wrap gap-2">
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-2 border-b border-[var(--border-subtle)] pb-3">
                 {([
                     ['load', '01 - SCENARIO LOAD'],
                     ['adversarial', '02 - ADVERSARIAL TEST'],
@@ -560,13 +560,10 @@ export default function SimulationWorkbench({
                         key={value}
                         type="button"
                         onClick={() => setMode(value)}
-                        className={`border px-4 py-3 font-mono text-[11px] uppercase tracking-[0.2em] ${
-                            mode === value
-                                ? 'border-accent bg-accent/10 text-accent'
-                                : 'border-grid bg-dim/70 text-muted hover:border-muted hover:text-foreground'
-                        }`}
+                        className={`relative border-l border-[var(--border-subtle)] px-4 py-2 text-left transition-all duration-150 ${mode === value ? 'border-b-2 border-b-[var(--green-bright)] bg-[var(--green-dim)]' : 'bg-transparent hover:bg-[var(--bg-elevated)]'}`}
                     >
-                        {label}
+                        <div className={`font-mono text-[22px] leading-none ${mode === value ? 'text-[var(--green-glow)]' : 'text-[var(--text-ghost)]'}`}>{label.slice(0, 2)}</div>
+                        <div className={`font-mono text-[10px] tracking-[0.14em] uppercase ${mode === value ? 'text-[var(--green-glow)]' : 'text-[var(--text-ghost)]'}`}>{label.slice(5)}</div>
                     </button>
                 ))}
             </div>
@@ -589,7 +586,7 @@ export default function SimulationWorkbench({
                         <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-2">
                                 {buildStatCards(outputMode, progress, activeResults).map((card) => (
-                                    <div key={card.label} className="border border-grid bg-dim/60 p-3">
+                                    <div key={card.label} className="card-surface p-3">
                                         <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">{card.label}</div>
                                         <div className="mt-2 font-mono text-sm text-foreground">{card.value}</div>
                                     </div>
@@ -598,8 +595,8 @@ export default function SimulationWorkbench({
 
                             <div className="border border-grid p-3">
                                 <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Simulation Progress</div>
-                                <div className="h-3 bg-black/50">
-                                    <div className="h-full bg-accent transition-all" style={{ width: `${Math.max(0, Math.min(100, activeProgressPct))}%` }} />
+                                <div className="h-2 border border-[var(--border-subtle)] bg-[var(--bg-elevated)]">
+                                    <div className="h-full bg-[var(--green-bright)] transition-all" style={{ width: `${Math.max(0, Math.min(100, activeProgressPct))}%` }} />
                                 </div>
                                 <div className="mt-2 font-mono text-xs text-muted">
                                     {runId ? `${formatPercent(activeProgressPct)} - ${progressCompleted} / ${progressTotal || '0'}` : 'IDLE'}
@@ -632,7 +629,7 @@ export default function SimulationWorkbench({
 
                             <div className="border border-grid p-3">
                                 <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Live Log</div>
-                                <div className="h-[200px] overflow-y-auto bg-black/30 p-2">
+                                <div className="h-[200px] overflow-y-auto bg-[var(--bg-base)] border border-[var(--border-subtle)] p-3">
                                     {logs.length === 0 ? (
                                         <div className="font-mono text-[11px] text-muted">NO EVENTS YET.</div>
                                     ) : logs.map((line) => (
@@ -835,7 +832,7 @@ export default function SimulationWorkbench({
 function Field({ label, children }: { label: string; children: ReactNode }) {
     return (
         <div>
-            <TerminalLabel>{label}</TerminalLabel>
+            <TerminalLabel><div className="font-mono text-[22px] leading-none ${mode === value ? 'text-[var(--green-glow)]' : 'text-[var(--text-ghost)]'}">{label.slice(0,2)}</div><div className="font-mono text-[10px] tracking-[0.14em] uppercase ${mode === value ? 'text-[var(--green-glow)]' : 'text-[var(--text-ghost)]'}">{label.slice(5)}</div></TerminalLabel>
             {children}
         </div>
     );
@@ -861,7 +858,7 @@ function RangeField({
     return (
         <div>
             <div className="mb-2 flex items-center justify-between">
-                <TerminalLabel>{label}</TerminalLabel>
+                <TerminalLabel><div className="font-mono text-[22px] leading-none ${mode === value ? 'text-[var(--green-glow)]' : 'text-[var(--text-ghost)]'}">{label.slice(0,2)}</div><div className="font-mono text-[10px] tracking-[0.14em] uppercase ${mode === value ? 'text-[var(--green-glow)]' : 'text-[var(--text-ghost)]'}">{label.slice(5)}</div></TerminalLabel>
                 <div className="font-mono text-xs text-accent">{value}{suffix ?? ''}</div>
             </div>
             <input
