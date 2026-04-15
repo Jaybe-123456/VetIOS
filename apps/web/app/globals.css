@@ -57,14 +57,14 @@
 }
 
 :root {
-  --bg-base: #040810;
-  --bg-surface: #080e18;
-  --bg-elevated: #0c1420;
-  --bg-overlay: #101a28;
-  --green-dim: #0d4a1f;
-  --green-mid: #16a34a;
-  --green-bright: #22c55e;
-  --green-glow: #4ade80;
+  --bg-base: #000000;
+  --bg-surface: #050505;
+  --bg-elevated: #0a0a0a;
+  --bg-overlay: #0f0f0f;
+  --green-dim: rgba(0, 255, 136, 0.14);
+  --green-mid: #00cc6a;
+  --green-bright: #00ff88;
+  --green-glow: #6effb5;
   --cyan-dim: #0c2a3a;
   --cyan-mid: #0891b2;
   --cyan-bright: #06b6d4;
@@ -73,14 +73,14 @@
   --amber-bright: #f59e0b;
   --red-dim: #2a0808;
   --red-bright: #ef4444;
-  --text-primary: #f0fdf4;
-  --text-secondary: #86efac;
-  --text-muted: #4ade80;
-  --text-ghost: #2f7a4a;
-  --border-subtle: rgba(34, 197, 94, 0.2);
-  --border-default: rgba(34, 197, 94, 0.35);
-  --border-active: rgba(34, 197, 94, 0.6);
-  --border-bright: #22c55e;
+  --text-primary: #d2ffe9;
+  --text-secondary: #9cffcb;
+  --text-muted: #71dca8;
+  --text-ghost: #3f5c4f;
+  --border-subtle: rgba(110, 110, 110, 0.35);
+  --border-default: rgba(0, 255, 136, 0.32);
+  --border-active: rgba(0, 255, 136, 0.62);
+  --border-bright: #00ff88;
 
   --background: var(--bg-base);
   --foreground: var(--text-primary);
@@ -118,6 +118,13 @@
 
 .dark {
   --background: var(--bg-base);
+  --foreground: var(--text-primary);
+  --card: var(--bg-surface);
+  --card-foreground: var(--text-primary);
+  --border: var(--border-subtle);
+  --muted-foreground: var(--text-ghost);
+  --primary: var(--green-bright);
+  --accent: var(--green-bright);
 }
 
 @layer base {
@@ -201,20 +208,3 @@
   .sidebar-label { display: none; }
 }
 
-@media (max-width: 767px) {
-  .desktop-recommended-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(4, 8, 16, 0.96);
-    z-index: 120;
-    display: grid;
-    place-items: center;
-    padding: 24px;
-    text-align: center;
-    font-family: var(--font-mono);
-    font-size: 12px;
-    letter-spacing: 0.14em;
-    color: var(--text-secondary);
-  }
-}

@@ -93,15 +93,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     </AnimatePresence>
                 </main>
             </div>
-
-            <div className="desktop-recommended-overlay md:hidden">
-                <div>
-                    <div className="text-[var(--green-glow)] mb-2">DESKTOP RECOMMENDED</div>
-                    <div style={{ fontFamily: 'Inter, sans-serif', letterSpacing: '0.04em', color: 'var(--text-muted)' }}>
-                        VetIOS is optimized for 1280px+ clinical workstations.
-                    </div>
-                </div>
-            </div>
         </>
     );
 }

@@ -1,5 +1,6 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
+    darkMode: ['class'],
     content: [
         './pages/**/*.{js,ts,jsx,tsx,mdx}',
         './components/**/*.{js,ts,jsx,tsx,mdx}',
@@ -8,18 +9,21 @@ module.exports = {
     theme: {
         extend: {
             colors: {
-                background: '#000000',
-                foreground: '#ffffff',
-                accent: '#00ff41', // Matrix green for execution
-                muted: '#333333',
-                dim: '#1a1a1a',
-                danger: '#ff3333',
+                background: 'var(--background)',
+                foreground: 'var(--foreground)',
+                border: 'var(--border)',
+                muted: 'var(--muted-foreground)',
+                primary: 'var(--primary)',
+                accent: 'var(--accent)',
             },
             fontFamily: {
-                mono: ['var(--font-geist-mono)', 'monospace'],
-                sans: ['var(--font-inter)', 'sans-serif'],
+                mono: ['JetBrains Mono', 'monospace'],
+                sans: ['Inter', 'sans-serif'],
+            },
+            boxShadow: {
+                glow: '0 0 0 1px rgba(0,255,136,0.2), 0 0 18px rgba(0,255,136,0.12)',
             },
         },
     },
     plugins: [],
-}
+};
