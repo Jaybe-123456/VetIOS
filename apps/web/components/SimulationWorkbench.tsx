@@ -560,10 +560,10 @@ export default function SimulationWorkbench({
                         key={value}
                         type="button"
                         onClick={() => setMode(value)}
-                        className={`border px-4 py-3 font-mono text-[11px] uppercase tracking-[0.2em] ${
+                        className={`border px-4 py-3 font-mono text-[11px] uppercase tracking-[0.2em] transition-all ${
                             mode === value
-                                ? 'border-accent bg-accent/10 text-accent'
-                                : 'border-grid bg-dim/70 text-muted hover:border-muted hover:text-foreground'
+                                ? 'border-accent bg-accent/15 text-accent font-bold shadow-[0_0_15px_rgba(0,255,65,0.2)]'
+                                : 'border-grid bg-dim/70 text-[hsl(0_0%_82%)] hover:border-muted hover:text-foreground'
                         }`}
                     >
                         {label}
@@ -589,9 +589,9 @@ export default function SimulationWorkbench({
                         <div className="space-y-4">
                             <div className="grid grid-cols-2 gap-2">
                                 {buildStatCards(outputMode, progress, activeResults).map((card) => (
-                                    <div key={card.label} className="border border-grid bg-dim/60 p-3">
-                                        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">{card.label}</div>
-                                        <div className="mt-2 font-mono text-sm text-foreground">{card.value}</div>
+                                    <div key={card.label} className="border border-grid bg-dim/60 p-3 transition-colors hover:bg-dim/80">
+                                        <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_85%)] font-bold">{card.label}</div>
+                                        <div className="mt-2 font-mono text-sm text-foreground font-medium">{card.value}</div>
                                     </div>
                                 ))}
                             </div>
@@ -601,11 +601,11 @@ export default function SimulationWorkbench({
                                 <div className="h-3 bg-black/50">
                                     <div className="h-full bg-accent transition-all" style={{ width: `${Math.max(0, Math.min(100, activeProgressPct))}%` }} />
                                 </div>
-                                <div className="mt-2 font-mono text-xs text-muted">
+                                <div className="mt-2 font-mono text-xs text-[hsl(0_0%_82%)] font-medium">
                                     {runId ? `${formatPercent(activeProgressPct)} - ${progressCompleted} / ${progressTotal || '0'}` : 'IDLE'}
                                 </div>
-                                <div className="mt-2 font-mono text-[11px] text-muted">Simulation ID: {runId ?? 'NO ACTIVE RUN'}</div>
-                                <div className="mt-1 font-mono text-[11px] text-foreground">Status: {String(activeStatus).toUpperCase()}</div>
+                                <div className="mt-2 font-mono text-[11px] text-[hsl(0_0%_75%)]">Simulation ID: {runId ?? 'NO ACTIVE RUN'}</div>
+                                <div className="mt-1 font-mono text-[11px] text-foreground font-bold">Status: {String(activeStatus).toUpperCase()}</div>
                             </div>
 
                             {activeResults && (
@@ -630,24 +630,24 @@ export default function SimulationWorkbench({
                                 </div>
                             )}
 
-                            <div className="border border-grid p-3">
-                                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Live Log</div>
+                            <div className="border border-grid p-3 bg-black/10">
+                                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_88%)] font-bold">Live Log</div>
                                 <div className="h-[200px] overflow-y-auto bg-black/30 p-2">
                                     {logs.length === 0 ? (
-                                        <div className="font-mono text-[11px] text-muted">NO EVENTS YET.</div>
+                                        <div className="font-mono text-[11px] text-[hsl(0_0%_72%)] font-medium">NO EVENTS YET.</div>
                                     ) : logs.map((line) => (
-                                        <div key={line.id} className={`font-mono text-[11px] ${logToneClass(line.tone)}`}>
-                                            [{formatClock(line.timestamp)}] {line.text}
+                                        <div key={line.id} className={`font-mono text-[11px] ${logToneClass(line.tone)} font-medium`}>
+                                            <span className="text-[hsl(0_0%_75%)]">[{formatClock(line.timestamp)}]</span> {line.text}
                                         </div>
                                     ))}
                                 </div>
                             </div>
 
-                            <div className="border border-grid p-3">
-                                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Recent Simulations</div>
+                            <div className="border border-grid p-3 bg-black/10">
+                                <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_88%)] font-bold">Recent Simulations</div>
                                 <div className="space-y-2">
                                     {history.length === 0 ? (
-                                        <div className="font-mono text-[11px] text-muted">NO SIMULATION HISTORY FOR THIS TENANT.</div>
+                                        <div className="font-mono text-[11px] text-[hsl(0_0%_72%)] font-medium">NO SIMULATION HISTORY FOR THIS TENANT.</div>
                                     ) : history.map((entry) => (
                                         <button
                                             key={entry.id}
@@ -656,9 +656,9 @@ export default function SimulationWorkbench({
                                             className="flex w-full items-center justify-between gap-3 border border-grid bg-dim/50 px-3 py-2 text-left hover:border-accent"
                                         >
                                             <div className="min-w-0">
-                                                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">{entry.mode}</div>
-                                                <div className="truncate font-mono text-xs text-foreground">{entry.scenario_name ?? 'SIMULATION'}</div>
-                                                <div className="font-mono text-[10px] text-muted">{formatDate(entry.created_at)}</div>
+                                                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_82%)] font-bold">{entry.mode}</div>
+                                                <div className="truncate font-mono text-xs text-foreground font-medium">{entry.scenario_name ?? 'SIMULATION'}</div>
+                                                <div className="font-mono text-[10px] text-[hsl(0_0%_75%)] font-medium">{formatDate(entry.created_at)}</div>
                                             </div>
                                             <span className={`font-mono text-[10px] uppercase tracking-[0.18em] ${statusTone(entry.status)}`}>
                                                 {String(entry.status ?? 'pending').toUpperCase()}
@@ -698,8 +698,8 @@ export default function SimulationWorkbench({
                     <RangeField label="REQUEST RATE (RPS)" value={ratePerSecond} min={1} max={500} step={1} onChange={setRatePerSecond} />
                 </div>
 
-                <div className="border border-grid p-4">
-                    <div className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Prompt Distribution</div>
+                <div className="border border-grid p-4 bg-black/10">
+                    <div className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_88%)] font-bold">Prompt Distribution</div>
                     <div className="grid gap-4 md:grid-cols-2">
                         <Field label="CANINE CASES %"><TerminalInput type="number" value={distribution.canine} onChange={(event: ChangeEvent<HTMLInputElement>) => setDistribution((current) => ({ ...current, canine: Number(event.target.value) }))} /></Field>
                         <Field label="FELINE CASES %"><TerminalInput type="number" value={distribution.feline} onChange={(event: ChangeEvent<HTMLInputElement>) => setDistribution((current) => ({ ...current, feline: Number(event.target.value) }))} /></Field>
@@ -744,8 +744,8 @@ export default function SimulationWorkbench({
                                 key={category}
                                 type="button"
                                 onClick={() => setSelectedCategories((current) => selected ? current.filter((value) => value !== category) : [...current, category])}
-                                className={`border p-3 text-left font-mono text-xs uppercase tracking-[0.18em] ${
-                                    selected ? 'border-accent bg-accent/10 text-accent' : 'border-grid bg-dim/50 text-muted'
+                                className={`border p-3 text-left font-mono text-xs uppercase tracking-[0.18em] transition-all ${
+                                    selected ? 'border-accent bg-accent/15 text-accent font-bold shadow-[0_0_10px_rgba(0,255,65,0.1)]' : 'border-grid bg-dim/50 text-[hsl(0_0%_82%)] font-medium'
                                 }`}
                             >
                                 <div className="flex items-center justify-between">
@@ -880,7 +880,7 @@ function RangeField({
 function PreviewBlock({ lines }: { lines: string[] }) {
     return (
         <div className="border border-grid bg-dim/50 p-4">
-            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Computed Preview</div>
+            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_88%)] font-bold">Computed Preview</div>
             <div className="space-y-2">
                 {lines.map((line) => (
                     <div key={line} className="font-mono text-xs text-foreground">{line}</div>
@@ -954,7 +954,7 @@ function renderResultsSection(
                 <div className="overflow-x-auto">
                     <table className="w-full min-w-[280px] border-collapse font-mono text-[11px]">
                         <thead>
-                            <tr className="text-left text-muted">
+                            <tr className="text-left text-[hsl(0_0%_88%)] font-bold bg-black/30">
                                 <th className="border-b border-grid px-2 py-2">CATEGORY</th>
                                 <th className="border-b border-grid px-2 py-2">PASS%</th>
                                 <th className="border-b border-grid px-2 py-2">PASS</th>
@@ -992,7 +992,7 @@ function renderResultsSection(
                 <div className="overflow-x-auto">
                     <table className="w-full min-w-[280px] border-collapse font-mono text-[11px]">
                         <thead>
-                            <tr className="text-left text-muted">
+                            <tr className="text-left text-[hsl(0_0%_88%)] font-bold bg-black/30">
                                 <th className="border-b border-grid px-2 py-2">BASELINE SCORE</th>
                                 <th className="border-b border-grid px-2 py-2">CANDIDATE SCORE</th>
                                 <th className="border-b border-grid px-2 py-2">DELTA</th>
