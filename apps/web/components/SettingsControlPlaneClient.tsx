@@ -1,6 +1,6 @@
 'use client';
 
-import type { Dispatch, ReactNode, SetStateAction } from 'react';
+import type { Dispatch, ReactNode, SetStateAction, ChangeEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import DebugToolsPanel from '@/components/DebugToolsPanel';
@@ -243,7 +243,7 @@ export default function SettingsControlPlaneClient() {
                     reject(new Error('Timed out waiting for telemetry stream payload.'));
                 }, 5000);
 
-                source.onmessage = (event) => {
+                source.onmessage = (event: MessageEvent) => {
                     window.clearTimeout(timeout);
                     source.close();
                     resolve(JSON.parse(event.data) as unknown);
@@ -638,7 +638,7 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
                         <TerminalLabel>Organization</TerminalLabel>
                         <TerminalInput
                             value={input.profileDraft.organization}
-                            onChange={(event) => input.onProfileDraftChange((current) => ({ ...current, organization: event.target.value }))}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => input.onProfileDraftChange((current) => ({ ...current, organization: event.target.value }))}
                         />
                     </div>
                     <div>
@@ -646,7 +646,7 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
                         <select
                             value={input.profileDraft.role}
                             disabled={!canChangeRole}
-                            onChange={(event) => input.onProfileDraftChange((current) => ({ ...current, role: event.target.value as ControlPlaneUserRole }))}
+                            onChange={(event: ChangeEvent<HTMLSelectElement>) => input.onProfileDraftChange((current) => ({ ...current, role: event.target.value as ControlPlaneUserRole }))}
                             className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground disabled:opacity-50"
                         >
                             <option value="admin">admin</option>
@@ -740,11 +740,11 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                     <div className="space-y-4">
                         <div>
                             <TerminalLabel>Key Label</TerminalLabel>
-                            <TerminalInput value={input.newKeyLabel} onChange={(event) => input.onNewKeyLabelChange(event.target.value)} />
+                            <TerminalInput value={input.newKeyLabel} onChange={(event: ChangeEvent<HTMLInputElement>) => input.onNewKeyLabelChange(event.target.value)} />
                         </div>
                         <div>
                             <TerminalLabel>Scopes (comma separated)</TerminalLabel>
-                            <TerminalInput value={input.newKeyScopes} onChange={(event) => input.onNewKeyScopesChange(event.target.value)} />
+                            <TerminalInput value={input.newKeyScopes} onChange={(event: ChangeEvent<HTMLInputElement>) => input.onNewKeyScopesChange(event.target.value)} />
                         </div>
                         <TerminalButton
                             onClick={() => void input.onRunAction({
@@ -1055,7 +1055,7 @@ function renderSimulationTab(
                         <TerminalLabel>Target Node</TerminalLabel>
                         <select
                             value={input.selectedSimulationTarget}
-                            onChange={(event) => input.onSelectedSimulationTargetChange(event.target.value)}
+                            onChange={(event: ChangeEvent<HTMLSelectElement>) => input.onSelectedSimulationTargetChange(event.target.value)}
                             className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
                         >
                             {SIMULATION_TARGETS.map((target) => (
@@ -1067,7 +1067,7 @@ function renderSimulationTab(
                         <TerminalLabel>Severity</TerminalLabel>
                         <select
                             value={input.selectedSimulationSeverity}
-                            onChange={(event) => input.onSelectedSimulationSeverityChange(event.target.value as 'degraded' | 'critical')}
+                            onChange={(event: ChangeEvent<HTMLSelectElement>) => input.onSelectedSimulationSeverityChange(event.target.value as 'degraded' | 'critical')}
                             className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
                         >
                             <option value="critical">critical</option>
@@ -1118,7 +1118,7 @@ function renderLogsTab(input: Parameters<typeof renderTab>[0]) {
                         <TerminalLabel>Event Type</TerminalLabel>
                         <select
                             value={input.logFilter.eventType}
-                            onChange={(event) => input.onLogFilterChange((current) => ({ ...current, eventType: event.target.value }))}
+                            onChange={(event: ChangeEvent<HTMLSelectElement>) => input.onLogFilterChange((current) => ({ ...current, eventType: event.target.value }))}
                             className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
                         >
                             <option value="all">all</option>
@@ -1135,14 +1135,14 @@ function renderLogsTab(input: Parameters<typeof renderTab>[0]) {
                         <TerminalLabel>Run ID</TerminalLabel>
                         <TerminalInput
                             value={input.logFilter.runId}
-                            onChange={(event) => input.onLogFilterChange((current) => ({ ...current, runId: event.target.value }))}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => input.onLogFilterChange((current) => ({ ...current, runId: event.target.value }))}
                         />
                     </div>
                     <div>
                         <TerminalLabel>Model Version</TerminalLabel>
                         <TerminalInput
                             value={input.logFilter.modelVersion}
-                            onChange={(event) => input.onLogFilterChange((current) => ({ ...current, modelVersion: event.target.value }))}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => input.onLogFilterChange((current) => ({ ...current, modelVersion: event.target.value }))}
                         />
                     </div>
                 </div>
@@ -1186,7 +1186,7 @@ function renderConfigurationTab(
                         <TerminalLabel>Decision Mode</TerminalLabel>
                         <select
                             value={input.configDraft.decision_mode}
-                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, decision_mode: event.target.value as typeof current.decision_mode }))}
+                            onChange={(event: ChangeEvent<HTMLSelectElement>) => input.onConfigDraftChange((current) => ({ ...current, decision_mode: event.target.value as typeof current.decision_mode }))}
                             className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
                         >
                             <option value="observe">observe</option>
@@ -1199,7 +1199,7 @@ function renderConfigurationTab(
                         <TerminalInput
                             type="number"
                             value={input.configDraft.latency_threshold_ms}
-                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, latency_threshold_ms: Number(event.target.value) }))}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => input.onConfigDraftChange((current) => ({ ...current, latency_threshold_ms: Number(event.target.value) }))}
                         />
                     </div>
                     <div>
@@ -1208,7 +1208,7 @@ function renderConfigurationTab(
                             type="number"
                             step="0.01"
                             value={input.configDraft.drift_threshold}
-                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, drift_threshold: Number(event.target.value) }))}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => input.onConfigDraftChange((current) => ({ ...current, drift_threshold: Number(event.target.value) }))}
                         />
                     </div>
                     <div>
@@ -1217,7 +1217,7 @@ function renderConfigurationTab(
                             type="number"
                             step="0.01"
                             value={input.configDraft.confidence_threshold}
-                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, confidence_threshold: Number(event.target.value) }))}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => input.onConfigDraftChange((current) => ({ ...current, confidence_threshold: Number(event.target.value) }))}
                         />
                     </div>
                     <div>
@@ -1226,14 +1226,14 @@ function renderConfigurationTab(
                             type="number"
                             step="0.01"
                             value={input.configDraft.abstain_threshold}
-                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, abstain_threshold: Number(event.target.value) }))}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => input.onConfigDraftChange((current) => ({ ...current, abstain_threshold: Number(event.target.value) }))}
                         />
                     </div>
                     <div>
                         <TerminalLabel>Alert Sensitivity</TerminalLabel>
                         <select
                             value={input.configDraft.alert_sensitivity}
-                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, alert_sensitivity: event.target.value as ControlPlaneAlertSensitivity }))}
+                            onChange={(event: ChangeEvent<HTMLSelectElement>) => input.onConfigDraftChange((current) => ({ ...current, alert_sensitivity: event.target.value as ControlPlaneAlertSensitivity }))}
                             className="w-full bg-dim border border-grid p-3 font-mono text-sm text-foreground"
                         >
                             <option value="low">low</option>
@@ -1247,7 +1247,7 @@ function renderConfigurationTab(
                             type="number"
                             step="0.01"
                             value={input.configDraft.auto_execute_confidence_threshold}
-                            onChange={(event) => input.onConfigDraftChange((current) => ({ ...current, auto_execute_confidence_threshold: Number(event.target.value) }))}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => input.onConfigDraftChange((current) => ({ ...current, auto_execute_confidence_threshold: Number(event.target.value) }))}
                         />
                     </div>
                 </div>

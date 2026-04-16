@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { AlertTriangle, ShieldAlert } from 'lucide-react';
 import { ConsoleCard, TerminalButton, TerminalInput, TerminalLabel, TerminalTextarea } from '@/components/ui/terminal';
 import { extractUuidFromText } from '@/lib/utils/uuid';
@@ -198,7 +198,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                             id="treatment-resource-profile"
                             className="w-full border border-grid bg-black/20 px-3 py-2 font-mono text-xs text-foreground outline-none"
                             value={resourceProfile}
-                            onChange={(event) => setResourceProfile(event.target.value as TreatmentResourceProfile)}
+                            onChange={(event: ChangeEvent<HTMLSelectElement>) => setResourceProfile(event.target.value as TreatmentResourceProfile)}
                         >
                             <option value="advanced">Advanced / Referral</option>
                             <option value="low_resource">Low Resource</option>
@@ -206,11 +206,11 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                     </label>
                     <label className="space-y-2">
                         <TerminalLabel htmlFor="treatment-region">Regulatory Region</TerminalLabel>
-                        <TerminalInput id="treatment-region" value={regulatoryRegion} onChange={(event) => setRegulatoryRegion(event.target.value)} />
+                        <TerminalInput id="treatment-region" value={regulatoryRegion} onChange={(event: ChangeEvent<HTMLInputElement>) => setRegulatoryRegion(event.target.value)} />
                     </label>
                     <label className="space-y-2">
                         <TerminalLabel htmlFor="treatment-environment">Care Environment</TerminalLabel>
-                        <TerminalInput id="treatment-environment" value={careEnvironment} onChange={(event) => setCareEnvironment(event.target.value)} />
+                        <TerminalInput id="treatment-environment" value={careEnvironment} onChange={(event: ChangeEvent<HTMLInputElement>) => setCareEnvironment(event.target.value)} />
                     </label>
                 </div>
 
@@ -294,7 +294,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                                     id="treatment-pathway"
                                     className="w-full border border-grid bg-black/20 px-3 py-2 font-mono text-xs text-foreground outline-none"
                                     value={formState.pathway}
-                                    onChange={(event) => setFormState((current) => ({ ...current, pathway: event.target.value }))}
+                                    onChange={(event: ChangeEvent<HTMLSelectElement>) => setFormState((current) => ({ ...current, pathway: event.target.value }))}
                                 >
                                     {pathwayOptions.map((option) => (
                                         <option key={option.treatment_pathway} value={option.treatment_pathway}>
@@ -310,7 +310,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                                     id="treatment-outcome-status"
                                     className="w-full border border-grid bg-black/20 px-3 py-2 font-mono text-xs text-foreground outline-none"
                                     value={formState.outcomeStatus}
-                                    onChange={(event) => setFormState((current) => ({ ...current, outcomeStatus: event.target.value }))}
+                                    onChange={(event: ChangeEvent<HTMLSelectElement>) => setFormState((current) => ({ ...current, outcomeStatus: event.target.value }))}
                                 >
                                     <option value="">No outcome yet</option>
                                     <option value="planned">Planned</option>
@@ -331,7 +331,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                                 id="treatment-actual-intervention"
                                 rows={3}
                                 value={formState.actualIntervention}
-                                onChange={(event) => setFormState((current) => ({ ...current, actualIntervention: event.target.value }))}
+                                onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setFormState((current) => ({ ...current, actualIntervention: event.target.value }))}
                                 placeholder="Describe what the clinician actually did. VetIOS stores this for outcome learning, not as a replacement for the medical record."
                             />
                         </label>
@@ -344,14 +344,14 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                                     type="number"
                                     min="0"
                                     value={formState.recoveryTimeDays}
-                                    onChange={(event) => setFormState((current) => ({ ...current, recoveryTimeDays: event.target.value }))}
+                                    onChange={(event: ChangeEvent<HTMLInputElement>) => setFormState((current) => ({ ...current, recoveryTimeDays: event.target.value }))}
                                 />
                             </label>
                             <label className="flex items-center gap-2 border border-grid p-3 font-mono text-xs">
                                 <input
                                     type="checkbox"
                                     checked={formState.clinicianConfirmed}
-                                    onChange={(event) => setFormState((current) => ({ ...current, clinicianConfirmed: event.target.checked }))}
+                                    onChange={(event: ChangeEvent<HTMLInputElement>) => setFormState((current) => ({ ...current, clinicianConfirmed: event.target.checked }))}
                                 />
                                 Licensed clinician reviewed this pathway
                             </label>
@@ -359,7 +359,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                                 <input
                                     type="checkbox"
                                     checked={formState.clinicianOverride}
-                                    onChange={(event) => setFormState((current) => ({ ...current, clinicianOverride: event.target.checked }))}
+                                    onChange={(event: ChangeEvent<HTMLInputElement>) => setFormState((current) => ({ ...current, clinicianOverride: event.target.checked }))}
                                 />
                                 Clinician override used
                             </label>
@@ -370,7 +370,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                             <TerminalInput
                                 id="treatment-complications"
                                 value={formState.complications}
-                                onChange={(event) => setFormState((current) => ({ ...current, complications: event.target.value }))}
+                                onChange={(event: ChangeEvent<HTMLInputElement>) => setFormState((current) => ({ ...current, complications: event.target.value }))}
                                 placeholder="arrhythmia, aspiration, hypotension"
                             />
                         </label>
@@ -381,7 +381,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                                 id="treatment-notes"
                                 rows={3}
                                 value={formState.notes}
-                                onChange={(event) => setFormState((current) => ({ ...current, notes: event.target.value }))}
+                                onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setFormState((current) => ({ ...current, notes: event.target.value }))}
                                 placeholder="Short-term response, complications, recovery progress..."
                             />
                         </label>

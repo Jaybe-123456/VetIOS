@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { Bot, ChevronRight, Compass, Loader2, Sparkles, X, Activity, Cpu, Zap, MessageSquare, ExternalLink, Maximize2 } from 'lucide-react';
 import { TerminalButton, TerminalInput } from '@/components/ui/terminal';
@@ -385,7 +385,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
                         <div className="absolute inset-x-0 -top-[1px] h-[1px] bg-gradient-to-r from-transparent via-accent/30 to-transparent" />
                         <TerminalInput
                             value={draft}
-                            onChange={(e) => setDraft(e.target.value)}
+                            onChange={(e: ChangeEvent<HTMLInputElement>) => setDraft(e.target.value)}
                             placeholder={`QUERY_${routeContext.title.toUpperCase().replace(/\s+/g, '_')}...`}
                             disabled={loading}
                             className={`${standalone ? 'h-12 sm:h-14 text-sm' : 'h-10 sm:h-12 text-[11px] sm:text-xs'} bg-accent/5 border-accent/20 focus:border-accent/50 transition-all font-mono pl-3 sm:pl-4`}

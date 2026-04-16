@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useMemo, useState } from 'react';
+import { type ChangeEvent, useMemo, useState } from 'react';
 import { Boxes, HardDrive, RefreshCw, Router } from 'lucide-react';
 import {
     ConsoleCard,
@@ -164,7 +164,7 @@ export default function EdgeBoxOperationsClient({
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Payload</TerminalLabel>
-                        <TerminalTextarea value={jobDraft.payload} onChange={(event) => setJobDraft((current) => ({ ...current, payload: event.target.value }))} />
+                        <TerminalTextarea value={jobDraft.payload} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setJobDraft((current) => ({ ...current, payload: event.target.value }))} />
                     </div>
                     <div className="pt-4">
                         <TerminalButton
@@ -258,7 +258,7 @@ function FormField({
     return (
         <div>
             <TerminalLabel>{label}</TerminalLabel>
-            <TerminalInput value={value} onChange={(event) => onChange(event.target.value)} />
+            <TerminalInput value={value} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)} />
         </div>
     );
 }
@@ -279,7 +279,7 @@ function SelectField({
             <TerminalLabel>{label}</TerminalLabel>
             <select
                 value={value}
-                onChange={(event) => onChange(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)}
                 className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
             >
                 {options.map((option) => (

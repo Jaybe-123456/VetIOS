@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ChangeEvent } from 'react';
 import { ConsoleCard, TerminalButton, TerminalInput, TerminalLabel } from '@/components/ui/terminal';
 import { extractApiErrorMessage, extractEnvelopeData, requestJson } from '@/lib/debugTools/client';
 
@@ -88,7 +88,7 @@ export default function TenantRateLimitPanel() {
                             <TerminalInput
                                 type="number"
                                 value={draft.inference_requests_per_minute}
-                                onChange={(event) => setDraft((current) => ({
+                                onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft((current) => ({
                                     ...current,
                                     inference_requests_per_minute: Number(event.target.value),
                                 }))}
@@ -99,7 +99,7 @@ export default function TenantRateLimitPanel() {
                             <TerminalInput
                                 type="number"
                                 value={draft.evaluation_requests_per_minute}
-                                onChange={(event) => setDraft((current) => ({
+                                onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft((current) => ({
                                     ...current,
                                     evaluation_requests_per_minute: Number(event.target.value),
                                 }))}
@@ -110,7 +110,7 @@ export default function TenantRateLimitPanel() {
                             <TerminalInput
                                 type="number"
                                 value={draft.simulate_requests_per_minute}
-                                onChange={(event) => setDraft((current) => ({
+                                onChange={(event: ChangeEvent<HTMLInputElement>) => setDraft((current) => ({
                                     ...current,
                                     simulate_requests_per_minute: Number(event.target.value),
                                 }))}

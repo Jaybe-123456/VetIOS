@@ -1,7 +1,7 @@
 'use client';
 
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { BrainCircuit, CalendarClock, GitBranchPlus, Network, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 import {
     ConsoleCard,
@@ -69,13 +69,21 @@ export default function FederationControlPlaneClient({ initialSnapshot, tenantId
         setAllowShadowParticipants(governance.policy.allow_shadow_participants);
     }, [coordinatorMembership, tenantId]);
 
+interface FederationActionResponse {
+    snapshot?: FederationControlPlaneSnapshot;
+    error?: string;
+    automation?: {
+        skipped_reason?: string | null;
+    };
+}
+
     async function refreshSnapshot() {
         setRefreshing(true);
         try {
             const params = new URLSearchParams();
             if (federationKey.trim()) params.set('federation_key', federationKey.trim().toLowerCase());
             const res = await fetch(`/api/platform/federation?${params.toString()}`, { cache: 'no-store' });
-            const data = await res.json() as { snapshot?: FederationControlPlaneSnapshot; error?: string };
+            const data = await res.json() as FederationActionResponse;
             if (!res.ok || !data.snapshot) throw new Error(data.error ?? 'Failed to load federation snapshot.');
             setSnapshot(data.snapshot);
         } catch (error) {
@@ -93,7 +101,7 @@ export default function FederationControlPlaneClient({ initialSnapshot, tenantId
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
-            const data = await res.json() as { snapshot?: FederationControlPlaneSnapshot; error?: string; automation?: { skipped_reason?: string | null } };
+            const data = (await res.json()) as FederationActionResponse;
             if (!res.ok || !data.snapshot) throw new Error(data.error ?? 'Federation operation failed.');
             setSnapshot(data.snapshot);
             setActionState({ status: 'success', message: data.automation?.skipped_reason ?? successMessage });
@@ -115,17 +123,17 @@ export default function FederationControlPlaneClient({ initialSnapshot, tenantId
             <ConsoleCard title="Federation Actions" className="mt-6">
                 <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
                     <div className="grid gap-4 md:grid-cols-2">
-                        <Field label="Federation Key"><TerminalInput value={federationKey} onChange={(event) => setFederationKey(event.target.value)} /></Field>
-                        <Field label="Coordinator Tenant ID"><TerminalInput value={coordinatorTenantId} onChange={(event) => setCoordinatorTenantId(event.target.value)} /></Field>
+                        <Field label="Federation Key"><TerminalInput value={federationKey} onChange={(event: ChangeEvent<HTMLInputElement>) => setFederationKey(event.target.value)} /></Field>
+                        <Field label="Coordinator Tenant ID"><TerminalInput value={coordinatorTenantId} onChange={(event: ChangeEvent<HTMLInputElement>) => setCoordinatorTenantId(event.target.value)} /></Field>
                         <Field label="Participation Mode">
-                            <Select value={participationMode} onChange={(event) => setParticipationMode(event.target.value as 'full' | 'shadow')}>
+                            <Select value={participationMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setParticipationMode(event.target.value as 'full' | 'shadow')}>
                                 <option value="full">full</option>
                                 <option value="shadow">shadow</option>
                             </Select>
                         </Field>
-                        <Field label="Site Weight"><TerminalInput value={weight} onChange={(event) => setWeight(event.target.value)} /></Field>
-                        <Field label="Enroll Target Tenant"><TerminalInput value={targetTenantId} onChange={(event) => setTargetTenantId(event.target.value)} placeholder="clinic tenant uuid" /></Field>
-                        <Field label="Snapshot Max Age (hours)"><TerminalInput value={snapshotMaxAgeHours} onChange={(event) => setSnapshotMaxAgeHours(event.target.value)} /></Field>
+                        <Field label="Site Weight"><TerminalInput value={weight} onChange={(event: ChangeEvent<HTMLInputElement>) => setWeight(event.target.value)} /></Field>
+                        <Field label="Enroll Target Tenant"><TerminalInput value={targetTenantId} onChange={(event: ChangeEvent<HTMLInputElement>) => setTargetTenantId(event.target.value)} placeholder="clinic tenant uuid" /></Field>
+                        <Field label="Snapshot Max Age (hours)"><TerminalInput value={snapshotMaxAgeHours} onChange={(event: ChangeEvent<HTMLInputElement>) => setSnapshotMaxAgeHours(event.target.value)} /></Field>
                     </div>
 
                     <div className="space-y-3">
@@ -179,36 +187,36 @@ export default function FederationControlPlaneClient({ initialSnapshot, tenantId
                 <ConsoleCard title="Governance Policy">
                     <div className="grid gap-4 md:grid-cols-2">
                         <Field label="Enrollment Mode">
-                            <Select value={enrollmentMode} onChange={(event) => setEnrollmentMode(event.target.value as FederationEnrollmentMode)}>
+                            <Select value={enrollmentMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setEnrollmentMode(event.target.value as FederationEnrollmentMode)}>
                                 <option value="coordinator_only">coordinator_only</option>
                                 <option value="allow_list">allow_list</option>
                                 <option value="open">open</option>
                             </Select>
                         </Field>
                         <Field label="Auto Enroll Allow List">
-                            <Select value={autoEnrollEnabled ? 'true' : 'false'} onChange={(event) => setAutoEnrollEnabled(event.target.value === 'true')}>
+                            <Select value={autoEnrollEnabled ? 'true' : 'false'} onChange={(event: ChangeEvent<HTMLSelectElement>) => setAutoEnrollEnabled(event.target.value === 'true')}>
                                 <option value="false">false</option>
                                 <option value="true">true</option>
                             </Select>
                         </Field>
                         <Field label="Auto Publish Snapshots">
-                            <Select value={autoPublishSnapshots ? 'true' : 'false'} onChange={(event) => setAutoPublishSnapshots(event.target.value === 'true')}>
+                            <Select value={autoPublishSnapshots ? 'true' : 'false'} onChange={(event: ChangeEvent<HTMLSelectElement>) => setAutoPublishSnapshots(event.target.value === 'true')}>
                                 <option value="true">true</option>
                                 <option value="false">false</option>
                             </Select>
                         </Field>
                         <Field label="Auto Run Rounds">
-                            <Select value={autoRunRounds ? 'true' : 'false'} onChange={(event) => setAutoRunRounds(event.target.value === 'true')}>
+                            <Select value={autoRunRounds ? 'true' : 'false'} onChange={(event: ChangeEvent<HTMLSelectElement>) => setAutoRunRounds(event.target.value === 'true')}>
                                 <option value="false">false</option>
                                 <option value="true">true</option>
                             </Select>
                         </Field>
-                        <Field label="Round Interval (hours)"><TerminalInput value={roundIntervalHours} onChange={(event) => setRoundIntervalHours(event.target.value)} /></Field>
-                        <Field label="Minimum Participants"><TerminalInput value={minimumParticipants} onChange={(event) => setMinimumParticipants(event.target.value)} /></Field>
-                        <Field label="Minimum Benchmark Pass Rate (%)"><TerminalInput value={minimumBenchmarkPassRate} onChange={(event) => setMinimumBenchmarkPassRate(event.target.value)} placeholder="blank disables gate" /></Field>
-                        <Field label="Maximum Calibration Avg ECE (%)"><TerminalInput value={maximumCalibrationAvgEce} onChange={(event) => setMaximumCalibrationAvgEce(event.target.value)} placeholder="blank disables gate" /></Field>
+                        <Field label="Round Interval (hours)"><TerminalInput value={roundIntervalHours} onChange={(event: ChangeEvent<HTMLInputElement>) => setRoundIntervalHours(event.target.value)} /></Field>
+                        <Field label="Minimum Participants"><TerminalInput value={minimumParticipants} onChange={(event: ChangeEvent<HTMLInputElement>) => setMinimumParticipants(event.target.value)} /></Field>
+                        <Field label="Minimum Benchmark Pass Rate (%)"><TerminalInput value={minimumBenchmarkPassRate} onChange={(event: ChangeEvent<HTMLInputElement>) => setMinimumBenchmarkPassRate(event.target.value)} placeholder="blank disables gate" /></Field>
+                        <Field label="Maximum Calibration Avg ECE (%)"><TerminalInput value={maximumCalibrationAvgEce} onChange={(event: ChangeEvent<HTMLInputElement>) => setMaximumCalibrationAvgEce(event.target.value)} placeholder="blank disables gate" /></Field>
                         <Field label="Allow Shadow Participants">
-                            <Select value={allowShadowParticipants ? 'true' : 'false'} onChange={(event) => setAllowShadowParticipants(event.target.value === 'true')}>
+                            <Select value={allowShadowParticipants ? 'true' : 'false'} onChange={(event: ChangeEvent<HTMLSelectElement>) => setAllowShadowParticipants(event.target.value === 'true')}>
                                 <option value="false">false</option>
                                 <option value="true">true</option>
                             </Select>
@@ -216,7 +224,7 @@ export default function FederationControlPlaneClient({ initialSnapshot, tenantId
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Approved Tenant IDs</TerminalLabel>
-                        <TerminalTextarea value={approvedTenantIdsText} onChange={(event) => setApprovedTenantIdsText(event.target.value)} placeholder="one tenant id per line or comma separated" />
+                        <TerminalTextarea value={approvedTenantIdsText} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setApprovedTenantIdsText(event.target.value)} placeholder="one tenant id per line or comma separated" />
                     </div>
                     <div className="mt-4 flex flex-wrap gap-2">
                         <TerminalButton onClick={() => void runAction({

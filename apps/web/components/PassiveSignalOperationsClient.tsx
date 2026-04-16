@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ChangeEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, CalendarClock, KeyRound, PlugZap, RefreshCw } from 'lucide-react';
 import {
@@ -78,11 +78,17 @@ export default function PassiveSignalOperationsClient({
         });
     }, [selectedInstallation]);
 
+interface PassiveSignalActionResponse {
+    snapshot?: PassiveSignalOperationsSnapshot;
+    error?: string;
+    generated_api_key?: string;
+}
+
     async function refreshSnapshot() {
         setRefreshing(true);
         try {
             const res = await fetch('/api/platform/passive-signals', { cache: 'no-store' });
-            const data = await res.json() as { snapshot?: PassiveSignalOperationsSnapshot; error?: string };
+            const data = await res.json() as PassiveSignalActionResponse;
             if (!res.ok || !data.snapshot) {
                 throw new Error(data.error ?? 'Failed to refresh passive-signal snapshot.');
             }
@@ -103,7 +109,7 @@ export default function PassiveSignalOperationsClient({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
-            const data = await res.json() as { snapshot?: PassiveSignalOperationsSnapshot; error?: string; generated_api_key?: string };
+            const data = (await res.json()) as PassiveSignalActionResponse;
             if (!res.ok || !data.snapshot) {
                 throw new Error(data.error ?? 'Passive-signal operation failed.');
             }
@@ -152,17 +158,17 @@ export default function PassiveSignalOperationsClient({
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
                 <ConsoleCard title="Install Marketplace Connector">
                     <Field label="Marketplace Pack">
-                        <Select value={selectedMarketplaceId} onChange={(event) => setSelectedMarketplaceId(event.target.value)}>
+                        <Select value={selectedMarketplaceId} onChange={(event: ChangeEvent<HTMLSelectElement>) => setSelectedMarketplaceId(event.target.value)}>
                             {snapshot.marketplace.map((template) => (
                                 <option key={template.id} value={template.id}>{template.label}</option>
                             ))}
                         </Select>
                     </Field>
                     <div className="mt-4 grid gap-4 md:grid-cols-2">
-                        <Field label="Installation Name"><TerminalInput value={installDraft.installation_name} onChange={(event) => setInstallDraft((current) => ({ ...current, installation_name: event.target.value }))} /></Field>
-                        <Field label="Vendor Account Ref"><TerminalInput value={installDraft.vendor_account_ref} onChange={(event) => setInstallDraft((current) => ({ ...current, vendor_account_ref: event.target.value }))} /></Field>
-                        <Field label="Webhook URL"><TerminalInput value={installDraft.webhook_url} onChange={(event) => setInstallDraft((current) => ({ ...current, webhook_url: event.target.value }))} /></Field>
-                        <Field label="Interval Hours"><TerminalInput value={installDraft.interval_hours} onChange={(event) => setInstallDraft((current) => ({ ...current, interval_hours: event.target.value }))} /></Field>
+                        <Field label="Installation Name"><TerminalInput value={installDraft.installation_name} onChange={(event: ChangeEvent<HTMLInputElement>) => setInstallDraft((current) => ({ ...current, installation_name: event.target.value }))} /></Field>
+                        <Field label="Vendor Account Ref"><TerminalInput value={installDraft.vendor_account_ref} onChange={(event: ChangeEvent<HTMLInputElement>) => setInstallDraft((current) => ({ ...current, vendor_account_ref: event.target.value }))} /></Field>
+                        <Field label="Webhook URL"><TerminalInput value={installDraft.webhook_url} onChange={(event: ChangeEvent<HTMLInputElement>) => setInstallDraft((current) => ({ ...current, webhook_url: event.target.value }))} /></Field>
+                        <Field label="Interval Hours"><TerminalInput value={installDraft.interval_hours} onChange={(event: ChangeEvent<HTMLInputElement>) => setInstallDraft((current) => ({ ...current, interval_hours: event.target.value }))} /></Field>
                     </div>
                     {selectedTemplate ? (
                         <div className="mt-4 border border-grid p-4">
@@ -195,7 +201,7 @@ export default function PassiveSignalOperationsClient({
 
                 <ConsoleCard title="Configure Installation">
                     <Field label="Connector Installation">
-                        <Select value={selectedInstallationId} onChange={(event) => setSelectedInstallationId(event.target.value)}>
+                        <Select value={selectedInstallationId} onChange={(event: ChangeEvent<HTMLSelectElement>) => setSelectedInstallationId(event.target.value)}>
                             {snapshot.installations.map((installation) => (
                                 <option key={installation.id} value={installation.id}>{installation.installation_name}</option>
                             ))}
@@ -204,25 +210,25 @@ export default function PassiveSignalOperationsClient({
                     {selectedInstallation ? (
                         <>
                             <div className="mt-4 grid gap-4 md:grid-cols-2">
-                                <Field label="Installation Name"><TerminalInput value={configDraft.installation_name} onChange={(event) => setConfigDraft((current) => ({ ...current, installation_name: event.target.value }))} /></Field>
-                                <Field label="Vendor Account Ref"><TerminalInput value={configDraft.vendor_account_ref} onChange={(event) => setConfigDraft((current) => ({ ...current, vendor_account_ref: event.target.value }))} /></Field>
-                                <Field label="Webhook URL"><TerminalInput value={configDraft.webhook_url} onChange={(event) => setConfigDraft((current) => ({ ...current, webhook_url: event.target.value }))} /></Field>
+                                <Field label="Installation Name"><TerminalInput value={configDraft.installation_name} onChange={(event: ChangeEvent<HTMLInputElement>) => setConfigDraft((current) => ({ ...current, installation_name: event.target.value }))} /></Field>
+                                <Field label="Vendor Account Ref"><TerminalInput value={configDraft.vendor_account_ref} onChange={(event: ChangeEvent<HTMLInputElement>) => setConfigDraft((current) => ({ ...current, vendor_account_ref: event.target.value }))} /></Field>
+                                <Field label="Webhook URL"><TerminalInput value={configDraft.webhook_url} onChange={(event: ChangeEvent<HTMLInputElement>) => setConfigDraft((current) => ({ ...current, webhook_url: event.target.value }))} /></Field>
                                 <Field label="Sync Mode">
-                                    <Select value={configDraft.sync_mode} onChange={(event) => setConfigDraft((current) => ({ ...current, sync_mode: event.target.value }))}>
+                                    <Select value={configDraft.sync_mode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setConfigDraft((current) => ({ ...current, sync_mode: event.target.value }))}>
                                         <option value="scheduled_pull">scheduled_pull</option>
                                         <option value="webhook_push">webhook_push</option>
                                         <option value="manual_file_drop">manual_file_drop</option>
                                     </Select>
                                 </Field>
-                                <Field label="Interval Hours"><TerminalInput value={configDraft.interval_hours} onChange={(event) => setConfigDraft((current) => ({ ...current, interval_hours: event.target.value }))} /></Field>
+                                <Field label="Interval Hours"><TerminalInput value={configDraft.interval_hours} onChange={(event: ChangeEvent<HTMLInputElement>) => setConfigDraft((current) => ({ ...current, interval_hours: event.target.value }))} /></Field>
                                 <Field label="Scheduler Enabled">
-                                    <Select value={configDraft.scheduler_enabled} onChange={(event) => setConfigDraft((current) => ({ ...current, scheduler_enabled: event.target.value }))}>
+                                    <Select value={configDraft.scheduler_enabled} onChange={(event: ChangeEvent<HTMLSelectElement>) => setConfigDraft((current) => ({ ...current, scheduler_enabled: event.target.value }))}>
                                         <option value="true">true</option>
                                         <option value="false">false</option>
                                     </Select>
                                 </Field>
                                 <Field label="Status">
-                                    <Select value={configDraft.status} onChange={(event) => setConfigDraft((current) => ({ ...current, status: event.target.value }))}>
+                                    <Select value={configDraft.status} onChange={(event: ChangeEvent<HTMLSelectElement>) => setConfigDraft((current) => ({ ...current, status: event.target.value }))}>
                                         <option value="active">active</option>
                                         <option value="paused">paused</option>
                                         <option value="revoked">revoked</option>

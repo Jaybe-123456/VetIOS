@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode, type ChangeEvent } from 'react';
 import { ConsoleCard, Container, PageHeader, TerminalButton, TerminalInput, TerminalLabel } from '@/components/ui/terminal';
 import { extractApiErrorMessage, extractEnvelopeData, requestJson } from '@/lib/debugTools/client';
 
@@ -428,7 +428,7 @@ export default function SimulationWorkbench({
             setError((current) => current === STREAM_FALLBACK_MESSAGE ? null : current);
         };
 
-        source.onmessage = (event) => {
+        source.onmessage = (event: MessageEvent) => {
             try {
                 const parsed = JSON.parse(event.data) as SimulationProgress;
                 applyProgress(parsed);
@@ -685,13 +685,13 @@ export default function SimulationWorkbench({
             <>
                 <div className="grid gap-4 md:grid-cols-2">
                     <Field label="SCENARIO NAME">
-                        <TerminalInput value={scenarioName} onChange={(event) => setScenarioName(event.target.value.toUpperCase())} />
+                        <TerminalInput value={scenarioName} onChange={(event: ChangeEvent<HTMLInputElement>) => setScenarioName(event.target.value.toUpperCase())} />
                     </Field>
                     <Field label="MODEL VERSION">
                         <ModelSelect value={selectedModelVersion} models={models} onChange={setSelectedModelVersion} />
                     </Field>
                     <Field label="DURATION (SECONDS)">
-                        <TerminalInput type="number" min={10} max={300} value={durationSeconds} onChange={(event) => setDurationSeconds(Number(event.target.value))} />
+                        <TerminalInput type="number" min={10} max={300} value={durationSeconds} onChange={(event: ChangeEvent<HTMLInputElement>) => setDurationSeconds(Number(event.target.value))} />
                     </Field>
                     <RangeField label="AGENT COUNT" value={agentCount} min={1} max={500} step={1} onChange={setAgentCount} />
                     <RangeField label="REQUESTS / AGENT" value={requestsPerAgent} min={1} max={100} step={1} onChange={setRequestsPerAgent} />
@@ -701,10 +701,10 @@ export default function SimulationWorkbench({
                 <div className="border border-grid p-4">
                     <div className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Prompt Distribution</div>
                     <div className="grid gap-4 md:grid-cols-2">
-                        <Field label="CANINE CASES %"><TerminalInput type="number" value={distribution.canine} onChange={(event) => setDistribution((current) => ({ ...current, canine: Number(event.target.value) }))} /></Field>
-                        <Field label="FELINE CASES %"><TerminalInput type="number" value={distribution.feline} onChange={(event) => setDistribution((current) => ({ ...current, feline: Number(event.target.value) }))} /></Field>
-                        <Field label="EQUINE CASES %"><TerminalInput type="number" value={distribution.equine} onChange={(event) => setDistribution((current) => ({ ...current, equine: Number(event.target.value) }))} /></Field>
-                        <Field label="OTHER SPECIES %"><TerminalInput type="number" value={distribution.other} onChange={(event) => setDistribution((current) => ({ ...current, other: Number(event.target.value) }))} /></Field>
+                        <Field label="CANINE CASES %"><TerminalInput type="number" value={distribution.canine} onChange={(event: ChangeEvent<HTMLInputElement>) => setDistribution((current) => ({ ...current, canine: Number(event.target.value) }))} /></Field>
+                        <Field label="FELINE CASES %"><TerminalInput type="number" value={distribution.feline} onChange={(event: ChangeEvent<HTMLInputElement>) => setDistribution((current) => ({ ...current, feline: Number(event.target.value) }))} /></Field>
+                        <Field label="EQUINE CASES %"><TerminalInput type="number" value={distribution.equine} onChange={(event: ChangeEvent<HTMLInputElement>) => setDistribution((current) => ({ ...current, equine: Number(event.target.value) }))} /></Field>
+                        <Field label="OTHER SPECIES %"><TerminalInput type="number" value={distribution.other} onChange={(event: ChangeEvent<HTMLInputElement>) => setDistribution((current) => ({ ...current, other: Number(event.target.value) }))} /></Field>
                     </div>
                     <div className={`mt-3 font-mono text-xs ${distributionTotal === 100 ? 'text-accent' : 'text-danger'}`}>
                         {distributionTotal === 100 ? '= 100%' : `!= 100% (${distributionTotal}%)`}
@@ -758,7 +758,7 @@ export default function SimulationWorkbench({
                 </div>
                 <RangeField label="PROMPTS PER CATEGORY" value={promptsPerCategory} min={5} max={100} step={5} onChange={setPromptsPerCategory} />
                 <Field label="EVALUATION METHOD">
-                    <select value={evaluationMethod} onChange={(event) => setEvaluationMethod(event.target.value as EvaluationMethod)} className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground">
+                    <select value={evaluationMethod} onChange={(event: ChangeEvent<HTMLSelectElement>) => setEvaluationMethod(event.target.value as EvaluationMethod)} className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground">
                         <option value="auto">AUTO</option>
                         <option value="human">HUMAN REVIEW QUEUE</option>
                         <option value="hybrid">HYBRID</option>
@@ -804,7 +804,7 @@ export default function SimulationWorkbench({
                     )}
                 </Field>
                 <Field label="TENANT SCOPE">
-                    <select value={tenantScope} onChange={(event) => setTenantScope(event.target.value as TenantScope)} className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground">
+                    <select value={tenantScope} onChange={(event: ChangeEvent<HTMLSelectElement>) => setTenantScope(event.target.value as TenantScope)} className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground">
                         <option value="own">MY TENANT ONLY</option>
                         <option value="all" disabled={!canUseAllTenantScope}>ALL TENANTS</option>
                     </select>
@@ -870,7 +870,7 @@ function RangeField({
                 max={max}
                 step={step}
                 value={value}
-                onChange={(event) => onChange(Number(event.target.value))}
+                onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(Number(event.target.value))}
                 className="w-full accent-[#00FF41]"
             />
         </div>
@@ -900,7 +900,7 @@ function ModelSelect({
     onChange: (value: string) => void;
 }) {
     return (
-        <select value={value} onChange={(event) => onChange(event.target.value)} className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground">
+        <select value={value} onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)} className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground">
             {models.length === 0 ? (
                 <option value="">NO MODELS AVAILABLE</option>
             ) : null}

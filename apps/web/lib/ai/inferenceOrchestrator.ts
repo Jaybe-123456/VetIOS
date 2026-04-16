@@ -19,6 +19,29 @@ export interface OrchestratorParams {
     inputMode: InputMode;
 }
 
+interface InferencePipelineDiagnosis {
+    primary_condition_class?: string;
+    condition_class?: string;
+    condition_class_probabilities?: Record<string, number>;
+    top_differentials?: Array<{ name?: string; diagnosis?: string }>;
+    confidence_score?: number;
+    analysis?: string;
+    top_diagnosis?: string;
+    predicted_diagnosis?: string;
+    [key: string]: unknown;
+}
+
+interface InferencePipelineRisk {
+    severity_score?: number | string;
+    emergency_level?: string;
+    risk_definition?: string;
+    catastrophic_deterioration_risk_6h?: number;
+    operative_urgency_risk?: number;
+    shock_risk?: number;
+    legacy_ml_operational_risk?: number | null;
+    [key: string]: unknown;
+}
+
 export async function runInferencePipeline({ model, rawInput, inputMode }: OrchestratorParams) {
     const pipelineTrace: Array<{ stage: string; status: 'completed'; detail?: string }> = [];
     let normalizedSig: Record<string, unknown>;
@@ -65,8 +88,8 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
         };
     }
 
-    const diagnosis = payload.diagnosis as Record<string, unknown>;
-    const risk = payload.risk_assessment as Record<string, unknown>;
+    const diagnosis = payload.diagnosis as InferencePipelineDiagnosis;
+    const risk = payload.risk_assessment as InferencePipelineRisk;
 
     const species = typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine';
     const mlRisk = await mlPredict({
@@ -143,7 +166,7 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
         inputSignature: normalizedSig,
         outputPayload: payload,
     });
-    const finalDiagnosis = payload.diagnosis as Record<string, unknown>;
+    const finalDiagnosis = payload.diagnosis as InferencePipelineDiagnosis;
     finalDiagnosis.primary_condition_class = resolveConditionClass(finalDiagnosis);
     const resolvedSeverityScore = resolveSeverityScore(risk);
     const resolvedEmergencyLevel = resolveEmergencyLevel(risk);
@@ -232,7 +255,7 @@ function elevateEmergencyLevel(currentRaw: string, target: string): string {
     return levels.indexOf(target) > levels.indexOf(current) ? target : current;
 }
 
-function resolveConditionClass(diagnosis: Record<string, unknown>): string {
+function resolveConditionClass(diagnosis: InferencePipelineDiagnosis): string {
     const explicit = normalizeConditionClass(
         typeof diagnosis.primary_condition_class === 'string'
             ? diagnosis.primary_condition_class
@@ -247,7 +270,7 @@ function resolveConditionClass(diagnosis: Record<string, unknown>): string {
     return inferConditionClassFromDiagnosis(extractTopDiagnosis(diagnosis)) ?? explicit ?? 'Undifferentiated';
 }
 
-function resolveSeverityScore(risk: Record<string, unknown>): number {
+function resolveSeverityScore(risk: InferencePipelineRisk): number {
     const explicit = typeof risk.severity_score === 'number'
         ? risk.severity_score
         : typeof risk.severity_score === 'string'
@@ -260,7 +283,7 @@ function resolveSeverityScore(risk: Record<string, unknown>): number {
     return severityScoreFromEmergencyLevel(resolveEmergencyLevel(risk));
 }
 
-function resolveEmergencyLevel(risk: Record<string, unknown>): string {
+function resolveEmergencyLevel(risk: InferencePipelineRisk): string {
     const explicit = typeof risk.emergency_level === 'string' ? risk.emergency_level.trim().toUpperCase() : null;
     if (explicit === 'CRITICAL' || explicit === 'HIGH' || explicit === 'MODERATE' || explicit === 'LOW') {
         return explicit;
@@ -292,7 +315,7 @@ function severityScoreFromEmergencyLevel(level: string): number {
     return 0.42;
 }
 
-function extractTopDiagnosis(diagnosis: Record<string, unknown>): string | null {
+function extractTopDiagnosis(diagnosis: InferencePipelineDiagnosis): string | null {
     const topDifferentials = Array.isArray(diagnosis.top_differentials) ? diagnosis.top_differentials : [];
     const top = topDifferentials[0];
     if (typeof top === 'object' && top !== null) {

@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ChangeEvent } from 'react';
 import { useMemo, useState } from 'react';
 import {
     BellRing,
@@ -202,7 +202,7 @@ export default function PetPassOperationsClient({
                             <TerminalLabel>Risk State</TerminalLabel>
                             <select
                                 value={petDraft.risk_state}
-                                onChange={(event) => setPetDraft((current) => ({ ...current, risk_state: event.target.value }))}
+                                onChange={(event: ChangeEvent<HTMLSelectElement>) => setPetDraft((current) => ({ ...current, risk_state: event.target.value }))}
                                 className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
                             >
                                 <option value="stable">stable</option>
@@ -278,7 +278,7 @@ export default function PetPassOperationsClient({
                             <TerminalLabel>Entry Type</TerminalLabel>
                             <select
                                 value={timelineDraft.entry_type}
-                                onChange={(event) => setTimelineDraft((current) => ({ ...current, entry_type: event.target.value }))}
+                                onChange={(event: ChangeEvent<HTMLSelectElement>) => setTimelineDraft((current) => ({ ...current, entry_type: event.target.value }))}
                                 className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
                             >
                                 <option value="alert">alert</option>
@@ -293,7 +293,7 @@ export default function PetPassOperationsClient({
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Detail</TerminalLabel>
-                        <TerminalTextarea value={timelineDraft.detail} onChange={(event) => setTimelineDraft((current) => ({ ...current, detail: event.target.value }))} />
+                        <TerminalTextarea value={timelineDraft.detail} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setTimelineDraft((current) => ({ ...current, detail: event.target.value }))} />
                     </div>
                     <div className="mt-6 grid gap-4 md:grid-cols-2">
                         <FormField label="Notification Owner ID" value={notificationDraft.owner_account_id} onChange={(value) => setNotificationDraft((current) => ({ ...current, owner_account_id: value }))} />
@@ -302,7 +302,7 @@ export default function PetPassOperationsClient({
                             <TerminalLabel>Notification Channel</TerminalLabel>
                             <select
                                 value={notificationDraft.channel}
-                                onChange={(event) => setNotificationDraft((current) => ({ ...current, channel: event.target.value }))}
+                                onChange={(event: ChangeEvent<HTMLSelectElement>) => setNotificationDraft((current) => ({ ...current, channel: event.target.value }))}
                                 className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
                             >
                                 <option value="email">email</option>
@@ -315,7 +315,7 @@ export default function PetPassOperationsClient({
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Notification Body</TerminalLabel>
-                        <TerminalTextarea value={notificationDraft.body} onChange={(event) => setNotificationDraft((current) => ({ ...current, body: event.target.value }))} />
+                        <TerminalTextarea value={notificationDraft.body} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setNotificationDraft((current) => ({ ...current, body: event.target.value }))} />
                     </div>
                     <div className="mt-2 font-mono text-[11px] text-muted">
                         Email sends to the owner email on file. SMS sends to the owner phone number on file and works best with E.164 numbers or a configured PETPASS_DEFAULT_COUNTRY_CODE. Push remains a placeholder until a device-token pipeline is added.
@@ -435,7 +435,7 @@ function FormField({
     return (
         <div>
             <TerminalLabel>{label}</TerminalLabel>
-            <TerminalInput value={value} onChange={(event) => onChange(event.target.value)} />
+            <TerminalInput value={value} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)} />
         </div>
     );
 }
