@@ -278,6 +278,7 @@ export function ModelRegistryControlPlaneClient({
                     label="Registry Health"
                     value={initialSnapshot.registry_health.toUpperCase()}
                     tone={initialSnapshot.registry_health === 'degraded' ? 'warn' : 'accent'}
+                    pulse={initialSnapshot.registry_health === 'degraded'}
                 />
                 <SummaryCard
                     label="Consistency Issues"
@@ -449,23 +450,23 @@ export function ModelRegistryControlPlaneClient({
                         <EmptyPanel message="No registry audit events have been recorded yet." compact />
                     ) : (
                         <div className="overflow-x-auto">
-                            <table className="min-w-[880px] w-full border-collapse text-left">
+                            <table className="min-w-[880px] w-full border-collapse text-left border border-grid/20">
                                 <thead>
-                                    <tr className="border-b border-grid bg-black/40 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_90%)] font-bold">
-                                        <th className="p-3 font-bold">Timestamp</th>
-                                        <th className="p-3 font-bold">Registry</th>
-                                        <th className="p-3 font-bold">Event</th>
-                                        <th className="p-3 font-bold">Actor</th>
+                                    <tr className="border-b border-grid bg-black/60 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_90%)] font-bold">
+                                        <th className="p-3 font-bold border-r border-grid/20">Timestamp</th>
+                                        <th className="p-3 font-bold border-r border-grid/20">Registry</th>
+                                        <th className="p-3 font-bold border-r border-grid/20">Event</th>
+                                        <th className="p-3 font-bold border-r border-grid/20">Actor</th>
                                         <th className="p-3 font-bold">Metadata</th>
                                     </tr>
                                 </thead>
                                 <tbody className="font-mono text-xs">
-                                    {initialSnapshot.audit_history.slice(0, 20).map((event) => (
-                                        <tr key={event.event_id} className="border-b border-grid/20 hover:bg-white/[0.02]">
-                                            <td className="p-3 text-[hsl(0_0%_80%)] font-medium">{formatDateTime(event.timestamp)}</td>
-                                            <td className="p-3 break-all align-top text-foreground/90">{event.registry_id}</td>
-                                            <td className="p-3 break-words align-top font-bold">{event.event_type}</td>
-                                            <td className="p-3 break-all align-top text-foreground/90">{event.actor ?? 'system'}</td>
+                                    {initialSnapshot.audit_history.slice(0, 20).map((event, idx) => (
+                                        <tr key={event.event_id} className={`border-b border-grid/20 hover:bg-accent/5 ${idx % 2 === 0 ? 'bg-black/10' : 'bg-transparent'}`}>
+                                            <td className="p-3 text-[hsl(0_0%_80%)] font-medium border-r border-grid/20">{formatDateTime(event.timestamp)}</td>
+                                            <td className="p-3 break-all align-top text-foreground/90 border-r border-grid/20">{event.registry_id}</td>
+                                            <td className="p-3 break-words align-top font-bold text-accent border-r border-grid/20">{event.event_type}</td>
+                                            <td className="p-3 break-all align-top text-foreground/90 border-r border-grid/20">{event.actor ?? 'system'}</td>
                                             <td className="max-w-[30rem] p-3 align-top break-all whitespace-pre-wrap text-foreground/95">{summarizeMetadata(event.metadata)}</td>
                                         </tr>
                                     ))}
@@ -794,17 +795,26 @@ function SummaryCard({
     label,
     value,
     tone = 'default',
+    pulse = false,
 }: {
     label: string;
     value: number | string;
     tone?: 'default' | 'warn' | 'accent';
+    pulse?: boolean;
 }) {
     return (
-        <div className="border border-grid bg-black/20 p-3 font-mono transition-colors hover:bg-black/30">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_82%)] font-bold">{label}</div>
-            <div className={`mt-2 break-words text-xl leading-tight md:text-2xl font-bold ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
-                {value}
+        <div className={`border border-grid bg-black/20 p-3 font-mono transition-all hover:bg-black/30 relative overflow-hidden group ${pulse ? 'ring-1 ring-danger/20' : ''}`}>
+            {pulse && <div className="absolute inset-0 bg-danger/5 animate-pulse" />}
+            <div className="relative z-10">
+                <div className="flex items-center gap-2 mb-2">
+                    {pulse && <div className="w-1.5 h-1.5 bg-danger rounded-full animate-ping" />}
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_82%)] font-bold">{label}</div>
+                </div>
+                <div className={`break-words text-xl leading-tight md:text-2xl font-bold ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
+                    {value}
+                </div>
             </div>
+            <div className={`absolute bottom-0 left-0 h-[2px] w-0 transition-all duration-500 group-hover:w-full ${tone === 'accent' ? 'bg-accent' : tone === 'warn' ? 'bg-danger' : 'bg-grid'}`} />
         </div>
     );
 }
@@ -869,19 +879,45 @@ function MetricTile({
     value: string;
     emphasis?: boolean;
 }) {
+    const numValue = parseFloat(value);
+    const isSafetyMetric = label.toLowerCase().includes('recall') || label.toLowerCase().includes('reassurance') || label.toLowerCase().includes('critical');
+    
+    let colorClass = 'text-foreground';
+    let borderAccent = 'bg-grid/40';
+    let bgTint = 'bg-black/20';
+
+    if (!Number.isNaN(numValue)) {
+        if (isSafetyMetric) {
+            if (numValue < 0.95) { colorClass = 'text-danger'; borderAccent = 'bg-danger'; bgTint = 'bg-danger/5'; }
+            else { colorClass = 'text-rose-400'; borderAccent = 'bg-rose-500/50'; }
+        } else {
+            if (numValue >= 0.90) { colorClass = 'text-accent'; borderAccent = 'bg-accent'; }
+            else if (numValue >= 0.75) { colorClass = 'text-warning'; borderAccent = 'bg-warning'; }
+            else { colorClass = 'text-danger'; borderAccent = 'bg-danger'; bgTint = 'bg-danger/5'; }
+        }
+    }
+
     return (
-        <div className={`border p-3 ${emphasis ? 'border-danger/30 bg-danger/10' : 'border-grid/30 bg-black/20'}`}>
+        <div className={`relative border border-grid/30 p-3 pl-4 transition-all hover:bg-black/40 group ${bgTint}`}>
+            <div className={`absolute left-0 top-0 bottom-0 w-1 ${borderAccent} group-hover:w-1.5 transition-all`} />
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-[hsl(0_0%_82%)] font-bold">{label}</div>
-            <div className={`mt-2 break-words font-mono text-base leading-tight md:text-lg font-bold ${emphasis ? 'text-danger' : 'text-foreground'}`}>{value}</div>
+            <div className={`mt-2 break-words font-mono text-base leading-tight md:text-lg font-bold ${colorClass}`}>{value}</div>
         </div>
     );
 }
 
 function GateRow({ label, status }: { label: string; status: GateStatus }) {
+    const isFailing = status === 'fail';
+    const isPending = status === 'hold' || status === 'unknown';
+    
     return (
-        <div className="flex items-center justify-between gap-3 border border-grid/30 bg-black/20 px-3 py-2 font-mono text-xs">
-            <span className="min-w-0 break-words text-foreground/95 font-medium">{label}</span>
-            <span className={`inline-flex items-center border px-2 py-1 text-[10px] uppercase tracking-[0.16em] font-bold ${gateBadgeClass(status)}`}>
+        <div className={`flex items-center justify-between gap-3 border border-grid/30 px-3 py-2 font-mono text-xs transition-colors ${
+            isFailing ? 'bg-danger/10 border-danger/20' : 
+            isPending ? 'bg-amber-500/5 border-amber-500/20' : 
+            'bg-accent/5 border-accent/20'
+        }`}>
+            <span className={`min-w-0 break-words font-bold ${isFailing ? 'text-danger' : 'text-foreground/95'}`}>{label}</span>
+            <span className={`inline-flex items-center border px-2 py-1 text-[10px] uppercase tracking-[0.16em] font-bold shadow-sm ${gateBadgeClass(status)}`}>
                 {status}
             </span>
         </div>
@@ -916,31 +952,40 @@ function LifecycleTimeline({
     const currentIndex = order.indexOf(current);
 
     return (
-        <div className="grid gap-2 md:grid-cols-5">
-            {order.map((step, index) => {
-                const isCurrent = step === current;
-                const isReached = current === 'archived'
-                    ? index <= currentIndex
-                    : step === 'archived'
-                        ? false
-                        : index <= currentIndex;
+        <div className="relative">
+            <div className="flex items-center justify-between gap-1">
+                {order.map((step, index) => {
+                    const isCurrent = step === current;
+                    const isReached = current === 'archived'
+                        ? index <= currentIndex
+                        : step === 'archived'
+                            ? false
+                            : index <= currentIndex;
 
-                return (
-                    <div
-                        key={step}
-                        className={`min-w-0 truncate text-center border px-2 py-2 font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.1em] xl:tracking-[0.16em] ${
-                            isCurrent
-                                ? 'border-accent/40 bg-accent/10 text-accent'
-                                : isReached
-                                    ? 'border-grid/50 bg-black/30 text-foreground/85'
-                                    : 'border-grid/20 bg-black/10 text-muted'
-                        }`}
-                        title={step}
-                    >
-                        {step}
-                    </div>
-                );
-            })}
+                    return (
+                        <div key={step} className="flex-1 group relative">
+                            {index < order.length - 1 && (
+                                <div className={`absolute top-1/2 left-full w-full h-[1px] -translate-y-1/2 z-0 hidden md:block ${
+                                    index < currentIndex ? 'bg-accent/40 shadow-[0_0_8px_rgba(var(--accent-rgb),0.3)]' : 'bg-grid/20'
+                                }`} />
+                            )}
+                            <div
+                                className={`relative z-10 min-w-0 truncate text-center border px-2 py-2 font-mono text-[9px] sm:text-[10px] uppercase tracking-[0.1em] xl:tracking-[0.16em] transition-all duration-300 ${
+                                    isCurrent
+                                        ? 'border-accent bg-accent/20 text-accent font-bold shadow-[0_0_15px_rgba(var(--accent-rgb),0.2)]'
+                                        : isReached
+                                            ? 'border-accent/40 bg-accent/5 text-accent/80'
+                                            : 'border-grid/20 bg-black/10 text-[hsl(0_0%_60%)]'
+                                }`}
+                                title={step}
+                            >
+                                {isReached && !isCurrent && <span className="absolute top-0 right-0 w-1.5 h-1.5 bg-accent/40" />}
+                                {step}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
         </div>
     );
 }
