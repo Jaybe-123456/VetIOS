@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ChangeEvent } from 'react';
 import { useMemo, useState } from 'react';
 import { BadgeCheck, FileCheck2, RefreshCw, Shield } from 'lucide-react';
 import {
@@ -146,20 +146,20 @@ export default function ModelTrustOperationsClient({
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Summary Override</TerminalLabel>
-                        <TerminalTextarea value={publicationDraft.summary_override} onChange={(event) => setPublicationDraft((current) => ({ ...current, summary_override: event.target.value }))} />
+                        <TerminalTextarea value={publicationDraft.summary_override} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPublicationDraft((current) => ({ ...current, summary_override: event.target.value }))} />
                     </div>
                     <div className="mt-4 grid gap-4">
                         <div>
                             <TerminalLabel>Intended Use</TerminalLabel>
-                            <TerminalTextarea value={publicationDraft.intended_use} onChange={(event) => setPublicationDraft((current) => ({ ...current, intended_use: event.target.value }))} />
+                            <TerminalTextarea value={publicationDraft.intended_use} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPublicationDraft((current) => ({ ...current, intended_use: event.target.value }))} />
                         </div>
                         <div>
                             <TerminalLabel>Limitations</TerminalLabel>
-                            <TerminalTextarea value={publicationDraft.limitations} onChange={(event) => setPublicationDraft((current) => ({ ...current, limitations: event.target.value }))} />
+                            <TerminalTextarea value={publicationDraft.limitations} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPublicationDraft((current) => ({ ...current, limitations: event.target.value }))} />
                         </div>
                         <div>
                             <TerminalLabel>Review Notes</TerminalLabel>
-                            <TerminalTextarea value={publicationDraft.review_notes} onChange={(event) => setPublicationDraft((current) => ({ ...current, review_notes: event.target.value }))} />
+                            <TerminalTextarea value={publicationDraft.review_notes} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setPublicationDraft((current) => ({ ...current, review_notes: event.target.value }))} />
                         </div>
                     </div>
                     <div className="pt-4">
@@ -209,7 +209,7 @@ export default function ModelTrustOperationsClient({
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Summary</TerminalLabel>
-                        <TerminalTextarea value={attestationDraft.summary} onChange={(event) => setAttestationDraft((current) => ({ ...current, summary: event.target.value }))} />
+                        <TerminalTextarea value={attestationDraft.summary} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setAttestationDraft((current) => ({ ...current, summary: event.target.value }))} />
                     </div>
                     <div className="pt-4">
                         <TerminalButton onClick={() => void runAction({ action: 'create_attestation', ...attestationDraft }, 'Attestation created.')}>
@@ -264,7 +264,7 @@ function FormField({
     return (
         <div>
             <TerminalLabel>{label}</TerminalLabel>
-            <TerminalInput value={value} onChange={(event) => onChange(event.target.value)} />
+            <TerminalInput value={value} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)} />
         </div>
     );
 }
@@ -285,7 +285,7 @@ function SelectField({
             <TerminalLabel>{label}</TerminalLabel>
             <select
                 value={value}
-                onChange={(event) => onChange(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)}
                 className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
             >
                 {options.map((option) => (

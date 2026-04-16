@@ -1,6 +1,6 @@
 'use client';
 
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, ReactNode, ChangeEvent } from 'react';
 import { useEffect, useState } from 'react';
 import ReactFlow, {
     Background,
@@ -115,7 +115,7 @@ export default function IntelligenceControlGraphClient() {
         setStreamError(null);
         const source = new EventSource('/intelligence/stream?window=24h');
 
-        source.onmessage = (event) => {
+        source.onmessage = (event: MessageEvent) => {
             const payload = JSON.parse(event.data) as TopologyStreamPayload;
             setSnapshot(payload.snapshot);
             setReplayMarkers(payload.snapshot.playback.event_timeline);
@@ -302,7 +302,7 @@ export default function IntelligenceControlGraphClient() {
                                 min={0}
                                 max={Math.max(0, replayMarkers.length - 1)}
                                 value={Math.max(0, replayIndex)}
-                                onChange={(event) => setReplayIndex(Number(event.target.value))}
+                                onChange={(event: ChangeEvent<HTMLInputElement>) => setReplayIndex(Number(event.target.value))}
                                 className="w-full"
                                 disabled={replayMarkers.length === 0}
                             />
@@ -411,7 +411,7 @@ export default function IntelligenceControlGraphClient() {
                                         <span className="text-muted uppercase">Scenario</span>
                                         <select
                                             value={simulationScenario}
-                                            onChange={(event) => setSimulationScenario(event.target.value as TopologySimulationScenario)}
+                                            onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationScenario(event.target.value as TopologySimulationScenario)}
                                             className="mt-1 w-full bg-black border border-grid p-2 text-foreground"
                                         >
                                             <option value="failure">Inject Failure</option>
@@ -423,7 +423,7 @@ export default function IntelligenceControlGraphClient() {
                                         <span className="text-muted uppercase">Target Node</span>
                                         <select
                                             value={simulationTarget}
-                                            onChange={(event) => setSimulationTarget(event.target.value)}
+                                            onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationTarget(event.target.value)}
                                             className="mt-1 w-full bg-black border border-grid p-2 text-foreground"
                                         >
                                             {(snapshot?.nodes ?? []).map((node) => (
@@ -435,7 +435,7 @@ export default function IntelligenceControlGraphClient() {
                                         <span className="text-muted uppercase">Severity</span>
                                         <select
                                             value={simulationSeverity}
-                                            onChange={(event) => setSimulationSeverity(event.target.value as 'degraded' | 'critical')}
+                                            onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationSeverity(event.target.value as 'degraded' | 'critical')}
                                             className="mt-1 w-full bg-black border border-grid p-2 text-foreground"
                                         >
                                             <option value="degraded">Degraded</option>

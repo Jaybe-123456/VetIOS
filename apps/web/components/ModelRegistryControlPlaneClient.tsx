@@ -20,6 +20,12 @@ import type {
     ModelRegistryControlPlaneSnapshot,
 } from '@/lib/experiments/types';
 
+interface RegistryControlPlaneApiResponse {
+    snapshot?: ModelRegistryControlPlaneSnapshot;
+    verification?: RegistryControlPlaneVerificationResult;
+    error?: string;
+}
+
 type RegistryAction = 'promote_to_staging' | 'promote_to_production' | 'set_manual_approval' | 'archive' | 'rollback';
 
 export function ModelRegistryControlPlaneClient({
@@ -73,7 +79,7 @@ export function ModelRegistryControlPlaneClient({
                             incident_id: options.incidentId ?? null,
                         }),
                     });
-                    const payload = await response.json().catch(() => ({}));
+                    const payload = await response.json().catch(() => ({})) as RegistryControlPlaneApiResponse;
                     if (!response.ok) {
                         throw new Error(typeof payload?.error === 'string' ? payload.error : 'Registry action failed.');
                     }
@@ -128,7 +134,7 @@ export function ModelRegistryControlPlaneClient({
                     action: 'verify_control_plane',
                 }),
             });
-            const payload = await response.json().catch(() => ({}));
+            const payload = await response.json().catch(() => ({})) as RegistryControlPlaneApiResponse;
             if (!response.ok || !payload?.verification) {
                 throw new Error(typeof payload?.error === 'string' ? payload.error : 'Registry verification failed.');
             }
@@ -161,7 +167,7 @@ export function ModelRegistryControlPlaneClient({
                     action: 'refresh_registry',
                 }),
             });
-            const payload = await response.json().catch(() => ({}));
+            const payload = await response.json().catch(() => ({})) as RegistryControlPlaneApiResponse;
             if (!response.ok || !payload?.snapshot) {
                 throw new Error(typeof payload?.error === 'string' ? payload.error : 'Registry refresh failed.');
             }
@@ -201,7 +207,7 @@ export function ModelRegistryControlPlaneClient({
                             run_id: entry.registry.run_id,
                         }),
                     });
-                    const payload = await response.json().catch(() => ({}));
+                    const payload = await response.json().catch(() => ({})) as RegistryControlPlaneApiResponse;
                     if (!response.ok || !payload?.snapshot) {
                         throw new Error(typeof payload?.error === 'string' ? payload.error : 'Governance refresh failed.');
                     }
@@ -234,7 +240,7 @@ export function ModelRegistryControlPlaneClient({
                         method: 'PATCH',
                         credentials: 'include',
                     });
-                    const payload = await response.json().catch(() => ({}));
+                    const payload = await response.json().catch(() => ({})) as RegistryControlPlaneApiResponse;
                     if (!response.ok) {
                         throw new Error(typeof payload?.error === 'string' ? payload.error : 'Model unblock failed.');
                     }

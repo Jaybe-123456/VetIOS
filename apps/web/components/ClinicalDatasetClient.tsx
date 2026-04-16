@@ -1,6 +1,6 @@
 'use client';
 
-import { useDeferredValue, useEffect, useMemo, useState, useTransition } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState, useTransition, type ChangeEvent } from 'react';
 import { useRouter } from 'next/navigation';
 import { RefreshCw, Search } from 'lucide-react';
 import { Container, PageHeader } from '@/components/ui/terminal';
@@ -154,13 +154,13 @@ export function ClinicalDatasetClient({
                         <input
                             type="text"
                             value={query}
-                            onChange={(event) => setQuery(event.target.value)}
+                            onChange={(event: ChangeEvent<HTMLInputElement>) => setQuery(event.target.value)}
                             placeholder="QUERY_CASES (species, diagnosis, contradiction flag, event id...)"
                             className="w-full border-none bg-transparent font-mono text-sm text-foreground focus:outline-none"
                         />
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <select value={selectedExportMode} onChange={(event) => setSelectedExportMode(event.target.value as DatasetExportMode)} className="border border-grid bg-black/20 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-muted">
+                        <select value={selectedExportMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setSelectedExportMode(event.target.value as DatasetExportMode)} className="border border-grid bg-black/20 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-muted">
                             <option value="clean_labeled_cases">Clean Labeled</option>
                             <option value="severity_training_set">Severity Set</option>
                             <option value="adversarial_benchmark_set">Adversarial Set</option>
@@ -402,7 +402,7 @@ function FilterSelect({ label, value, options, onChange }: { label: string; valu
     return (
         <label className="flex flex-col gap-1 border border-grid bg-black/20 p-2 font-mono text-[10px] uppercase tracking-[0.15em] text-muted">
             {label}
-            <select value={value} onChange={(event) => onChange(event.target.value)} className="bg-transparent text-xs text-foreground outline-none">
+            <select value={value} onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)} className="bg-transparent text-xs text-foreground outline-none">
                 <option value="all">All</option>
                 {options.map((option) => <option key={option} value={option}>{option}</option>)}
             </select>
@@ -414,7 +414,7 @@ function ToggleFilter({ label, checked, onChange }: { label: string; checked: bo
     return (
         <label className="flex items-center justify-between gap-3 border border-grid bg-black/20 p-2 font-mono text-[10px] uppercase tracking-[0.15em] text-muted">
             <span>{label}</span>
-            <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="accent-current" />
+            <input type="checkbox" checked={checked} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.checked)} className="accent-current" />
         </label>
     );
 }

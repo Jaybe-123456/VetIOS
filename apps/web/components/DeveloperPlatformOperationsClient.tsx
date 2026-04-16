@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import type { ReactNode, ChangeEvent } from 'react';
 import { useMemo, useState } from 'react';
 import { ArrowRight, Boxes, KeyRound, RefreshCw, UsersRound } from 'lucide-react';
 import {
@@ -186,7 +186,7 @@ export default function DeveloperPlatformOperationsClient({
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Summary</TerminalLabel>
-                        <TerminalTextarea value={productDraft.summary} onChange={(event) => setProductDraft((current) => ({ ...current, summary: event.target.value }))} />
+                        <TerminalTextarea value={productDraft.summary} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setProductDraft((current) => ({ ...current, summary: event.target.value }))} />
                     </div>
                     <div className="pt-4">
                         <TerminalButton
@@ -213,7 +213,7 @@ export default function DeveloperPlatformOperationsClient({
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Use Case</TerminalLabel>
-                        <TerminalTextarea value={onboardingDraft.use_case} onChange={(event) => setOnboardingDraft((current) => ({ ...current, use_case: event.target.value }))} />
+                        <TerminalTextarea value={onboardingDraft.use_case} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setOnboardingDraft((current) => ({ ...current, use_case: event.target.value }))} />
                     </div>
                     <div className="pt-4">
                         <TerminalButton
@@ -325,7 +325,7 @@ function FormField({
     return (
         <div>
             <TerminalLabel>{label}</TerminalLabel>
-            <TerminalInput value={value} onChange={(event) => onChange(event.target.value)} />
+            <TerminalInput value={value} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)} />
         </div>
     );
 }
@@ -346,7 +346,7 @@ function SelectField({
             <TerminalLabel>{label}</TerminalLabel>
             <select
                 value={value}
-                onChange={(event) => onChange(event.target.value)}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)}
                 className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
             >
                 {options.map((option) => (

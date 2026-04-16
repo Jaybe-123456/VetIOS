@@ -74,6 +74,11 @@ type CireCollapseProfile = {
     m_threshold_map: Record<string, unknown>;
 };
 
+interface CireApiResponse<T> {
+    data?: T;
+    error?: string | { message: string };
+}
+
 export default function DashboardControlPlaneClient() {
     const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
     const [snapshot, setSnapshot] = useState<ControlPlaneDashboardViewSnapshot | null>(null);
@@ -128,18 +133,23 @@ export default function DashboardControlPlaneClient() {
                 fetch('/api/cire/collapse-profile', { cache: 'no-store' }),
             ]);
 
-            const [statusJson, historyJson, incidentsJson, profileJson] = await Promise.all([
+            const [statusJson, historyJson, incidentsJson, profileJson] = (await Promise.all([
                 statusRes.json(),
                 historyRes.json(),
                 incidentsRes.json(),
                 profileRes.json(),
-            ]);
+            ])) as [
+                CireApiResponse<CireStatusSnapshot>,
+                CireApiResponse<CireHistoryPoint[]>,
+                CireApiResponse<CireIncidentRecord[]>,
+                CireApiResponse<CireCollapseProfile>
+            ];
 
             if (statusRes.ok) {
                 setCireStatus(statusJson.data ?? null);
             }
             if (historyRes.ok) {
-                setCireHistory(Array.isArray(historyJson.data) ? historyJson.data : []);
+                setCireHistory(Array.isArray(statusJson.data) ? (statusJson.data as unknown as CireHistoryPoint[]) : (historyJson.data ?? []));
             }
             if (incidentsRes.ok) {
                 setCireIncidents(Array.isArray(incidentsJson.data) ? incidentsJson.data : []);
@@ -281,9 +291,10 @@ export default function DashboardControlPlaneClient() {
                 method: 'POST',
                 cache: 'no-store',
             });
-            const result = await response.json();
+            const result = await response.json() as CireApiResponse<{ simulation_id?: string }>;
             if (!response.ok) {
-                throw new Error(result.error?.message ?? 'Failed to start CIRE calibration.');
+                const errorObj = result.error;
+                throw new Error(typeof errorObj === 'object' ? errorObj.message : (errorObj ?? 'Failed to start CIRE calibration.'));
             }
             window.location.href = `/simulate?simulation_id=${result.data?.simulation_id ?? ''}`;
         } catch (error) {
@@ -304,9 +315,10 @@ export default function DashboardControlPlaneClient() {
                     resolution_notes: 'Resolved from system dashboard',
                 }),
             });
-            const result = await response.json();
+            const result = await response.json() as CireApiResponse<unknown>;
             if (!response.ok) {
-                throw new Error(result.error?.message ?? 'Failed to resolve CIRE incident.');
+                const errorObj = result.error;
+                throw new Error(typeof errorObj === 'object' ? errorObj.message : (errorObj ?? 'Failed to resolve CIRE incident.'));
             }
             await refreshCire();
         } catch (error) {

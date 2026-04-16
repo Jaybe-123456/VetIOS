@@ -36,7 +36,7 @@ export function TerminalInput({ className = '', ...props }: React.InputHTMLAttri
 
 /* ── TerminalTextarea ──────────────────────────────────────────────────────── */
 
-export function TerminalTextarea({ className = '', ...props }: React.TextareaAttributes<HTMLTextAreaElement>) {
+export function TerminalTextarea({ className = '', ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
     return (
         <textarea
             className={`
