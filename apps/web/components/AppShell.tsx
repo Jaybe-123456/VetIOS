@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import UserNav from '@/components/UserNav';
 import VetiosGuide from '@/components/VetiosGuide';
-import { Menu, X, TerminalSquare, ArrowLeft } from 'lucide-react';
+import { Menu, X, TerminalSquare, ChevronLeft } from 'lucide-react';
 import { isShelllessPublicPath } from '@/lib/site';
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -16,6 +16,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     const handleToggle = useCallback(() => setSidebarOpen(prev => !prev), []);
     const handleClose = useCallback(() => setSidebarOpen(false), []);
     const isShelllessSurface = pathname ? isShelllessPublicPath(pathname) : false;
+
+    // Derive page title from pathname for center display
+    const pageTitle = pathname
+        ? pathname.split('/').filter(Boolean).pop()?.replace(/-/g, ' ').toUpperCase() ?? 'DASHBOARD'
+        : 'DASHBOARD';
 
     if (isShelllessSurface) {
         return (
@@ -30,7 +35,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     return (
         <>
-            {/* ── Desktop Sidebar (always visible on lg+) ── */}
+            {/* ── Desktop Sidebar ── */}
             <div className="hidden lg:block">
                 <Sidebar isOpen={true} onClose={() => {}} isMobile={false} />
             </div>
@@ -51,47 +56,65 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
             {/* ── Main Content Area ── */}
             <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-                {/* Header */}
-                <header className="h-14 lg:h-16 border-b border-grid flex items-center justify-between px-4 lg:px-6 shrink-0 bg-background sticky top-0 z-30">
-                    {/* Left: hamburger + branding on mobile, and back button */}
-                    <div className="flex items-center gap-2 lg:gap-4">
-                        <div className="flex items-center gap-3 lg:hidden">
-                            <button
-                                onClick={handleToggle}
-                                className="p-2 -ml-2 text-muted hover:text-accent transition-colors"
-                                aria-label="Toggle sidebar"
-                            >
-                                {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-                            </button>
-                            <span className="font-mono flex items-center gap-1.5 font-bold tracking-tight text-accent text-sm mr-1">
-                                <TerminalSquare className="w-4 h-4" />
-                                VET_IOS
-                            </span>
-                        </div>
 
-                        {/* Back Button */}
+                {/* ── UPGRADED Topbar ── */}
+                <header className="
+                    h-12 lg:h-14 border-b border-[hsl(0_0%_18%)]
+                    flex items-center justify-between px-4 lg:px-6
+                    shrink-0 bg-[hsl(0_0%_6%)] sticky top-0 z-30
+                ">
+                    {/* Left: hamburger (mobile) + back button */}
+                    <div className="flex items-center gap-2 lg:gap-3">
+                        {/* Mobile hamburger */}
+                        <button
+                            onClick={handleToggle}
+                            className="lg:hidden p-1.5 text-[hsl(0_0%_52%)] hover:text-accent transition-colors"
+                            aria-label="Toggle sidebar"
+                        >
+                            {sidebarOpen
+                                ? <X className="w-4 h-4" />
+                                : <Menu className="w-4 h-4" />
+                            }
+                        </button>
+
+                        {/* Mobile logo */}
+                        <span className="lg:hidden font-mono flex items-center gap-1.5 font-bold tracking-tight text-accent text-sm">
+                            <TerminalSquare className="w-4 h-4" />
+                            VET_IOS
+                        </span>
+
+                        {/* Back button — desktop */}
                         <button
                             onClick={() => router.back()}
-                            className="flex items-center gap-1.5 p-1.5 lg:px-2.5 lg:py-1.5 text-muted hover:text-accent border border-transparent hover:border-grid transition-all text-sm font-mono uppercase tracking-widest group"
+                            className="
+                                hidden lg:flex items-center gap-1.5 px-2.5 py-1.5
+                                text-[hsl(0_0%_52%)] hover:text-[hsl(0_0%_80%)]
+                                border border-transparent hover:border-[hsl(0_0%_22%)]
+                                transition-all text-[11px] font-mono uppercase tracking-[0.14em] group
+                            "
                             aria-label="Go back"
-                            title="Go back"
                         >
-                            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-                            <span className="hidden sm:inline">Back</span>
+                            <ChevronLeft className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
+                            Back
                         </button>
                     </div>
 
-                    {/* Spacer for desktop */}
-                    <div className="hidden lg:block flex-1" />
+                    {/* Center: current page title */}
+                    <div className="hidden lg:flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
+                        <span className="font-mono text-[10px] text-[hsl(0_0%_38%)] tracking-[0.18em] uppercase">
+                            {pageTitle}
+                        </span>
+                        <span className="font-mono text-accent animate-blink text-xs leading-none">█</span>
+                    </div>
 
-                    {/* Right: user nav */}
-                    <div className="flex items-center gap-4">
+                    {/* Right: guide + user nav */}
+                    <div className="flex items-center gap-3">
                         <VetiosGuide />
                         <UserNav />
                     </div>
                 </header>
 
-                {/* Main */}
+                {/* ── Main content ── */}
                 <main className="flex-1 overflow-auto bg-background">
                     {children}
                 </main>
