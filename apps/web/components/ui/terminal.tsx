@@ -9,7 +9,7 @@ export function TerminalLabel({ children, htmlFor }: { children: React.ReactNode
     return (
         <label
             htmlFor={htmlFor}
-            className="block font-mono text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_65%)] mb-2"
+            className="block font-mono text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_88%)] mb-2"
         >
             {children}
         </label>
@@ -24,7 +24,7 @@ export function TerminalInput({ className = '', ...props }: React.InputHTMLAttri
             className={`
                 w-full bg-[hsl(0_0%_10%)] border border-[hsl(0_0%_20%)]
                 px-3 py-2.5 font-mono text-[13px] text-[hsl(0_0%_90%)]
-                placeholder:text-[hsl(0_0%_38%)]
+                placeholder:text-[hsl(0_0%_62%)]
                 focus:outline-none focus:border-accent focus:bg-[hsl(0_0%_11%)]
                 transition-colors
                 ${className}
@@ -42,7 +42,7 @@ export function TerminalTextarea({ className = '', ...props }: React.TextareaHTM
             className={`
                 w-full bg-[hsl(0_0%_10%)] border border-[hsl(0_0%_20%)]
                 px-3 py-2.5 font-mono text-[13px] text-[hsl(0_0%_90%)]
-                placeholder:text-[hsl(0_0%_38%)]
+                placeholder:text-[hsl(0_0%_62%)]
                 focus:outline-none focus:border-accent focus:bg-[hsl(0_0%_11%)]
                 transition-colors min-h-[100px] sm:min-h-[120px] resize-y
                 ${className}
@@ -96,7 +96,7 @@ export function PageHeader({ title, description }: { title: string, description?
                 {title}
             </h1>
             {description && (
-                <p className="font-mono text-[12px] text-[hsl(0_0%_58%)] leading-relaxed max-w-3xl">
+                <p className="font-mono text-[12px] text-[hsl(0_0%_80%)] leading-relaxed max-w-3xl">
                     {description}
                 </p>
             )}
@@ -109,7 +109,7 @@ export function PageHeader({ title, description }: { title: string, description?
 export function DataRow({ label, value }: { label: string, value: React.ReactNode }) {
     return (
         <div className="flex justify-between items-start gap-4 py-2.5 border-b border-[hsl(0_0%_16%)] min-w-0 last:border-b-0">
-            <span className="font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_52%)] uppercase tracking-[0.14em] shrink-0 mt-0.5">
+            <span className="font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_82%)] uppercase tracking-[0.14em] shrink-0 mt-0.5">
                 {label}
             </span>
             <span className="font-mono text-[12px] sm:text-[13px] text-[hsl(0_0%_86%)] text-right break-all sm:break-words min-w-0 flex-1">
@@ -151,14 +151,14 @@ export function ConsoleCard({
         >
             {title && (
                 <div className="
-                    font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_62%)]
+                    font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_80%)]
                     uppercase tracking-[0.18em]
                     border-b border-[hsl(0_0%_18%)] pb-3 sm:pb-4 mb-1
                     flex items-center justify-between
                 ">
                     <div className="flex items-center gap-2">
                         <div className="w-1.5 h-1.5 bg-accent shrink-0" />
-                        <span className="text-[hsl(0_0%_72%)]">{title}</span>
+                        <span className="text-[hsl(0_0%_90%)]">{title}</span>
                     </div>
                     {(collapsible || maximized) && (
                         <div className="flex items-center gap-1">
@@ -235,7 +235,7 @@ export function TerminalTabs<T extends string>({
                             transition-all flex items-center gap-2
                             ${isActive
                                 ? 'border-accent text-accent bg-[hsl(142_76%_46%_/_0.1)]'
-                                : 'border-[hsl(0_0%_20%)] text-[hsl(0_0%_52%)] hover:border-[hsl(0_0%_32%)] hover:text-[hsl(0_0%_74%)] bg-[hsl(0_0%_8%)]'
+                                : 'border-[hsl(0_0%_20%)] text-[hsl(0_0%_82%)] hover:border-[hsl(0_0%_32%)] hover:text-[hsl(0_0%_92%)] bg-[hsl(0_0%_8%)]'
                             }
                         `}
                     >

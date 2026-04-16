@@ -301,7 +301,7 @@ export default function SettingsControlPlaneClient() {
                     description="Bootstrapping centralized system state, telemetry, governance, and access controls."
                 />
                 <ConsoleCard title="Initializing">
-                    <div className="font-mono text-xs text-muted flex items-center gap-2">
+                    <div className="font-mono text-xs text-[hsl(0_0%_88%)] flex items-center gap-2 font-bold">
                         <Activity className="w-4 h-4 animate-spin" />
                         Loading control-plane snapshot...
                     </div>
@@ -363,7 +363,7 @@ export default function SettingsControlPlaneClient() {
 
             <ConsoleCard title="Control Actions" className="mb-6">
                 <div className="flex flex-wrap items-center gap-3 justify-between">
-                    <div className="font-mono text-xs text-muted">
+                    <div className="font-mono text-xs text-[hsl(0_0%_80%)] font-medium">
                         {refreshing ? 'Refreshing snapshot...' : `Last refreshed ${new Date(snapshot.refreshed_at).toLocaleTimeString()}`}
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -437,8 +437,8 @@ export default function SettingsControlPlaneClient() {
                         onClick={() => setActiveTab(tab.id)}
                         className={`px-3 py-2 border font-mono text-xs uppercase tracking-widest transition-colors ${
                             activeTab === tab.id
-                                ? 'border-accent text-accent bg-accent/10'
-                                : 'border-grid text-muted hover:border-muted hover:text-foreground'
+                                ? 'border-accent text-accent bg-accent/10 font-bold'
+                                : 'border-grid text-[hsl(0_0%_80%)] font-medium hover:border-muted hover:text-foreground'
                         }`}
                     >
                         {tab.label}
@@ -574,11 +574,11 @@ function SummaryCard({
 
     return (
         <ConsoleCard className={`p-4 ${tones[tone]}`}>
-            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-muted mb-2">
+            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_88%)] font-bold mb-2">
                 {icon}
                 {label}
             </div>
-            <div className="font-mono text-2xl">{value}</div>
+            <div className="font-mono text-2xl font-bold">{value}</div>
         </ConsoleCard>
     );
 }
@@ -590,7 +590,7 @@ function ActionStatePanel({
 }) {
     if (actionState.status === 'idle') {
         return (
-            <div className="pt-4 font-mono text-xs text-muted">
+            <div className="pt-4 font-mono text-xs text-[hsl(0_0%_80%)] font-medium">
                 No control action has been executed in this session yet.
             </div>
         );
@@ -606,7 +606,7 @@ function ActionStatePanel({
         <div className={`mt-4 border ${tone} bg-black/20 p-3 font-mono text-xs`}>
             <div>{actionState.message}</div>
             {actionState.payload != null && (
-                <pre className="mt-3 overflow-auto whitespace-pre-wrap text-[11px] text-foreground/80">
+                <pre className="mt-3 overflow-auto whitespace-pre-wrap text-[11px] text-foreground font-medium">
                     {JSON.stringify(actionState.payload, null, 2)}
                 </pre>
             )}
@@ -670,7 +670,7 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
                         </TerminalButton>
                     </div>
                     {!canChangeRole && (
-                        <div className="font-mono text-[11px] text-muted">
+                        <div className="font-mono text-[11px] text-[#FFD700] font-bold">
                             Only admin operators can change role assignments.
                         </div>
                     )}
@@ -680,7 +680,7 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
             <ConsoleCard title="Permissions">
                 <div className="flex flex-wrap gap-2">
                     {input.snapshot.profile.permissions.map((permission) => (
-                        <span key={permission} className="px-2 py-1 border border-grid font-mono text-[10px] uppercase tracking-widest text-muted">
+                        <span key={permission} className="px-2 py-1 border border-grid font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_88%)] font-bold">
                             {permission}
                         </span>
                     ))}
@@ -707,7 +707,7 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                     <div className="space-y-4">
                         <div className="border border-grid/50 bg-black/20 p-4">
                             <TerminalLabel>Session Credential Exposure</TerminalLabel>
-                            <div className="font-mono text-xs text-muted leading-relaxed">
+                            <div className="font-mono text-xs text-[hsl(0_0%_88%)] leading-relaxed font-medium">
                                 Raw JWT access tokens and refresh tokens are intentionally hidden in the control plane.
                                 VetIOS only exposes session metadata here so bearer credentials are not leaked through the UI.
                             </div>
@@ -760,7 +760,7 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                     </div>
                     <div className="xl:col-span-2 space-y-3">
                         {input.snapshot.access_security.api_keys.length === 0 ? (
-                            <div className="font-mono text-xs text-muted">No control-plane API keys registered.</div>
+                            <div className="font-mono text-xs text-[hsl(0_0%_80%)] font-medium">No control-plane API keys registered.</div>
                         ) : (
                             input.snapshot.access_security.api_keys.map((key) => (
                                 <div key={key.id} className="border border-grid p-3">

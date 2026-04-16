@@ -171,7 +171,7 @@ export function ClinicWorkflowPanel({
                     </div>
 
                     <div className="border border-grid p-3 font-mono text-xs">
-                        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-muted">Benchmark Snapshot</div>
+                        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_88%)] font-bold">Benchmark Snapshot</div>
                         {benchmarkSummary ? (
                             <div className="space-y-2">
                                 <div className="text-accent text-sm">{benchmarkSummary.metric_name}</div>
@@ -183,7 +183,7 @@ export function ClinicWorkflowPanel({
                                 </div>
                             </div>
                         ) : (
-                            <div className="text-muted">Benchmark rollup will appear after an outcome computes a matched cohort snapshot.</div>
+                            <div className="text-[hsl(0_0%_75%)] font-medium">Benchmark rollup will appear after an outcome computes a matched cohort snapshot.</div>
                         )}
                     </div>
                 </div>
@@ -191,7 +191,7 @@ export function ClinicWorkflowPanel({
 
             <ConsoleCard title="Protocol Queue" className="border-grid">
                 {episodeDetail.protocol_executions.length === 0 ? (
-                    <div className="text-muted font-mono text-xs">No protocol executions are attached to this episode yet.</div>
+                    <div className="text-[hsl(0_0%_80%)] font-mono text-xs font-medium">No protocol executions are attached to this episode yet.</div>
                 ) : (
                     <div className="space-y-4">
                         {episodeDetail.protocol_executions.slice(0, 3).map((execution) => {
@@ -199,22 +199,22 @@ export function ClinicWorkflowPanel({
                             return (
                                 <div key={execution.id} className="border border-grid p-3 font-mono text-xs">
                                     <div className="flex flex-wrap items-center justify-between gap-2">
-                                        <span className="text-accent">{execution.trigger_source ?? execution.id}</span>
-                                        <span className="text-muted">{execution.status}</span>
+                                        <span className="text-accent font-bold">{execution.trigger_source ?? execution.id}</span>
+                                        <span className="text-[hsl(0_0%_80%)] font-bold">{execution.status}</span>
                                     </div>
                                     {actions.length > 0 ? (
                                         <div className="mt-3 space-y-2">
                                             {actions.slice(0, 3).map((action, index) => (
                                                 <div key={`${execution.id}-${index}`} className="border border-grid/60 bg-black/20 p-2">
-                                                    <div className="text-foreground">{readText(action.title) ?? readText(action.action_key) ?? 'Recommended action'}</div>
+                                                    <div className="text-foreground font-medium">{readText(action.title) ?? readText(action.action_key) ?? 'Recommended action'}</div>
                                                     {readText(action.rationale) ? (
-                                                        <div className="mt-1 text-muted">{readText(action.rationale)}</div>
+                                                        <div className="mt-1 text-[hsl(0_0%_82%)] font-medium italic">{readText(action.rationale)}</div>
                                                     ) : null}
                                                 </div>
                                             ))}
                                         </div>
                                     ) : (
-                                        <div className="mt-3 text-muted">Protocol execution exists, but no recommended actions were stored.</div>
+                                        <div className="mt-3 text-[hsl(0_0%_72%)] font-medium italic">Protocol execution exists, but no recommended actions were stored.</div>
                                     )}
                                 </div>
                             );
@@ -299,18 +299,18 @@ export function ClinicWorkflowPanel({
 
             <ConsoleCard title="Recent Passive Signals" className="border-grid">
                 {episodeDetail.signals.length === 0 ? (
-                    <div className="text-muted font-mono text-xs">No passive signals have been attached to this episode yet.</div>
+                    <div className="text-[hsl(0_0%_80%)] font-mono text-xs font-medium">No passive signals have been attached to this episode yet.</div>
                 ) : (
                     <div className="space-y-3">
                         {episodeDetail.signals.slice(0, 5).map((signal) => (
                             <div key={signal.id} className="border border-grid p-3 font-mono text-xs">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
-                                    <span className="text-accent">
+                                    <span className="text-accent font-bold">
                                         {signal.signal_subtype ? `${signal.signal_type}:${signal.signal_subtype}` : signal.signal_type}
                                     </span>
-                                    <span className="text-muted">{formatTimestamp(signal.observed_at)}</span>
+                                    <span className="text-[hsl(0_0%_82%)] font-bold">{formatTimestamp(signal.observed_at)}</span>
                                 </div>
-                                <div className="mt-2 text-muted">
+                                <div className="mt-2 text-[hsl(0_0%_88%)] font-medium">
                                     {summarizeFacts(signal.normalized_facts)}
                                 </div>
                             </div>
@@ -325,7 +325,7 @@ export function ClinicWorkflowPanel({
 function MiniMetric({ label, value }: { label: string; value: string }) {
     return (
         <div className="border border-grid/60 bg-black/20 p-2">
-            <div className="text-[9px] uppercase tracking-[0.15em] text-muted">{label}</div>
+            <div className="text-[9px] uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">{label}</div>
             <div className="mt-1 text-foreground">{value}</div>
         </div>
     );

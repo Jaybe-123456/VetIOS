@@ -381,31 +381,31 @@ export default function DashboardControlPlaneClient() {
                         </button>
                         <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Route className="w-6 h-6" /></div>
-                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Outbox Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">Outbox Ops</div>
                         </Link>
                         <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Workflow className="w-6 h-6" /></div>
-                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Federation Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">Federation Ops</div>
                         </Link>
                         <Link href="/settings" className="border border-grid hover:border-[#ffcc00]/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-[#ffcc00] group-hover:drop-shadow-[0_0_8px_rgba(255,204,0,0.8)]"><Database className="w-6 h-6" /></div>
-                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">PetPass Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">PetPass Ops</div>
                         </Link>
                         <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Network className="w-6 h-6" /></div>
-                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Partner Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">Partner Ops</div>
                         </Link>
                         <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><ShieldAlert className="w-6 h-6" /></div>
-                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Trust Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">Trust Ops</div>
                         </Link>
                         <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.7)]"><Cpu className="w-6 h-6" /></div>
-                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Edge Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">Edge Ops</div>
                         </Link>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_52%)] tracking-[0.14em] uppercase border-t border-[hsl(0_0%_18%)] pt-3">
+                    <div className="flex flex-wrap items-center justify-between font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_75%)] tracking-[0.14em] uppercase border-t border-[hsl(0_0%_18%)] pt-3">
                         <div className="flex flex-col sm:flex-row gap-2 sm:gap-6">
                             <span>
                                 T-UPDATE: <span className="text-foreground">{formatTimestampOrState(lastTelemetryUpdate, telemetryStreamStatus)}</span>
@@ -812,11 +812,11 @@ function MetricCard({
     return (
         <ConsoleCard>
             <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[11px] text-[hsl(0_0%_58%)] uppercase tracking-[0.14em]">{label}</span>
+                <span className="font-mono text-[11px] text-[hsl(0_0%_82%)] uppercase tracking-[0.14em] font-medium">{label}</span>
                 <span className={toneClass(tone)}>{icon}</span>
             </div>
-            <div className={`font-mono text-lg sm:text-2xl ${toneClass(tone)}`}>{value}</div>
-            <div className="font-mono text-[11px] text-[hsl(0_0%_55%)] mt-2 leading-relaxed">{detail}</div>
+            <div className={`font-mono text-lg sm:text-2xl font-bold ${toneClass(tone)}`}>{value}</div>
+            <div className="font-mono text-[11px] text-[hsl(0_0%_80%)] mt-2 leading-relaxed">{detail}</div>
         </ConsoleCard>
     );
 }
@@ -841,8 +841,8 @@ function StatusChip({
 function DataPanel({ label, value }: { label: string; value: string }) {
     return (
         <div className="border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_7%)] p-3 sm:p-4">
-            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_60%)] mb-2">{label}</div>
-            <div className="font-mono text-sm text-foreground leading-relaxed">{value}</div>
+            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_82%)] mb-2 font-medium">{label}</div>
+            <div className="font-mono text-sm text-[hsl(0_0%_94%)] leading-relaxed">{value}</div>
         </div>
     );
 }
@@ -852,11 +852,11 @@ function AlertRow({ alert }: { alert: ControlPlaneAlertRecord }) {
         <div className="flex gap-3">
             <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${alertDotTone(alert.severity)}`} />
             <div className="flex flex-col gap-1">
-                <span className={`font-mono text-[11px] uppercase tracking-wider ${alertTextTone(alert.severity)}`}>
+                <span className={`font-mono text-[11px] uppercase tracking-wider ${alertTextTone(alert.severity)} font-bold`}>
                     {alert.title}
                 </span>
-                <span className="font-mono text-[11px] text-[hsl(0_0%_60%)] leading-relaxed">{alert.message}</span>
-                <span className="font-mono text-[10px] text-[hsl(0_0%_42%)]">{new Date(alert.timestamp).toLocaleString()}</span>
+                <span className="font-mono text-[11px] text-[hsl(0_0%_85%)] leading-relaxed">{alert.message}</span>
+                <span className="font-mono text-[10px] text-[hsl(0_0%_70%)]">{new Date(alert.timestamp).toLocaleString()}</span>
             </div>
         </div>
     );
@@ -864,7 +864,7 @@ function AlertRow({ alert }: { alert: ControlPlaneAlertRecord }) {
 
 function EmptyChartState({ message }: { message: string }) {
     return (
-        <div className="h-full flex items-center justify-center text-[hsl(0_0%_48%)] text-[11px] font-mono border border-dashed border-[hsl(0_0%_20%)]">
+        <div className="h-full flex items-center justify-center text-[hsl(0_0%_75%)] text-[11px] font-mono border border-dashed border-[hsl(0_0%_25%)]">
             {message}
         </div>
     );
@@ -872,7 +872,7 @@ function EmptyChartState({ message }: { message: string }) {
 
 function EmptyListState({ message, compact = false }: { message: string; compact?: boolean }) {
     return (
-        <div className={`font-mono text-[11px] text-[hsl(0_0%_50%)] border border-dashed border-[hsl(0_0%_20%)] grid place-items-center ${compact ? 'h-20' : 'h-32'}`}>
+        <div className={`font-mono text-[11px] text-[hsl(0_0%_75%)] border border-dashed border-[hsl(0_0%_25%)] grid place-items-center ${compact ? 'h-20' : 'h-32'}`}>
             {message}
         </div>
     );

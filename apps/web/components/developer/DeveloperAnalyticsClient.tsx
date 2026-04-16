@@ -13,6 +13,11 @@ import {
     Tooltip,
 } from 'chart.js';
 import { Bar, Line } from 'react-chartjs-2';
+import {
+    ConsoleCard,
+    TerminalButton,
+    DataRow,
+} from '@/components/ui/terminal';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Tooltip, Legend, Filler);
 
@@ -203,10 +208,11 @@ export function DeveloperAnalyticsClient({ adminMode = false }: AnalyticsClientP
             {
                 label: 'Requests',
                 data: timeseries.map((point) => point.count),
-                borderColor: '#0f766e',
-                backgroundColor: 'rgba(15, 118, 110, 0.18)',
+                borderColor: '#00F0FF',
+                backgroundColor: 'rgba(0, 240, 255, 0.1)',
                 fill: true,
-                tension: 0.32,
+                tension: 0.2,
+                pointRadius: 2,
             },
         ],
     }), [timeseries]);
@@ -217,257 +223,279 @@ export function DeveloperAnalyticsClient({ adminMode = false }: AnalyticsClientP
             {
                 label: 'Error count',
                 data: errors.map((entry) => entry.count),
-                backgroundColor: errors.map((entry) => entry.status_code >= 500 ? '#dc2626' : '#f59e0b'),
+                backgroundColor: errors.map((entry) => entry.status_code >= 500 ? '#FF3B3B' : '#FFD700'),
             },
         ],
     }), [errors]);
 
     return (
-        <div className="space-y-8">
-            <div className="space-y-3">
-                <p className="text-sm uppercase tracking-[0.32em] text-teal-700">Developer Analytics</p>
-                <h1 className="text-3xl font-semibold text-slate-950">
+        <div className="space-y-6">
+            <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-accent animate-pulse" />
+                    <p className="text-[10px] uppercase font-mono tracking-[0.32em] text-accent font-bold">Developer Analytics</p>
+                </div>
+                <h1 className="text-2xl font-mono tracking-tighter uppercase font-bold text-foreground">
                     {adminMode ? 'Partner Lifecycle Analytics' : 'API Lifecycle Analytics'}
                 </h1>
-                <p className="max-w-3xl text-sm text-slate-600">
+                <p className="max-w-3xl font-mono text-xs text-[hsl(0_0%_80%)] leading-relaxed font-medium">
                     Track quota consumption, endpoint behavior, and reliability signals for the VetIOS developer moat.
                 </p>
             </div>
 
             {adminMode ? (
-                <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-                    <label className="block text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Partner</label>
-                    <select
-                        className="mt-3 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900"
-                        value={selectedPartner}
-                        onChange={(event) => setSelectedPartner(event.target.value)}
-                    >
-                        {partners.map((partner) => (
-                            <option key={partner.id} value={partner.id}>
-                                {partner.name} · {partner.billingEmail}
-                            </option>
-                        ))}
-                    </select>
-                </div>
+                <ConsoleCard title="Target Partner Selection">
+                    <div className="p-1">
+                        <select
+                            className="w-full border border-grid bg-black/40 px-3 py-2 font-mono text-xs text-foreground outline-none focus:border-accent"
+                            value={selectedPartner}
+                            onChange={(event) => setSelectedPartner(event.target.value)}
+                        >
+                            {partners.map((partner) => (
+                                <option key={partner.id} value={partner.id} className="bg-black text-foreground">
+                                    {partner.name} · {partner.billingEmail}
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+                </ConsoleCard>
             ) : null}
 
             {errorMessage ? (
-                <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">
-                    {errorMessage}
+                <div className="border border-danger/40 bg-danger/10 p-3 font-mono text-xs text-danger font-bold">
+                    ERR: {errorMessage}
                 </div>
             ) : null}
 
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <MetricCard label="Total requests" value={overview?.total_requests ?? 0} />
                 <MetricCard
                     label="Success rate"
                     value={`${toPct(overview ? (overview.successful_requests / Math.max(1, overview.total_requests)) * 100 : 0)}%`}
+                    tone={(overview?.successful_requests ?? 0) / Math.max(1, overview?.total_requests ?? 0) < 0.95 ? 'warning' : 'default'}
                 />
                 <MetricCard label="Avg response time" value={`${overview?.avg_response_time_ms ?? 0} ms`} />
-                <MetricCard label="Quota used" value={`${quota?.pct_used ?? 0}%`} />
+                <MetricCard label="Quota used" value={`${quota?.pct_used ?? 0}%`} tone={(quota?.pct_used ?? 0) > 90 ? 'danger' : (quota?.pct_used ?? 0) > 70 ? 'warning' : 'default'} />
             </div>
 
-            <div className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Quota progress</p>
-                        <h2 className="text-xl font-semibold text-slate-950">
-                            {quota?.requests_used ?? 0} / {quota?.requests_limit ?? 0} requests this period
-                        </h2>
-                    </div>
-                    {!adminMode && (quota?.pct_used ?? 0) > 80 ? (
-                        <a
-                            href="/developer/billing"
-                            className="rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white"
-                        >
-                            Upgrade plan
-                        </a>
-                    ) : null}
-                </div>
-                <div className="mt-5 h-3 overflow-hidden rounded-full bg-slate-100">
-                    <div
-                        className={progressClass(quota?.pct_used ?? 0)}
-                        style={{ width: `${Math.min(100, quota?.pct_used ?? 0)}%` }}
-                    />
-                </div>
-                <div className="mt-4 flex flex-wrap gap-6 text-sm text-slate-600">
-                    <span>Projected month end: {quota?.projected_month_end ?? 0}</span>
-                    <span>Plan: {quota?.plan ?? 'unknown'}</span>
-                    <span>{quota?.on_track ? 'On track' : 'Projected to exceed plan quota'}</span>
-                </div>
-            </div>
-
-            <div className="grid gap-6 xl:grid-cols-[2fr,1fr]">
-                <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                    <div className="flex flex-wrap items-center justify-between gap-4">
+            <ConsoleCard title="Quota Progress">
+                <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
-                            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Requests over time</p>
-                            <h2 className="text-xl font-semibold text-slate-950">Usage trend</h2>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            <select
-                                className="rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm"
-                                value={selectedEndpoint}
-                                onChange={(event) => setSelectedEndpoint(event.target.value)}
-                            >
-                                <option value="">All endpoints</option>
-                                {endpoints.map((endpoint) => (
-                                    <option key={`${endpoint.method}-${endpoint.endpoint}`} value={endpoint.endpoint}>
-                                        {endpoint.method} {endpoint.endpoint}
-                                    </option>
-                                ))}
-                            </select>
-                            <div className="flex overflow-hidden rounded-full border border-slate-200">
-                                {(['hour', 'day'] as const).map((option) => (
-                                    <button
-                                        key={option}
-                                        type="button"
-                                        onClick={() => setGranularity(option)}
-                                        className={`px-4 py-2 text-sm ${granularity === option ? 'bg-slate-950 text-white' : 'bg-white text-slate-700'}`}
-                                    >
-                                        {option === 'hour' ? 'Hourly' : 'Daily'}
-                                    </button>
-                                ))}
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-[hsl(0_0%_88%)] font-bold mb-1">Consumption Vector</div>
+                            <div className="text-xl font-mono font-bold text-foreground">
+                                {quota?.requests_used?.toLocaleString() ?? 0} / {quota?.requests_limit?.toLocaleString() ?? 0} requests
                             </div>
                         </div>
+                        {!adminMode && (quota?.pct_used ?? 0) > 80 ? (
+                            <TerminalButton onClick={() => window.location.href = '/developer/billing'}>
+                                UPGRADE PLAN
+                            </TerminalButton>
+                        ) : null}
                     </div>
-                    <div className="mt-6 h-[320px]">
-                        <Line
-                            data={requestSeries}
-                            options={{
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                plugins: { legend: { display: false } },
-                            }}
+                    
+                    <div className="h-2 border border-grid bg-black/40">
+                        <div
+                            className={`h-full transition-all duration-500 ${
+                                (quota?.pct_used ?? 0) > 90 ? 'bg-danger' : 
+                                (quota?.pct_used ?? 0) > 75 ? 'bg-warning' : 
+                                'bg-accent'
+                            }`}
+                            style={{ width: `${Math.min(100, quota?.pct_used ?? 0)}%` }}
                         />
                     </div>
-                </section>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                        <div className="font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_75%)] font-bold">
+                            Projected: <span className="text-foreground ml-1">{quota?.projected_month_end?.toLocaleString() ?? 0}</span>
+                        </div>
+                        <div className="font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_75%)] font-bold">
+                            Plan: <span className="text-foreground ml-1">{quota?.plan ?? 'LOADING...'}</span>
+                        </div>
+                        <div className={`font-mono text-[10px] uppercase tracking-widest font-bold ${quota?.on_track ? 'text-accent' : 'text-warning'}`}>
+                            {quota?.on_track ? 'Status: Nominal' : 'Status: Over-Quota Projection'}
+                        </div>
+                    </div>
+                </div>
+            </ConsoleCard>
 
-                <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                    <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Error breakdown</p>
-                    <h2 className="text-xl font-semibold text-slate-950">HTTP error mix</h2>
-                    <div className="mt-6 h-[320px]">
-                        <Bar
-                            data={errorSeries}
-                            options={{
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                plugins: { legend: { display: false } },
-                            }}
-                        />
+            <div className="grid gap-6 xl:grid-cols-[2fr,1fr]">
+                <ConsoleCard title="Requests Over Time">
+                    <div className="space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-4">
+                            <div className="text-[10px] font-mono uppercase tracking-widest text-[hsl(0_0%_88%)] font-bold">Temporal Usage Trend</div>
+                            <div className="flex flex-wrap gap-2">
+                                <select
+                                    className="border border-grid bg-black/40 px-3 py-1 font-mono text-[10px] text-foreground outline-none focus:border-accent"
+                                    value={selectedEndpoint}
+                                    onChange={(event) => setSelectedEndpoint(event.target.value)}
+                                >
+                                    <option value="">ALL ENDPOINTS</option>
+                                    {endpoints.map((endpoint) => (
+                                        <option key={`${endpoint.method}-${endpoint.endpoint}`} value={endpoint.endpoint}>
+                                            {endpoint.method} {endpoint.endpoint}
+                                        </option>
+                                    ))}
+                                </select>
+                                <div className="flex border border-grid bg-black/40">
+                                    {(['hour', 'day'] as const).map((option) => (
+                                        <button
+                                            key={option}
+                                            type="button"
+                                            onClick={() => setGranularity(option)}
+                                            className={`px-3 py-1 font-mono text-[10px] uppercase tracking-widest transition-colors ${
+                                                granularity === option ? 'bg-accent text-black font-bold' : 'text-[hsl(0_0%_75%)] hover:text-foreground'
+                                            }`}
+                                        >
+                                            {option}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="h-[280px] w-full">
+                            <Line
+                                data={requestSeries}
+                                options={{
+                                    responsive: true,
+                                    maintainAspectRatio: false,
+                                    scales: {
+                                        y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: 'rgba(255, 255, 255, 0.5)', font: { family: 'monospace', size: 9 } } },
+                                        x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: 'rgba(255, 255, 255, 0.5)', font: { family: 'monospace', size: 9 } } }
+                                    },
+                                    plugins: { legend: { display: false } },
+                                }}
+                            />
+                        </div>
                     </div>
-                </section>
+                </ConsoleCard>
+
+                <ConsoleCard title="Error Breakdown">
+                    <div className="space-y-4">
+                        <div className="text-[10px] font-mono uppercase tracking-widest text-[hsl(0_0%_88%)] font-bold">HTTP Status Distribution</div>
+                        <div className="h-[280px] w-full">
+                            <Bar
+                                data={errorSeries}
+                                options={{
+                                    responsive: true,
+                                    maintainAspectRatio: false,
+                                    scales: {
+                                        y: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: 'rgba(255, 255, 255, 0.5)', font: { family: 'monospace', size: 9 } } },
+                                        x: { grid: { color: 'rgba(255, 255, 255, 0.05)' }, ticks: { color: 'rgba(255, 255, 255, 0.5)', font: { family: 'monospace', size: 9 } } }
+                                    },
+                                    plugins: { legend: { display: false } },
+                                }}
+                            />
+                        </div>
+                    </div>
+                </ConsoleCard>
             </div>
 
-            <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Endpoint breakdown</p>
-                <h2 className="text-xl font-semibold text-slate-950">Most active endpoints</h2>
-                <div className="mt-5 overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
-                        <thead className="text-slate-500">
-                            <tr>
-                                <th className="pb-3 font-medium">Endpoint</th>
-                                <th className="pb-3 font-medium">Requests</th>
-                                <th className="pb-3 font-medium">Success rate</th>
-                                <th className="pb-3 font-medium">Avg ms</th>
-                                <th className="pb-3 font-medium">P95 ms</th>
+            <ConsoleCard title="Endpoint Performance Matrix">
+                <div className="overflow-x-auto p-1">
+                    <table className="w-full font-mono text-[11px] leading-relaxed">
+                        <thead>
+                            <tr className="border-b border-grid text-[hsl(0_0%_88%)] uppercase tracking-wider font-bold">
+                                <th className="py-2 text-left">Endpoint</th>
+                                <th className="py-2 text-right">Count</th>
+                                <th className="py-2 text-right">Success</th>
+                                <th className="py-2 text-right">Avg MS</th>
+                                <th className="py-2 text-right">P95 MS</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-100">
+                        <tbody className="divide-y divide-grid/20">
                             {endpoints.map((endpoint) => (
-                                <tr key={`${endpoint.method}-${endpoint.endpoint}`}>
-                                    <td className="py-3 pr-6 text-slate-900">{endpoint.method} {endpoint.endpoint}</td>
-                                    <td className="py-3 pr-6 text-slate-700">{endpoint.count}</td>
-                                    <td className={`py-3 pr-6 font-medium ${successRateClass(endpoint.success_rate)}`}>
+                                <tr key={`${endpoint.method}-${endpoint.endpoint}`} className="hover:bg-white/[0.02] transition-colors">
+                                    <td className="py-2 text-foreground font-bold">{endpoint.method} {endpoint.endpoint}</td>
+                                    <td className="py-2 text-right text-[hsl(0_0%_80%)]">{endpoint.count.toLocaleString()}</td>
+                                    <td className={`py-2 text-right font-bold ${endpoint.success_rate < 95 ? 'text-warning' : 'text-accent'}`}>
                                         {endpoint.success_rate}%
                                     </td>
-                                    <td className="py-3 pr-6 text-slate-700">{endpoint.avg_ms}</td>
-                                    <td className="py-3 text-slate-700">{endpoint.p95_ms}</td>
+                                    <td className="py-2 text-right text-[hsl(0_0%_80%)]">{endpoint.avg_ms}ms</td>
+                                    <td className="py-2 text-right text-[hsl(0_0%_80%)]">{endpoint.p95_ms}ms</td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
-            </section>
+            </ConsoleCard>
 
             <div className="grid gap-6 xl:grid-cols-[1.4fr,1fr]">
-                <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                    <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Recent API keys</p>
-                    <h2 className="text-xl font-semibold text-slate-950">Credential activity</h2>
-                    <div className="mt-5 space-y-3">
+                <ConsoleCard title="Credential Activity Log">
+                    <div className="space-y-3">
                         {(credentials ?? []).map((credential) => (
-                            <div key={credential.id} className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4">
-                                <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div key={credential.id} className="border border-grid bg-black/20 p-3 font-mono">
+                                <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
                                     <div>
-                                        <p className="font-medium text-slate-900">{credential.key_prefix}</p>
-                                        <p className="text-sm text-slate-600">{credential.label ?? 'Unlabeled key'}</p>
-                                        <p className="mt-1 text-xs text-slate-500">
-                                            Last used: {credential.last_used_at ? new Date(credential.last_used_at).toLocaleString() : 'never'}
-                                        </p>
+                                        <div className="text-accent font-bold truncate max-w-[200px]">{credential.key_prefix}...</div>
+                                        <div className="text-[10px] text-[hsl(0_0%_88%)] font-bold">{credential.label ?? 'ROOT_KEY'}</div>
                                     </div>
-                                    <button
-                                        type="button"
+                                    <TerminalButton 
                                         onClick={() => void revokeCredential(credential.id, adminMode, selectedPartner)}
-                                        className="rounded-full border border-rose-200 px-4 py-2 text-sm text-rose-700"
+                                        className="text-[9px] px-2 py-1 h-auto"
                                     >
-                                        Revoke
-                                    </button>
+                                        REVOKE
+                                    </TerminalButton>
                                 </div>
-                                <div className="mt-3 flex flex-wrap gap-2">
+                                <div className="flex flex-wrap gap-1.5 mb-2">
                                     {credential.scopes.map((scope) => (
-                                        <span key={scope} className="rounded-full bg-white px-3 py-1 text-xs text-slate-700">
+                                        <span key={scope} className="text-[9px] border border-grid px-1.5 py-0.5 text-[hsl(0_0%_80%)] uppercase font-bold">
                                             {scope}
                                         </span>
                                     ))}
                                 </div>
-                            </div>
-                        ))}
-                    </div>
-                </section>
-
-                <section className="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-                    <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Errors</p>
-                    <h2 className="text-xl font-semibold text-slate-950">Recent failure profile</h2>
-                    <div className="mt-5 space-y-3">
-                        {errors.map((entry) => (
-                            <div key={entry.status_code} className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-4">
-                                <div className="flex items-center justify-between gap-4">
-                                    <span className="font-medium text-slate-900">HTTP {entry.status_code}</span>
-                                    <span className="text-sm text-slate-600">{entry.count} events · {entry.pct}%</span>
+                                <div className="text-[9px] text-[hsl(0_0%_72%)] font-medium">
+                                    LAST_USED: {credential.last_used_at ? new Date(credential.last_used_at).toLocaleTimeString() : 'INIT'}
                                 </div>
-                                <p className="mt-2 text-sm text-slate-600">{entry.sample_endpoint ?? 'No sample endpoint recorded.'}</p>
                             </div>
                         ))}
                     </div>
-                </section>
+                </ConsoleCard>
+
+                <ConsoleCard title="Recent Failure Profile">
+                    <div className="space-y-3">
+                        {errors.map((entry) => (
+                            <div key={entry.status_code} className="border border-grid bg-black/20 p-3 font-mono">
+                                <div className="flex items-center justify-between gap-3 mb-1">
+                                    <span className={`text-[11px] font-bold ${entry.status_code >= 500 ? 'text-danger' : 'text-warning'}`}>
+                                        HTTP {entry.status_code}
+                                    </span>
+                                    <span className="text-[10px] text-[hsl(0_0%_88%)] font-bold">
+                                        {entry.count} EVTS · {entry.pct}%
+                                    </span>
+                                </div>
+                                <p className="text-[10px] text-[hsl(0_0%_75%)] font-medium truncate italic">
+                                    {entry.sample_endpoint ?? 'N/A_PATH'}
+                                </p>
+                            </div>
+                        ))}
+                        {errors.length === 0 && (
+                            <div className="text-[10px] text-accent font-bold uppercase tracking-widest">No terminal errors detected.</div>
+                        )}
+                    </div>
+                </ConsoleCard>
             </div>
 
             {isLoading ? (
-                <div className="text-sm text-slate-500">Refreshing analytics…</div>
+                <div className="font-mono text-[10px] text-accent font-bold animate-pulse">SYNCHRONIZING ANALYTICS STREAM...</div>
             ) : null}
         </div>
     );
 }
 
-function MetricCard({ label, value }: { label: string; value: string | number }) {
+function MetricCard({ label, value, tone = 'default' }: { label: string; value: string | number, tone?: 'default' | 'warning' | 'danger' }) {
+    const toneColors = {
+        default: 'text-foreground',
+        warning: 'text-warning',
+        danger: 'text-danger'
+    };
+    
     return (
-        <div className="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
-            <p className="text-xs uppercase tracking-[0.24em] text-slate-500">{label}</p>
-            <p className="mt-3 text-3xl font-semibold text-slate-950">{value}</p>
-        </div>
+        <ConsoleCard className="p-4">
+            <p className="text-[9px] uppercase tracking-[0.24em] text-[hsl(0_0%_88%)] font-bold mb-2">{label}</p>
+            <p className={`text-2xl font-mono font-bold ${toneColors[tone]}`}>{value}</p>
+        </ConsoleCard>
     );
-}
-
-function progressClass(pctUsed: number) {
-    if (pctUsed > 90) return 'h-full rounded-full bg-rose-500';
-    if (pctUsed > 70) return 'h-full rounded-full bg-amber-500';
-    return 'h-full rounded-full bg-emerald-500';
-}
-
-function successRateClass(value: number) {
-    if (value < 85) return 'text-rose-600';
-    if (value < 95) return 'text-amber-600';
-    return 'text-emerald-600';
 }
 
 function toPct(value: number) {
@@ -475,13 +503,13 @@ function toPct(value: number) {
 }
 
 async function revokeCredential(credentialId: string, adminMode: boolean, partnerId: string) {
+    if (!confirm('CONFIRM CREDENTIAL REVOCATION? THIS ACTION IS IRREVERSIBLE.')) return;
+    
     const url = adminMode && partnerId
         ? `/api/admin/partners/${partnerId}/credentials/revoke`
         : '/api/developer/credentials/revoke';
 
-    const body = adminMode && partnerId
-        ? { credentialId }
-        : { credentialId };
+    const body = { credentialId };
 
     await fetch(url, {
         method: 'POST',

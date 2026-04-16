@@ -164,7 +164,7 @@ export function ExperimentTrackingClient({
 
                 {snapshot.summary.total_runs === 0 && (
                     <ConsoleCard title="Initialization Required">
-                        <div className="space-y-4 font-mono text-xs text-muted">
+                        <div className="space-y-4 font-mono text-sm text-[hsl(0_0%_85%)]">
                             <p>
                                 No experiment runs exist for this tenant yet. This screen only fills after a learning cycle materializes telemetry into <span className="text-foreground">experiment_runs</span>, or after you explicitly seed bootstrap smoke runs.
                             </p>
@@ -202,7 +202,7 @@ export function ExperimentTrackingClient({
                             value={query}
                             onChange={(event) => setQuery(event.target.value)}
                             placeholder="QUERY_RUNS (run id, model, dataset, status reason, task...)"
-                            className="w-full bg-transparent font-mono text-sm text-foreground outline-none"
+                            className="w-full bg-transparent font-mono text-sm text-[hsl(0_0%_90%)] placeholder:text-[hsl(0_0%_60%)] outline-none"
                         />
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
@@ -276,9 +276,9 @@ export function ExperimentTrackingClient({
                                                     <input type="checkbox" checked={compareRunIds.includes(run.run_id)} onChange={() => handleToggleCompare(run.run_id)} className="accent-current" />
                                                 </td>
                                                 <td className="p-3 text-accent">{run.run_id}</td>
-                                                <td className="p-3">{run.task_type}<div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-muted">{run.modality}</div></td>
-                                                <td className="p-3">{run.model_arch}<div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-muted">{run.model_version ?? 'No model version'}</div></td>
-                                                <td className="p-3">{run.dataset_name}<div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-muted">{run.dataset_version ?? 'No dataset version'}</div></td>
+                                                <td className="p-3 text-[hsl(0_0%_95%)]">{run.task_type}<div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-[hsl(0_0%_80%)]">{run.modality}</div></td>
+                                                <td className="p-3 text-[hsl(0_0%_95%)]">{run.model_arch}<div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-[hsl(0_0%_80%)]">{run.model_version ?? 'No model version'}</div></td>
+                                                <td className="p-3 text-[hsl(0_0%_95%)]">{run.dataset_name}<div className="mt-1 text-[10px] uppercase tracking-[0.15em] text-[hsl(0_0%_80%)]">{run.dataset_version ?? 'No dataset version'}</div></td>
                                                 <td className="p-3">{renderEpochs(run)}</td>
                                                 <td className="p-3">{renderPrimaryMetric(run)}</td>
                                                 <td className="p-3">{renderStatusBadge(run)}</td>
@@ -1463,8 +1463,8 @@ function SummaryCard({
     const toneClass = tone === 'warn' ? 'text-danger' : tone === 'accent' ? 'text-accent' : 'text-foreground';
     return (
         <div className="border border-grid bg-black/20 p-3 font-mono" title={tooltip}>
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
-            <div className={`mt-2 text-2xl ${toneClass}`}>{value}</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_85%)]">{label}</div>
+            <div className={`mt-2 text-2xl font-bold ${toneClass}`}>{value}</div>
         </div>
     );
 }
@@ -1480,16 +1480,16 @@ function ResearchPositionCard({
 }) {
     return (
         <div className="border border-grid bg-black/20 p-4">
-            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent">{eyebrow}</div>
-            <div className="mt-3 text-sm font-semibold text-foreground">{title}</div>
-            <div className="mt-2 font-mono text-xs leading-6 text-muted">{body}</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-accent font-bold">{eyebrow}</div>
+            <div className="mt-3 text-[15px] font-bold text-[hsl(0_0%_96%)] leading-tight">{title}</div>
+            <div className="mt-2 font-mono text-sm leading-6 text-[hsl(0_0%_85%)]">{body}</div>
         </div>
     );
 }
 
 function EmptyPanel({ message, compact = false }: { message: string; compact?: boolean }) {
     return (
-        <div className={`flex items-center justify-center border border-dashed border-grid bg-black/10 px-6 text-center font-mono text-xs text-muted ${compact ? 'min-h-[120px]' : 'min-h-[220px]'}`}>
+        <div className={`flex items-center justify-center border border-dashed border-grid bg-black/10 px-6 text-center font-mono text-xs text-[hsl(0_0%_80%)] ${compact ? 'min-h-[120px]' : 'min-h-[220px]'}`}>
             {message}
         </div>
     );
@@ -1498,8 +1498,8 @@ function EmptyPanel({ message, compact = false }: { message: string; compact?: b
 function DetailStat({ label, value }: { label: string; value: string }) {
     return (
         <div className="border border-grid bg-black/20 p-3">
-            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
-            <div className="mt-2 break-all font-mono text-xs text-foreground/85">{value}</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_82%)]">{label}</div>
+            <div className="mt-2 break-all font-mono text-xs text-[hsl(0_0%_94%)]">{value}</div>
         </div>
     );
 }
@@ -1507,8 +1507,8 @@ function DetailStat({ label, value }: { label: string; value: string }) {
 function CodeBlock({ title, value }: { title: string; value: string }) {
     return (
         <div className="border border-grid bg-black/20 p-3">
-            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{title}</div>
-            <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-foreground/80">{value}</pre>
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_82%)]">{title}</div>
+            <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[11px] text-[hsl(0_0%_90%)]">{value}</pre>
         </div>
     );
 }
@@ -1516,7 +1516,7 @@ function CodeBlock({ title, value }: { title: string; value: string }) {
 function ConsoleInset({ title, children }: { title: string; children: ReactNode }) {
     return (
         <div className="border border-grid bg-black/20 p-4">
-            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{title}</div>
+            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_85%)] font-medium">{title}</div>
             {children}
         </div>
     );

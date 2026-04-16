@@ -150,7 +150,7 @@ export function ClinicalDatasetClient({
             <div className="mb-8 flex flex-col gap-6">
                 <div className="flex flex-col gap-3 border border-grid bg-background/50 p-3 xl:flex-row xl:items-center xl:justify-between">
                     <div className="flex flex-1 items-center gap-2 border border-grid bg-black/20 px-2 py-2">
-                        <Search className="ml-1 h-4 w-4 text-muted" />
+                        <Search className="ml-1 h-4 w-4 text-[hsl(0_0%_80%)]" />
                         <input
                             type="text"
                             value={query}
@@ -160,14 +160,14 @@ export function ClinicalDatasetClient({
                         />
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                        <select value={selectedExportMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setSelectedExportMode(event.target.value as DatasetExportMode)} className="border border-grid bg-black/20 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-muted">
+                        <select value={selectedExportMode} onChange={(event: ChangeEvent<HTMLSelectElement>) => setSelectedExportMode(event.target.value as DatasetExportMode)} className="border border-grid bg-black/20 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">
                             <option value="clean_labeled_cases">Clean Labeled</option>
                             <option value="severity_training_set">Severity Set</option>
                             <option value="adversarial_benchmark_set">Adversarial Set</option>
                             <option value="calibration_audit_set">Calibration Set</option>
                             <option value="quarantined_invalid_cases">Quarantined</option>
                         </select>
-                        <button onClick={handleRefresh} className="flex items-center gap-2 border border-grid px-3 py-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted transition-colors hover:border-accent hover:text-foreground">
+                        <button onClick={handleRefresh} className="flex items-center gap-2 border border-grid px-3 py-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_82%)] font-bold transition-colors hover:border-accent hover:text-foreground">
                             <RefreshCw className={`h-3 w-3 ${isRefreshing ? 'animate-spin' : ''}`} />
                             Refresh
                         </button>
@@ -194,10 +194,10 @@ export function ClinicalDatasetClient({
 
                 <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center border-b border-grid font-mono text-xs uppercase tracking-wider">
-                        <button onClick={() => setActiveTab('cases')} className={`border-b-2 px-6 py-3 transition-colors ${activeTab === 'cases' ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-foreground'}`}>Clinical Cases</button>
-                        <button onClick={() => setActiveTab('inference')} className={`border-b-2 px-6 py-3 transition-colors ${activeTab === 'inference' ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-foreground'}`}>Inference Events</button>
+                        <button onClick={() => setActiveTab('cases')} className={`border-b-2 px-6 py-3 transition-colors ${activeTab === 'cases' ? 'border-accent text-accent font-bold' : 'border-transparent text-[hsl(0_0%_80%)] font-medium hover:text-foreground'}`}>Clinical Cases</button>
+                        <button onClick={() => setActiveTab('inference')} className={`border-b-2 px-6 py-3 transition-colors ${activeTab === 'inference' ? 'border-accent text-accent font-bold' : 'border-transparent text-[hsl(0_0%_80%)] font-medium hover:text-foreground'}`}>Inference Events</button>
                     </div>
-                    <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">
+                    <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_75%)] font-bold">
                         Last refresh: {formatRefreshTimestamp(refreshedAt)}
                     </span>
                 </div>
@@ -389,10 +389,10 @@ function formatRefreshTimestamp(value: string): string {
 }
 
 function SummaryCard({ label, value, tone = 'default' }: { label: string; value: number | string; tone?: 'default' | 'warn' | 'accent' }) {
-    const toneClass = tone === 'warn' ? 'text-amber-400' : tone === 'accent' ? 'text-accent' : 'text-foreground';
+    const toneClass = tone === 'warn' ? 'text-[#FFD700]' : tone === 'accent' ? 'text-accent' : 'text-foreground';
     return (
         <div className="border border-grid bg-black/20 p-3 font-mono">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
+            <div className="text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_88%)] font-bold">{label}</div>
             <div className={`mt-2 text-2xl ${toneClass}`}>{value}</div>
         </div>
     );
@@ -400,7 +400,7 @@ function SummaryCard({ label, value, tone = 'default' }: { label: string; value:
 
 function FilterSelect({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
     return (
-        <label className="flex flex-col gap-1 border border-grid bg-black/20 p-2 font-mono text-[10px] uppercase tracking-[0.15em] text-muted">
+        <label className="flex flex-col gap-1 border border-grid bg-black/20 p-2 font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">
             {label}
             <select value={value} onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)} className="bg-transparent text-xs text-foreground outline-none">
                 <option value="all">All</option>
@@ -412,7 +412,7 @@ function FilterSelect({ label, value, options, onChange }: { label: string; valu
 
 function ToggleFilter({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
     return (
-        <label className="flex items-center justify-between gap-3 border border-grid bg-black/20 p-2 font-mono text-[10px] uppercase tracking-[0.15em] text-muted">
+        <label className="flex items-center justify-between gap-3 border border-grid bg-black/20 p-2 font-mono text-[10px] uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">
             <span>{label}</span>
             <input type="checkbox" checked={checked} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.checked)} className="accent-current" />
         </label>
@@ -422,11 +422,11 @@ function ToggleFilter({ label, checked, onChange }: { label: string; checked: bo
 function DetailBlock({ label, value, code = false }: { label: string; value: string; code?: boolean }) {
     return (
         <div className="border border-grid bg-black/20 p-3">
-            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
+            <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_88%)] font-bold">{label}</div>
             {code ? (
-                <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-foreground/80">{value}</pre>
+                <pre className="overflow-x-auto whitespace-pre-wrap text-xs text-foreground font-medium">{value}</pre>
             ) : (
-                <div className="font-mono text-xs text-foreground/80">{value}</div>
+                <div className="font-mono text-xs text-foreground font-medium">{value}</div>
             )}
         </div>
     );
@@ -435,8 +435,8 @@ function DetailBlock({ label, value, code = false }: { label: string; value: str
 function DetailStat({ label, value }: { label: string; value: string }) {
     return (
         <div className="border border-grid bg-black/20 p-3">
-            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
-            <div className="mt-2 font-mono text-xs text-foreground/80 break-all">{value}</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_88%)] font-bold">{label}</div>
+            <div className="mt-2 font-mono text-xs text-foreground font-medium break-all">{value}</div>
         </div>
     );
 }

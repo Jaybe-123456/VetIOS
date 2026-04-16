@@ -227,7 +227,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                 ) : null}
 
                 {loadState.status === 'loading' ? (
-                    <div className="mt-4 border border-grid p-4 font-mono text-xs text-muted">
+                    <div className="mt-4 border border-grid p-4 font-mono text-xs text-[hsl(0_0%_80%)] font-medium italic">
                         Loading structured treatment pathways for {diagnosisLabel ?? 'current diagnosis'}...
                     </div>
                 ) : null}
@@ -248,7 +248,7 @@ export function TreatmentPathwaysPanel({ inferenceEventId, diagnosisLabel }: Tre
                         ) : null}
 
                         {loadState.bundle.management_mode === 'diagnostic_management' ? (
-                            <div className="border border-yellow-500/40 bg-yellow-500/10 p-3 font-mono text-xs text-yellow-200">
+                            <div className="border border-yellow-500/40 bg-yellow-500/15 p-3 font-mono text-xs text-[#FFE000] font-bold">
                                 <div className="mb-2 flex items-center gap-2 uppercase tracking-[0.15em]">
                                     <AlertTriangle className="h-4 w-4" />
                                     Diagnostic Management Mode
@@ -431,7 +431,7 @@ function ConditionModulePanel({ module }: { module: TreatmentConditionModuleRepo
             </div>
 
             <div className="mt-4 border border-grid/70 bg-black/20 p-3">
-                <div className="mb-3 uppercase tracking-[0.15em] text-muted">Step 3 - Aetiology Differential Ranking</div>
+                <div className="mb-3 uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">Step 3 - Aetiology Differential Ranking</div>
                 <div className="space-y-3">
                     {module.step_3_aetiology_differential_ranking.map((entry) => (
                         <div key={`${entry.rank}-${entry.condition}`} className="border border-grid/70 p-3">
@@ -439,7 +439,7 @@ function ConditionModulePanel({ module }: { module: TreatmentConditionModuleRepo
                                 <div className="text-foreground">[{entry.rank}] {entry.condition}</div>
                                 <StatusPill label={`${entry.confidence_percent}%`} tone={entry.confidence_percent >= 60 ? 'success' : entry.confidence_percent >= 35 ? 'warn' : 'neutral'} />
                             </div>
-                            <div className="mt-2 text-muted">Mechanism: {entry.mechanism}</div>
+                            <div className="mt-2 text-[hsl(0_0%_80%)] font-medium">Mechanism: {entry.mechanism}</div>
                             <div className="mt-3 grid gap-3 md:grid-cols-3">
                                 <MiniBlock title="Supporting" lines={entry.supporting} />
                                 <MiniBlock title="Confirms If" lines={entry.confirms_if} />
@@ -452,7 +452,7 @@ function ConditionModulePanel({ module }: { module: TreatmentConditionModuleRepo
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <div className="border border-grid/70 bg-black/20 p-3">
-                    <div className="mb-3 uppercase tracking-[0.15em] text-muted">Step 4 - Diagnostic Recommendation</div>
+                    <div className="mb-3 uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">Step 4 - Diagnostic Recommendation</div>
                     <div className="space-y-3">
                         {module.step_4_diagnostic_recommendations.map((diagnostic) => (
                             <div key={`${diagnostic.priority}-${diagnostic.test_name}`} className="border border-grid/70 p-3">
@@ -460,7 +460,7 @@ function ConditionModulePanel({ module }: { module: TreatmentConditionModuleRepo
                                     <div className="text-foreground">{diagnostic.test_name}</div>
                                     <StatusPill label={diagnostic.priority} tone={diagnostic.priority === 'urgent' ? 'danger' : diagnostic.priority === 'essential' ? 'warn' : 'neutral'} />
                                 </div>
-                                <div className="mt-2 text-muted">Rules in/out: {diagnostic.rules_in_or_out}</div>
+                                <div className="mt-2 text-[hsl(0_0%_80%)] font-medium">Rules in/out: {diagnostic.rules_in_or_out}</div>
                                 <div className="mt-2 text-foreground">Expected: {diagnostic.expected_if_hypothesis_correct}</div>
                             </div>
                         ))}
@@ -468,7 +468,7 @@ function ConditionModulePanel({ module }: { module: TreatmentConditionModuleRepo
                 </div>
 
                 <div className="border border-grid/70 bg-black/20 p-3">
-                    <div className="mb-3 uppercase tracking-[0.15em] text-muted">Step 5 - Treatment Pathway</div>
+                    <div className="mb-3 uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">Step 5 - Treatment Pathway</div>
                     <div className="space-y-3">
                         {module.step_5_treatment_pathway.map((tier) => (
                             <MiniBlock key={tier.tier} title={tier.title} lines={tier.items} />
@@ -519,7 +519,7 @@ function TreatmentOptionCard({
                 </div>
             </div>
 
-            <div className="mt-3 text-muted">{option.why_relevant}</div>
+            <div className="mt-3 text-[hsl(0_0%_88%)] font-medium leading-relaxed">{option.why_relevant}</div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <MiniBlock title="Intervention Details" lines={[
@@ -539,7 +539,7 @@ function TreatmentOptionCard({
 
             {performance ? (
                 <div className="mt-4 border border-grid/70 bg-black/20 p-3">
-                    <div className="mb-2 uppercase tracking-[0.15em] text-muted">Observed VetIOS Performance</div>
+                    <div className="mb-2 uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">Observed VetIOS Performance</div>
                     <div className="grid gap-2 md:grid-cols-4">
                         <MetricBox label="Sample Size" value={String(performance.sample_size)} compact />
                         <MetricBox label="Success Rate" value={formatRate(performance.success_rate)} compact />
@@ -549,7 +549,7 @@ function TreatmentOptionCard({
                 </div>
             ) : null}
 
-            <div className="mt-4 flex items-start gap-2 border border-yellow-500/30 bg-yellow-500/5 p-3 text-yellow-200">
+            <div className="mt-4 flex items-start gap-2 border border-yellow-500/30 bg-yellow-500/5 p-3 text-[#FFE000] font-bold">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
                 <div>
                     Recommendation confidence {(option.uncertainty.recommendation_confidence * 100).toFixed(0)}%.{' '}
@@ -568,7 +568,7 @@ function MiniBlock({ title, lines }: { title: string; lines: string[] }) {
     const safeLines = lines.filter((line) => line.trim().length > 0);
     return (
         <div className="border border-grid/70 bg-black/20 p-3">
-            <div className="mb-2 uppercase tracking-[0.15em] text-muted">{title}</div>
+            <div className="mb-2 uppercase tracking-[0.15em] text-[hsl(0_0%_88%)] font-bold">{title}</div>
             {safeLines.length > 0 ? (
                 <div className="space-y-1 text-foreground">
                     {safeLines.map((line, index) => (
@@ -576,7 +576,7 @@ function MiniBlock({ title, lines }: { title: string; lines: string[] }) {
                     ))}
                 </div>
             ) : (
-                <div className="text-muted">No data recorded.</div>
+                <div className="text-[hsl(0_0%_75%)] font-medium italic">No data recorded.</div>
             )}
         </div>
     );
@@ -585,7 +585,7 @@ function MiniBlock({ title, lines }: { title: string; lines: string[] }) {
 function MetricBox({ label, value, compact = false }: { label: string; value: string; compact?: boolean }) {
     return (
         <div className={`border border-grid/70 bg-black/20 ${compact ? 'p-2' : 'p-3'}`}>
-            <div className="text-[9px] uppercase tracking-[0.15em] text-muted">{label}</div>
+            <div className="text-[9px] uppercase tracking-[0.15em] text-[hsl(0_0%_85%)] font-bold">{label}</div>
             <div className={`mt-1 ${compact ? 'text-xs' : 'text-sm'} text-foreground`}>{value}</div>
         </div>
     );

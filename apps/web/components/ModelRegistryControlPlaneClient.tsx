@@ -295,7 +295,7 @@ export function ModelRegistryControlPlaneClient({
                     <ShieldAlert className={`mr-2 h-3.5 w-3.5 ${verificationBusy ? 'animate-pulse' : ''}`} />
                     {verificationBusy ? 'VERIFYING...' : 'Verify Control Plane'}
                 </TerminalButton>
-                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
+                <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-[hsl(0_0%_85%)]">
                     Refreshed {formatDateTime(initialSnapshot.refreshed_at)}
                 </span>
             </div>
@@ -322,8 +322,8 @@ export function ModelRegistryControlPlaneClient({
                                         : 'border-yellow-500/40 bg-yellow-500/10 text-yellow-200'
                                 }`}
                             >
-                                <div className="text-[10px] uppercase tracking-[0.16em]">{issue.code}</div>
-                                <div className="mt-1 text-foreground/85">{issue.message}</div>
+                                <div className="text-[10px] uppercase tracking-[0.16em] font-medium">{issue.code}</div>
+                                <div className="mt-1 text-foreground/95">{issue.message}</div>
                             </div>
                         ))}
                     </div>
@@ -347,12 +347,12 @@ export function ModelRegistryControlPlaneClient({
                             {verification.checks.map((check) => (
                                 <div key={check.key} className="border border-grid/40 bg-black/20 p-4">
                                     <div className="mb-2 flex items-center justify-between gap-3">
-                                        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{check.label}</div>
-                                        <Badge className={check.status === 'pass' ? 'border-accent/40 bg-accent/10 text-accent' : check.status === 'warning' ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-200' : 'border-danger/40 bg-danger/10 text-danger'}>
+                                        <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-[hsl(0_0%_88%)] font-medium">{check.label}</div>
+                                        <Badge className={check.status === 'pass' ? 'border-accent/50 bg-accent/10 text-accent font-bold' : check.status === 'warning' ? 'border-yellow-500/50 bg-yellow-500/10 text-yellow-300 font-bold' : 'border-danger/50 bg-danger/10 text-danger font-bold'}>
                                             {check.status}
                                         </Badge>
                                     </div>
-                                    <div className="font-mono text-xs text-foreground/85">{check.summary}</div>
+                                    <div className="font-mono text-xs text-foreground/95">{check.summary}</div>
                                     {check.failures.length > 0 ? (
                                         <div className="mt-3 space-y-2 font-mono text-xs text-danger">
                                             {check.failures.map((failure) => (
@@ -375,7 +375,7 @@ export function ModelRegistryControlPlaneClient({
                             <div className="grid gap-3 md:grid-cols-2">
                                 {verification.simulated_failures.map((item) => (
                                     <div key={item.scenario} className={`border px-3 py-2 font-mono text-xs ${item.detected ? 'border-accent/40 bg-accent/10 text-foreground' : 'border-danger/40 bg-danger/10 text-danger'}`}>
-                                        <div className="text-[10px] uppercase tracking-[0.16em] text-muted">{item.scenario.replaceAll('_', ' ')}</div>
+                                        <div className="text-[10px] uppercase tracking-[0.16em] text-[hsl(0_0%_82%)] font-medium">{item.scenario.replaceAll('_', ' ')}</div>
                                         <div className="mt-1">{item.summary}</div>
                                     </div>
                                 ))}
@@ -451,22 +451,22 @@ export function ModelRegistryControlPlaneClient({
                         <div className="overflow-x-auto">
                             <table className="min-w-[880px] w-full border-collapse text-left">
                                 <thead>
-                                    <tr className="border-b border-grid bg-black/30 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
-                                        <th className="p-3 font-normal">Timestamp</th>
-                                        <th className="p-3 font-normal">Registry</th>
-                                        <th className="p-3 font-normal">Event</th>
-                                        <th className="p-3 font-normal">Actor</th>
-                                        <th className="p-3 font-normal">Metadata</th>
+                                    <tr className="border-b border-grid bg-black/40 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_90%)] font-bold">
+                                        <th className="p-3 font-bold">Timestamp</th>
+                                        <th className="p-3 font-bold">Registry</th>
+                                        <th className="p-3 font-bold">Event</th>
+                                        <th className="p-3 font-bold">Actor</th>
+                                        <th className="p-3 font-bold">Metadata</th>
                                     </tr>
                                 </thead>
                                 <tbody className="font-mono text-xs">
                                     {initialSnapshot.audit_history.slice(0, 20).map((event) => (
-                                        <tr key={event.event_id} className="border-b border-grid/20">
-                                            <td className="p-3 text-muted">{formatDateTime(event.timestamp)}</td>
-                                            <td className="p-3 break-all align-top">{event.registry_id}</td>
-                                            <td className="p-3 break-words align-top">{event.event_type}</td>
-                                            <td className="p-3 break-all align-top">{event.actor ?? 'system'}</td>
-                                            <td className="max-w-[30rem] p-3 align-top break-all whitespace-pre-wrap text-foreground/85">{summarizeMetadata(event.metadata)}</td>
+                                        <tr key={event.event_id} className="border-b border-grid/20 hover:bg-white/[0.02]">
+                                            <td className="p-3 text-[hsl(0_0%_80%)] font-medium">{formatDateTime(event.timestamp)}</td>
+                                            <td className="p-3 break-all align-top text-foreground/90">{event.registry_id}</td>
+                                            <td className="p-3 break-words align-top font-bold">{event.event_type}</td>
+                                            <td className="p-3 break-all align-top text-foreground/90">{event.actor ?? 'system'}</td>
+                                            <td className="max-w-[30rem] p-3 align-top break-all whitespace-pre-wrap text-foreground/95">{summarizeMetadata(event.metadata)}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -526,10 +526,10 @@ function RegistryEntryCard({
         <div className="min-w-0 border border-grid bg-black/20 p-5">
             <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                    <div className="break-words font-mono text-lg leading-tight text-foreground">
+                    <div className="break-words font-mono text-lg leading-tight text-foreground font-bold">
                         {registry.model_name}
                     </div>
-                    <div className="mt-1 break-all font-mono text-xs uppercase tracking-[0.16em] text-muted">{`${registry.model_version} | ${registry.registry_id}`}</div>{/* legacy separator preserved for diff stability
+                    <div className="mt-1 break-all font-mono text-xs uppercase tracking-[0.16em] text-[hsl(0_0%_88%)] font-medium">{`${registry.model_version} | ${registry.registry_id}`}</div>{/* legacy separator preserved for diff stability
                         {registry.model_version} • {registry.registry_id}
                     */}
                 </div>
@@ -710,9 +710,9 @@ function RegistryEntryCard({
                     {entry.rollback_history.length > 0 ? (
                         <div className="mt-4 space-y-2">
                             {entry.rollback_history.slice(0, 3).map((event) => (
-                                <div key={event.event_id} className="border border-grid/40 bg-black/20 px-3 py-2 font-mono text-xs text-foreground/85">
-                                    <div className="text-muted">{formatDateTime(event.timestamp)}</div>
-                                    <div className="break-all whitespace-pre-wrap">{summarizeMetadata(event.metadata)}</div>
+                                <div key={event.event_id} className="border border-grid/40 bg-black/20 px-3 py-2 font-mono text-xs text-foreground/95">
+                                    <div className="text-[hsl(0_0%_82%)] font-medium mb-1">{formatDateTime(event.timestamp)}</div>
+                                    <div className="break-all whitespace-pre-wrap font-mono">{summarizeMetadata(event.metadata)}</div>
                                 </div>
                             ))}
                         </div>
@@ -772,7 +772,7 @@ function RegistryEntryCard({
 
             {entry.latest_registry_events.length > 0 ? (
                 <div className="mt-5 border-t border-grid/30 pt-4">
-                    <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Latest Registry Events</div>
+                    <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_88%)] font-bold">Latest Registry Events</div>
                     <div className="space-y-2">
                         {entry.latest_registry_events.slice(0, 4).map((event) => (
                             <div key={event.event_id} className="grid gap-2 border border-grid/30 bg-black/20 px-3 py-2 font-mono text-xs md:grid-cols-[minmax(0,1fr),auto] md:items-start">
@@ -800,9 +800,9 @@ function SummaryCard({
     tone?: 'default' | 'warn' | 'accent';
 }) {
     return (
-        <div className="border border-grid bg-black/20 p-3 font-mono">
-            <div className="text-[10px] uppercase tracking-[0.2em] text-muted">{label}</div>
-            <div className={`mt-2 break-words text-xl leading-tight md:text-2xl ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
+        <div className="border border-grid bg-black/20 p-3 font-mono transition-colors hover:bg-black/30">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-[hsl(0_0%_82%)] font-bold">{label}</div>
+            <div className={`mt-2 break-words text-xl leading-tight md:text-2xl font-bold ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
                 {value}
             </div>
         </div>
@@ -820,15 +820,15 @@ function FamilyStat({
 }) {
     return (
         <div className="border border-grid bg-black/20 p-3">
-            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">{label}</div>
-            <div className={`mt-2 break-words font-mono text-xs leading-relaxed ${tone === 'accent' ? 'text-accent' : 'text-foreground/85'}`}>{value}</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_82%)] font-bold">{label}</div>
+            <div className={`mt-2 break-words font-mono text-[11px] leading-relaxed font-medium ${tone === 'accent' ? 'text-accent' : 'text-foreground/95'}`}>{value}</div>
         </div>
     );
 }
 
 function EmptyPanel({ message, compact = false }: { message: string; compact?: boolean }) {
     return (
-        <div className={`flex items-center justify-center border border-dashed border-grid bg-black/10 px-6 text-center font-mono text-xs text-muted ${compact ? 'min-h-[120px]' : 'min-h-[220px]'}`}>
+        <div className={`flex items-center justify-center border border-dashed border-grid bg-black/10 px-6 text-center font-mono text-xs text-[hsl(0_0%_80%)] font-medium ${compact ? 'min-h-[120px]' : 'min-h-[220px]'}`}>
             {message}
         </div>
     );
@@ -837,7 +837,7 @@ function EmptyPanel({ message, compact = false }: { message: string; compact?: b
 function Section({ title, children }: { title: string; children: ReactNode }) {
     return (
         <div className="border border-grid/40 bg-black/20 p-4">
-            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">{title}</div>
+            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_88%)] font-bold">{title}</div>
             {children}
         </div>
     );
@@ -854,8 +854,8 @@ function Badge({ className, children }: { className: string; children: ReactNode
 function Stat({ label, value }: { label: string; value: string }) {
     return (
         <div className="border border-grid/30 bg-black/20 p-3">
-            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">{label}</div>
-            <div className="mt-2 break-all font-mono text-xs text-foreground/85">{value}</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-[hsl(0_0%_82%)] font-bold">{label}</div>
+            <div className="mt-2 break-all font-mono text-xs text-foreground/95">{value}</div>
         </div>
     );
 }
@@ -871,8 +871,8 @@ function MetricTile({
 }) {
     return (
         <div className={`border p-3 ${emphasis ? 'border-danger/30 bg-danger/10' : 'border-grid/30 bg-black/20'}`}>
-            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">{label}</div>
-            <div className={`mt-2 break-words font-mono text-base leading-tight md:text-lg ${emphasis ? 'text-danger' : 'text-foreground'}`}>{value}</div>
+            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-[hsl(0_0%_82%)] font-bold">{label}</div>
+            <div className={`mt-2 break-words font-mono text-base leading-tight md:text-lg font-bold ${emphasis ? 'text-danger' : 'text-foreground'}`}>{value}</div>
         </div>
     );
 }
@@ -880,8 +880,8 @@ function MetricTile({
 function GateRow({ label, status }: { label: string; status: GateStatus }) {
     return (
         <div className="flex items-center justify-between gap-3 border border-grid/30 bg-black/20 px-3 py-2 font-mono text-xs">
-            <span className="min-w-0 break-words text-foreground/85">{label}</span>
-            <span className={`inline-flex items-center border px-2 py-1 text-[10px] uppercase tracking-[0.16em] ${gateBadgeClass(status)}`}>
+            <span className="min-w-0 break-words text-foreground/95 font-medium">{label}</span>
+            <span className={`inline-flex items-center border px-2 py-1 text-[10px] uppercase tracking-[0.16em] font-bold ${gateBadgeClass(status)}`}>
                 {status}
             </span>
         </div>
@@ -899,8 +899,8 @@ function DecisionStat({
 }) {
     return (
         <div className="border border-grid/30 bg-black/20 p-3">
-            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted">{label}</div>
-            <div className={`mt-2 break-words font-mono text-base leading-tight md:text-lg ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
+            <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-[hsl(0_0%_82%)] font-bold">{label}</div>
+            <div className={`mt-2 break-words font-mono text-base leading-tight md:text-lg font-bold ${tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-danger' : 'text-foreground'}`}>
                 {value}
             </div>
         </div>
