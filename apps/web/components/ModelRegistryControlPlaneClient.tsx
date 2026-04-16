@@ -908,7 +908,7 @@ function MetricTile({
 
 function GateRow({ label, status }: { label: string; status: GateStatus }) {
     const isFailing = status === 'fail';
-    const isPending = status === 'hold' || status === 'unknown';
+    const isPending = status === 'pending';
     
     return (
         <div className={`flex items-center justify-between gap-3 border border-grid/30 px-3 py-2 font-mono text-xs transition-colors ${
