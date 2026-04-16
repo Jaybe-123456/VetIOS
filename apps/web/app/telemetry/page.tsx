@@ -343,12 +343,12 @@ export default function TelemetryObserverPage() {
                     <div className="space-y-2 font-mono text-xs">
                         {snapshot && snapshot.observability.disease_performance.length > 0 ? (
                             snapshot.observability.disease_performance.slice(0, 6).map((row) => (
-                                <div key={row.disease_name} className="border border-grid/60 p-2 space-y-1">
+                                <div key={row.disease_name} className="border border-grid/60 p-2 space-y-1 bg-accent/5">
                                     <div className="flex items-center justify-between gap-3">
-                                        <span className="text-accent truncate">{row.disease_name}</span>
-                                        <span className="text-muted">n={row.support_n}</span>
+                                        <span className="text-accent truncate font-semibold">{row.disease_name}</span>
+                                        <span className="text-[hsl(0_0%_80%)]">n={row.support_n}</span>
                                     </div>
-                                    <div className="grid grid-cols-2 gap-2 text-[10px] text-muted">
+                                    <div className="grid grid-cols-2 gap-2 text-[11px] sm:text-[12px] text-[hsl(0_0%_85%)]">
                                         <span>PREC {formatInlinePercent(row.precision)}</span>
                                         <span>REC {formatInlinePercent(row.recall)}</span>
                                         <span>TOP1 {formatInlinePercent(row.top1_accuracy)}</span>
@@ -357,7 +357,7 @@ export default function TelemetryObserverPage() {
                                 </div>
                             ))
                         ) : (
-                            <div className="text-muted/50">NO DISEASE PERFORMANCE SNAPSHOT</div>
+                            <div className="text-[hsl(0_0%_60%)]">NO DISEASE PERFORMANCE SNAPSHOT</div>
                         )}
                     </div>
                 </ConsoleCard>
@@ -366,20 +366,20 @@ export default function TelemetryObserverPage() {
                     <div className="space-y-2 font-mono text-xs">
                         {snapshot && snapshot.observability.recent_failures.length > 0 ? (
                             snapshot.observability.recent_failures.map((failure) => (
-                                <div key={failure.id} className="border border-grid/60 p-2">
-                                    <div className={`text-[10px] uppercase ${failure.severity === 'critical' ? 'text-danger' : failure.severity === 'warning' ? 'text-[#ffcc00]' : 'text-muted'}`}>
+                                <div key={failure.id} className="border border-grid/60 p-2 bg-danger/5">
+                                    <div className={`text-[11px] sm:text-[12px] uppercase font-semibold ${failure.severity === 'critical' ? 'text-danger' : failure.severity === 'warning' ? 'text-[#ffcc00]' : 'text-[hsl(0_0%_80%)]'}`}>
                                         {failure.error_type.replace(/_/g, ' ')} / {failure.failure_classification.replace(/_/g, ' ')}
                                     </div>
-                                    <div className="text-muted mt-1 truncate">
+                                    <div className="text-[hsl(0_0%_85%)] mt-1 truncate text-[12px]">
                                         {failure.predicted ?? 'ABSTAIN'} {'->'} {failure.actual ?? 'OUTCOME PENDING'}
                                     </div>
-                                    <div className="text-[10px] text-muted/70 mt-1">
+                                    <div className="text-[11px] text-[hsl(0_0%_75%)] mt-1">
                                         conf={formatInlinePercent(failure.confidence)} top3={failure.actual_in_top3 ? 'yes' : 'no'} abstain={failure.abstained ? 'yes' : 'no'}
                                     </div>
                                 </div>
                             ))
                         ) : (
-                            <div className="text-muted/50">NO FAILURE EVENTS</div>
+                            <div className="text-[hsl(0_0%_60%)]">NO FAILURE EVENTS</div>
                         )}
                     </div>
                 </ConsoleCard>
@@ -392,13 +392,13 @@ export default function TelemetryObserverPage() {
                         <span>EVENT-DRIVEN TELEMETRY LOG</span>
                         <Activity className="w-3 h-3 ml-auto animate-pulse" />
                     </div>
-                    <div className="flex-1 overflow-y-auto space-y-1 text-muted/80">
+                    <div className="flex-1 overflow-y-auto space-y-1 text-[hsl(0_0%_82%)]">
                         {snapshot && snapshot.logs.length > 0 ? (
                             snapshot.logs.map((log) => (
                                 <LogLine key={log.id} log={log} />
                             ))
                         ) : (
-                            <div className="text-muted/40 text-center pt-8">
+                            <div className="text-[hsl(0_0%_55%)] text-center pt-8">
                                 {disconnectedWithoutData ? 'STREAM DISCONNECTED' : 'NO DATA'}
                             </div>
                         )}
@@ -449,159 +449,19 @@ function MetricCard({
 }) {
     const tones = {
         accent: {
-            border: 'border-accent/20',
+            border: 'border-accent/30',
             text: 'text-accent',
         },
         danger: {
-            border: 'border-danger/20',
+            border: 'border-danger/30',
             text: 'text-danger',
         },
         muted: {
-            border: 'border-muted/20',
+            border: 'border-muted/30',
             text: 'text-muted',
         },
     } as const;
 
     return (
-        <ConsoleCard className={`p-3 sm:p-4 h-full ${tones[tone].border}`}>
-            <div className="font-mono text-[9px] sm:text-[10px] text-muted uppercase mb-2 leading-snug whitespace-normal break-words min-h-[1.6rem] sm:min-h-[1.9rem]">
-                {label}
-            </div>
-            <div className={`font-mono text-base sm:text-xl xl:text-2xl flex items-start gap-1.5 leading-tight whitespace-normal break-words min-w-0 ${tones[tone].text}`}>
-                <span className="min-w-0 break-words whitespace-normal">{value}</span>
-                {icon ? <span className="shrink-0 pt-0.5">{icon}</span> : null}
-            </div>
-        </ConsoleCard>
-    );
-}
-
-function EmptyChartState({ message }: { message: string }) {
-    return (
-        <div className="h-full flex items-center justify-center text-muted text-[10px] sm:text-xs font-mono border border-dashed border-grid">
-            <span className="px-4 text-center leading-relaxed whitespace-normal break-words">{message}</span>
-        </div>
-    );
-}
-
-function LogLine({ log }: { log: TelemetryLogEntry }) {
-    const tone = log.level === 'ERROR'
-        ? 'text-danger'
-        : log.level === 'WARN'
-            ? 'text-[#ffcc00]'
-            : 'text-muted/80';
-
-    return (
-        <div className={`truncate text-[10px] sm:text-xs ${tone}`}>
-            <span className="text-muted/40 mr-2">
-                {new Date(log.timestamp).toLocaleTimeString()}
-            </span>
-            {log.message}
-        </div>
-    );
-}
-
-function formatCount(value: number | undefined, disconnectedWithoutData: boolean) {
-    if (typeof value === 'number') {
-        return String(value);
-    }
-    return disconnectedWithoutData ? 'STREAM DISCONNECTED' : 'NO DATA';
-}
-
-function formatLatencyMetric(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
-    if (snapshot?.metric_states.p95_latency === 'READY' && snapshot.metrics.p95_latency_ms != null) {
-        return `${snapshot.metrics.p95_latency_ms.toFixed(1)}ms`;
-    }
-    return formatMetricState(snapshot?.metric_states.p95_latency, streamStatus);
-}
-
-function formatPercentMetric(
-    value: number | null | undefined,
-    state: TelemetryMetricState | undefined,
-    streamStatus: StreamStatus,
-) {
-    if (state === 'READY' && value != null) {
-        return `${(value * 100).toFixed(1)}%`;
-    }
-    return formatMetricState(state, streamStatus);
-}
-
-function formatInlinePercent(value: number | null | undefined) {
-    if (value == null) {
-        return 'NO DATA';
-    }
-    return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatDriftMetric(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
-    if (snapshot?.metric_states.drift_score === 'READY' && snapshot.metrics.drift_score != null) {
-        return snapshot.metrics.drift_score.toFixed(4);
-    }
-    return formatMetricState(snapshot?.metric_states.drift_score, streamStatus, true);
-}
-
-function formatMetricState(
-    state: TelemetryMetricState | undefined,
-    streamStatus: StreamStatus,
-    useInsufficientDataLabel = false,
-) {
-    if (streamStatus === 'disconnected' && !state) {
-        return 'STREAM DISCONNECTED';
-    }
-
-    if (state === 'NO_DATA') {
-        return 'NO DATA';
-    }
-
-    if (state === 'INSUFFICIENT_OUTCOMES') {
-        return useInsufficientDataLabel ? 'INSUFFICIENT DATA' : 'INSUFFICIENT OUTCOMES';
-    }
-
-    if (state === 'STREAM_DISCONNECTED' || streamStatus === 'disconnected') {
-        return 'STREAM DISCONNECTED';
-    }
-
-    return 'NO DATA';
-}
-
-function formatUtilization(value: number | null | undefined, streamStatus: StreamStatus) {
-    if (value == null) {
-        return stateForMissingSnapshot(streamStatus);
-    }
-    return `${(value * 100).toFixed(1)}%`;
-}
-
-function resolveLatencyChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
-    if (streamStatus === 'disconnected' && !snapshot) {
-        return 'STREAM DISCONNECTED';
-    }
-    if (snapshot?.metric_states.p95_latency === 'NO_DATA') {
-        return 'NO DATA';
-    }
-    return 'NO DATA';
-}
-
-function resolveDriftChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
-    if (streamStatus === 'disconnected' && !snapshot) {
-        return 'STREAM DISCONNECTED';
-    }
-    if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES') {
-        if ((snapshot.metrics.outcome_count ?? 0) === 1) {
-            return 'NEED 1 MORE OUTCOME';
-        }
-        return 'INSUFFICIENT DATA';
-    }
-    return 'NO DATA';
-}
-
-function stateForMissingSnapshot(streamStatus: StreamStatus) {
-    if (streamStatus === 'disconnected') {
-        return 'STREAM DISCONNECTED';
-    }
-    return 'NO DATA';
-}
-
-function statusTone(streamStatus: StreamStatus) {
-    if (streamStatus === 'live') return 'text-accent';
-    if (streamStatus === 'disconnected') return 'text-danger';
-    return 'text-muted';
-}
+        <ConsoleCard className={`p-4 sm:p-5 h-full ${tones[tone].border}`}>
+            <div className="font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_88%)] uppercase
