@@ -192,7 +192,7 @@ export default function DashboardControlPlaneClient() {
 
         const source = new EventSource('/telemetry/stream');
 
-        source.onmessage = (event) => {
+        source.onmessage = (event: MessageEvent) => {
             try {
                 const payload = JSON.parse(event.data) as TelemetryStreamPayload;
                 setTelemetrySnapshot(payload.snapshot);
@@ -222,7 +222,7 @@ export default function DashboardControlPlaneClient() {
 
         const source = new EventSource('/intelligence/stream?window=24h');
 
-        source.onmessage = (event) => {
+        source.onmessage = (event: MessageEvent) => {
             try {
                 const payload = JSON.parse(event.data) as TopologyStreamPayload;
                 setTopologySnapshot(payload.snapshot);
