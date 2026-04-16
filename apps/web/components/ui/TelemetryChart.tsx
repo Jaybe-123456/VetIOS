@@ -15,42 +15,44 @@ export function TelemetryChart({ data, dataKey = 'value', color = '#00ff41' }: {
         <div className="w-full h-full min-h-[200px]">
             <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={data}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#444" vertical={false} />
                     <XAxis
                         dataKey="time"
-                        stroke="#666"
-                        fontSize={10}
+                        stroke="#888"
+                        fontSize={12}
                         tickLine={false}
                         axisLine={false}
                         tickFormatter={(value) => value}
                         fontFamily="monospace"
+                        height={40}
                     />
                     <YAxis
-                        stroke="#666"
-                        fontSize={10}
+                        stroke="#888"
+                        fontSize={12}
                         tickLine={false}
                         axisLine={false}
                         tickFormatter={(value) => `${value}`}
                         fontFamily="monospace"
-                        width={40}
+                        width={50}
                     />
                     <Tooltip
                         contentStyle={{
-                            backgroundColor: '#000',
-                            border: '1px solid #333',
+                            backgroundColor: '#1a1a1a',
+                            border: '1px solid #555',
                             borderRadius: '0px',
                             fontFamily: 'monospace',
-                            fontSize: '12px'
+                            fontSize: '14px',
+                            color: '#e0e0e0'
                         }}
-                        itemStyle={{ color: '#fff' }}
+                        itemStyle={{ color: '#00ff41' }}
                     />
                     <Line
                         type="monotone"
                         dataKey={dataKey}
                         stroke={color}
-                        strokeWidth={2}
+                        strokeWidth={2.5}
                         dot={false}
-                        activeDot={{ r: 4, fill: color, stroke: '#000' }}
+                        activeDot={{ r: 5, fill: color, stroke: '#000' }}
                         isAnimationActive={false}
                     />
                 </LineChart>
