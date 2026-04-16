@@ -1,3 +1,4 @@
+
 'use client';
 
 import type { ReactNode } from 'react';
@@ -464,4 +465,144 @@ function MetricCard({
 
     return (
         <ConsoleCard className={`p-4 sm:p-5 h-full ${tones[tone].border}`}>
-            <div className="font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_88%)] uppercase
+            <div className="font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_88%)] uppercase mb-3 leading-snug whitespace-normal break-words min-h-[2rem] sm:min-h-[2.2rem]">
+                {label}
+            </div>
+            <div className={`font-mono text-lg sm:text-2xl xl:text-3xl flex items-start gap-1.5 leading-tight whitespace-normal break-words min-w-0 font-semibold ${tones[tone].text}`}>
+                <span className="min-w-0 break-words whitespace-normal">{value}</span>
+                {icon ? <span className="shrink-0 pt-1">{icon}</span> : null}
+            </div>
+        </ConsoleCard>
+    );
+}
+
+function EmptyChartState({ message }: { message: string }) {
+    return (
+        <div className="h-full flex items-center justify-center text-[hsl(0_0%_70%)] text-[11px] sm:text-xs font-mono border border-dashed border-grid">
+            <span className="px-4 text-center leading-relaxed whitespace-normal break-words">{message}</span>
+        </div>
+    );
+}
+
+function LogLine({ log }: { log: TelemetryLogEntry }) {
+    const tone = log.level === 'ERROR'
+        ? 'text-danger'
+        : log.level === 'WARN'
+            ? 'text-[#ffcc00]'
+            : 'text-[hsl(0_0%_85%)]';
+
+    return (
+        <div className={`truncate text-[11px] sm:text-xs ${tone}`}>
+            <span className="text-[hsl(0_0%_55%)] mr-2">
+                {new Date(log.timestamp).toLocaleTimeString()}
+            </span>
+            {log.message}
+        </div>
+    );
+}
+
+function formatCount(value: number | undefined, disconnectedWithoutData: boolean) {
+    if (typeof value === 'number') {
+        return String(value);
+    }
+    return disconnectedWithoutData ? 'STREAM DISCONNECTED' : 'NO DATA';
+}
+
+function formatLatencyMetric(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (snapshot?.metric_states.p95_latency === 'READY' && snapshot.metrics.p95_latency_ms != null) {
+        return `${snapshot.metrics.p95_latency_ms.toFixed(1)}ms`;
+    }
+    return formatMetricState(snapshot?.metric_states.p95_latency, streamStatus);
+}
+
+function formatPercentMetric(
+    value: number | null | undefined,
+    state: TelemetryMetricState | undefined,
+    streamStatus: StreamStatus,
+) {
+    if (state === 'READY' && value != null) {
+        return `${(value * 100).toFixed(1)}%`;
+    }
+    return formatMetricState(state, streamStatus);
+}
+
+function formatInlinePercent(value: number | null | undefined) {
+    if (value == null) {
+        return 'NO DATA';
+    }
+    return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatDriftMetric(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (snapshot?.metric_states.drift_score === 'READY' && snapshot.metrics.drift_score != null) {
+        return snapshot.metrics.drift_score.toFixed(4);
+    }
+    return formatMetricState(snapshot?.metric_states.drift_score, streamStatus, true);
+}
+
+function formatMetricState(
+    state: TelemetryMetricState | undefined,
+    streamStatus: StreamStatus,
+    useInsufficientDataLabel = false,
+) {
+    if (streamStatus === 'disconnected' && !state) {
+        return 'STREAM DISCONNECTED';
+    }
+
+    if (state === 'NO_DATA') {
+        return 'NO DATA';
+    }
+
+    if (state === 'INSUFFICIENT_OUTCOMES') {
+        return useInsufficientDataLabel ? 'INSUFFICIENT DATA' : 'INSUFFICIENT OUTCOMES';
+    }
+
+    if (state === 'STREAM_DISCONNECTED' || streamStatus === 'disconnected') {
+        return 'STREAM DISCONNECTED';
+    }
+
+    return 'NO DATA';
+}
+
+function formatUtilization(value: number | null | undefined, streamStatus: StreamStatus) {
+    if (value == null) {
+        return stateForMissingSnapshot(streamStatus);
+    }
+    return `${(value * 100).toFixed(1)}%`;
+}
+
+function resolveLatencyChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (streamStatus === 'disconnected' && !snapshot) {
+        return 'STREAM DISCONNECTED';
+    }
+    if (snapshot?.metric_states.p95_latency === 'NO_DATA') {
+        return 'NO DATA';
+    }
+    return 'NO DATA';
+}
+
+function resolveDriftChartMessage(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (streamStatus === 'disconnected' && !snapshot) {
+        return 'STREAM DISCONNECTED';
+    }
+    if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES') {
+        if ((snapshot.metrics.outcome_count ?? 0) === 1) {
+            return 'NEED 1 MORE OUTCOME';
+        }
+        return 'INSUFFICIENT DATA';
+    }
+    return 'NO DATA';
+}
+
+function stateForMissingSnapshot(streamStatus: StreamStatus) {
+    if (streamStatus === 'disconnected') {
+        return 'STREAM DISCONNECTED';
+    }
+    return 'NO DATA';
+}
+
+function statusTone(streamStatus: StreamStatus) {
+    if (streamStatus === 'live') return 'text-accent';
+    if (streamStatus === 'disconnected') return 'text-danger';
+    return 'text-muted';
+}
