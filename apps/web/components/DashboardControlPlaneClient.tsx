@@ -367,33 +367,33 @@ export default function DashboardControlPlaneClient() {
                             <Activity className={`w-6 h-6 ${refreshing ? 'animate-spin' : ''}`} />
                             {refreshing ? 'REFRESHING...' : 'REFRESH\nSNAPSHOT'}
                         </button>
-                        <Link href="/settings" className="border border-grid hover:border-accent/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
+                        <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Route className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">Outbox Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Outbox Ops</div>
                         </Link>
-                        <Link href="/settings" className="border border-grid hover:border-accent/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
+                        <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Workflow className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">Federation Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Federation Ops</div>
                         </Link>
                         <Link href="/settings" className="border border-grid hover:border-[#ffcc00]/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-[#ffcc00] group-hover:drop-shadow-[0_0_8px_rgba(255,204,0,0.8)]"><Database className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">PetPass Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">PetPass Ops</div>
                         </Link>
-                        <Link href="/settings" className="border border-grid hover:border-accent/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
+                        <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Network className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">Partner Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Partner Ops</div>
                         </Link>
-                        <Link href="/settings" className="border border-grid hover:border-accent/50 bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
+                        <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><ShieldAlert className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-muted group-hover:text-foreground">Trust Ops</div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Trust Ops</div>
                         </Link>
-                        <Link href="/settings" className="border border-danger/50 hover:border-danger bg-background/50 flex flex-col justify-center gap-3 p-4 transition-all group">
-                            <div className="text-danger group-hover:drop-shadow-[0_0_8px_rgba(255,0,0,0.8)]"><Cpu className="w-6 h-6" /></div>
-                            <div className="font-mono text-[10px] sm:text-xs uppercase tracking-widest text-danger group-hover:text-white">Edge Ops</div>
+                        <Link href="/settings" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
+                            <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.7)]"><Cpu className="w-6 h-6" /></div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_64%)] group-hover:text-[hsl(0_0%_90%)]">Edge Ops</div>
                         </Link>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between font-mono text-[10px] sm:text-[11px] text-muted tracking-widest uppercase border-t border-grid pt-3">
+                    <div className="flex flex-wrap items-center justify-between font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_52%)] tracking-[0.14em] uppercase border-t border-[hsl(0_0%_18%)] pt-3">
                         <div className="flex flex-col sm:flex-row gap-2 sm:gap-6">
                             <span>
                                 T-UPDATE: <span className="text-foreground">{formatTimestampOrState(lastTelemetryUpdate, telemetryStreamStatus)}</span>
@@ -510,7 +510,7 @@ export default function DashboardControlPlaneClient() {
                         pipelineStates.map((pipeline) => (
                             <div key={pipeline.key} className="py-2 border-b border-muted/30">
                                 <div className="flex items-start justify-between gap-3">
-                                    <div className="font-mono text-xs uppercase text-muted">{pipeline.label}</div>
+                                    <div className="font-mono text-[11px] uppercase text-[hsl(0_0%_60%)]">{pipeline.label}</div>
                                     <StateText tone={pipelineTone(pipeline.status)}>{pipeline.status}</StateText>
                                 </div>
                                 <div className="mt-2 font-mono text-[11px] text-foreground">
@@ -531,7 +531,7 @@ export default function DashboardControlPlaneClient() {
                         governanceFamilies.map((family) => (
                             <div key={family.model_family} className="py-2 border-b border-muted/30">
                                 <div className="flex items-start justify-between gap-3">
-                                    <div className="font-mono text-xs uppercase text-accent">{family.model_family}</div>
+                                    <div className="font-mono text-[11px] uppercase text-accent">{family.model_family}</div>
                                     <span className="font-mono text-[10px] text-muted">{family.entry_count} entries</span>
                                 </div>
                                 <div className="mt-2 font-mono text-[11px] text-foreground">
@@ -800,11 +800,11 @@ function MetricCard({
     return (
         <ConsoleCard>
             <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[10px] sm:text-xs text-muted uppercase">{label}</span>
+                <span className="font-mono text-[11px] text-[hsl(0_0%_58%)] uppercase tracking-[0.14em]">{label}</span>
                 <span className={toneClass(tone)}>{icon}</span>
             </div>
             <div className={`font-mono text-lg sm:text-2xl ${toneClass(tone)}`}>{value}</div>
-            <div className="font-mono text-[10px] text-muted mt-2">{detail}</div>
+            <div className="font-mono text-[11px] text-[hsl(0_0%_55%)] mt-2 leading-relaxed">{detail}</div>
         </ConsoleCard>
     );
 }
@@ -828,8 +828,8 @@ function StatusChip({
 
 function DataPanel({ label, value }: { label: string; value: string }) {
     return (
-        <div className="border border-grid bg-black/20 p-3 sm:p-4">
-            <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted mb-2">{label}</div>
+        <div className="border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_7%)] p-3 sm:p-4">
+            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_60%)] mb-2">{label}</div>
             <div className="font-mono text-sm text-foreground leading-relaxed">{value}</div>
         </div>
     );
@@ -840,11 +840,11 @@ function AlertRow({ alert }: { alert: ControlPlaneAlertRecord }) {
         <div className="flex gap-3">
             <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${alertDotTone(alert.severity)}`} />
             <div className="flex flex-col gap-1">
-                <span className={`font-mono text-xs uppercase tracking-wider ${alertTextTone(alert.severity)}`}>
+                <span className={`font-mono text-[11px] uppercase tracking-wider ${alertTextTone(alert.severity)}`}>
                     {alert.title}
                 </span>
-                <span className="font-mono text-[10px] text-muted leading-relaxed">{alert.message}</span>
-                <span className="font-mono text-[10px] text-muted/70">{new Date(alert.timestamp).toLocaleString()}</span>
+                <span className="font-mono text-[11px] text-[hsl(0_0%_60%)] leading-relaxed">{alert.message}</span>
+                <span className="font-mono text-[10px] text-[hsl(0_0%_42%)]">{new Date(alert.timestamp).toLocaleString()}</span>
             </div>
         </div>
     );
@@ -852,7 +852,7 @@ function AlertRow({ alert }: { alert: ControlPlaneAlertRecord }) {
 
 function EmptyChartState({ message }: { message: string }) {
     return (
-        <div className="h-full flex items-center justify-center text-muted text-[10px] sm:text-xs font-mono border border-dashed border-grid">
+        <div className="h-full flex items-center justify-center text-[hsl(0_0%_48%)] text-[11px] font-mono border border-dashed border-[hsl(0_0%_20%)]">
             {message}
         </div>
     );
@@ -860,7 +860,7 @@ function EmptyChartState({ message }: { message: string }) {
 
 function EmptyListState({ message, compact = false }: { message: string; compact?: boolean }) {
     return (
-        <div className={`font-mono text-xs text-muted border border-dashed border-grid grid place-items-center ${compact ? 'h-20' : 'h-32'}`}>
+        <div className={`font-mono text-[11px] text-[hsl(0_0%_50%)] border border-dashed border-[hsl(0_0%_20%)] grid place-items-center ${compact ? 'h-20' : 'h-32'}`}>
             {message}
         </div>
     );
@@ -1151,7 +1151,7 @@ function StateText({
     tone: 'accent' | 'warning' | 'danger' | 'muted';
 }) {
     return (
-        <span className={`font-mono text-xs uppercase ${toneClass(tone)}`}>
+        <span className={`font-mono text-[11px] uppercase ${toneClass(tone)}`}>
             {children}
         </span>
     );

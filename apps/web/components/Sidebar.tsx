@@ -17,16 +17,16 @@ import {
 } from 'lucide-react';
 
 const navItems = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Inference Console', href: '/inference', icon: TerminalSquare },
-    { name: 'Outcome Learning', href: '/outcome', icon: GraduationCap },
-    { name: 'Adversarial Sim', href: '/simulate', icon: ShieldAlert },
-    { name: 'Clinical Dataset', href: '/dataset', icon: Database },
-    { name: 'Experiment Track', href: '/experiments', icon: FlaskConical },
-    { name: 'Model Registry', href: '/models', icon: Cpu },
-    { name: 'Telemetry', href: '/telemetry', icon: Activity },
-    { name: 'Network', href: '/intelligence', icon: Network },
-    { name: 'Settings', href: '/settings', icon: Settings },
+    { name: 'Dashboard',         href: '/dashboard',    icon: LayoutDashboard },
+    { name: 'Inference Console', href: '/inference',    icon: TerminalSquare  },
+    { name: 'Outcome Learning',  href: '/outcome',      icon: GraduationCap   },
+    { name: 'Adversarial Sim',   href: '/simulate',     icon: ShieldAlert     },
+    { name: 'Clinical Dataset',  href: '/dataset',      icon: Database        },
+    { name: 'Experiment Track',  href: '/experiments',  icon: FlaskConical    },
+    { name: 'Model Registry',    href: '/models',       icon: Cpu             },
+    { name: 'Telemetry',         href: '/telemetry',    icon: Activity        },
+    { name: 'Network',           href: '/intelligence', icon: Network         },
+    { name: 'Settings',          href: '/settings',     icon: Settings        },
 ];
 
 interface SidebarProps {
@@ -41,23 +41,23 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
     return (
         <aside className={`
             ${isMobile ? 'w-full h-full' : 'w-64 h-full'}
-            border-r border-grid bg-dim flex flex-col shrink-0 select-none
+            border-r border-[hsl(0_0%_18%)] bg-[hsl(0_0%_6%)] flex flex-col shrink-0 select-none
         `}>
-            {/* Header */}
-            <div className="h-14 lg:h-16 flex items-center justify-between px-5 border-b border-grid shrink-0">
-                <div className="flex flex-col">
-                    <span className="font-mono flex items-center gap-2 font-bold tracking-tight text-accent text-lg">
-                        <TerminalSquare className="w-5 h-5" />
+            {/* ── Logo Header ── */}
+            <div className="h-14 lg:h-16 flex items-center justify-between px-5 border-b border-[hsl(0_0%_18%)] shrink-0">
+                <div className="flex flex-col gap-0.5">
+                    <span className="font-mono flex items-center gap-2 font-bold tracking-tight text-accent text-base">
+                        <TerminalSquare className="w-4 h-4" />
                         VET_IOS //
                     </span>
-                    <span className="font-mono text-[10px] text-muted tracking-widest uppercase">
+                    <span className="font-mono text-[9px] text-[hsl(0_0%_45%)] tracking-[0.22em] uppercase">
                         V1.0 OMEGA
                     </span>
                 </div>
                 {isMobile && (
                     <button
                         onClick={onClose}
-                        className="p-2 -mr-2 text-muted hover:text-accent transition-colors"
+                        className="p-2 -mr-2 text-[hsl(0_0%_55%)] hover:text-accent transition-colors"
                         aria-label="Close sidebar"
                     >
                         <X className="w-5 h-5" />
@@ -65,8 +65,15 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
                 )}
             </div>
 
-            {/* Navigation */}
-            <nav className="flex-1 overflow-y-auto py-4 lg:py-6 px-3 flex flex-col gap-0.5">
+            {/* ── Nav label ── */}
+            <div className="px-5 pt-4 pb-1">
+                <span className="font-mono text-[9px] text-[hsl(0_0%_38%)] tracking-[0.22em] uppercase">
+                    Navigation
+                </span>
+            </div>
+
+            {/* ── Navigation Items ── */}
+            <nav className="flex-1 overflow-y-auto py-1 px-2 flex flex-col gap-0.5">
                 {navItems.map((item) => {
                     const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
                     const Icon = item.icon;
@@ -75,26 +82,37 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
                             key={item.href}
                             href={item.href}
                             onClick={isMobile ? onClose : undefined}
-                            className={`flex items-center gap-3 px-3 py-3 lg:py-2.5 font-mono text-xs uppercase tracking-wider transition-all duration-200 group
+                            className={`
+                                flex items-center gap-3 px-3 py-2.5 font-mono text-[11px]
+                                uppercase tracking-[0.12em] transition-all duration-150 group
+                                border-l-2
                                 ${isActive
-                                    ? 'border border-accent text-accent shadow-[0_0_10px_rgba(0,255,65,0.1)]'
-                                    : 'border border-transparent text-muted hover:text-foreground hover:border-grid'
-                                }`}
+                                    ? 'border-l-accent bg-[hsl(142_76%_46%_/_0.08)] text-accent'
+                                    : 'border-l-transparent text-[hsl(0_0%_58%)] hover:text-[hsl(0_0%_84%)] hover:bg-[hsl(0_0%_10%)] hover:border-l-[hsl(0_0%_30%)]'
+                                }
+                            `}
                         >
-                            <Icon className={`w-4 h-4 shrink-0 transition-colors ${isActive ? 'text-accent' : 'text-muted group-hover:text-foreground'}`} />
-                            <span className="truncate">{item.name}</span>
+                            <Icon className={`w-3.5 h-3.5 shrink-0 transition-colors ${
+                                isActive
+                                    ? 'text-accent'
+                                    : 'text-[hsl(0_0%_42%)] group-hover:text-[hsl(0_0%_68%)]'
+                            }`} />
+                            <span className="truncate leading-none">{item.name}</span>
+                            {isActive && (
+                                <span className="ml-auto w-1 h-1 bg-accent shrink-0" />
+                            )}
                         </Link>
                     );
                 })}
             </nav>
 
-            {/* System Status */}
-            <div className="p-3 lg:p-4 border-t border-grid shrink-0">
-                <div className="flex items-center gap-3 p-3 bg-background border border-grid transition-colors hover:border-accent cursor-crosshair">
-                    <div className="w-2 h-2 bg-accent animate-pulse shadow-[0_0_8px_rgba(0,255,65,0.6)]" />
-                    <div className="flex flex-col w-full overflow-hidden">
-                        <span className="font-mono text-[10px] text-muted uppercase">System Status</span>
-                        <span className="font-mono text-xs text-accent uppercase truncate">Operational</span>
+            {/* ── System Status ── */}
+            <div className="p-3 border-t border-[hsl(0_0%_18%)] shrink-0">
+                <div className="flex items-center gap-3 px-3 py-2.5 bg-[hsl(0_0%_8%)] border border-[hsl(0_0%_20%)] hover:border-accent/40 transition-colors cursor-default">
+                    <div className="w-1.5 h-1.5 bg-accent animate-pulse shadow-[0_0_6px_hsl(142_76%_46%_/_0.7)] shrink-0" />
+                    <div className="flex flex-col gap-0.5 min-w-0">
+                        <span className="font-mono text-[9px] text-[hsl(0_0%_42%)] uppercase tracking-[0.18em]">System Status</span>
+                        <span className="font-mono text-[11px] text-accent uppercase tracking-[0.12em] font-medium">Operational</span>
                     </div>
                 </div>
             </div>
