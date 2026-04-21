@@ -12,6 +12,7 @@ overrides:
   minimatch@9.0.3: 9.0.7
   picomatch@2.3.1: 2.3.2
   picomatch@4.0.3: 4.0.4
+  typescript: '>=5.7.0 <6.0.0'
 
 importers:
 
@@ -24,7 +25,7 @@ importers:
         specifier: ^2.3.0
         version: 2.8.9
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   apps/web:
@@ -151,7 +152,7 @@ importers:
         specifier: 14.2.0
         version: 14.2.0(eslint@8.57.1)(typescript@5.9.3)
       typescript:
-        specifier: ^5.4.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
       vitest:
         specifier: ^4.1.2
@@ -176,7 +177,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tsconfig
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   internal/domain:
@@ -195,7 +196,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tsconfig
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   internal/testing:
@@ -211,7 +212,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/tsconfig
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   packages/cire-engine:
@@ -223,7 +224,7 @@ importers:
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   packages/db:
@@ -239,7 +240,7 @@ importers:
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   packages/gaas:
@@ -251,7 +252,7 @@ importers:
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   packages/logger:
@@ -263,7 +264,7 @@ importers:
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   packages/tsconfig: {}
@@ -286,7 +287,7 @@ importers:
         specifier: ^18.3.1
         version: 18.3.1(react@18.3.1)
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
 packages:
@@ -1617,7 +1618,7 @@ packages:
     resolution: {integrity: sha512-hr4ihw+DBqcvrsEDioRO31Z17x71pUYoNe/4h6Z0wB72p7MU7/9gH8Q3s12NFhHPfYBBOV3qyfUxmr/Yn3shnQ==}
     engines: {node: '>=14'}
     peerDependencies:
-      typescript: '>=4.9.5'
+      typescript: '>=5.7.0 <6.0.0'
     peerDependenciesMeta:
       typescript:
         optional: true
@@ -1902,7 +1903,7 @@ packages:
     resolution: {integrity: sha512-N0eQkn/wz557mIpW4JQWGEv4wGU8zvJ7emLHMS15uC18jjaU4kx6leR4U9QYT/eNghUZT7N9lBlfd8E4N0cp1w==}
     peerDependencies:
       eslint: ^7.23.0 || ^8.0.0
-      typescript: '>=3.3.1'
+      typescript: '>=5.7.0 <6.0.0'
     peerDependenciesMeta:
       typescript:
         optional: true
@@ -2878,7 +2879,7 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
     peerDependencies:
-      typescript: '>= 4.8.x'
+      typescript: '>=5.7.0 <6.0.0'
     peerDependenciesMeta:
       typescript:
         optional: true
@@ -3597,7 +3598,7 @@ packages:
     resolution: {integrity: sha512-i3eMG77UTMD0hZhgRS562pv83RC6ukSAC2GMNWc+9dieh/+jDM5u5YG+NHX6VNDRHQcHwmsTHctP9LhbC3WxVw==}
     engines: {node: '>=16'}
     peerDependencies:
-      typescript: '>=4.2.0'
+      typescript: '>=5.7.0 <6.0.0'
 
   ts-morph@26.0.0:
     resolution: {integrity: sha512-ztMO++owQnz8c/gIENcM9XfCEzgoGphTv+nKpYNM1bgsdOVC/jRZuEBf6N+mLLDNg68Kl+GgUZfOySaRiG1/Ug==}
