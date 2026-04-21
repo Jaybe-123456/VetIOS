@@ -43,7 +43,9 @@
         "TURNSTILE_SECRET_KEY",
         "AUTH_CAPTCHA_AFTER_FAILURES",
         "VETIOS_ADMIN_EMAIL",
-        "NEXT_PUBLIC_VETIOS_DEV_BYPASS"
+        "NEXT_PUBLIC_VETIOS_DEV_BYPASS",
+        "DEBUG_INFERENCE",
+        "NODE_ENV"
     ],
     "tasks": {
         "build": {
@@ -90,7 +92,9 @@
                 "TURNSTILE_SECRET_KEY",
                 "AUTH_CAPTCHA_AFTER_FAILURES",
                 "VETIOS_ADMIN_EMAIL",
-                "NEXT_PUBLIC_VETIOS_DEV_BYPASS"
+                "NEXT_PUBLIC_VETIOS_DEV_BYPASS",
+                "DEBUG_INFERENCE",
+                "NODE_ENV"
             ],
             "outputs": [
                 ".next/**",
