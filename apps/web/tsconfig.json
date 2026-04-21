@@ -30,7 +30,8 @@
       "@vetios/cire-engine": [
         "../../packages/cire-engine/src/index.ts"
       ]
-    }
+    },
+    "allowArbitraryExtensions": true
   },
   "include": [
     "next-env.d.ts",
