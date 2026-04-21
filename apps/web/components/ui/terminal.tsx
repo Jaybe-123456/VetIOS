@@ -159,7 +159,7 @@ export function ConsoleCard({
                     flex items-center justify-between
                     bg-gradient-to-r from-[hsl(0_0%_100%_/_0.03)] to-transparent
                     -mx-4 sm:-mx-5 px-4 sm:px-5 -mt-4 sm:-mt-5 pt-4 sm:pt-5 rounded-t-sm
-                ">'
+                ">
 
                     <div className="flex items-center gap-2">
                         <div className="w-1.5 h-1.5 bg-accent shrink-0 shadow-[0_0_6px_hsl(142_76%_46%_/_0.8)]" />
