@@ -373,7 +373,7 @@ export default function DashboardControlPlaneClient() {
                 </div>
 
                 {/* ── Control Plane Operations HUD ── */}
-                <ConsoleCard title="Control Plane Core Operations" className="mt-4 border-accent shadow-[0_0_15px_rgba(0,255,65,0.15)] bg-background" collapsible defaultCollapsed={false}>
+                <ConsoleCard title="Control Plane Core Operations" className="mt-4 glass-card-accent accent-line-top" collapsible defaultCollapsed={false}>
                     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
                         <button type="button" onClick={() => void refreshSnapshot(false)} className="col-span-2 xl:col-span-1 border border-accent/60 shadow-[0_0_10px_rgba(0,255,65,0.2)] bg-accent/5 hover:bg-accent hover:text-black text-accent flex flex-col items-center justify-center gap-2 h-full py-5 transition-all text-[10px] sm:text-xs font-mono uppercase tracking-widest disabled:opacity-50">
                             <Activity className={`w-6 h-6 ${refreshing ? 'animate-spin' : ''}`} />
@@ -520,7 +520,7 @@ export default function DashboardControlPlaneClient() {
                 <ConsoleCard title="Pipeline Health" collapsible>
                     {pipelineStates.length > 0 ? (
                         pipelineStates.map((pipeline) => (
-                            <div key={pipeline.key} className="pipeline-row-glass py-2 border-b border-[hsl(0_0%_100%_/_0.06)] px-2 -mx-2">
+                            <div key={pipeline.key} className={`pipeline-row-glass py-2 border-b border-[hsl(0_0%_100%_/_0.06)] px-2 -mx-2 ${pipeline.status === 'ACTIVE' ? 'pipeline-row-active' : pipeline.status === 'INITIALIZING' ? 'pipeline-row-warning' : pipeline.status === 'FAILED' ? 'pipeline-row-danger' : ''}`}>
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="font-mono text-[11px] uppercase text-[hsl(0_0%_85%)]">{pipeline.label}</div>
                                     <StateText tone={pipelineTone(pipeline.status)}>{pipeline.status}</StateText>
