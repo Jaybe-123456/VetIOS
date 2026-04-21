@@ -22,10 +22,11 @@ export function TerminalInput({ className = '', ...props }: React.InputHTMLAttri
     return (
         <input
             className={`
-                w-full bg-[hsl(0_0%_10%)] border border-[hsl(0_0%_20%)]
+                w-full bg-[hsl(0_0%_8%_/_0.9)] border border-[hsl(0_0%_100%_/_0.08)]
                 px-3 py-2.5 font-mono text-[14px] text-[hsl(0_0%_94%)]
-                placeholder:text-[hsl(0_0%_68%)]
-                focus:outline-none focus:border-accent focus:bg-[hsl(0_0%_11%)]
+                placeholder:text-[hsl(0_0%_55%)]
+                focus:outline-none focus:border-accent/60 focus:bg-[hsl(0_0%_10%)]
+                shadow-[inset_0_1px_3px_hsl(0_0%_0%_/_0.3)]
                 transition-colors
                 ${className}
             `}
@@ -40,10 +41,11 @@ export function TerminalTextarea({ className = '', ...props }: React.TextareaHTM
     return (
         <textarea
             className={`
-                w-full bg-[hsl(0_0%_10%)] border border-[hsl(0_0%_20%)]
+                w-full bg-[hsl(0_0%_8%_/_0.9)] border border-[hsl(0_0%_100%_/_0.08)]
                 px-3 py-2.5 font-mono text-[14px] text-[hsl(0_0%_94%)]
-                placeholder:text-[hsl(0_0%_68%)]
-                focus:outline-none focus:border-accent focus:bg-[hsl(0_0%_11%)]
+                placeholder:text-[hsl(0_0%_55%)]
+                focus:outline-none focus:border-accent/60 focus:bg-[hsl(0_0%_10%)]
+                shadow-[inset_0_1px_3px_hsl(0_0%_0%_/_0.3)]
                 transition-colors min-h-[100px] sm:min-h-[120px] resize-y
                 ${className}
             `}
@@ -62,7 +64,7 @@ export function TerminalButton({
     const baseClasses = "font-mono text-[13px] uppercase tracking-[0.16em] px-4 sm:px-5 py-2.5 transition-all border";
 
     const variants = {
-        primary:   "border-accent text-accent hover:bg-accent hover:text-black",
+        primary:   "border-accent/70 text-accent hover:bg-accent hover:text-black bg-[hsl(142_76%_46%_/_0.05)] shadow-[0_0_12px_hsl(142_76%_46%_/_0.1)] hover:shadow-[0_0_20px_hsl(142_76%_46%_/_0.3)] transition-all",
         secondary: "border-[hsl(0_0%_32%)] text-[hsl(0_0%_78%)] hover:border-[hsl(0_0%_48%)] hover:text-[hsl(0_0%_94%)]",
         danger:    "border-destructive text-destructive hover:bg-destructive hover:text-white",
     };
@@ -91,7 +93,7 @@ export function Container({ children, className = '' }: { children: React.ReactN
 
 export function PageHeader({ title, description }: { title: string, description?: string }) {
     return (
-        <div className="mb-6 sm:mb-8 pb-4 sm:pb-5 border-b border-[hsl(0_0%_18%)]">
+        <div className="mb-6 sm:mb-8 pb-4 sm:pb-5 border-b border-[hsl(0_0%_100%_/_0.08)] relative accent-line-top">
             <h1 className="font-mono text-xl sm:text-2xl font-semibold text-[hsl(0_0%_97%)] tracking-[0.08em] mb-1.5">
                 {title}
             </h1>
@@ -108,7 +110,7 @@ export function PageHeader({ title, description }: { title: string, description?
 
 export function DataRow({ label, value }: { label: string, value: React.ReactNode }) {
     return (
-        <div className="flex justify-between items-start gap-4 py-2.5 border-b border-[hsl(0_0%_16%)] min-w-0 last:border-b-0">
+        <div className="flex justify-between items-start gap-4 py-2.5 border-b border-[hsl(0_0%_100%_/_0.06)] min-w-0 last:border-b-0">
             <span className="font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_75%)] uppercase tracking-[0.14em] shrink-0 mt-0.5">
                 {label}
             </span>
@@ -143,7 +145,7 @@ export function ConsoleCard({
         <div
             onClick={onClick}
             className={`
-                border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_8%)]
+                console-card-glass
                 p-4 sm:p-5 flex flex-col gap-3 sm:gap-4 animate-scale-in
                 ${maximized ? 'fixed inset-4 z-50 overflow-auto' : ''}
                 ${className}
@@ -151,13 +153,16 @@ export function ConsoleCard({
         >
             {title && (
                 <div className="
-                    font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_95%)]
+                    font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_96%)]
                     uppercase tracking-[0.18em]
-                    border-b border-[hsl(0_0%_18%)] pb-3 sm:pb-4 mb-1
+                    border-b border-[hsl(0_0%_100%_/_0.07)] pb-3 sm:pb-4 mb-1
                     flex items-center justify-between
-                ">
+                    bg-gradient-to-r from-[hsl(0_0%_100%_/_0.03)] to-transparent
+                    -mx-4 sm:-mx-5 px-4 sm:px-5 -mt-4 sm:-mt-5 pt-4 sm:pt-5 rounded-t-sm
+                ">'
+
                     <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 bg-accent shrink-0" />
+                        <div className="w-1.5 h-1.5 bg-accent shrink-0 shadow-[0_0_6px_hsl(142_76%_46%_/_0.8)]" />
                         <span className="text-[hsl(0_0%_96%)]">{title}</span>
                     </div>
                     {(collapsible || maximized) && (
@@ -234,7 +239,7 @@ export function TerminalTabs<T extends string>({
                             text-[11px] sm:text-[12px] uppercase tracking-[0.16em]
                             transition-all flex items-center gap-2
                             ${isActive
-                                ? 'border-accent text-accent bg-[hsl(142_76%_46%_/_0.1)]'
+                                ? 'border-accent/70 text-accent bg-[hsl(142_76%_46%_/_0.1)] shadow-[0_0_12px_hsl(142_76%_46%_/_0.15),inset_0_1px_0_hsl(142_76%_46%_/_0.2)]'
                                 : 'border-[hsl(0_0%_28%)] text-[hsl(0_0%_90%)] hover:border-[hsl(0_0%_42%)] hover:text-[hsl(0_0%_98%)] bg-[hsl(0_0%_9%)]'
                             }
                         `}

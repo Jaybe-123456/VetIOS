@@ -520,7 +520,7 @@ export default function DashboardControlPlaneClient() {
                 <ConsoleCard title="Pipeline Health" collapsible>
                     {pipelineStates.length > 0 ? (
                         pipelineStates.map((pipeline) => (
-                            <div key={pipeline.key} className="py-2 border-b border-muted/30">
+                            <div key={pipeline.key} className="pipeline-row-glass py-2 border-b border-[hsl(0_0%_100%_/_0.06)] px-2 -mx-2">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="font-mono text-[11px] uppercase text-[hsl(0_0%_85%)]">{pipeline.label}</div>
                                     <StateText tone={pipelineTone(pipeline.status)}>{pipeline.status}</StateText>
@@ -541,7 +541,7 @@ export default function DashboardControlPlaneClient() {
                 <ConsoleCard title="Model Governance" collapsible>
                     {governanceFamilies.length > 0 ? (
                         governanceFamilies.map((family) => (
-                            <div key={family.model_family} className="py-2 border-b border-muted/30">
+                            <div key={family.model_family} className="pipeline-row-glass py-2 border-b border-[hsl(0_0%_100%_/_0.06)] px-2 -mx-2">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="font-mono text-[11px] uppercase text-accent">{family.model_family}</div>
                                     <span className="font-mono text-[11px] text-[hsl(0_0%_72%)]">{family.entry_count} entries</span>
@@ -594,7 +594,7 @@ export default function DashboardControlPlaneClient() {
                     <ConsoleCard title="Recent Inferences" collapsible>
                         {recentInferences.length > 0 ? (
                             recentInferences.map((event) => (
-                                <div key={event.id} className="py-2 border-b border-muted/30">
+                                <div key={event.id} className="pipeline-row-glass py-2 border-b border-[hsl(0_0%_100%_/_0.06)] px-2 -mx-2">
                                     <div className="flex items-start justify-between gap-3">
                                         <div className="font-mono text-xs text-foreground break-all">{event.id}</div>
                                         <StateText tone={eventTone(event)}>
@@ -809,15 +809,17 @@ function MetricCard({
     icon: ReactNode;
     detail: string;
 }) {
+    const glassClass = tone === 'accent' ? 'metric-card-accent' : tone === 'warning' ? 'metric-card-warning' : tone === 'danger' ? 'metric-card-danger' : 'console-card-glass';
     return (
-        <ConsoleCard>
-            <div className="flex items-center justify-between mb-2">
+        <div className={`${glassClass} p-4 sm:p-5 flex flex-col gap-3 sm:gap-4 animate-scale-in relative overflow-hidden`}>
+            <div className="absolute inset-0 bg-gradient-to-br from-white/[0.02] to-transparent pointer-events-none" />
+            <div className="flex items-center justify-between mb-2 relative">
                 <span className="font-mono text-[11px] text-[hsl(0_0%_88%)] uppercase tracking-[0.14em] font-medium">{label}</span>
-                <span className={toneClass(tone)}>{icon}</span>
+                <span className={`${toneClass(tone)} opacity-80`}>{icon}</span>
             </div>
-            <div className={`font-mono text-lg sm:text-2xl font-bold ${toneClass(tone)}`}>{value}</div>
-            <div className="font-mono text-[11px] text-[hsl(0_0%_86%)] mt-2 leading-relaxed">{detail}</div>
-        </ConsoleCard>
+            <div className={`font-mono text-lg sm:text-2xl font-bold relative ${toneClass(tone)}`} style={tone === 'accent' ? {textShadow:'0 0 20px hsl(142 76% 46% / 0.4)'} : tone === 'warning' ? {textShadow:'0 0 20px hsl(45 100% 50% / 0.35)'} : tone === 'danger' ? {textShadow:'0 0 20px hsl(0 72% 55% / 0.4)'} : {}}>{value}</div>
+            <div className="font-mono text-[11px] text-[hsl(0_0%_86%)] mt-2 leading-relaxed relative">{detail}</div>
+        </div>
     );
 }
 
@@ -831,7 +833,7 @@ function StatusChip({
     icon?: ReactNode;
 }) {
     return (
-        <span className={`inline-flex items-center gap-1.5 border px-2 py-1 ${chipToneClass(tone)}`}>
+        <span className={`inline-flex items-center gap-1.5 border px-2 py-1 chip-glass backdrop-blur-sm ${chipToneClass(tone)}`}>
             {icon}
             {label}
         </span>
@@ -840,9 +842,10 @@ function StatusChip({
 
 function DataPanel({ label, value }: { label: string; value: string }) {
     return (
-        <div className="border border-[hsl(0_0%_18%)] bg-[hsl(0_0%_7%)] p-3 sm:p-4">
-            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_82%)] mb-2 font-medium">{label}</div>
-            <div className="font-mono text-sm text-[hsl(0_0%_94%)] leading-relaxed">{value}</div>
+        <div className="data-panel-glass p-3 sm:p-4 relative overflow-hidden group transition-all duration-200 hover:border-[hsl(0_0%_100%_/_0.1)]">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/[0.015] to-transparent pointer-events-none" />
+            <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_82%)] mb-2 font-medium relative">{label}</div>
+            <div className="font-mono text-sm text-[hsl(0_0%_96%)] leading-relaxed relative">{value}</div>
         </div>
     );
 }
@@ -864,7 +867,7 @@ function AlertRow({ alert }: { alert: ControlPlaneAlertRecord }) {
 
 function EmptyChartState({ message }: { message: string }) {
     return (
-        <div className="h-full flex items-center justify-center text-[hsl(0_0%_75%)] text-[11px] font-mono border border-dashed border-[hsl(0_0%_25%)]">
+        <div className="h-full flex items-center justify-center text-[hsl(0_0%_78%)] text-[11px] font-mono border border-dashed border-[hsl(0_0%_100%_/_0.1)] bg-[hsl(0_0%_100%_/_0.01)]">
             {message}
         </div>
     );
@@ -872,7 +875,7 @@ function EmptyChartState({ message }: { message: string }) {
 
 function EmptyListState({ message, compact = false }: { message: string; compact?: boolean }) {
     return (
-        <div className={`font-mono text-[11px] text-[hsl(0_0%_75%)] border border-dashed border-[hsl(0_0%_25%)] grid place-items-center ${compact ? 'h-20' : 'h-32'}`}>
+        <div className={`font-mono text-[11px] text-[hsl(0_0%_78%)] border border-dashed border-[hsl(0_0%_100%_/_0.1)] bg-[hsl(0_0%_100%_/_0.01)] grid place-items-center ${compact ? 'h-20' : 'h-32'}`}>
             {message}
         </div>
     );
@@ -1011,10 +1014,10 @@ function toneClass(tone: 'accent' | 'warning' | 'danger' | 'muted') {
 }
 
 function chipToneClass(tone: 'accent' | 'warning' | 'danger' | 'muted') {
-    if (tone === 'warning') return 'border-[#ffcc00]/30 text-[#ffcc00] bg-[#ffcc00]/5';
-    if (tone === 'danger') return 'border-danger/30 text-danger bg-danger/5';
+    if (tone === 'warning') return 'border-[#ffcc00]/40 text-[#ffcc00] bg-[#ffcc00]/8 shadow-[0_0_8px_hsl(45_100%_50%_/_0.12)]';
+    if (tone === 'danger') return 'border-danger/40 text-danger bg-danger/8 shadow-[0_0_8px_hsl(0_72%_55%_/_0.12)]';
     if (tone === 'muted') return 'border-grid text-muted bg-black/20';
-    return 'border-accent/30 text-accent bg-accent/5';
+    return 'border-accent/40 text-accent bg-accent/8 shadow-[0_0_8px_hsl(142_76%_46%_/_0.12)]';
 }
 
 function alertDotTone(severity: ControlPlaneAlertRecord['severity']) {

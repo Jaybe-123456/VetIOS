@@ -59,16 +59,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                 {/* ── UPGRADED Topbar ── */}
                 <header className="
-                    h-12 lg:h-14 border-b border-[hsl(0_0%_18%)]
+                    h-12 lg:h-14
                     flex items-center justify-between px-4 lg:px-6
-                    shrink-0 bg-[hsl(0_0%_6%)] sticky top-0 z-30
+                    shrink-0 glass-topbar sticky top-0 z-30
                 ">
                     {/* Left: hamburger (mobile) + back button */}
                     <div className="flex items-center gap-2 lg:gap-3">
                         {/* Mobile hamburger */}
                         <button
                             onClick={handleToggle}
-                            className="lg:hidden p-1.5 text-[hsl(0_0%_52%)] hover:text-accent transition-colors"
+                            className="lg:hidden p-1.5 text-[hsl(0_0%_62%)] hover:text-accent transition-colors"
                             aria-label="Toggle sidebar"
                         >
                             {sidebarOpen
@@ -88,8 +88,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                             onClick={() => router.back()}
                             className="
                                 hidden lg:flex items-center gap-1.5 px-2.5 py-1.5
-                                text-[hsl(0_0%_52%)] hover:text-[hsl(0_0%_80%)]
-                                border border-transparent hover:border-[hsl(0_0%_22%)]
+                                text-[hsl(0_0%_58%)] hover:text-[hsl(0_0%_88%)]
+                                border border-transparent hover:border-[hsl(0_0%_100%_/_0.12)]
+                                hover:bg-[hsl(0_0%_100%_/_0.04)]
                                 transition-all text-[11px] font-mono uppercase tracking-[0.14em] group
                             "
                             aria-label="Go back"
@@ -101,7 +102,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                     {/* Center: current page title */}
                     <div className="hidden lg:flex items-center gap-2 absolute left-1/2 -translate-x-1/2">
-                        <span className="font-mono text-[10px] text-[hsl(0_0%_38%)] tracking-[0.18em] uppercase">
+                        <span className="font-mono text-[10px] topbar-title tracking-[0.18em] uppercase">
                             {pageTitle}
                         </span>
                         <span className="font-mono text-accent animate-blink text-xs leading-none">█</span>
