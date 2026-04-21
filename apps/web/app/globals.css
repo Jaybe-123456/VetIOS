@@ -68,14 +68,14 @@
   --primary:                142 76% 46%;
   --primary-foreground:     0 0% 4%;
   --secondary:              0 0% 13%;
-  --secondary-foreground:   0 0% 90%;
+  --secondary-foreground:   0 0% 94%;
   --muted:                  0 0% 13%;
-  --muted-foreground:       0 0% 80%;
+  --muted-foreground:       0 0% 85%;
   --accent:                 142 76% 46%;
   --accent-foreground:      0 0% 4%;
   --destructive:            0 72% 60%;
   --destructive-foreground: 0 0% 96%;
-  --border:                 0 0% 20%;
+  --border:                 0 0% 22%;
   --input:                  0 0% 13%;
   --ring:                   142 76% 46%;
   --chart-1: 142 76% 46%;
@@ -84,11 +84,11 @@
   --chart-4: 280 65% 65%;
   --chart-5: 340 75% 60%;
   --sidebar:                    0 0% 6%;
-  --sidebar-foreground:         0 0% 90%;
+  --sidebar-foreground:         0 0% 93%;
   --sidebar-primary:            142 76% 46%;
   --sidebar-primary-foreground: 0 0% 4%;
   --sidebar-accent:             0 0% 12%;
-  --sidebar-accent-foreground:  0 0% 90%;
+  --sidebar-accent-foreground:  0 0% 93%;
   --sidebar-border:             0 0% 18%;
   --sidebar-ring:               142 76% 46%;
   --vet-accent: 142 76% 46%;
@@ -179,7 +179,7 @@
   /* Tracking reduced on body text for easier scanning     */
 
   .text-muted {
-    color: hsl(0 0% 80%);
+    color: hsl(0 0% 85%);
   }
 }
 
@@ -215,7 +215,7 @@
   }
 
   .landing-eyebrow {
-    @apply inline-flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.22em] text-white/50 sm:text-[11px] sm:tracking-[0.28em];
+    @apply inline-flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.22em] text-white/70 sm:text-[11px] sm:tracking-[0.28em];
   }
 
   .landing-grid {

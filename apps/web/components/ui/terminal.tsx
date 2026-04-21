@@ -96,7 +96,7 @@ export function PageHeader({ title, description }: { title: string, description?
                 {title}
             </h1>
             {description && (
-                <p className="font-mono text-[13px] sm:text-[14px] text-[hsl(0_0%_86%)] leading-relaxed max-w-3xl">
+                <p className="font-mono text-[13px] sm:text-[14px] text-[hsl(0_0%_92%)] leading-relaxed max-w-3xl">
                     {description}
                 </p>
             )}
@@ -109,10 +109,10 @@ export function PageHeader({ title, description }: { title: string, description?
 export function DataRow({ label, value }: { label: string, value: React.ReactNode }) {
     return (
         <div className="flex justify-between items-start gap-4 py-2.5 border-b border-[hsl(0_0%_16%)] min-w-0 last:border-b-0">
-            <span className="font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_92%)] uppercase tracking-[0.14em] shrink-0 mt-0.5">
+            <span className="font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_75%)] uppercase tracking-[0.14em] shrink-0 mt-0.5">
                 {label}
             </span>
-            <span className="font-mono text-[13px] sm:text-[14px] text-[hsl(0_0%_94%)] text-right break-all sm:break-words min-w-0 flex-1">
+            <span className="font-mono text-[13px] sm:text-[14px] text-[hsl(0_0%_98%)] text-right break-all sm:break-words min-w-0 flex-1">
                 {value}
             </span>
         </div>
@@ -151,7 +151,7 @@ export function ConsoleCard({
         >
             {title && (
                 <div className="
-                    font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_90%)]
+                    font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_95%)]
                     uppercase tracking-[0.18em]
                     border-b border-[hsl(0_0%_18%)] pb-3 sm:pb-4 mb-1
                     flex items-center justify-between
@@ -165,7 +165,7 @@ export function ConsoleCard({
                             {collapsible && (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }}
-                                    className="p-1 text-[hsl(0_0%_48%)] hover:text-accent transition-colors"
+                                    className="p-1 text-[hsl(0_0%_62%)] hover:text-accent transition-colors"
                                     aria-label={collapsed ? 'Expand' : 'Collapse'}
                                 >
                                     {collapsed
@@ -235,7 +235,7 @@ export function TerminalTabs<T extends string>({
                             transition-all flex items-center gap-2
                             ${isActive
                                 ? 'border-accent text-accent bg-[hsl(142_76%_46%_/_0.1)]'
-                                : 'border-[hsl(0_0%_24%)] text-[hsl(0_0%_88%)] hover:border-[hsl(0_0%_36%)] hover:text-[hsl(0_0%_96%)] bg-[hsl(0_0%_8%)]'
+                                : 'border-[hsl(0_0%_28%)] text-[hsl(0_0%_90%)] hover:border-[hsl(0_0%_42%)] hover:text-[hsl(0_0%_98%)] bg-[hsl(0_0%_9%)]'
                             }
                         `}
                     >

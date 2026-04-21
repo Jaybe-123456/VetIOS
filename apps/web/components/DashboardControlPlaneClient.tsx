@@ -405,7 +405,7 @@ export default function DashboardControlPlaneClient() {
                         </Link>
                     </div>
 
-                    <div className="flex flex-wrap items-center justify-between font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_75%)] tracking-[0.14em] uppercase border-t border-[hsl(0_0%_18%)] pt-3">
+                    <div className="flex flex-wrap items-center justify-between font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_82%)] tracking-[0.14em] uppercase border-t border-[hsl(0_0%_20%)] pt-3">
                         <div className="flex flex-col sm:flex-row gap-2 sm:gap-6">
                             <span>
                                 T-UPDATE: <span className="text-foreground">{formatTimestampOrState(lastTelemetryUpdate, telemetryStreamStatus)}</span>
@@ -522,7 +522,7 @@ export default function DashboardControlPlaneClient() {
                         pipelineStates.map((pipeline) => (
                             <div key={pipeline.key} className="py-2 border-b border-muted/30">
                                 <div className="flex items-start justify-between gap-3">
-                                    <div className="font-mono text-[11px] uppercase text-[hsl(0_0%_60%)]">{pipeline.label}</div>
+                                    <div className="font-mono text-[11px] uppercase text-[hsl(0_0%_85%)]">{pipeline.label}</div>
                                     <StateText tone={pipelineTone(pipeline.status)}>{pipeline.status}</StateText>
                                 </div>
                                 <div className="mt-2 font-mono text-[11px] text-foreground">
@@ -544,7 +544,7 @@ export default function DashboardControlPlaneClient() {
                             <div key={family.model_family} className="py-2 border-b border-muted/30">
                                 <div className="flex items-start justify-between gap-3">
                                     <div className="font-mono text-[11px] uppercase text-accent">{family.model_family}</div>
-                                    <span className="font-mono text-[10px] text-muted">{family.entry_count} entries</span>
+                                    <span className="font-mono text-[11px] text-[hsl(0_0%_72%)]">{family.entry_count} entries</span>
                                 </div>
                                 <div className="mt-2 font-mono text-[11px] text-foreground">
                                     PROD {family.current_production_model ?? 'NO DATA'}
@@ -576,9 +576,9 @@ export default function DashboardControlPlaneClient() {
                             <div className="space-y-2">
                                 {routingOverview.familyRows.slice(0, 4).map((row) => (
                                     <div key={row.family} className="font-mono text-[11px] text-foreground">
-                                        <span className="text-muted uppercase mr-2">{row.family}</span>
+                                        <span className="text-[hsl(0_0%_78%)] uppercase mr-2">{row.family}</span>
                                         {row.top_model ?? 'NO DATA'}
-                                        <span className="text-muted ml-2">{row.total_requests} req</span>
+                                        <span className="text-[hsl(0_0%_72%)] ml-2">{row.total_requests} req</span>
                                     </div>
                                 ))}
                             </div>
@@ -701,7 +701,7 @@ export default function DashboardControlPlaneClient() {
                                         const width = (value / total) * 100;
                                         return (
                                             <div key={label}>
-                                                <div className="flex items-center justify-between uppercase text-muted">
+                                                <div className="flex items-center justify-between uppercase text-[hsl(0_0%_82%)]">
                                                     <span>{label}</span>
                                                     <span>{value}</span>
                                                 </div>
@@ -772,7 +772,7 @@ export default function DashboardControlPlaneClient() {
                                                 const numericValue = typeof value === 'number' ? value : 0;
                                                 return (
                                                     <div key={capability} className="font-mono text-[10px]">
-                                                        <div className="flex items-center justify-between text-muted uppercase">
+                                                        <div className="flex items-center justify-between text-[hsl(0_0%_80%)] uppercase">
                                                             <span>{capability}</span>
                                                             <span>{numericValue.toFixed(3)}</span>
                                                         </div>
@@ -812,11 +812,11 @@ function MetricCard({
     return (
         <ConsoleCard>
             <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-[11px] text-[hsl(0_0%_82%)] uppercase tracking-[0.14em] font-medium">{label}</span>
+                <span className="font-mono text-[11px] text-[hsl(0_0%_88%)] uppercase tracking-[0.14em] font-medium">{label}</span>
                 <span className={toneClass(tone)}>{icon}</span>
             </div>
             <div className={`font-mono text-lg sm:text-2xl font-bold ${toneClass(tone)}`}>{value}</div>
-            <div className="font-mono text-[11px] text-[hsl(0_0%_80%)] mt-2 leading-relaxed">{detail}</div>
+            <div className="font-mono text-[11px] text-[hsl(0_0%_86%)] mt-2 leading-relaxed">{detail}</div>
         </ConsoleCard>
     );
 }
