@@ -41,16 +41,16 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
     return (
         <aside className={`
             ${isMobile ? 'w-full h-full' : 'w-64 h-full'}
-            border-r border-[hsl(0_0%_18%)] bg-[hsl(0_0%_6%)] flex flex-col shrink-0 select-none
+            glass-sidebar flex flex-col shrink-0 select-none
         `}>
             {/* ── Logo Header ── */}
-            <div className="h-14 lg:h-16 flex items-center justify-between px-5 border-b border-[hsl(0_0%_18%)] shrink-0">
+            <div className="h-14 lg:h-16 flex items-center justify-between px-5 border-b border-[hsl(0_0%_100%_/_0.07)] shrink-0">
                 <div className="flex flex-col gap-0.5">
                     <span className="font-mono flex items-center gap-2 font-bold tracking-tight text-accent text-base">
                         <TerminalSquare className="w-4 h-4" />
                         VET_IOS //
                     </span>
-                    <span className="font-mono text-[9px] text-[hsl(0_0%_45%)] tracking-[0.22em] uppercase">
+                    <span className="font-mono text-[9px] text-[hsl(0_0%_52%)] tracking-[0.22em] uppercase">
                         V1.0 OMEGA
                     </span>
                 </div>
@@ -67,7 +67,7 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
 
             {/* ── Nav label ── */}
             <div className="px-5 pt-4 pb-1">
-                <span className="font-mono text-[9px] text-[hsl(0_0%_38%)] tracking-[0.22em] uppercase">
+                <span className="font-mono text-[9px] text-[hsl(0_0%_48%)] tracking-[0.22em] uppercase">
                     Navigation
                 </span>
             </div>
@@ -87,15 +87,15 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
                                 uppercase tracking-[0.12em] transition-all duration-150 group
                                 border-l-2
                                 ${isActive
-                                    ? 'border-l-accent bg-[hsl(142_76%_46%_/_0.08)] text-accent'
-                                    : 'border-l-transparent text-[hsl(0_0%_58%)] hover:text-[hsl(0_0%_84%)] hover:bg-[hsl(0_0%_10%)] hover:border-l-[hsl(0_0%_30%)]'
+                                    ? 'border-l-accent nav-item-active text-accent'
+                                    : 'border-l-transparent text-[hsl(0_0%_62%)] hover:text-[hsl(0_0%_90%)] nav-item-glass hover:border-l-[hsl(0_0%_32%)]'
                                 }
                             `}
                         >
                             <Icon className={`w-3.5 h-3.5 shrink-0 transition-colors ${
                                 isActive
                                     ? 'text-accent'
-                                    : 'text-[hsl(0_0%_42%)] group-hover:text-[hsl(0_0%_68%)]'
+                                    : 'text-[hsl(0_0%_48%)] group-hover:text-[hsl(0_0%_75%)]'
                             }`} />
                             <span className="truncate leading-none">{item.name}</span>
                             {isActive && (
@@ -107,11 +107,11 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
             </nav>
 
             {/* ── System Status ── */}
-            <div className="p-3 border-t border-[hsl(0_0%_18%)] shrink-0">
-                <div className="flex items-center gap-3 px-3 py-2.5 bg-[hsl(0_0%_8%)] border border-[hsl(0_0%_20%)] hover:border-accent/40 transition-colors cursor-default">
-                    <div className="w-1.5 h-1.5 bg-accent animate-pulse shadow-[0_0_6px_hsl(142_76%_46%_/_0.7)] shrink-0" />
+            <div className="p-3 border-t border-[hsl(0_0%_100%_/_0.07)] shrink-0">
+                <div className="flex items-center gap-3 px-3 py-2.5 glass-card hover:border-accent/30 transition-all duration-300 cursor-default">
+                    <div className="w-1.5 h-1.5 bg-accent animate-pulse shadow-[0_0_8px_hsl(142_76%_46%),0_0_16px_hsl(142_76%_46%_/_0.5)] shrink-0" />
                     <div className="flex flex-col gap-0.5 min-w-0">
-                        <span className="font-mono text-[9px] text-[hsl(0_0%_42%)] uppercase tracking-[0.18em]">System Status</span>
+                        <span className="font-mono text-[9px] text-[hsl(0_0%_55%)] uppercase tracking-[0.18em]">System Status</span>
                         <span className="font-mono text-[11px] text-accent uppercase tracking-[0.12em] font-medium">Operational</span>
                     </div>
                 </div>
