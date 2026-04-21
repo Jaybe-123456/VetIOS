@@ -343,7 +343,7 @@ export function ModelRegistryControlPlaneClient({
                             <SummaryCard label="Failed Checks" value={verification.failed_checks.length} tone={verification.failed_checks.length > 0 ? 'warn' : 'default'} />
                             <SummaryCard label="Warnings" value={verification.warnings.length} tone={verification.warnings.length > 0 ? 'warn' : 'default'} />
                         </div>
-                        <div className="mb-4 font-mono text-xs text-foreground/85">{verification.summary}</div>
+                        <div className="mb-4 font-mono text-xs text-[hsl(0_0%_92%)]">{verification.summary}</div>
                         <div className="grid gap-4 xl:grid-cols-2">
                             {verification.checks.map((check) => (
                                 <div key={check.key} className="border border-grid/40 bg-black/20 p-4">
@@ -372,7 +372,7 @@ export function ModelRegistryControlPlaneClient({
                             ))}
                         </div>
                         <div className="mt-5 border-t border-grid/30 pt-4">
-                            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-muted">Failure Simulation</div>
+                            <div className="mb-3 font-mono text-[11px] uppercase tracking-[0.18em] text-[hsl(0_0%_82%)]">Failure Simulation</div>
                             <div className="grid gap-3 md:grid-cols-2">
                                 {verification.simulated_failures.map((item) => (
                                     <div key={item.scenario} className={`border px-3 py-2 font-mono text-xs ${item.detected ? 'border-accent/40 bg-accent/10 text-foreground' : 'border-danger/40 bg-danger/10 text-danger'}`}>
@@ -463,10 +463,10 @@ export function ModelRegistryControlPlaneClient({
                                 <tbody className="font-mono text-xs">
                                     {initialSnapshot.audit_history.slice(0, 20).map((event, idx) => (
                                         <tr key={event.event_id} className={`border-b border-grid/20 hover:bg-accent/5 ${idx % 2 === 0 ? 'bg-black/10' : 'bg-transparent'}`}>
-                                            <td className="p-3 text-[hsl(0_0%_80%)] font-medium border-r border-grid/20">{formatDateTime(event.timestamp)}</td>
-                                            <td className="p-3 break-all align-top text-foreground/90 border-r border-grid/20">{event.registry_id}</td>
+                                            <td className="p-3 text-[hsl(0_0%_86%)] font-medium border-r border-grid/20">{formatDateTime(event.timestamp)}</td>
+                                            <td className="p-3 break-all align-top text-[hsl(0_0%_94%)] border-r border-grid/20">{event.registry_id}</td>
                                             <td className="p-3 break-words align-top font-bold text-accent border-r border-grid/20">{event.event_type}</td>
-                                            <td className="p-3 break-all align-top text-foreground/90 border-r border-grid/20">{event.actor ?? 'system'}</td>
+                                            <td className="p-3 break-all align-top text-[hsl(0_0%_94%)] border-r border-grid/20">{event.actor ?? 'system'}</td>
                                             <td className="max-w-[30rem] p-3 align-top break-all whitespace-pre-wrap text-foreground/95">{summarizeMetadata(event.metadata)}</td>
                                         </tr>
                                     ))}
@@ -558,7 +558,7 @@ function RegistryEntryCard({
             <LifecycleTimeline current={registry.lifecycle_status} />
 
             {isSimulationBlocked ? (
-                <div className="mt-4 border border-warning/40 bg-warning/10 p-3 font-mono text-xs text-foreground/85">
+                <div className="mt-4 border border-warning/40 bg-warning/10 p-3 font-mono text-xs text-[hsl(0_0%_92%)]">
                     <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-warning">Regression Simulation Block</div>
                     <div>Reason: {registry.block_reason ?? 'Regression simulation'}</div>
                     <div>Blocked At: {registry.blocked_at ? formatDateTime(registry.blocked_at) : 'n/a'}</div>
@@ -608,7 +608,7 @@ function RegistryEntryCard({
                             <div className={`mb-2 font-mono text-[10px] uppercase tracking-[0.18em] ${isLiveProduction ? 'text-yellow-300' : 'text-danger'}`}>
                                 {isLiveProduction ? 'Operational Watchlist' : 'Promotion Blockers'}
                             </div>
-                            <div className="space-y-2 break-words font-mono text-xs text-foreground/85">
+                            <div className="space-y-2 break-words font-mono text-xs text-[hsl(0_0%_92%)]">
                                 {entry.promotion_gating.blockers.map((blocker) => (
                                     <div key={blocker}>{blocker}</div>
                                 ))}
@@ -630,10 +630,10 @@ function RegistryEntryCard({
                             tone={entry.decision_panel.deployment_decision === 'approved' ? 'accent' : entry.decision_panel.deployment_decision === 'hold' ? 'default' : 'warn'}
                         />
                     </div>
-                    <div className="mt-4 space-y-2 break-words font-mono text-xs text-foreground/85">
+                    <div className="mt-4 space-y-2 break-words font-mono text-xs text-[hsl(0_0%_92%)]">
                         {entry.decision_panel.reasons.length > 0 ? (
                             <div>
-                                <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">{isLiveProduction ? 'Live Deployment Notes' : 'Reasons'}</div>
+                                <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_80%)]">{isLiveProduction ? 'Live Deployment Notes' : 'Reasons'}</div>
                                 {entry.decision_panel.reasons.map((reason) => (
                                     <div key={reason}>{reason}</div>
                                 ))}
@@ -641,7 +641,7 @@ function RegistryEntryCard({
                         ) : null}
                         {entry.decision_panel.missing_evaluations.length > 0 ? (
                             <div>
-                                <div className="mb-1 text-[10px] uppercase tracking-[0.16em] text-muted">{isLiveProduction ? 'Monitoring Gaps' : 'Missing Evaluations'}</div>
+                                <div className="mb-1 text-[11px] uppercase tracking-[0.16em] text-[hsl(0_0%_80%)]">{isLiveProduction ? 'Monitoring Gaps' : 'Missing Evaluations'}</div>
                                 {entry.decision_panel.missing_evaluations.map((item) => (
                                     <div key={item}>{item}</div>
                                 ))}
@@ -712,7 +712,7 @@ function RegistryEntryCard({
                         <div className="mt-4 space-y-2">
                             {entry.rollback_history.slice(0, 3).map((event) => (
                                 <div key={event.event_id} className="border border-grid/40 bg-black/20 px-3 py-2 font-mono text-xs text-foreground/95">
-                                    <div className="text-[hsl(0_0%_82%)] font-medium mb-1">{formatDateTime(event.timestamp)}</div>
+                                    <div className="text-[hsl(0_0%_88%)] font-medium mb-1">{formatDateTime(event.timestamp)}</div>
                                     <div className="break-all whitespace-pre-wrap font-mono">{summarizeMetadata(event.metadata)}</div>
                                 </div>
                             ))}
@@ -722,7 +722,7 @@ function RegistryEntryCard({
             </div>
 
             {registry.rollback_metadata ? (
-                <div className="mt-5 border border-danger/30 bg-danger/10 p-3 font-mono text-xs text-foreground/85">
+                <div className="mt-5 border border-danger/30 bg-danger/10 p-3 font-mono text-xs text-[hsl(0_0%_92%)]">
                     <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-danger">Last Rollback Metadata</div>
                     <div className="break-words">Triggered: {formatDateTime(registry.rollback_metadata.triggered_at)}</div>
                     <div className="break-all">By: {registry.rollback_metadata.triggered_by ?? 'system'}</div>
@@ -778,10 +778,10 @@ function RegistryEntryCard({
                         {entry.latest_registry_events.slice(0, 4).map((event) => (
                             <div key={event.event_id} className="grid gap-2 border border-grid/30 bg-black/20 px-3 py-2 font-mono text-xs md:grid-cols-[minmax(0,1fr),auto] md:items-start">
                                 <div className="min-w-0">
-                                    <div className="text-foreground/90">{event.event_type}</div>
-                                    <div className="mt-1 break-all whitespace-pre-wrap text-muted">{summarizeMetadata(event.metadata)}</div>
+                                    <div className="text-[hsl(0_0%_98%)] font-medium">{event.event_type}</div>
+                                    <div className="mt-1 break-all whitespace-pre-wrap text-[hsl(0_0%_86%)]">{summarizeMetadata(event.metadata)}</div>
                                 </div>
-                                <div className="break-words text-muted md:text-right">{formatDateTime(event.timestamp)}</div>
+                                <div className="break-words text-[hsl(0_0%_78%)] md:text-right">{formatDateTime(event.timestamp)}</div>
                             </div>
                         ))}
                     </div>
@@ -975,7 +975,7 @@ function LifecycleTimeline({
                                         ? 'border-accent bg-accent/20 text-accent font-bold shadow-[0_0_15px_rgba(var(--accent-rgb),0.2)]'
                                         : isReached
                                             ? 'border-accent/40 bg-accent/5 text-accent/80'
-                                            : 'border-grid/20 bg-black/10 text-[hsl(0_0%_60%)]'
+                                            : 'border-grid/20 bg-black/10 text-[hsl(0_0%_78%)]'
                                 }`}
                                 title={step}
                             >
@@ -1091,9 +1091,9 @@ function roleBadgeClass(role: string) {
         case 'experimental':
             return 'border-zinc-500/40 bg-zinc-500/10 text-zinc-300';
         case 'archived':
-            return 'border-grid/40 bg-black/20 text-muted';
+            return 'border-grid/40 bg-black/20 text-[hsl(0_0%_80%)]';
         default:
-            return 'border-grid/40 bg-black/20 text-foreground/80';
+            return 'border-grid/40 bg-black/20 text-[hsl(0_0%_90%)]';
     }
 }
 
@@ -1106,9 +1106,9 @@ function lifecycleBadgeClass(status: string) {
         case 'training':
             return 'border-amber-500/40 bg-amber-500/10 text-amber-200';
         case 'archived':
-            return 'border-grid/40 bg-black/20 text-muted';
+            return 'border-grid/40 bg-black/20 text-[hsl(0_0%_80%)]';
         default:
-            return 'border-grid/40 bg-black/20 text-foreground/80';
+            return 'border-grid/40 bg-black/20 text-[hsl(0_0%_90%)]';
     }
 }
 
