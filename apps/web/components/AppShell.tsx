@@ -59,7 +59,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
                 {/* ── UPGRADED Topbar ── */}
                 <header className="
-                    h-12 lg:h-14
+                    h-12 lg:h-14 safe-top
                     flex items-center justify-between px-4 lg:px-6
                     shrink-0 glass-topbar sticky top-0 z-30
                 ">
@@ -116,7 +116,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 </header>
 
                 {/* ── Main content ── */}
-                <main className="flex-1 overflow-auto bg-background">
+                <main className="flex-1 overflow-auto bg-background safe-bottom">
                     {children}
                 </main>
             </div>

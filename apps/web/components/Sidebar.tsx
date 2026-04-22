@@ -57,7 +57,7 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
                 {isMobile && (
                     <button
                         onClick={onClose}
-                        className="p-2 -mr-2 text-[hsl(0_0%_55%)] hover:text-accent transition-colors"
+                        className="p-3 -mr-2 text-[hsl(0_0%_55%)] hover:text-accent transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
                         aria-label="Close sidebar"
                     >
                         <X className="w-5 h-5" />
@@ -83,7 +83,7 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
                             href={item.href}
                             onClick={isMobile ? onClose : undefined}
                             className={`
-                                flex items-center gap-3 px-3 py-2.5 font-mono text-[11px]
+                                flex items-center gap-3 px-3 py-3 sm:py-2.5 font-mono text-[11px] min-h-[44px]
                                 uppercase tracking-[0.12em] transition-all duration-150 group
                                 border-l-2
                                 ${isActive

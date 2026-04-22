@@ -37,12 +37,12 @@ export function DatasetTable<Row>({
 }: DatasetTableProps<Row>) {
     return (
         <div className="flex flex-col border border-grid bg-background/50">
-            <div className="flex items-start justify-between gap-4 border-b border-grid bg-dim p-4">
-                <div className="flex items-center gap-2 font-mono text-sm uppercase tracking-widest text-accent">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-grid bg-dim p-3 sm:p-4">
+                <div className="flex items-center gap-2 font-mono text-xs sm:text-sm uppercase tracking-widest text-accent">
                     <div className="h-1.5 w-1.5 bg-accent" />
                     {title}
                 </div>
-                <div className="flex flex-wrap items-center justify-end gap-2">
+                <div className="flex flex-wrap items-center justify-start sm:justify-end gap-2">
                     {filterSlot ? (
                         <div className="flex items-center gap-2 border border-grid px-2 py-1 text-muted">
                             <Filter className="h-4 w-4" />
@@ -59,12 +59,12 @@ export function DatasetTable<Row>({
                     </button>
                 </div>
             </div>
-            <div className="w-full overflow-x-auto">
+            <div className="table-scroll-wrapper">
                 <table className="min-w-[980px] w-full border-collapse text-left">
                     <thead>
                         <tr className="border-b border-grid bg-black/40 font-mono text-[10px] uppercase tracking-widest text-muted/70">
                             {columns.map((column) => (
-                                <th key={column.key} className="p-4 font-normal whitespace-nowrap">
+                                <th key={column.key} className="p-2 sm:p-4 font-normal whitespace-nowrap">
                                     {column.label}
                                 </th>
                             ))}
@@ -84,13 +84,13 @@ export function DatasetTable<Row>({
                                 return (
                                     <Fragment key={key}>
                                         <tr
-                                            className="cursor-crosshair border-b border-grid/20 transition-colors hover:bg-white/[0.02]"
+                                            className="cursor-crosshair border-b border-grid/20 transition-colors active:bg-white/[0.03] sm:hover:bg-white/[0.02] touch-manipulation"
                                             onClick={() => onRowToggle?.(row)}
                                         >
                                             {columns.map((column, index) => (
                                                 <td
                                                     key={`${key}:${column.key}`}
-                                                    className={`whitespace-nowrap p-4 ${index === 0 ? 'text-muted' : 'text-foreground/80'} ${column.className ?? ''}`}
+                                                    className={`whitespace-nowrap p-2 sm:p-4 ${index === 0 ? 'text-muted' : 'text-foreground/80'} ${column.className ?? ''}`}
                                                 >
                                                     {column.render(row)}
                                                 </td>
@@ -110,7 +110,7 @@ export function DatasetTable<Row>({
                     </tbody>
                 </table>
             </div>
-            <div className="flex items-center justify-between border-t border-grid bg-black/20 p-3 font-mono text-[10px] text-muted">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1 border-t border-grid bg-black/20 p-2 sm:p-3 font-mono text-[10px] text-muted">
                 <span>Total records: {data.length}</span>
                 <span>LIVE DATASET VIEW</span>
             </div>

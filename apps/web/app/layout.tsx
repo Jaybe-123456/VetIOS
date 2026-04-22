@@ -11,6 +11,15 @@ const jetbrainsMono = JetBrains_Mono({ subsets: ['latin'], variable: '--font-gei
 const siteOrigin = getConfiguredSiteOrigin();
 const allowIndexing = shouldIndexSite();
 
+
+export const viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  maximumScale: 5,
+  themeColor: '#0a0a0a',
+  colorScheme: 'dark',
+};
+
 export const metadata: Metadata = {
   metadataBase: siteOrigin ? new URL(siteOrigin) : undefined,
   applicationName: 'VetIOS',

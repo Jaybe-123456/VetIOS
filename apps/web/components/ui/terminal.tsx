@@ -61,7 +61,7 @@ export function TerminalButton({
     variant = 'primary',
     ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' }) {
-    const baseClasses = "font-mono text-[13px] uppercase tracking-[0.16em] px-4 sm:px-5 py-2.5 transition-all border";
+    const baseClasses = "font-mono text-[13px] uppercase tracking-[0.16em] px-4 sm:px-5 py-3 sm:py-2.5 transition-all border min-h-[44px] touch-manipulation flex items-center justify-center";
 
     const variants = {
         primary:   "border-accent/70 text-accent hover:bg-accent hover:text-black bg-[hsl(142_76%_46%_/_0.05)] shadow-[0_0_12px_hsl(142_76%_46%_/_0.1)] hover:shadow-[0_0_20px_hsl(142_76%_46%_/_0.3)] transition-all",
@@ -170,7 +170,7 @@ export function ConsoleCard({
                             {collapsible && (
                                 <button
                                     onClick={(e) => { e.stopPropagation(); setCollapsed(!collapsed); }}
-                                    className="p-1 text-[hsl(0_0%_62%)] hover:text-accent transition-colors"
+                                    className="p-2 sm:p-1 text-[hsl(0_0%_62%)] hover:text-accent transition-colors min-h-[36px] min-w-[36px] flex items-center justify-center touch-manipulation"
                                     aria-label={collapsed ? 'Expand' : 'Collapse'}
                                 >
                                     {collapsed
@@ -235,7 +235,7 @@ export function TerminalTabs<T extends string>({
                         type="button"
                         onClick={() => onTabChange(tab.id)}
                         className={`
-                            px-4 py-2 sm:px-5 sm:py-2 border font-mono
+                            px-3 py-3 sm:px-5 sm:py-2 border font-mono min-h-[44px] touch-manipulation
                             text-[11px] sm:text-[12px] uppercase tracking-[0.16em]
                             transition-all flex items-center gap-2
                             ${isActive

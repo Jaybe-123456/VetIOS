@@ -178,7 +178,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
     const GuideContent = (
         <aside className={`${standalone
             ? 'h-[100dvh] w-full max-w-full flex-col border border-accent/10 bg-background/40 backdrop-blur-xl'
-            : 'fixed inset-y-0 right-0 z-50 w-full max-w-[480px] flex-col border-l border-accent/20 bg-background/95 backdrop-blur-xl shadow-[0_0_40px_rgba(0,0,0,0.5)] animate-slide-in'
+            : 'fixed inset-y-0 right-0 z-50 w-full sm:max-w-[420px] md:max-w-[480px] flex-col border-l border-accent/20 bg-background/95 backdrop-blur-xl shadow-[0_0_40px_rgba(0,0,0,0.5)] animate-slide-in'
             } flex overflow-hidden`}>
 
             {standalone && (
@@ -295,7 +295,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
                         )}
                     </div>
 
-                    <div ref={scrollRef} className={`${standalone ? 'flex-1 pr-1' : 'max-h-[36vh] sm:max-h-[40vh] pr-1'} space-y-4 overflow-y-auto scrollbar-thin scroll-smooth min-h-0`}>
+                    <div ref={scrollRef} className={`${standalone ? 'flex-1 pr-1' : 'max-h-[40vh] sm:max-h-[45vh] pr-1'} space-y-4 overflow-y-auto scrollbar-thin scroll-smooth min-h-0 scroll-touch`}>
                         {messages.length === 0 && !loading && (
                             <div className="border border-accent/10 bg-accent/5 p-4 sm:p-5 rounded-sm animate-in fade-in slide-in-from-bottom-2 duration-700">
                                 <div className="font-mono text-[11px] sm:text-xs leading-relaxed text-foreground/90 mb-4 sm:mb-5 whitespace-pre-wrap">
@@ -436,7 +436,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
             <button
                 type="button"
                 onClick={() => setIsOpen(true)}
-                className="group relative flex items-center gap-2 overflow-hidden rounded-sm border border-accent/20 bg-accent/5 px-3 py-2 text-xs font-mono uppercase tracking-widest text-accent transition-all hover:bg-accent/10 hover:border-accent/40"
+                className="group relative flex items-center gap-2 overflow-hidden rounded-sm border border-accent/20 bg-accent/5 px-3 py-2.5 sm:py-2 text-xs font-mono uppercase tracking-widest text-accent transition-all hover:bg-accent/10 hover:border-accent/40 min-h-[44px] sm:min-h-0 touch-manipulation"
             >
                 <div className="absolute inset-x-0 bottom-0 h-[1px] w-full bg-accent/30 scale-x-0 transition-transform group-hover:scale-x-100" />
                 <Bot className="h-3.5 w-3.5" />
