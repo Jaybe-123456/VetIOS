@@ -54,10 +54,11 @@ export default function UserNav() {
             <button
                 onClick={handleSignOut}
                 className="
-                    flex items-center gap-1.5 px-2.5 py-1.5
+                    flex items-center gap-1.5 px-3 py-2.5 sm:px-2.5 sm:py-1.5
                     font-mono text-[10px] uppercase tracking-[0.14em]
                     text-[hsl(0_0%_48%)] hover:text-[hsl(0_72%_65%)]
                     border border-transparent hover:border-[hsl(0_72%_35%_/_0.4)]
+                    min-h-[44px] sm:min-h-0 touch-manipulation
                     transition-all
                 "
                 title="Sign out"

@@ -31,14 +31,14 @@ export function SystemLogConsole({ logs, className = '' }: { logs: LogEntry[], c
             
             <div 
                 ref={scrollRef}
-                className="p-3 overflow-y-auto max-h-[250px] min-h-[150px] scrollbar-thin scrollbar-thumb-grid transition-all"
+                className="p-3 overflow-y-auto max-h-[200px] sm:max-h-[300px] min-h-[120px] sm:min-h-[150px] scrollbar-thin scrollbar-thumb-grid transition-all scroll-touch"
             >
                 {logs.length === 0 ? (
                     <div className="text-[hsl(0_0%_72%)] font-medium italic">Awaiting system initialization...</div>
                 ) : (
                     <div className="space-y-1">
                         {logs.map((log) => (
-                            <div key={log.id} className="flex gap-3">
+                            <div key={log.id} className="flex gap-2 sm:gap-3 py-0.5">
                                 <span className="text-[hsl(0_0%_75%)] shrink-0 text-[10px] mt-0.5 font-bold">[{log.timestamp}]</span>
                                 <span className={`break-words font-medium ${
                                     log.level === 'error' ? 'text-danger font-bold' : 

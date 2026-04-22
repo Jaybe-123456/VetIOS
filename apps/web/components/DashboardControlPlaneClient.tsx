@@ -374,8 +374,8 @@ export default function DashboardControlPlaneClient() {
 
                 {/* ── Control Plane Operations HUD ── */}
                 <ConsoleCard title="Control Plane Core Operations" className="mt-4 glass-card-accent accent-line-top" collapsible defaultCollapsed={false}>
-                    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-4">
-                        <button type="button" onClick={() => void refreshSnapshot(false)} className="col-span-2 xl:col-span-1 border border-accent/60 shadow-[0_0_10px_rgba(0,255,65,0.2)] bg-accent/5 hover:bg-accent hover:text-black text-accent flex flex-col items-center justify-center gap-2 h-full py-5 transition-all text-[10px] sm:text-xs font-mono uppercase tracking-widest disabled:opacity-50">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2 sm:gap-3 mb-4">
+                        <button type="button" onClick={() => void refreshSnapshot(false)} className="col-span-2 sm:col-span-1 xl:col-span-1 border border-accent/60 shadow-[0_0_10px_rgba(0,255,65,0.2)] bg-accent/5 active:bg-accent active:text-black sm:hover:bg-accent sm:hover:text-black text-accent flex flex-col items-center justify-center gap-2 h-full py-4 sm:py-5 transition-all text-[10px] sm:text-xs font-mono uppercase tracking-widest disabled:opacity-50 min-h-[80px] touch-manipulation">
                             <Activity className={`w-6 h-6 ${refreshing ? 'animate-spin' : ''}`} />
                             {refreshing ? 'REFRESHING...' : 'REFRESH\nSNAPSHOT'}
                         </button>
@@ -431,7 +431,7 @@ export default function DashboardControlPlaneClient() {
                 ) : null}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6 mb-4 sm:mb-6">
+            <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-4 lg:gap-6 mb-4 sm:mb-6">
                 <MetricCard
                     label="Network Health"
                     value={networkHealthScore != null ? `${networkHealthScore}%` : 'NO DATA'}
@@ -489,7 +489,7 @@ export default function DashboardControlPlaneClient() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6 mb-4 sm:mb-6">
-                <ConsoleCard title="Latency Envelope (p95 window input)" className="h-[260px] sm:h-[320px]" collapsible>
+                <ConsoleCard title="Latency Envelope (p95 window input)" className="h-[200px] sm:h-[320px]" collapsible>
                     {(telemetrySnapshot && telemetrySnapshot.charts.latency.length > 0) || (dashboardLens && dashboardLens.latency_history.length > 0) ? (
                         <div className="flex-1 -mx-2 sm:-mx-4 h-full">
                             <TelemetryChart
@@ -502,7 +502,7 @@ export default function DashboardControlPlaneClient() {
                     )}
                 </ConsoleCard>
 
-                <ConsoleCard title="Outcome Drift Signal" className="h-[260px] sm:h-[320px]" collapsible>
+                <ConsoleCard title="Outcome Drift Signal" className="h-[200px] sm:h-[320px]" collapsible>
                     {(telemetrySnapshot && telemetrySnapshot.charts.drift.length > 0) || (dashboardLens && dashboardLens.drift_history.length > 0) ? (
                         <div className="flex-1 -mx-2 sm:-mx-4 h-full">
                             <TelemetryChart
@@ -589,7 +589,7 @@ export default function DashboardControlPlaneClient() {
                 </ConsoleCard>
             </div>
 
-            <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                 <div className="xl:col-span-2">
                     <ConsoleCard title="Recent Inferences" collapsible>
                         {recentInferences.length > 0 ? (
@@ -650,7 +650,7 @@ export default function DashboardControlPlaneClient() {
 
             {activeTab === 'cire' && (
                 <div className="space-y-6">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 lg:gap-6">
+                    <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-4 lg:gap-6">
                         <MetricCard
                             label="Phi Mean"
                             value={cireStatus ? cireStatus.phi_population_mean.toFixed(3) : 'NO DATA'}
@@ -681,7 +681,7 @@ export default function DashboardControlPlaneClient() {
                         />
                     </div>
 
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                         <div className="xl:col-span-2">
                             <ConsoleCard title="Rolling Phi History" className="h-[320px]" collapsible>
                                 {cireHistoryChart.length > 0 ? (
@@ -721,7 +721,7 @@ export default function DashboardControlPlaneClient() {
                         </ConsoleCard>
                     </div>
 
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                         <div className="xl:col-span-2">
                             <ConsoleCard title="Recent CIRE Incidents" collapsible>
                                 <div className="mb-4">

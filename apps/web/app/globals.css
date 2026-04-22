@@ -569,6 +569,166 @@
   color: hsl(0 0% 100%);
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   VetIOS — Mobile-First System
+   Touch targets, safe areas, scroll behaviour, viewport fixes
+═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Prevent iOS bounce on fixed panels ─────────────────────────────────── */
+html, body {
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Safe area insets for notched devices ───────────────────────────────── */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* ── Touch-friendly scroll containers ──────────────────────────────────── */
+.scroll-touch {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+/* ── Horizontal scroll with snap for mobile tables/cards ───────────────── */
+.mobile-scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: thin;
+}
+.mobile-scroll-x > * {
+  scroll-snap-align: start;
+}
+
+/* ── Minimum touch target 44x44px (WCAG 2.5.5) ─────────────────────────── */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* ── Mobile card stack — single column on mobile, grid on desktop ────────── */
+.mobile-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+@media (min-width: 640px) {
+  .mobile-stack {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1rem;
+  }
+}
+@media (min-width: 1024px) {
+  .mobile-stack {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ── Table wrapper — horizontal scroll with fade indicators ─────────────── */
+.table-scroll-wrapper {
+  position: relative;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+.table-scroll-wrapper::after {
+  content: '';
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 40px;
+  background: linear-gradient(to right, transparent, hsl(var(--background) / 0.9));
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.table-scroll-wrapper:not([data-at-end])::after {
+  opacity: 1;
+}
+
+/* ── Mobile bottom nav bar (for future use) ─────────────────────────────── */
+.mobile-nav-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: hsl(0 0% 5% / 0.97);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-top: 1px solid hsl(0 0% 100% / 0.07);
+  z-index: 40;
+}
+
+/* ── Full-height mobile layout fix ─────────────────────────────────────── */
+.mobile-full-height {
+  height: 100dvh;
+  height: -webkit-fill-available;
+}
+
+/* ── Mobile font size guards (already in base but strengthened) ─────────── */
+@media (max-width: 640px) {
+  input, textarea, select {
+    font-size: 16px !important; /* Prevents iOS zoom on focus */
+  }
+
+  /* Minimum readable size on small screens */
+  .font-mono {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+}
+
+/* ── Touch-optimized scrollbar ───────────────────────────────────────────── */
+@media (pointer: coarse) {
+  ::-webkit-scrollbar {
+    width: 3px;
+    height: 3px;
+  }
+}
+
+/* ── Disable hover effects on touch devices ─────────────────────────────── */
+@media (hover: none) {
+  .hover\:border-accent:hover,
+  .hover\:bg-accent:hover,
+  .hover\:text-accent:hover {
+    /* Let tap highlight handle feedback instead */
+  }
+}
+
+/* ── Active state for touch (replaces hover) ────────────────────────────── */
+@media (pointer: coarse) {
+  button:active, a:active {
+    opacity: 0.75;
+    transform: scale(0.98);
+    transition: transform 0.1s, opacity 0.1s;
+  }
+}
+
+
+/* ── Hide scrollbar (keep scrollability) ───────────────────────────────── */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Prevent text selection on interactive UI elements ─────────────────── */
+.no-select {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 /* ── Animations ───────────────────────────────────────────────────────────── */
 
 @keyframes slideInLeft  { from { transform: translateX(-100%); } to { transform: translateX(0); } }

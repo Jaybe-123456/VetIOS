@@ -17,14 +17,14 @@ export function PlatformNav() {
     const pathname = usePathname();
 
     return (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex gap-2 overflow-x-auto pb-1 scroll-touch sm:flex-wrap no-scrollbar">
             {navItems.map((item) => {
                 const isActive = pathname === item.href || (item.href !== '/platform' && pathname?.startsWith(`${item.href}/`));
                 return (
                     <Link
                         key={item.href}
                         href={item.href}
-                        className={`rounded-full border px-4 py-2 text-sm transition ${
+                        className={`rounded-full border px-3 sm:px-4 py-2 text-xs sm:text-sm transition whitespace-nowrap shrink-0 sm:shrink touch-manipulation ${
                             isActive
                                 ? 'border-white/20 bg-white text-slate-950'
                                 : 'border-white/12 bg-white/[0.04] text-slate-200 hover:border-white/25 hover:bg-white/10'
