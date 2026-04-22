@@ -1,0 +1,38 @@
+﻿diff --git a/apps/web/components/SettingsControlPlaneClient.tsx b/apps/web/components/SettingsControlPlaneClient.tsx
+index d0e1b1f..a95116d 100644
+--- a/apps/web/components/SettingsControlPlaneClient.tsx
++++ b/apps/web/components/SettingsControlPlaneClient.tsx
+@@ -339,7 +339,7 @@ export default function SettingsControlPlaneClient() {
+                     icon={<UserCog className="w-4 h-4" />}
+                     label="Operator Role"
+                     value={snapshot.profile.role.toUpperCase()}
+-                    tone="accent"
++                    tone="cyber-blue"
+                 />
+                 <SummaryCard
+                     icon={<Gauge className="w-4 h-4" />}
+@@ -351,7 +351,7 @@ export default function SettingsControlPlaneClient() {
+                     icon={<Wifi className="w-4 h-4" />}
+                     label="Telemetry Status"
+                     value={snapshot.system_health.telemetry_status.toUpperCase()}
+-                    tone={snapshot.system_health.telemetry_status === 'connected' ? 'accent' : 'danger'}
++                    tone={snapshot.system_health.telemetry_status === 'connected' ? 'cyber-purple' : 'danger'}
+                 />
+                 <SummaryCard
+                     icon={<AlertTriangle className="w-4 h-4" />}
+@@ -564,12 +564,14 @@ function SummaryCard({
+     icon: ReactNode;
+     label: string;
+     value: string;
+-    tone: 'accent' | 'warning' | 'danger';
++    tone: 'accent' | 'warning' | 'danger' | 'cyber-blue' | 'cyber-purple';
+ }) {
+     const tones = {
+         accent: 'border-accent/30 text-accent',
+         warning: 'border-[#ffcc00]/30 text-[#ffcc00]',
+         danger: 'border-danger/30 text-danger',
++        'cyber-blue': 'border-[#00f0ff]/30 text-[#00f0ff]',
++        'cyber-purple': 'border-[#b100ff]/30 text-[#b100ff]',
+     } as const;
+ 
+     return (

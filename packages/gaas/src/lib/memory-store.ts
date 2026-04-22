@@ -4,7 +4,7 @@
 // Built on top of the existing Supabase layer.
 // ============================================================
 
-import type { MemoryEntry, PatientContext } from "../types/agent";
+import type { MemoryEntry } from "../types/agent";
 
 export interface MemoryQueryOptions {
   limit?: number;
