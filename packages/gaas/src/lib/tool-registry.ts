@@ -42,8 +42,8 @@ export class ToolRegistry {
 export class ToolExecutor {
   constructor(
     private registry: ToolRegistry,
-    private baseUrl: string,
-    private authToken: string
+    _baseUrl: string,
+    _authToken: string
   ) {}
 
   async execute(
@@ -156,7 +156,7 @@ export function buildDefaultTools(baseUrl: string, authToken: string): ToolDefin
         species: { type: "string", description: "Patient species", required: true },
         weight_kg: { type: "number", description: "Patient weight in kg" },
       },
-      executor: async (input) => {
+      executor: async (_input) => {
         // Stub: integrate with external vet pharmacology API
         return {
           interactions: [],

@@ -57,6 +57,9 @@ importers:
       '@vetios/cire-engine':
         specifier: workspace:*
         version: link:../../packages/cire-engine
+      '@vetios/gaas':
+        specifier: workspace:*
+        version: link:../../packages/gaas
       autoprefixer:
         specifier: ^10.4.24
         version: 10.4.24(postcss@8.5.6)

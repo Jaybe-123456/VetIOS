@@ -14,13 +14,11 @@ import type {
   AgentPolicy,
   AgentRole,
   PatientContext,
-  TenantConfig,
   AgentRunResponse,
   AgentResumeResponse,
 } from "../types/agent";
 import { AgentRuntime } from "../agents/agent-runtime";
 import { HITLManager, buildDecisionCard } from "../lib/hitl";
-import { AgentCoordinator } from "../lib/coordination";
 
 // ─── Default policies per role ───────────────────────────────
 export const DEFAULT_POLICIES: Record<AgentRole, AgentPolicy> = {

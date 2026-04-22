@@ -11,6 +11,25 @@ import { InProcessMessageBus, AgentCoordinator } from "./lib/coordination";
 import { TenantProvisioner, InMemoryTenantStore, UsageMeter } from "./lib/tenant";
 import type { AgentRun } from "./types/agent";
 
+// Re-export API route handlers and types for consumers
+export {
+  handleRunAgent,
+  handleResumeAgent,
+  handleListInterrupts,
+  type RunAgentRequest,
+  type ResumeAgentRequest,
+} from "./api/routes";
+export type {
+  AgentRun,
+  AgentRunResponse,
+  AgentResumeResponse,
+  AgentRole,
+  AgentStatus,
+  HITLInterrupt,
+  PatientContext,
+  TenantConfig,
+} from "./types/agent";
+
 export interface GaaSPlatformConfig {
   vetiosBaseUrl: string;
   authToken: string;

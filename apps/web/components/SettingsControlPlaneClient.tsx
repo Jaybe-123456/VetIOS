@@ -931,7 +931,7 @@ function renderGovernanceTab(
                                         <DataCard label="Role" value={entry.registry_role.toUpperCase()} tone={entry.registry_role === 'champion' ? 'accent' : entry.registry_role === 'challenger' ? 'warning' : undefined} />
                                         <DataCard label="Lifecycle" value={entry.lifecycle_status.toUpperCase()} tone={entry.lifecycle_status === 'production' ? 'accent' : entry.lifecycle_status === 'candidate' ? 'warning' : entry.lifecycle_status === 'archived' ? 'danger' : undefined} />
                                         <DataCard label="Promotion" value={entry.promotion_allowed ? 'YES' : 'NO'} tone={entry.promotion_allowed ? 'accent' : 'danger'} />
-                                        <DataCard label="Decision" value={entry.deployment_decision.toUpperCase()} tone={entry.deployment_decision === 'approved' ? 'accent' : entry.deployment_decision === 'blocked' ? 'danger' : 'warning'} />
+                                        <DataCard label="Decision" value={entry.deployment_decision.toUpperCase()} tone={entry.deployment_decision === 'approved' ? 'accent' : entry.deployment_decision === 'rejected' ? 'danger' : 'warning'} />
                                     </div>
                                     <div className="grid grid-cols-1 lg:grid-cols-5 gap-2 mt-3 font-mono text-[10px] uppercase tracking-widest text-muted">
                                         {Object.entries(entry.gating).map(([gate, status]) => (
