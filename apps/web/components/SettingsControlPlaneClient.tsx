@@ -371,54 +371,33 @@ export default function SettingsControlPlaneClient() {
                             <RefreshCw className="w-3 h-3 mr-2" />
                             Refresh Snapshot
                         </TerminalButton>
-                        <Link
-                            href="/settings/outbox"
-                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
-                        >
-                            Outbox Ops
-                            <ArrowRight className="ml-2 h-3 w-3" />
+                        <Link href="/settings/outbox"
+                            className="inline-flex items-center border border-[hsl(142_60%_30%_/_0.5)] bg-[hsl(142_60%_12%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(142_70%_60%)] transition-colors hover:border-[hsl(142_76%_46%)] hover:text-[hsl(142_76%_72%)] hover:bg-[hsl(142_60%_12%_/_0.4)]">
+                            Outbox Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link
-                            href="/settings/federation"
-                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
-                        >
-                            Federation Ops
-                            <ArrowRight className="ml-2 h-3 w-3" />
+                        <Link href="/settings/federation"
+                            className="inline-flex items-center border border-[hsl(190_70%_30%_/_0.5)] bg-[hsl(190_70%_10%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(190_80%_62%)] transition-colors hover:border-[hsl(190_90%_55%)] hover:text-[hsl(190_90%_78%)] hover:bg-[hsl(190_70%_10%_/_0.4)]">
+                            Federation Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link
-                            href="/settings/petpass"
-                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
-                        >
-                            PetPass Ops
-                            <ArrowRight className="ml-2 h-3 w-3" />
+                        <Link href="/settings/petpass"
+                            className="inline-flex items-center border border-[hsl(265_60%_38%_/_0.5)] bg-[hsl(265_60%_12%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(265_75%_72%)] transition-colors hover:border-[hsl(265_80%_65%)] hover:text-[hsl(265_80%_85%)] hover:bg-[hsl(265_60%_12%_/_0.4)]">
+                            PetPass Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link
-                            href="/settings/passive-signals"
-                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
-                        >
-                            Passive Ops
-                            <ArrowRight className="ml-2 h-3 w-3" />
+                        <Link href="/settings/passive-signals"
+                            className="inline-flex items-center border border-[hsl(30_80%_30%_/_0.5)] bg-[hsl(30_80%_10%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(30_90%_65%)] transition-colors hover:border-[hsl(30_90%_55%)] hover:text-[hsl(30_90%_78%)] hover:bg-[hsl(30_80%_10%_/_0.4)]">
+                            Passive Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link
-                            href="/settings/developer-platform"
-                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
-                        >
-                            Partner Ops
-                            <ArrowRight className="ml-2 h-3 w-3" />
+                        <Link href="/settings/developer-platform"
+                            className="inline-flex items-center border border-[hsl(210_70%_32%_/_0.5)] bg-[hsl(210_70%_10%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(210_80%_68%)] transition-colors hover:border-[hsl(210_80%_58%)] hover:text-[hsl(210_80%_82%)] hover:bg-[hsl(210_70%_10%_/_0.4)]">
+                            Partner Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link
-                            href="/settings/model-trust"
-                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
-                        >
-                            Trust Ops
-                            <ArrowRight className="ml-2 h-3 w-3" />
+                        <Link href="/settings/model-trust"
+                            className="inline-flex items-center border border-[hsl(0_70%_32%_/_0.5)] bg-[hsl(0_70%_10%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(0_80%_66%)] transition-colors hover:border-[hsl(0_85%_58%)] hover:text-[hsl(0_85%_78%)] hover:bg-[hsl(0_70%_10%_/_0.4)]">
+                            Trust Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link
-                            href="/settings/edge-box"
-                            className="inline-flex items-center border border-grid px-4 py-3 font-mono text-sm uppercase tracking-widest text-muted transition-colors hover:border-accent hover:text-accent"
-                        >
-                            Edge Ops
-                            <ArrowRight className="ml-2 h-3 w-3" />
+                        <Link href="/settings/edge-box"
+                            className="inline-flex items-center border border-[hsl(45_80%_28%_/_0.5)] bg-[hsl(45_80%_8%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(45_100%_62%)] transition-colors hover:border-[hsl(45_100%_52%)] hover:text-[hsl(45_100%_78%)] hover:bg-[hsl(45_80%_8%_/_0.4)]">
+                            Edge Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
                         <TerminalButton variant="secondary" onClick={() => void runAction({ action: 'run_system_diagnostic' })}>
                             <ShieldCheck className="w-3 h-3 mr-2" />
@@ -435,10 +414,10 @@ export default function SettingsControlPlaneClient() {
                         key={tab.id}
                         type="button"
                         onClick={() => setActiveTab(tab.id)}
-                        className={`px-3 py-2 border font-mono text-xs uppercase tracking-widest transition-colors ${
+                        className={`px-3 py-2.5 border font-mono text-xs uppercase tracking-widest transition-all min-h-[38px] ${
                             activeTab === tab.id
-                                ? 'border-accent text-accent bg-accent/10 font-bold'
-                                : 'border-grid text-[hsl(0_0%_80%)] font-medium hover:border-muted hover:text-foreground'
+                                ? 'border-[hsl(142_76%_46%)] text-[hsl(142_76%_65%)] bg-[hsl(142_60%_12%_/_0.35)] font-bold shadow-[0_0_10px_hsl(142_76%_46%_/_0.2)]'
+                                : 'border-[hsl(0_0%_26%)] text-[hsl(0_0%_72%)] font-medium hover:border-[hsl(0_0%_44%)] hover:text-[hsl(0_0%_94%)] bg-[hsl(0_0%_8%)]'
                         }`}
                     >
                         {tab.label}
@@ -567,18 +546,19 @@ function SummaryCard({
     tone: 'accent' | 'warning' | 'danger';
 }) {
     const tones = {
-        accent: 'border-accent/30 text-accent',
-        warning: 'border-[#ffcc00]/30 text-[#ffcc00]',
-        danger: 'border-danger/30 text-danger',
+        accent:  { card: 'border-[hsl(142_76%_46%_/_0.35)] bg-[hsl(142_60%_12%_/_0.3)]', label: 'text-[hsl(142_76%_72%)]', value: 'text-[hsl(142_76%_55%)]' },
+        warning: { card: 'border-[hsl(45_100%_50%_/_0.35)] bg-[hsl(45_80%_10%_/_0.3)]',  label: 'text-[hsl(45_100%_75%)]',  value: 'text-[hsl(45_100%_60%)]' },
+        danger:  { card: 'border-[hsl(0_85%_55%_/_0.35)]  bg-[hsl(0_60%_10%_/_0.3)]',    label: 'text-[hsl(0_85%_75%)]',    value: 'text-[hsl(0_85%_62%)]' },
     } as const;
+    const t = tones[tone];
 
     return (
-        <ConsoleCard className={`p-4 ${tones[tone]}`}>
-            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_88%)] font-bold mb-2">
+        <ConsoleCard className={`p-4 border ${t.card}`}>
+            <div className={`flex items-center gap-2 font-mono text-[10px] uppercase tracking-widest font-bold mb-2 ${t.label}`}>
                 {icon}
                 {label}
             </div>
-            <div className="font-mono text-2xl font-bold">{value}</div>
+            <div className={`font-mono text-2xl font-bold ${t.value}`}>{value}</div>
         </ConsoleCard>
     );
 }
@@ -597,13 +577,13 @@ function ActionStatePanel({
     }
 
     const tone = actionState.status === 'error'
-        ? 'border-danger text-danger'
+        ? 'border-[hsl(0_85%_55%)] text-[hsl(0_85%_68%)] bg-[hsl(0_60%_8%_/_0.5)]'
         : actionState.status === 'running'
-            ? 'border-[#ffcc00] text-[#ffcc00]'
-            : 'border-accent text-accent';
+            ? 'border-[hsl(45_100%_52%)] text-[hsl(45_100%_68%)] bg-[hsl(45_80%_6%_/_0.5)]'
+            : 'border-[hsl(142_76%_40%)] text-[hsl(142_76%_62%)] bg-[hsl(142_60%_6%_/_0.5)]';
 
     return (
-        <div className={`mt-4 border ${tone} bg-black/20 p-3 font-mono text-xs`}>
+        <div className={`mt-4 border ${tone} p-3 font-mono text-xs`}>
             <div>{actionState.message}</div>
             {actionState.payload != null && (
                 <pre className="mt-3 overflow-auto whitespace-pre-wrap text-[11px] text-foreground font-medium">
@@ -621,13 +601,14 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
             <ConsoleCard title="Account Profile">
                 <div className="space-y-2">
-                    <DataRow label="User ID" value={input.snapshot.profile.user_id ?? 'NO DATA'} />
-                    <DataRow label="Email" value={input.snapshot.profile.email ?? 'NO DATA'} />
-                    <DataRow label="Role" value={input.snapshot.profile.role.toUpperCase()} />
+                    <DataRow label="User ID" value={input.snapshot.profile.user_id ?? 'NO DATA'} tone="muted" />
+                    <DataRow label="Email" value={input.snapshot.profile.email ?? 'NO DATA'} tone="cyan" />
+                    <DataRow label="Role" value={input.snapshot.profile.role.toUpperCase()} tone={input.snapshot.profile.role === 'admin' ? 'warning' : 'accent'} />
                     <DataRow label="Organization" value={input.snapshot.profile.organization ?? 'NO DATA'} />
                     <DataRow
                         label="Last Login"
                         value={input.snapshot.profile.last_login ? new Date(input.snapshot.profile.last_login).toLocaleString() : 'NO DATA'}
+                        tone="muted"
                     />
                 </div>
             </ConsoleCard>
@@ -679,11 +660,21 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
 
             <ConsoleCard title="Permissions">
                 <div className="flex flex-wrap gap-2">
-                    {input.snapshot.profile.permissions.map((permission) => (
-                        <span key={permission} className="px-2 py-1 border border-grid font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_88%)] font-bold">
-                            {permission}
-                        </span>
-                    ))}
+                    {input.snapshot.profile.permissions.map((permission, i) => {
+                        const colours = [
+                            'border-[hsl(142_60%_30%_/_0.5)] text-[hsl(142_76%_60%)] bg-[hsl(142_60%_8%_/_0.3)]',
+                            'border-[hsl(190_60%_30%_/_0.5)] text-[hsl(190_80%_62%)] bg-[hsl(190_60%_8%_/_0.3)]',
+                            'border-[hsl(265_60%_38%_/_0.5)] text-[hsl(265_75%_72%)] bg-[hsl(265_60%_8%_/_0.3)]',
+                            'border-[hsl(45_80%_28%_/_0.5)]  text-[hsl(45_100%_62%)] bg-[hsl(45_80%_6%_/_0.3)]',
+                            'border-[hsl(210_60%_30%_/_0.5)] text-[hsl(210_80%_68%)] bg-[hsl(210_60%_8%_/_0.3)]',
+                        ];
+                        const cls = colours[i % colours.length];
+                        return (
+                            <span key={permission} className={`px-2 py-1 border font-mono text-[10px] uppercase tracking-widest font-bold ${cls}`}>
+                                {permission}
+                            </span>
+                        );
+                    })}
                 </div>
             </ConsoleCard>
         </div>
@@ -696,13 +687,14 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
             <ConsoleCard title="Access & Tokens" className="xl:col-span-2">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                        <DataRow label="Tenant ID" value={input.snapshot.access_security.tenant_id} />
-                        <DataRow label="Auth Mode" value={input.snapshot.access_security.auth_mode.toUpperCase()} />
+                        <DataRow label="Tenant ID" value={input.snapshot.access_security.tenant_id} tone="cyan" />
+                        <DataRow label="Auth Mode" value={input.snapshot.access_security.auth_mode.toUpperCase()} tone="violet" />
                         <DataRow
                             label="Token Expiry"
                             value={input.snapshot.access_security.token_expiry ? new Date(input.snapshot.access_security.token_expiry).toLocaleString() : 'NO DATA'}
+                            tone="warning"
                         />
-                        <DataRow label="Scope" value={input.snapshot.access_security.access_scope.join(', ')} />
+                        <DataRow label="Scope" value={input.snapshot.access_security.access_scope.join(', ')} tone="muted" />
                     </div>
                     <div className="space-y-4">
                         <div className="border border-grid/50 bg-black/20 p-4">
@@ -723,14 +715,15 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
 
             <ConsoleCard title="Active Session">
                 {input.snapshot.access_security.active_sessions.map((session) => (
-                    <div key={session.session_id} className="mb-4 border border-grid/50 p-3">
-                        <DataRow label="Session" value={session.label} />
-                        <DataRow label="Current" value={session.current ? 'YES' : 'NO'} />
+                    <div key={session.session_id} className="mb-4 border border-[hsl(142_60%_30%_/_0.3)] bg-[hsl(142_40%_8%_/_0.2)] p-3">
+                        <DataRow label="Session" value={session.label} tone="accent" />
+                        <DataRow label="Current" value={session.current ? 'YES' : 'NO'} tone={session.current ? 'accent' : 'muted'} />
                         <DataRow
                             label="Expires"
                             value={session.expires_at ? new Date(session.expires_at).toLocaleString() : 'NO DATA'}
+                            tone="warning"
                         />
-                        <DataRow label="Tenant Isolation" value={session.tenant_isolation} />
+                        <DataRow label="Tenant Isolation" value={session.tenant_isolation} tone="cyan" />
                     </div>
                 ))}
             </ConsoleCard>
@@ -763,17 +756,17 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                             <div className="font-mono text-xs text-[hsl(0_0%_80%)] font-medium">No control-plane API keys registered.</div>
                         ) : (
                             input.snapshot.access_security.api_keys.map((key) => (
-                                <div key={key.id} className="border border-grid p-3">
+                                <div key={key.id} className={`border p-3 ${key.status === 'active' ? 'border-[hsl(142_60%_30%_/_0.4)] bg-[hsl(142_40%_6%_/_0.2)]' : 'border-[hsl(0_0%_22%)] bg-[hsl(0_0%_6%_/_0.3)] opacity-70'}`}>
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                                         <div className="space-y-2">
-                                            <DataRow label="Label" value={key.label} />
-                                            <DataRow label="Prefix" value={key.key_prefix} />
-                                            <DataRow label="Status" value={key.status.toUpperCase()} />
+                                            <DataRow label="Label" value={key.label} tone="cyan" />
+                                            <DataRow label="Prefix" value={key.key_prefix} tone="muted" />
+                                            <DataRow label="Status" value={key.status.toUpperCase()} tone={key.status === 'active' ? 'accent' : 'danger'} />
                                         </div>
                                         <div className="space-y-2">
-                                            <DataRow label="Scopes" value={key.scopes.join(', ') || 'NO DATA'} />
+                                            <DataRow label="Scopes" value={key.scopes.join(', ') || 'NO DATA'} tone="violet" />
                                             <DataRow label="Created" value={new Date(key.created_at).toLocaleString()} />
-                                            <DataRow label="Last Used" value={key.last_used_at ? new Date(key.last_used_at).toLocaleString() : 'NO DATA'} />
+                                            <DataRow label="Last Used" value={key.last_used_at ? new Date(key.last_used_at).toLocaleString() : 'NO DATA'} tone="muted" />
                                         </div>
                                     </div>
                                     {key.status === 'active' && (
@@ -806,21 +799,22 @@ function renderHealthTab(snapshot: ControlPlaneSnapshot) {
             <ConsoleCard title="Operational Intelligence" className="xl:col-span-2">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                        <DataRow label="Telemetry Status" value={snapshot.system_health.telemetry_status.toUpperCase()} />
-                        <DataRow label="Topology State" value={snapshot.system_health.topology_state} />
+                        <DataRow label="Telemetry Status" value={snapshot.system_health.telemetry_status.toUpperCase()} tone={snapshot.system_health.telemetry_status === 'connected' ? 'accent' : 'danger'} />
+                        <DataRow label="Topology State" value={snapshot.system_health.topology_state} tone="cyan" />
                         <DataRow
                             label="Ingestion Rate"
                             value={snapshot.system_health.event_ingestion_rate != null ? `${snapshot.system_health.event_ingestion_rate}/min` : 'NO DATA'}
+                            tone={snapshot.system_health.event_ingestion_rate != null ? 'accent' : 'muted'}
                         />
-                        <DataRow label="Network Health" value={`${snapshot.system_health.network_health_score}%`} />
+                        <DataRow label="Network Health" value={`${snapshot.system_health.network_health_score}%`} tone={snapshot.system_health.network_health_score >= 80 ? 'accent' : snapshot.system_health.network_health_score >= 60 ? 'warning' : 'danger'} />
                     </div>
                     <div className="space-y-2">
-                        <DataRow label="Last Inference" value={formatTimestamp(snapshot.system_health.last_inference_timestamp)} />
-                        <DataRow label="Last Outcome" value={formatTimestamp(snapshot.system_health.last_outcome_timestamp)} />
-                        <DataRow label="Last Evaluation" value={formatTimestamp(snapshot.system_health.last_evaluation_event_timestamp)} />
-                        <DataRow label="Last Simulation" value={formatTimestamp(snapshot.system_health.last_simulation_timestamp)} />
-                        <DataRow label="Decision Mode" value={snapshot.decision_engine.mode.toUpperCase()} />
-                        <DataRow label="Safe Mode" value={snapshot.decision_engine.safe_mode_enabled ? 'ENABLED' : 'DISABLED'} />
+                        <DataRow label="Last Inference" value={formatTimestamp(snapshot.system_health.last_inference_timestamp)} tone="muted" />
+                        <DataRow label="Last Outcome" value={formatTimestamp(snapshot.system_health.last_outcome_timestamp)} tone="muted" />
+                        <DataRow label="Last Evaluation" value={formatTimestamp(snapshot.system_health.last_evaluation_event_timestamp)} tone="muted" />
+                        <DataRow label="Last Simulation" value={formatTimestamp(snapshot.system_health.last_simulation_timestamp)} tone="muted" />
+                        <DataRow label="Decision Mode" value={snapshot.decision_engine.mode.toUpperCase()} tone="violet" />
+                        <DataRow label="Safe Mode" value={snapshot.decision_engine.safe_mode_enabled ? 'ENABLED' : 'DISABLED'} tone={snapshot.decision_engine.safe_mode_enabled ? 'warning' : 'muted'} />
                     </div>
                 </div>
                 <div className="pt-4 border-t border-grid mt-4 font-mono text-xs text-muted space-y-2">
@@ -919,10 +913,10 @@ function renderGovernanceTab(
             {snapshot.governance.families.map((family) => (
                 <ConsoleCard key={family.model_family} title={`${family.model_family.toUpperCase()} Governance`}>
                     <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 mb-4">
-                        <DataCard label="Production" value={family.current_production_model ?? 'NO DATA'} />
-                        <DataCard label="Staging" value={family.staging_candidate ?? 'NO DATA'} />
-                        <DataCard label="Rollback Target" value={family.rollback_target ?? 'NO DATA'} />
-                        <DataCard label="Active Route" value={family.active_registry_id ?? 'NO DATA'} />
+                        <DataCard label="Production" value={family.current_production_model ?? 'NO DATA'} tone="accent" />
+                        <DataCard label="Staging" value={family.staging_candidate ?? 'NO DATA'} tone="warning" />
+                        <DataCard label="Rollback Target" value={family.rollback_target ?? 'NO DATA'} tone="danger" />
+                        <DataCard label="Active Route" value={family.active_registry_id ?? 'NO DATA'} tone="cyan" />
                     </div>
                     {family.entries.length === 0 ? (
                         <div className="border border-dashed border-grid p-4 font-mono text-xs text-muted">
@@ -933,11 +927,11 @@ function renderGovernanceTab(
                             {family.entries.map((entry) => (
                                 <div key={entry.registry_id} className="border border-grid p-3">
                                     <div className="grid grid-cols-1 xl:grid-cols-5 gap-3">
-                                        <DataCard label="Version" value={entry.model_version} />
-                                        <DataCard label="Role" value={entry.registry_role.toUpperCase()} />
-                                        <DataCard label="Lifecycle" value={entry.lifecycle_status.toUpperCase()} />
-                                        <DataCard label="Promotion" value={entry.promotion_allowed ? 'YES' : 'NO'} />
-                                        <DataCard label="Decision" value={entry.deployment_decision.toUpperCase()} />
+                                        <DataCard label="Version" value={entry.model_version} tone="cyan" />
+                                        <DataCard label="Role" value={entry.registry_role.toUpperCase()} tone={entry.registry_role === 'champion' ? 'accent' : entry.registry_role === 'challenger' ? 'warning' : undefined} />
+                                        <DataCard label="Lifecycle" value={entry.lifecycle_status.toUpperCase()} tone={entry.lifecycle_status === 'production' ? 'accent' : entry.lifecycle_status === 'candidate' ? 'warning' : entry.lifecycle_status === 'archived' ? 'danger' : undefined} />
+                                        <DataCard label="Promotion" value={entry.promotion_allowed ? 'YES' : 'NO'} tone={entry.promotion_allowed ? 'accent' : 'danger'} />
+                                        <DataCard label="Decision" value={entry.deployment_decision.toUpperCase()} tone={entry.deployment_decision === 'approved' ? 'accent' : entry.deployment_decision === 'blocked' ? 'danger' : 'warning'} />
                                     </div>
                                     <div className="grid grid-cols-1 lg:grid-cols-5 gap-2 mt-3 font-mono text-[10px] uppercase tracking-widest text-muted">
                                         {Object.entries(entry.gating).map(([gate, status]) => (
@@ -1305,8 +1299,8 @@ function renderAlertsTab(
                             <div className="font-mono text-xs text-muted">{alert.message}</div>
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                                 <DataCard label="Timestamp" value={formatTimestamp(alert.timestamp)} />
-                                <DataCard label="Source Node" value={alert.node_id ?? 'NO DATA'} />
-                                <DataCard label="Resolved" value={alert.resolved ? 'YES' : 'NO'} />
+                                <DataCard label="Source Node" value={alert.node_id ?? 'NO DATA'} tone="cyan" />
+                                <DataCard label="Resolved" value={alert.resolved ? 'YES' : 'NO'} tone={alert.resolved ? 'accent' : 'danger'} />
                             </div>
                             {!alert.resolved && (
                                 <div className="pt-2">
@@ -1361,8 +1355,8 @@ function PipelineCard({ pipeline }: { pipeline: ControlPlanePipelineState }) {
     return (
         <div className={`border p-3 ${tone}`}>
             <div className="flex items-center justify-between gap-3">
-                <div className="font-mono text-xs uppercase tracking-widest">{pipeline.label}</div>
-                <div className="font-mono text-[10px] uppercase tracking-widest">{pipeline.status}</div>
+                <div className="font-mono text-xs uppercase tracking-widest text-[hsl(0_0%_92%)]">{pipeline.label}</div>
+                <div className={`font-mono text-[10px] uppercase tracking-widest font-bold ${pipeline.status === 'FAILED' ? 'text-[hsl(0_85%_62%)]' : pipeline.status === 'INITIALIZING' ? 'text-[hsl(45_100%_60%)]' : 'text-[hsl(142_76%_55%)]'}`}>{pipeline.status}</div>
             </div>
             <div className="pt-3 space-y-2">
                 <DataRow label="Last Success" value={formatTimestamp(pipeline.last_successful_event)} />
@@ -1372,11 +1366,17 @@ function PipelineCard({ pipeline }: { pipeline: ControlPlanePipelineState }) {
     );
 }
 
-function DataCard({ label, value }: { label: string; value: string }) {
+function DataCard({ label, value, tone }: { label: string; value: string; tone?: 'accent' | 'warning' | 'danger' | 'cyan' | 'violet' }) {
+    const toneClass = tone === 'accent'  ? 'text-[hsl(142_76%_55%)]'
+                    : tone === 'warning' ? 'text-[hsl(45_100%_60%)]'
+                    : tone === 'danger'  ? 'text-[hsl(0_85%_62%)]'
+                    : tone === 'cyan'    ? 'text-[hsl(190_90%_62%)]'
+                    : tone === 'violet'  ? 'text-[hsl(265_80%_72%)]'
+                    : 'text-[hsl(0_0%_94%)]';
     return (
-        <div className="border border-grid p-3">
-            <div className="font-mono text-[10px] uppercase tracking-widest text-muted mb-1">{label}</div>
-            <div className="font-mono text-xs">{value}</div>
+        <div className="border border-[hsl(0_0%_22%)] bg-[hsl(0_0%_7%_/_0.5)] p-3">
+            <div className="font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_52%)] mb-1">{label}</div>
+            <div className={`font-mono text-xs font-semibold ${toneClass}`}>{value}</div>
         </div>
     );
 }
