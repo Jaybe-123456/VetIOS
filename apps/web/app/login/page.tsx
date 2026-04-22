@@ -168,18 +168,29 @@ export default function LoginPage() {
     }
 
     return (
-        <div className="h-screen w-screen flex flex-col bg-background">
-            <header className="h-12 border-b border-grid flex items-center px-4 shrink-0 bg-dim">
-                <span className="font-mono font-bold tracking-tight text-accent">VET_IOS //</span>
-                <span className="font-mono text-sm text-muted ml-4">V1.0 OMEGA</span>
+        <div className="min-h-screen w-full flex flex-col bg-background">
+            <header className="h-14 border-b border-[hsl(0_0%_100%_/_0.08)] flex items-center justify-between px-5 shrink-0 glass-topbar">
+                <div className="flex items-center gap-3">
+                    <span className="font-mono font-bold tracking-tight text-accent text-base">VET_IOS //</span>
+                    <span className="w-px h-4 bg-[hsl(0_0%_25%)]" />
+                    <span className="font-mono text-[11px] text-[hsl(0_0%_52%)] tracking-[0.18em] uppercase">V1.0 OMEGA</span>
+                </div>
+                <a href="/signup" className="font-mono text-[11px] text-[hsl(0_0%_65%)] hover:text-accent transition-colors uppercase tracking-[0.12em]">
+                    Create Account →
+                </a>
             </header>
 
-            <main className="flex-1 flex items-center justify-center">
-                <Container className="max-w-md w-full">
-                    <PageHeader
-                        title="AUTHENTICATE"
-                        description="Sign in with email and password or continue with Google."
-                    />
+            <main className="flex-1 flex items-start sm:items-center justify-center py-8 sm:py-12 px-4">
+                <div className="w-full max-w-md mx-auto">
+                    <div className="mb-8">
+                        <h1 className="font-mono text-2xl sm:text-3xl font-bold text-[hsl(0_0%_98%)] tracking-[0.06em] mb-3">
+                            AUTHENTICATE
+                        </h1>
+                        <p className="font-mono text-[13px] text-[hsl(0_0%_88%)] leading-relaxed">
+                            Sign in with email and password or continue with Google.
+                        </p>
+                        <div className="mt-4 h-px bg-gradient-to-r from-accent/40 via-accent/20 to-transparent" />
+                    </div>
 
                     {status === 'success' ? (
                         <div className="p-6 border border-accent bg-accent/5 text-center space-y-4">
@@ -237,7 +248,7 @@ export default function LoginPage() {
                             <button
                                 type="button"
                                 onClick={handleGoogleOAuth}
-                                className="w-full font-mono text-sm uppercase tracking-widest px-6 py-3 border border-muted text-muted hover:border-foreground hover:text-foreground transition-colors flex items-center justify-center gap-3"
+                                className="w-full font-mono text-[13px] uppercase tracking-[0.12em] px-6 py-4 sm:py-3.5 border-2 border-[hsl(0_0%_90%)] text-[hsl(0_0%_98%)] bg-[hsl(0_0%_100%_/_0.06)] hover:bg-[hsl(0_0%_100%_/_0.12)] hover:border-white active:scale-[0.98] transition-all flex items-center justify-center gap-3 font-semibold shadow-[0_2px_12px_hsl(0_0%_0%_/_0.3)] min-h-[52px] touch-manipulation"
                             >
                                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
@@ -377,7 +388,7 @@ export default function LoginPage() {
                             </form>
                         </div>
                     )}
-                </Container>
+                </div>
             </main>
         </div>
     );
