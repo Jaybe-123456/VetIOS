@@ -169,25 +169,36 @@ export default function SignupPage() {
     }
 
     return (
-        <div className="h-screen w-screen flex flex-col bg-background">
-            <header className="h-12 border-b border-grid flex items-center px-4 shrink-0 bg-dim">
-                <span className="font-mono font-bold tracking-tight text-accent">VET_IOS //</span>
-                <span className="font-mono text-sm text-muted ml-4">V1.0 OMEGA</span>
+        <div className="min-h-screen w-full flex flex-col bg-background">
+            <header className="h-14 border-b border-[hsl(0_0%_100%_/_0.08)] flex items-center justify-between px-5 shrink-0 glass-topbar">
+                <div className="flex items-center gap-3">
+                    <span className="font-mono font-bold tracking-tight text-accent text-base">VET_IOS //</span>
+                    <span className="w-px h-4 bg-[hsl(0_0%_25%)]" />
+                    <span className="font-mono text-[11px] text-[hsl(0_0%_52%)] tracking-[0.18em] uppercase">V1.0 OMEGA</span>
+                </div>
+                <a href="/login" className="font-mono text-[11px] text-[hsl(0_0%_65%)] hover:text-accent transition-colors uppercase tracking-[0.12em]">
+                    Sign In →
+                </a>
             </header>
 
-            <main className="flex-1 flex items-center justify-center">
-                <Container className="max-w-md w-full">
-                    <PageHeader
-                        title="CREATE ACCOUNT"
-                        description="Create an account with email and password or continue with Google."
-                    />
+            <main className="flex-1 flex items-start sm:items-center justify-center py-8 sm:py-12 px-4">
+                <div className="w-full max-w-md mx-auto">
+                    <div className="mb-8">
+                        <h1 className="font-mono text-2xl sm:text-3xl font-bold text-[hsl(0_0%_98%)] tracking-[0.06em] mb-3">
+                            CREATE ACCOUNT
+                        </h1>
+                        <p className="font-mono text-[13px] text-[hsl(0_0%_88%)] leading-relaxed">
+                            Create an account with email and password or continue with Google.
+                        </p>
+                        <div className="mt-4 h-px bg-gradient-to-r from-accent/40 via-accent/20 to-transparent" />
+                    </div>
 
                     {status === 'success' ? (
                         <div className="p-6 border border-accent bg-accent/5 text-center space-y-4">
                             <div className="text-accent font-mono text-sm uppercase tracking-widest">
                                 Account created
                             </div>
-                            <p className="font-mono text-xs text-muted">
+                            <p className="font-mono text-[12px] text-[hsl(0_0%_82%)]">
                                 Redirecting you into the VetIOS console.
                             </p>
                         </div>
@@ -205,12 +216,12 @@ export default function SignupPage() {
                         <div className="space-y-8">
                             <AuthDomainNotice actionLabel="create an account" />
 
-                            <div className="p-4 border border-grid bg-dim/50 space-y-2">
-                                <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
+                            <div className="p-4 border border-[hsl(0_0%_100%_/_0.1)] bg-[hsl(0_0%_100%_/_0.03)] space-y-2 rounded-sm">
+                                <div className="font-mono text-[11px] uppercase tracking-[0.14em] font-medium text-accent">
                                     Account Setup Guidance
                                 </div>
-                                <p className="font-mono text-xs text-muted leading-relaxed">
-                                    Choose <span className="text-foreground">Continue with Google</span> if this account should authenticate through Google or Gmail.
+                                <p className="font-mono text-[12px] text-[hsl(0_0%_86%)] leading-relaxed">
+                                    Choose <span className="text-[hsl(0_0%_98%)] font-semibold">Continue with Google</span> if this account should authenticate through Google or Gmail.
                                     Use the password form only if you want a separate VetIOS password account.
                                 </p>
                             </div>
@@ -218,9 +229,9 @@ export default function SignupPage() {
                             <button
                                 type="button"
                                 onClick={handleGoogleOAuth}
-                                className="w-full font-mono text-sm uppercase tracking-widest px-6 py-3 border border-muted text-muted hover:border-foreground hover:text-foreground transition-colors flex items-center justify-center gap-3"
+                                className="w-full font-mono text-[13px] uppercase tracking-[0.12em] px-6 py-4 sm:py-3.5 border-2 border-[hsl(0_0%_90%)] text-[hsl(0_0%_98%)] bg-[hsl(0_0%_100%_/_0.06)] hover:bg-[hsl(0_0%_100%_/_0.12)] hover:border-white active:scale-[0.98] transition-all flex items-center justify-center gap-3 font-semibold shadow-[0_2px_12px_hsl(0_0%_0%_/_0.3)] min-h-[52px] touch-manipulation"
                             >
-                                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
                                     <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
                                     <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
@@ -230,9 +241,9 @@ export default function SignupPage() {
                             </button>
 
                             <div className="flex items-center gap-4">
-                                <div className="flex-1 h-px bg-grid" />
-                                <span className="font-mono text-xs text-muted uppercase">or create a VetIOS password</span>
-                                <div className="flex-1 h-px bg-grid" />
+                                <div className="flex-1 h-px bg-[hsl(0_0%_28%)]" />
+                                <span className="font-mono text-[11px] text-[hsl(0_0%_72%)] uppercase tracking-[0.1em]">or create a VetIOS password</span>
+                                <div className="flex-1 h-px bg-[hsl(0_0%_28%)]" />
                             </div>
 
                             <form onSubmit={handleEmailPasswordSignup} className="space-y-6">
@@ -248,11 +259,11 @@ export default function SignupPage() {
                                         autoComplete="email"
                                         required
                                     />
-                                    <p className="mt-2 font-mono text-[10px] text-muted leading-relaxed">
+                                    <p className="mt-2 font-mono text-[11px] text-[hsl(0_0%_78%)] leading-relaxed">
                                         This form creates a VetIOS-specific password account for the email you enter.
                                     </p>
                                     {isGoogleEmail && (
-                                        <p className="mt-2 font-mono text-[10px] text-accent leading-relaxed">
+                                        <p className="mt-2 font-mono text-[11px] text-accent leading-relaxed">
                                             Gmail address detected. If you want Google sign-in instead of a separate VetIOS password, use the Google button above.
                                         </p>
                                     )}
@@ -260,11 +271,11 @@ export default function SignupPage() {
 
                                 {isGoogleManagedFlow ? (
                                     <div className="space-y-3">
-                                        <div className="p-4 border border-accent/60 bg-accent/5 space-y-2">
+                                        <div className="p-4 border border-accent/50 bg-accent/8 space-y-2 rounded-sm">
                                             <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
                                                 Google Sign-In Recommended
                                             </div>
-                                            <p className="font-mono text-xs text-muted leading-relaxed">
+                                            <p className="font-mono text-[12px] text-[hsl(0_0%_86%)] leading-relaxed">
                                                 This Gmail address can create a VetIOS account through Google directly,
                                                 which avoids the separate password and CAPTCHA path.
                                             </p>
@@ -272,7 +283,7 @@ export default function SignupPage() {
                                         <button
                                             type="button"
                                             onClick={() => setGmailPasswordOverride(true)}
-                                            className="w-full font-mono text-[10px] uppercase tracking-widest px-4 py-3 border border-grid text-muted hover:border-accent hover:text-accent transition-colors"
+                                            className="w-full font-mono text-[11px] uppercase tracking-[0.1em] px-4 py-3 border border-[hsl(0_0%_30%)] text-[hsl(0_0%_78%)] hover:border-accent hover:text-accent transition-colors min-h-[44px] touch-manipulation"
                                         >
                                             Create a separate VetIOS password instead
                                         </button>
@@ -280,7 +291,7 @@ export default function SignupPage() {
                                 ) : (
                                     <>
                                         {isGoogleEmail && gmailPasswordOverride && (
-                                            <div className="p-4 border border-grid bg-dim/50 space-y-2">
+                                            <div className="p-4 border border-[hsl(0_0%_100%_/_0.1)] bg-[hsl(0_0%_100%_/_0.03)] space-y-2 rounded-sm">
                                                 <div className="font-mono text-[10px] uppercase tracking-widest text-accent">
                                                     Separate Password Mode
                                                 </div>
@@ -321,7 +332,7 @@ export default function SignupPage() {
                                                     {showPassword ? 'Hide' : 'Show'}
                                                 </button>
                                             </div>
-                                            <p className="mt-2 font-mono text-[10px] text-muted">
+                                            <p className="mt-2 font-mono text-[11px] text-[hsl(0_0%_78%)]">
                                                 Use 10+ characters with uppercase, lowercase, number, and symbol.
                                             </p>
                                             {showGooglePasswordWarning && (
@@ -358,7 +369,7 @@ export default function SignupPage() {
 
                                         {captchaRequired && (
                                             <div className="space-y-3">
-                                                <div className="p-3 border border-accent/60 bg-accent/5 font-mono text-[10px] leading-relaxed text-accent">
+                                                <div className="p-3 border border-accent/50 bg-accent/8 font-mono text-[12px] leading-relaxed text-accent font-medium">
                                                     Security verification is required to create an account.
                                                 </div>
                                                 {canRenderCaptcha ? (
@@ -371,7 +382,7 @@ export default function SignupPage() {
                                                             onErrorChange={setCaptchaError}
                                                         />
                                                         {!captchaToken && !captchaError ? (
-                                                            <div className="p-3 border border-grid text-muted font-mono text-[10px] leading-relaxed">
+                                                            <div className="p-3 border border-[hsl(0_0%_28%)] text-[hsl(0_0%_78%)] font-mono text-[11px] leading-relaxed">
                                                                 Loading security challenge...
                                                             </div>
                                                         ) : null}
@@ -389,27 +400,27 @@ export default function SignupPage() {
                                             </div>
                                         )}
 
-                                        <TerminalButton type="submit" disabled={status === 'submitting' || isWaitingOnCaptcha}>
+                                        <button type="submit" disabled={status === 'submitting' || isWaitingOnCaptcha} className="w-full font-mono text-[13px] uppercase tracking-[0.1em] px-6 py-4 sm:py-3.5 border-2 border-accent text-[hsl(0_0%_4%)] bg-accent hover:bg-[hsl(142_76%_40%)] active:scale-[0.98] transition-all flex items-center justify-center gap-2 font-bold min-h-[52px] touch-manipulation shadow-[0_0_20px_hsl(142_76%_46%_/_0.25)] disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none">
                                             {status === 'submitting' ? 'CREATING ACCOUNT...' : 'CREATE VETIOS PASSWORD ACCOUNT'}
-                                        </TerminalButton>
+                                        </button>
                                     </>
                                 )}
 
                                 {status === 'error' && errorMessage && (
-                                    <div className="p-3 border border-danger text-danger font-mono text-xs">
+                                    <div className="p-3 border border-danger text-danger font-mono text-[12px] font-medium">
                                         ERR: {errorMessage}
                                     </div>
                                 )}
                             </form>
 
                             <div className="text-center">
-                                <a href="/login" className="font-mono text-xs text-muted hover:text-accent transition-colors">
+                                <a href="/login" className="font-mono text-[12px] text-[hsl(0_0%_72%)] hover:text-accent transition-colors">
                                     Already have an account? Sign in →
                                 </a>
                             </div>
                         </div>
                     )}
-                </Container>
+                </div>
             </main>
         </div>
     );
