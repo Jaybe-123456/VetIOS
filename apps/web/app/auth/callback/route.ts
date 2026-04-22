@@ -12,8 +12,9 @@ import { createServerClient } from '@supabase/ssr';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { NextResponse, type NextRequest } from 'next/server';
-import { buildVerifyEmailPath, getEmailVerificationState, isLikelyFirstGoogleSignIn } from '@/lib/auth/emailVerification';
-import { beginUserEmailVerification, completeUserEmailVerification } from '@/lib/auth/emailVerificationServer';
+import { buildCompletedEmailVerificationMetadata, buildVerifyEmailPath, getEmailVerificationState, isLikelyFirstGoogleSignIn } from '@/lib/auth/emailVerification';
+import { completeUserEmailVerification } from '@/lib/auth/emailVerificationServer';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 import { buildConfiguredAbsoluteUrl, sanitizeInternalPath, shouldRedirectPreviewAuthHost } from '@/lib/site';
 
 export async function GET(request: NextRequest) {
@@ -77,17 +78,20 @@ export async function GET(request: NextRequest) {
                     }
 
                     if (isLikelyFirstGoogleSignIn(user)) {
-                        await beginUserEmailVerification({
-                            userId: user.id,
-                            email: user.email ?? '',
-                            currentMetadata: user.user_metadata,
-                            nextPath: next,
-                            fallbackOrigin: origin,
-                            source: 'google_oauth',
-                        });
+                        // Google has already verified this email address — no need to
+                        // send a verification email. Mark the account as verified in
+                        // the background (fire-and-forget) so we can redirect immediately
+                        // without blocking the user on an admin API round-trip.
+                        const verifiedMetadata = buildCompletedEmailVerificationMetadata(
+                            user.user_metadata,
+                        );
+                        getSupabaseServer()
+                            .auth.admin.updateUserById(user.id, { user_metadata: verifiedMetadata })
+                            .catch((err: unknown) => {
+                                console.error('Failed to auto-verify Google OAuth user metadata:', err);
+                            });
 
-                        const verifyPath = buildVerifyEmailPath(next);
-                        return NextResponse.redirect(buildAbsoluteRedirectTarget(verifyPath, origin));
+                        return NextResponse.redirect(buildAbsoluteRedirectTarget(next, origin));
                     }
 
                     const verificationState = getEmailVerificationState(user);
