@@ -1,9 +1,32 @@
 import { NextResponse } from 'next/server';
+import { runInference } from '@/lib/ai/provider';
+import { shouldUseAiHeuristicFallback } from '@/lib/ai/config';
 
 export async function POST(req: Request) {
   try {
     const { message } = await req.json();
     const content = message.toLowerCase();
+
+    // ── Real AI Inference (If not in bypass) ──
+    if (!shouldUseAiHeuristicFallback()) {
+        const inferenceResult = await runInference({
+          input_signature: {
+            raw_consultation: message,
+            platform_context: "Ask VetIOS Assistant"
+          }
+        });
+
+        const diagnosis = inferenceResult.output_payload.diagnosis as any;
+        return NextResponse.json({
+          content: diagnosis?.analysis || inferenceResult.raw_content,
+          metadata: {
+            diagnosis_ranked: diagnosis?.top_differentials || [],
+            urgency_level: (inferenceResult.output_payload.risk_assessment as any)?.emergency_level?.toLowerCase() || "medium",
+            recommended_tests: (inferenceResult.output_payload as any).recommended_tests || [],
+            explanation: diagnosis?.ranking_shift_explanation || "Clinical analysis complete."
+          }
+        });
+    }
 
     // Mock thinking delay
     await new Promise(resolve => setTimeout(resolve, 1500));
