@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
     LayoutDashboard,
+    MessageSquare,
     TerminalSquare,
     GraduationCap,
     ShieldAlert,
@@ -18,6 +19,7 @@ import {
 
 const navItems = [
     { name: 'Dashboard',         href: '/dashboard',    icon: LayoutDashboard },
+    { name: 'Ask VetIOS',        href: '/ask-vetios',   icon: MessageSquare   },
     { name: 'Inference Console', href: '/inference',    icon: TerminalSquare  },
     { name: 'Outcome Learning',  href: '/outcome',      icon: GraduationCap   },
     { name: 'Adversarial Sim',   href: '/simulate',     icon: ShieldAlert     },
