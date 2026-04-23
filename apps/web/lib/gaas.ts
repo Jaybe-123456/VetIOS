@@ -12,9 +12,70 @@
 import {
     bootstrapGaaSPlatform,
     type GaaSPlatform,
+    type PlannerFn,
 } from '@vetios/gaas';
 
 let _instance: GaaSPlatform | null = null;
+
+/**
+ * Inline planner — calls the AI provider directly.
+ * Avoids HTTP self-calls which fail in Vercel serverless environment.
+ */
+const inlinePlannerFn: PlannerFn = async (system, messages) => {
+    const safeHold = {
+        reasoning: 'No AI provider configured. Agent completing safely.',
+        is_complete: true as const,
+        completion_summary: 'Agent completed without AI planning — no provider configured.',
+        safety_assessment: 'nominal' as const,
+        needs_human_review: false,
+    };
+
+    const aiApiKey  = process.env.AI_PROVIDER_API_KEY ?? process.env.OPENAI_API_KEY ?? '';
+    const aiBaseUrl = process.env.AI_PROVIDER_BASE_URL;
+    const aiModel   = process.env.AI_PROVIDER_DEFAULT_MODEL ?? 'gpt-4o-mini';
+
+    if (!aiApiKey) return safeHold;
+
+    try {
+        const providerUrl = aiBaseUrl
+            ? `${aiBaseUrl.replace(/\/$/, '')}/chat/completions`
+            : 'https://api.openai.com/v1/chat/completions';
+
+        const res = await fetch(providerUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${aiApiKey}`,
+            },
+            body: JSON.stringify({
+                model: aiModel,
+                max_tokens: 1000,
+                temperature: 0.1,
+                response_format: { type: 'json_object' },
+                messages: [{ role: 'system', content: system }, ...messages],
+            }),
+        });
+
+        if (!res.ok) return safeHold;
+
+        const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const raw = data.choices?.[0]?.message?.content ?? '';
+        if (!raw) return safeHold;
+
+        const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+        return {
+            reasoning: parsed.reasoning ?? 'No reasoning.',
+            next_tool: parsed.next_tool,
+            is_complete: typeof parsed.is_complete === 'boolean' ? parsed.is_complete : false,
+            completion_summary: parsed.completion_summary,
+            safety_assessment: parsed.safety_assessment ?? 'nominal',
+            needs_human_review: typeof parsed.needs_human_review === 'boolean' ? parsed.needs_human_review : false,
+            human_review_reason: parsed.human_review_reason,
+        };
+    } catch {
+        return safeHold;
+    }
+};
 
 export function getGaaSPlatform(): GaaSPlatform {
     if (!_instance) {
@@ -36,11 +97,12 @@ export function getGaaSPlatform(): GaaSPlatform {
                 ? process.env.SUPABASE_SERVICE_ROLE_KEY
                 : undefined,
             notifyOnHITL: async (interrupt) => {
-                // Future: push to Realtime channel or webhook
                 console.log(
                     `[GaaS] HITL interrupt raised: ${interrupt.interrupt_id} — ${interrupt.reason}`
                 );
             },
+            // Inline planner avoids HTTP self-calls which fail in Vercel serverless
+            plannerFn: inlinePlannerFn,
         });
 
         console.log('[GaaS] Platform bootstrapped ✓');

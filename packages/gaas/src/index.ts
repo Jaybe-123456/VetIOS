@@ -30,12 +30,17 @@ export type {
   TenantConfig,
 } from "./types/agent";
 
+export type { PlannerFn } from "./agents/agent-runtime";
+import type { PlannerFn } from "./agents/agent-runtime";
+
 export interface GaaSPlatformConfig {
   vetiosBaseUrl: string;
   authToken: string;
   supabaseUrl?: string;
   supabaseServiceKey?: string;
   notifyOnHITL?: (interrupt: import("./types/agent").HITLInterrupt) => Promise<void>;
+  /** Inject a direct planner function to avoid HTTP self-calls in serverless */
+  plannerFn?: PlannerFn;
 }
 
 export interface GaaSPlatform {
@@ -73,6 +78,7 @@ export function bootstrapGaaSPlatform(config: GaaSPlatformConfig): GaaSPlatform 
   const runtimeConfig: AgentRuntimeConfig = {
     vetiosBaseUrl: config.vetiosBaseUrl,
     authToken: config.authToken,
+    plannerFn: config.plannerFn,
   };
 
   const runtime = new AgentRuntime(runtimeConfig, memoryStore, toolExecutor, hitlManager);
