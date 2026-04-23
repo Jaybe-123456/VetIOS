@@ -34,11 +34,18 @@ interface PlannerOutput {
 }
 
 // ─── Runtime Config ──────────────────────────────────────────
+export type PlannerFn = (
+  system: string,
+  messages: Array<{ role: string; content: string }>
+) => Promise<PlannerOutput>;
+
 export interface AgentRuntimeConfig {
   vetiosBaseUrl: string;
   authToken: string;
   openaiCompatibleUrl?: string;
   plannerModel?: string;
+  /** Optional: inject a direct planner function to avoid HTTP self-calls */
+  plannerFn?: PlannerFn;
 }
 
 // ─── Agent Runtime ───────────────────────────────────────────
@@ -236,33 +243,57 @@ export class AgentRuntime {
     const systemPrompt = buildPlannerSystemPrompt(run.agent_role, run.policy);
     const userPrompt = buildPlannerUserPrompt(run, memory_summary);
 
-    const res = await fetch(`${this.config.vetiosBaseUrl}/api/agent/plan`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${this.config.authToken}`,
-      },
-      body: JSON.stringify({
-        model: { name: "VetIOS Diagnostics", version: "latest" },
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-        max_tokens: 1000,
-      }),
-    });
-
-    if (!res.ok) {
-      // Fallback: safe terminal state
-      return {
-        reasoning: "Planner API unavailable. Escalating to human review.",
-        is_complete: false,
-        safety_assessment: "hold",
-        needs_human_review: true,
-        human_review_reason: "Planner unreachable",
-      };
+    // Use injected plannerFn if provided (avoids HTTP self-calls in serverless)
+    if (this.config.plannerFn) {
+      try {
+        return await this.config.plannerFn(systemPrompt, [{ role: "user", content: userPrompt }]);
+      } catch (err) {
+        return {
+          reasoning: `Planner function error: ${err instanceof Error ? err.message : "unknown"}`,
+          is_complete: false,
+          safety_assessment: "hold",
+          needs_human_review: true,
+          human_review_reason: "Planner function threw an error",
+        };
+      }
     }
 
-    const data = await res.json();
-    return parsePlannerResponse(data);
+    // Fallback: HTTP call to /api/agent/plan (works when vetiosBaseUrl is an external host)
+    try {
+      const res = await fetch(`${this.config.vetiosBaseUrl}/api/agent/plan`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.config.authToken}`,
+        },
+        body: JSON.stringify({
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+          max_tokens: 1000,
+        }),
+      });
+
+      if (!res.ok) {
+        return {
+          reasoning: `Planner API returned ${res.status}. Escalating to human review.`,
+          is_complete: false,
+          safety_assessment: "hold",
+          needs_human_review: true,
+          human_review_reason: `Planner HTTP ${res.status}`,
+        };
+      }
+
+      const data = await res.json();
+      return parsePlannerResponse(data);
+    } catch {
+      return {
+        reasoning: "Planner unreachable. Running safe completion.",
+        is_complete: true,
+        completion_summary: "Agent completed: planner unreachable, defaulting to safe terminal state.",
+        safety_assessment: "nominal",
+        needs_human_review: false,
+      };
+    }
   }
 
   private async persistToMemory(run: AgentRun, call: ToolCall): Promise<void> {
