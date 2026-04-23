@@ -27,8 +27,14 @@ export function getGaaSPlatform(): GaaSPlatform {
                 process.env.VETIOS_AUTH_TOKEN ??
                 process.env.SUPABASE_SERVICE_ROLE_KEY ??
                 '',
-            supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
-            supabaseServiceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+            // Only use Supabase persistence after gaas_* migrations are applied.
+            // Set VETIOS_GAAS_DB=true in Vercel env vars once migrations are done.
+            supabaseUrl: process.env.VETIOS_GAAS_DB === 'true'
+                ? process.env.NEXT_PUBLIC_SUPABASE_URL
+                : undefined,
+            supabaseServiceKey: process.env.VETIOS_GAAS_DB === 'true'
+                ? process.env.SUPABASE_SERVICE_ROLE_KEY
+                : undefined,
             notifyOnHITL: async (interrupt) => {
                 // Future: push to Realtime channel or webhook
                 console.log(
