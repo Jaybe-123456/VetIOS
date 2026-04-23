@@ -68,7 +68,7 @@ export default function SmartActions({ metadata }: SmartActionsProps) {
             )}>{metadata.urgency_level}</span>
           </div>
           <p className="mt-2 font-mono text-[11px] text-white/60 leading-relaxed italic">
-            "{metadata.explanation}"
+            &quot;{metadata.explanation}&quot;
           </p>
         </div>
       </div>
