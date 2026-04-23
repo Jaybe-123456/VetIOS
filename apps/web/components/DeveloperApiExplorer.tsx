@@ -160,8 +160,8 @@ export default function DeveloperApiExplorer({
                                 endpoint === value
                                     ? 'border-accent bg-accent/10 border-l-4 border-l-accent'
                                     : value === '/api/simulate'
-                                        ? 'border-danger/30 hover:border-danger text-muted'
-                                        : 'border-grid hover:border-muted text-muted'
+                                        ? 'border-[hsl(0_0%_28%)] hover:border-danger text-[hsl(0_0%_78%)]'
+                                        : 'border-[hsl(0_0%_28%)] hover:border-[hsl(0_0%_48%)] text-[hsl(0_0%_78%)]'
                             }`}
                         >
                             <span className="font-mono text-xs font-bold tracking-widest uppercase flex items-center gap-2">
@@ -229,7 +229,7 @@ export default function DeveloperApiExplorer({
                                 <div className="font-mono text-xs text-foreground">
                                     {entry.endpoint}
                                 </div>
-                                <div className="font-mono text-[10px] text-muted">
+                                <div className={`font-mono text-[10px] ${entry.status != null && entry.status >= 200 && entry.status < 300 ? 'text-accent' : entry.status != null ? 'text-danger' : 'text-[hsl(0_0%_50%)]'}`}>
                                     {entry.status != null ? formatHttpStatus(entry.status, entry.statusText) : 'Network error'}
                                 </div>
                             </button>
@@ -240,7 +240,7 @@ export default function DeveloperApiExplorer({
 
             <div className="xl:col-span-5 flex flex-col h-full border border-grid bg-background">
                 <div className="flex items-center justify-between p-3 border-b border-grid bg-dim">
-                    <span className="font-mono text-xs text-muted uppercase tracking-widest flex items-center gap-2">
+                    <span className="font-mono text-xs text-foreground uppercase tracking-widest flex items-center gap-2">
                         <Code className="w-4 h-4" /> Request Payload (JSON)
                     </span>
                     <button
@@ -248,7 +248,7 @@ export default function DeveloperApiExplorer({
                         disabled={loading}
                         className={`px-4 py-1.5 font-mono text-[10px] tracking-widest uppercase flex items-center gap-2 transition-colors border ${
                             loading
-                                ? 'border-grid text-muted cursor-not-allowed'
+                                ? 'border-[hsl(0_0%_28%)] text-[hsl(0_0%_50%)] cursor-not-allowed'
                                 : endpoint === '/api/simulate'
                                     ? 'border-danger text-danger hover:bg-danger hover:text-white'
                                     : 'border-accent text-accent hover:bg-accent hover:text-black'
@@ -276,7 +276,7 @@ export default function DeveloperApiExplorer({
 
             <div className="xl:col-span-4 flex flex-col h-full border border-grid bg-black relative">
                 <div className="flex items-center justify-between p-3 border-b border-grid bg-dim relative z-10">
-                    <span className="font-mono text-xs text-muted uppercase tracking-widest">
+                    <span className="font-mono text-xs text-foreground uppercase tracking-widest">
                         Raw System Response
                     </span>
                 </div>

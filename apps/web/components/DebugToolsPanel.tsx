@@ -477,7 +477,7 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                                 type="button"
                                 disabled={isDisabled}
                                 onClick={() => void handleDiagnosticAction(action)}
-                                className="w-full text-left border border-grid p-3 font-mono text-xs uppercase tracking-widest text-muted hover:text-foreground hover:border-muted disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                                className="w-full text-left border border-[hsl(0_0%_32%)] p-3 font-mono text-xs uppercase tracking-widest text-foreground hover:border-[hsl(0_0%_48%)] hover:text-foreground disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-2"
                             >
                                 {isRunning ? <Activity className="w-3 h-3 animate-spin" /> : null}
                                 {action.label}
@@ -494,7 +494,7 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
 
                 <div className="mt-4 border border-grid bg-black/20 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-grid pb-3">
-                        <div className="font-mono text-[10px] uppercase tracking-widest text-muted">
+                        <div className="font-mono text-[11px] uppercase tracking-widest text-foreground">
                             Diagnostic Result
                         </div>
                         {actionState.statusCode != null && (
@@ -506,7 +506,7 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                     </div>
 
                     {actionState.status === 'idle' && (
-                        <div className="pt-4 font-mono text-xs text-muted">
+                        <div className="pt-4 font-mono text-xs text-[hsl(0_0%_62%)]">
                             No diagnostic action has been executed in this session yet.
                         </div>
                     )}
@@ -534,7 +534,7 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
 
                 <div className="mt-4 border border-grid bg-black/20 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-grid pb-3">
-                        <div className="font-mono text-[10px] uppercase tracking-widest text-muted">
+                        <div className="font-mono text-[11px] uppercase tracking-widest text-foreground">
                             Live Telemetry Stream
                         </div>
                         <StatusBadge
@@ -556,7 +556,7 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
                         )}
                         <div className="max-h-[20rem] overflow-y-auto space-y-2">
                             {telemetryEvents.length === 0 ? (
-                                <div className="font-mono text-xs text-muted">
+                                <div className="font-mono text-xs text-[hsl(0_0%_62%)]">
                                     No live telemetry events captured in this session yet.
                                 </div>
                             ) : telemetryEvents.map((event, index) => (
@@ -592,7 +592,7 @@ function DebugDataCard({
 
     return (
         <div className={`border p-3 ${isError ? 'border-danger bg-danger/5' : 'border-grid'}`}>
-            <div className="font-mono text-[10px] uppercase tracking-widest text-muted mb-2">{label}</div>
+            <div className="font-mono text-[11px] uppercase tracking-widest text-foreground mb-2">{label}</div>
 
             {state.status === 'loading' && !state.hasFetched ? (
                 <div className="space-y-2 animate-pulse">
