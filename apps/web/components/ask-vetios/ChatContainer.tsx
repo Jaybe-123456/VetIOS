@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useMemo } from 'react';
 import { useChatStore } from '@/store/useChatStore';
 import ChatBubble from './ChatBubble';
 import { TypingIndicator } from './RecentCases';
@@ -10,8 +10,8 @@ export default function ChatContainer() {
   const { chats, activeChatId, isLoading } = useChatStore();
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const activeChat = chats.find(c => c.id === activeChatId);
-  const messages = activeChat?.messages ?? [];
+  const activeChat = useMemo(() => chats.find(c => c.id === activeChatId), [chats, activeChatId]);
+  const messages = useMemo(() => activeChat?.messages ?? [], [activeChat]);
 
   useEffect(() => {
     if (scrollRef.current) {
