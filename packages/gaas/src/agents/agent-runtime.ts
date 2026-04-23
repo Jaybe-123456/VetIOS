@@ -351,23 +351,43 @@ function getRoleDescription(role: AgentRole): string {
 }
 
 function parsePlannerResponse(data: unknown): PlannerOutput {
-  try {
-    const text =
-      typeof data === "string"
-        ? data
-        : ((data as Record<string, unknown>)?.["choices"] as Array<Record<string, unknown>>)?.[0]?.["message"] as string
-          ?? ((data as Record<string, unknown>)?.["content"] as Array<Record<string, unknown>>)?.[0]?.["text"] as string
-          ?? "";
+  const safeDefault: PlannerOutput = {
+    reasoning: "Could not parse planner response. Defaulting to safe state.",
+    is_complete: false,
+    safety_assessment: "hold",
+    needs_human_review: true,
+    human_review_reason: "Planner response parse failure",
+  };
 
-    const cleaned = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(cleaned) as PlannerOutput;
+  try {
+    if (!data || typeof data !== "object") return safeDefault;
+
+    // Handle our VetIOS envelope: { data: PlannerOutput, meta, error }
+    const envelope = data as Record<string, unknown>;
+    if (envelope["data"] && typeof envelope["data"] === "object") {
+      const inner = envelope["data"] as Record<string, unknown>;
+      if (typeof inner["reasoning"] === "string") {
+        return inner as unknown as PlannerOutput;
+      }
+    }
+
+    // Handle direct PlannerOutput (no envelope)
+    if (typeof (data as Record<string, unknown>)["reasoning"] === "string") {
+      return data as PlannerOutput;
+    }
+
+    // Handle OpenAI-style response: { choices[0].message.content }
+    const choices = envelope["choices"] as Array<Record<string, unknown>> | undefined;
+    const content = choices?.[0]?.["message"] as Record<string, unknown> | undefined;
+    const text = content?.["content"] as string | undefined ?? "";
+    if (text) {
+      const cleaned = text.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(cleaned) as PlannerOutput;
+      if (typeof parsed["reasoning"] === "string") return parsed;
+    }
+
+    return safeDefault;
   } catch {
-    return {
-      reasoning: "Could not parse planner response. Defaulting to safe state.",
-      is_complete: false,
-      safety_assessment: "hold",
-      needs_human_review: true,
-      human_review_reason: "Planner response parse failure",
-    };
+    return safeDefault;
   }
 }
