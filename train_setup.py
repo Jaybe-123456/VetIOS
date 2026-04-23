@@ -8,8 +8,8 @@ from unsloth import Trainer
 from datasets import load_dataset
 
 # Model and tokenizer
-# Use local model path
-model_name = "models/Qwen2.5-0.5B-Instruct"
+# Use local model path or Hugging Face ID
+model_name = "unsloth/Qwen2.5-0.5B-Instruct"
 max_seq_length = 2048
 dtype = None  # Auto detection
 load_in_4bit = True

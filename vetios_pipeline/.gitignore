@@ -1,0 +1,8 @@
+raw_data/
+parsed_text/
+structured_cases/
+checkpoints/
+final_model/
+evaluation/results.json
+downloader.log
+*.log
