@@ -86,9 +86,7 @@ function buildEnsembleResponse(data: Record<string, any>, ensembleMetadata: any)
             mode: 'educational',
             topic: (data.topic as string) || (data.title as string) || 'Veterinary Knowledge',
             content: (data.answer as string) || (data.content as string) || 'No content returned.',
-            metadata: {
-                ensemble_metadata: ensembleMetadata
-            },
+            metadata: null,
         };
     }
 
@@ -103,7 +101,6 @@ function buildEnsembleResponse(data: Record<string, any>, ensembleMetadata: any)
                 recommended_tests: (data.recommended_tests as string[]) || [],
                 red_flags: (data.red_flags as string[]) || [],
                 explanation: (data.explanation as string) || '',
-                ensemble_metadata: ensembleMetadata
             },
         };
     }
@@ -111,9 +108,7 @@ function buildEnsembleResponse(data: Record<string, any>, ensembleMetadata: any)
     return {
         mode: 'general',
         content: (data.answer as string) || (data.content as string) || 'How can I assist you today?',
-        metadata: {
-            ensemble_metadata: ensembleMetadata
-        },
+        metadata: null,
     };
 }
 
