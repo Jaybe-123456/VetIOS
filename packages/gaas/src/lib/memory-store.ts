@@ -110,7 +110,7 @@ export class SupabaseMemoryStore implements MemoryStoreAdapter {
     if (opts.limit) params.set("limit", String(opts.limit));
 
     const res = await fetch(
-      `${this.supabaseUrl}/rest/v1/gaas_patient_memory?${params}`,
+      `${this.supabaseUrl}/rest/v1/patient_memory?${params}`,
       { headers: this.headers() }
     );
     if (!res.ok) throw new Error(`Memory fetch failed: ${res.status}`);
@@ -118,7 +118,7 @@ export class SupabaseMemoryStore implements MemoryStoreAdapter {
   }
 
   async append(entry: Omit<MemoryEntry, "id">): Promise<MemoryEntry> {
-    const res = await fetch(`${this.supabaseUrl}/rest/v1/gaas_patient_memory`, {
+    const res = await fetch(`${this.supabaseUrl}/rest/v1/patient_memory`, {
       method: "POST",
       headers: { ...this.headers(), Prefer: "return=representation" },
       body: JSON.stringify(entry),
@@ -156,7 +156,7 @@ export class SupabaseMemoryStore implements MemoryStoreAdapter {
 
   async clear(patient_id: string): Promise<void> {
     await fetch(
-      `${this.supabaseUrl}/rest/v1/gaas_patient_memory?patient_id=eq.${patient_id}`,
+      `${this.supabaseUrl}/rest/v1/patient_memory?patient_id=eq.${patient_id}`,
       { method: "DELETE", headers: this.headers() }
     );
   }

@@ -34,18 +34,11 @@ interface PlannerOutput {
 }
 
 // ─── Runtime Config ──────────────────────────────────────────
-export type PlannerFn = (
-  system: string,
-  messages: Array<{ role: string; content: string }>
-) => Promise<PlannerOutput>;
-
 export interface AgentRuntimeConfig {
   vetiosBaseUrl: string;
   authToken: string;
   openaiCompatibleUrl?: string;
   plannerModel?: string;
-  /** Optional: inject a direct planner function to avoid HTTP self-calls */
-  plannerFn?: PlannerFn;
 }
 
 // ─── Agent Runtime ───────────────────────────────────────────
@@ -243,57 +236,33 @@ export class AgentRuntime {
     const systemPrompt = buildPlannerSystemPrompt(run.agent_role, run.policy);
     const userPrompt = buildPlannerUserPrompt(run, memory_summary);
 
-    // Use injected plannerFn if provided (avoids HTTP self-calls in serverless)
-    if (this.config.plannerFn) {
-      try {
-        return await this.config.plannerFn(systemPrompt, [{ role: "user", content: userPrompt }]);
-      } catch (err) {
-        return {
-          reasoning: `Planner function error: ${err instanceof Error ? err.message : "unknown"}`,
-          is_complete: false,
-          safety_assessment: "hold",
-          needs_human_review: true,
-          human_review_reason: "Planner function threw an error",
-        };
-      }
-    }
+    const res = await fetch(`${this.config.vetiosBaseUrl}/api/agent/plan`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.config.authToken}`,
+      },
+      body: JSON.stringify({
+        model: { name: "VetIOS Diagnostics", version: "latest" },
+        system: systemPrompt,
+        messages: [{ role: "user", content: userPrompt }],
+        max_tokens: 1000,
+      }),
+    });
 
-    // Fallback: HTTP call to /api/agent/plan (works when vetiosBaseUrl is an external host)
-    try {
-      const res = await fetch(`${this.config.vetiosBaseUrl}/api/agent/plan`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${this.config.authToken}`,
-        },
-        body: JSON.stringify({
-          system: systemPrompt,
-          messages: [{ role: "user", content: userPrompt }],
-          max_tokens: 1000,
-        }),
-      });
-
-      if (!res.ok) {
-        return {
-          reasoning: `Planner API returned ${res.status}. Escalating to human review.`,
-          is_complete: false,
-          safety_assessment: "hold",
-          needs_human_review: true,
-          human_review_reason: `Planner HTTP ${res.status}`,
-        };
-      }
-
-      const data = await res.json();
-      return parsePlannerResponse(data);
-    } catch {
+    if (!res.ok) {
+      // Fallback: safe terminal state
       return {
-        reasoning: "Planner unreachable. Running safe completion.",
-        is_complete: true,
-        completion_summary: "Agent completed: planner unreachable, defaulting to safe terminal state.",
-        safety_assessment: "nominal",
-        needs_human_review: false,
+        reasoning: "Planner API unavailable. Escalating to human review.",
+        is_complete: false,
+        safety_assessment: "hold",
+        needs_human_review: true,
+        human_review_reason: "Planner unreachable",
       };
     }
+
+    const data = await res.json();
+    return parsePlannerResponse(data);
   }
 
   private async persistToMemory(run: AgentRun, call: ToolCall): Promise<void> {
@@ -382,43 +351,23 @@ function getRoleDescription(role: AgentRole): string {
 }
 
 function parsePlannerResponse(data: unknown): PlannerOutput {
-  const safeDefault: PlannerOutput = {
-    reasoning: "Could not parse planner response. Defaulting to safe state.",
-    is_complete: false,
-    safety_assessment: "hold",
-    needs_human_review: true,
-    human_review_reason: "Planner response parse failure",
-  };
-
   try {
-    if (!data || typeof data !== "object") return safeDefault;
+    const text =
+      typeof data === "string"
+        ? data
+        : ((data as Record<string, unknown>)?.["choices"] as Array<Record<string, unknown>>)?.[0]?.["message"] as string
+          ?? ((data as Record<string, unknown>)?.["content"] as Array<Record<string, unknown>>)?.[0]?.["text"] as string
+          ?? "";
 
-    // Handle our VetIOS envelope: { data: PlannerOutput, meta, error }
-    const envelope = data as Record<string, unknown>;
-    if (envelope["data"] && typeof envelope["data"] === "object") {
-      const inner = envelope["data"] as Record<string, unknown>;
-      if (typeof inner["reasoning"] === "string") {
-        return inner as unknown as PlannerOutput;
-      }
-    }
-
-    // Handle direct PlannerOutput (no envelope)
-    if (typeof (data as Record<string, unknown>)["reasoning"] === "string") {
-      return data as PlannerOutput;
-    }
-
-    // Handle OpenAI-style response: { choices[0].message.content }
-    const choices = envelope["choices"] as Array<Record<string, unknown>> | undefined;
-    const content = choices?.[0]?.["message"] as Record<string, unknown> | undefined;
-    const text = content?.["content"] as string | undefined ?? "";
-    if (text) {
-      const cleaned = text.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleaned) as PlannerOutput;
-      if (typeof parsed["reasoning"] === "string") return parsed;
-    }
-
-    return safeDefault;
+    const cleaned = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(cleaned) as PlannerOutput;
   } catch {
-    return safeDefault;
+    return {
+      reasoning: "Could not parse planner response. Defaulting to safe state.",
+      is_complete: false,
+      safety_assessment: "hold",
+      needs_human_review: true,
+      human_review_reason: "Planner response parse failure",
+    };
   }
 }

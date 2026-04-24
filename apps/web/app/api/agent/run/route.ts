@@ -27,8 +27,6 @@ export async function POST(req: Request) {
     try {
         const body = (await req.json()) as RunAgentRequest;
 
-        const validRoles = ['triage','diagnostic','treatment','compliance','followup','billing'];
-
         if (!body.tenant_id || !body.agent_role || !body.patient_context) {
             const res = NextResponse.json(
                 {
@@ -36,23 +34,8 @@ export async function POST(req: Request) {
                     meta: { timestamp: new Date().toISOString(), request_id: requestId },
                     error: {
                         code: 'bad_request',
-                        message: 'Missing required fields: tenant_id, agent_role, patient_context',
-                    },
-                },
-                { status: 400 }
-            );
-            withRequestHeaders(res.headers, requestId, startTime);
-            return res;
-        }
-
-        if (!validRoles.includes(body.agent_role)) {
-            const res = NextResponse.json(
-                {
-                    data: null,
-                    meta: { timestamp: new Date().toISOString(), request_id: requestId },
-                    error: {
-                        code: 'invalid_role',
-                        message: `Invalid agent_role. Must be one of: ${validRoles.join(', ')}`,
+                        message:
+                            'Missing required fields: tenant_id, agent_role, patient_context',
                     },
                 },
                 { status: 400 }
