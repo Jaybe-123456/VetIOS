@@ -90,8 +90,6 @@ export class InMemoryStore implements MemoryStoreAdapter {
 
 // ─── Supabase adapter (production) ───────────────────────────
 export class SupabaseMemoryStore implements MemoryStoreAdapter {
-  private fallback = new InMemoryStore();
-
   constructor(
     private supabaseUrl: string,
     private serviceKey: string
@@ -106,54 +104,39 @@ export class SupabaseMemoryStore implements MemoryStoreAdapter {
   }
 
   async get(patient_id: string, opts: MemoryQueryOptions = {}): Promise<MemoryEntry[]> {
-    try {
-      const params = new URLSearchParams({ patient_id, order: "timestamp.asc" });
-      if (opts.type) params.set("type", `eq.${opts.type}`);
-      if (opts.since) params.set("timestamp", `gte.${opts.since}`);
-      if (opts.limit) params.set("limit", String(opts.limit));
+    const params = new URLSearchParams({ patient_id, order: "timestamp.asc" });
+    if (opts.type) params.set("type", `eq.${opts.type}`);
+    if (opts.since) params.set("timestamp", `gte.${opts.since}`);
+    if (opts.limit) params.set("limit", String(opts.limit));
 
-      const res = await fetch(
-        `${this.supabaseUrl}/rest/v1/patient_memory?${params}`,
-        { headers: this.headers() }
-      );
-      if (!res.ok) throw new Error(`Memory fetch failed: ${res.status}`);
-      return res.json();
-    } catch (error) {
-      this.warnAndFallback("get", error);
-      return this.fallback.get(patient_id, opts);
-    }
+    const res = await fetch(
+      `${this.supabaseUrl}/rest/v1/patient_memory?${params}`,
+      { headers: this.headers() }
+    );
+    if (!res.ok) throw new Error(`Memory fetch failed: ${res.status}`);
+    return res.json();
   }
 
   async append(entry: Omit<MemoryEntry, "id">): Promise<MemoryEntry> {
-    try {
-      const res = await fetch(`${this.supabaseUrl}/rest/v1/patient_memory`, {
-        method: "POST",
-        headers: { ...this.headers(), Prefer: "return=representation" },
-        body: JSON.stringify(entry),
-      });
-      if (!res.ok) throw new Error(`Memory append failed: ${res.status}`);
-      const rows = await res.json();
-      return rows[0];
-    } catch (error) {
-      this.warnAndFallback("append", error);
-      return this.fallback.append(entry);
-    }
+    const res = await fetch(`${this.supabaseUrl}/rest/v1/patient_memory`, {
+      method: "POST",
+      headers: { ...this.headers(), Prefer: "return=representation" },
+      body: JSON.stringify(entry),
+    });
+    if (!res.ok) throw new Error(`Memory append failed: ${res.status}`);
+    const rows = await res.json();
+    return rows[0];
   }
 
   async search(patient_id: string, query: string, top_k = 5): Promise<MemoryEntry[]> {
-    try {
-      // Uses Supabase pgvector full-text search endpoint
-      const res = await fetch(`${this.supabaseUrl}/rest/v1/rpc/search_patient_memory`, {
-        method: "POST",
-        headers: this.headers(),
-        body: JSON.stringify({ p_patient_id: patient_id, p_query: query, p_limit: top_k }),
-      });
-      if (!res.ok) throw new Error(`Memory search failed: ${res.status}`);
-      return res.json();
-    } catch (error) {
-      this.warnAndFallback("search", error);
-      return this.fallback.search(patient_id, query, top_k);
-    }
+    // Uses Supabase pgvector full-text search endpoint
+    const res = await fetch(`${this.supabaseUrl}/rest/v1/rpc/search_patient_memory`, {
+      method: "POST",
+      headers: this.headers(),
+      body: JSON.stringify({ p_patient_id: patient_id, p_query: query, p_limit: top_k }),
+    });
+    if (!res.ok) throw new Error(`Memory search failed: ${res.status}`);
+    return res.json();
   }
 
   async summarize(patient_id: string): Promise<string> {
@@ -172,21 +155,9 @@ export class SupabaseMemoryStore implements MemoryStoreAdapter {
   }
 
   async clear(patient_id: string): Promise<void> {
-    try {
-      await fetch(
-        `${this.supabaseUrl}/rest/v1/patient_memory?patient_id=eq.${patient_id}`,
-        { method: "DELETE", headers: this.headers() }
-      );
-    } catch (error) {
-      this.warnAndFallback("clear", error);
-      await this.fallback.clear(patient_id);
-    }
-  }
-
-  private warnAndFallback(operation: string, error: unknown) {
-    console.warn(
-      `[GaaS] Supabase memory ${operation} unavailable, using in-memory fallback.`,
-      error
+    await fetch(
+      `${this.supabaseUrl}/rest/v1/patient_memory?patient_id=eq.${patient_id}`,
+      { method: "DELETE", headers: this.headers() }
     );
   }
 }

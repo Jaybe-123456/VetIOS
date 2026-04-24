@@ -150,9 +150,7 @@ export class AgentRuntime {
           return run;
         }
 
-        const executedCall = await this.toolExecutor.execute(toolCall, run.policy, {
-          tenantId: run.tenant_id,
-        });
+        const executedCall = await this.toolExecutor.execute(toolCall, run.policy);
         step.tool_call = executedCall;
         step.observation = JSON.stringify(executedCall.output ?? {}, null, 2).slice(0, 500);
 
@@ -222,9 +220,7 @@ export class AgentRuntime {
 
     // Execute pending tool call if it was the hold reason
     if (lastStep?.tool_call?.status === "pending") {
-      const executed = await this.toolExecutor.execute(lastStep.tool_call, run.policy, {
-        tenantId: run.tenant_id,
-      });
+      const executed = await this.toolExecutor.execute(lastStep.tool_call, run.policy);
       executed.approved_by = interrupt.resolved_by ?? undefined;
       executed.approved_at = interrupt.resolved_at ?? undefined;
       lastStep.tool_call = executed;
@@ -356,10 +352,6 @@ function getRoleDescription(role: AgentRole): string {
 
 function parsePlannerResponse(data: unknown): PlannerOutput {
   try {
-    if (isPlannerOutput(data)) {
-      return data;
-    }
-
     const text =
       typeof data === "string"
         ? data
@@ -378,18 +370,4 @@ function parsePlannerResponse(data: unknown): PlannerOutput {
       human_review_reason: "Planner response parse failure",
     };
   }
-}
-
-function isPlannerOutput(value: unknown): value is PlannerOutput {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return false;
-  }
-
-  const candidate = value as Record<string, unknown>;
-  return (
-    typeof candidate.reasoning === "string" &&
-    typeof candidate.is_complete === "boolean" &&
-    typeof candidate.safety_assessment === "string" &&
-    typeof candidate.needs_human_review === "boolean"
-  );
 }
