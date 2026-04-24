@@ -1,16 +1,21 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 
-export type MessageMode = 'educational' | 'clinical' | 'general';
+export type MessageMode = 'educational' | 'clinical' | 'general' | 'operational';
 
 export interface MessageMetadata {
     mode: MessageMode;
     topic?: string;
     diagnosis_ranked?: { name: string; confidence: number; reasoning: string }[];
-    urgency_level?: 'low' | 'moderate' | 'high' | 'emergency';
+    urgency_level?: 'low' | 'moderate' | 'high' | 'critical' | 'emergency';
     recommended_tests?: string[];
     red_flags?: string[];
     explanation?: string;
+    ensemble_metadata?: {
+        openai_status: 'success' | 'failed' | 'disabled';
+        hf_status: 'success' | 'failed' | 'disabled';
+        hf_raw_output?: string;
+    };
 }
 
 export interface Message {

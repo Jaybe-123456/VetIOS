@@ -5,11 +5,18 @@
 
 import type { ToolCall, ToolName, AgentPolicy } from "../types/agent";
 
+export interface ToolExecutionContext {
+  tenantId?: string;
+}
+
 export interface ToolDefinition {
   name: ToolName;
   description: string;
   input_schema: Record<string, { type: string; description: string; required?: boolean }>;
-  executor: (input: Record<string, unknown>) => Promise<Record<string, unknown>>;
+  executor: (
+    input: Record<string, unknown>,
+    context?: ToolExecutionContext
+  ) => Promise<Record<string, unknown>>;
   requires_approval?: boolean;
 }
 
@@ -48,7 +55,8 @@ export class ToolExecutor {
 
   async execute(
     call: ToolCall,
-    policy: AgentPolicy
+    policy: AgentPolicy,
+    context: ToolExecutionContext = {}
   ): Promise<ToolCall> {
     const tool = this.registry.get(call.tool);
     if (!tool) {
@@ -61,7 +69,7 @@ export class ToolExecutor {
 
     const start = Date.now();
     try {
-      const output = await tool.executor(call.input);
+      const output = await tool.executor(call.input, context);
       return { ...call, status: "success", output, latency_ms: Date.now() - start };
     } catch (err) {
       return {
@@ -76,9 +84,19 @@ export class ToolExecutor {
 
 // ─── Built-in Tool Definitions ───────────────────────────────
 export function buildDefaultTools(baseUrl: string, authToken: string): ToolDefinition[] {
-  const headers = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${authToken}`,
+  const buildHeaders = (context?: ToolExecutionContext) => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
+    }
+    if (context?.tenantId) {
+      headers["x-tenant-scope"] = context.tenantId;
+    }
+
+    return headers;
   };
 
   return [
@@ -90,10 +108,10 @@ export function buildDefaultTools(baseUrl: string, authToken: string): ToolDefin
         symptoms: { type: "array", description: "List of symptoms", required: true },
         metadata: { type: "object", description: "Lab values and vitals" },
       },
-      executor: async (input) => {
+      executor: async (input, context) => {
         const res = await fetch(`${baseUrl}/api/inference`, {
           method: "POST",
-          headers,
+          headers: buildHeaders(context),
           body: JSON.stringify({
             model: { name: "VetIOS Diagnostics", version: "latest" },
             input: { input_signature: input },
@@ -110,10 +128,10 @@ export function buildDefaultTools(baseUrl: string, authToken: string): ToolDefin
         label: { type: "string", description: "Confirmed diagnosis label", required: true },
         confidence: { type: "number", description: "Clinician confidence 0-1" },
       },
-      executor: async (input) => {
+      executor: async (input, context) => {
         const res = await fetch(`${baseUrl}/api/outcome`, {
           method: "POST",
-          headers,
+          headers: buildHeaders(context),
           body: JSON.stringify({
             inference_event_id: input.inference_event_id,
             outcome: {
@@ -134,10 +152,10 @@ export function buildDefaultTools(baseUrl: string, authToken: string): ToolDefin
         steps: { type: "number", description: "Simulation steps" },
         mode: { type: "string", description: "Simulation mode: adaptive | fixed" },
       },
-      executor: async (input) => {
+      executor: async (input, context) => {
         const res = await fetch(`${baseUrl}/api/simulate`, {
           method: "POST",
-          headers,
+          headers: buildHeaders(context),
           body: JSON.stringify({
             steps: input.steps ?? 10,
             mode: input.mode ?? "adaptive",

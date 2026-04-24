@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { runInference } from '@/lib/ai/provider';
 import {
     getAiProviderApiKey,
     getAiProviderBaseUrl,
@@ -20,61 +21,6 @@ const RequestSchema = z.object({
         content: z.string().trim().min(1).max(4000),
     })).max(20).default([]),
 });
-
-const SYSTEM_PROMPT = `You are VetIOS — a veterinary clinical intelligence assistant operating inside a professional AI infrastructure platform. You are not a consumer chatbot. You are a clinical expert system.
-
-You have THREE operating modes. Detect the user's intent from their message and respond accordingly.
-
-━━━ MODE DETECTION ━━━
-
-MODE: "educational"
-→ Trigger: User asks WHAT something is, HOW it works, its classification, mechanism, pathogenesis, epidemiology, clinical signs, diagnosis, treatment, prevention, or asks for a research/overview of any veterinary topic, disease, pathogen, drug, or procedure.
-→ Examples: "What is CDV", "Explain parvovirus", "How does FIP develop", "What vaccines exist for distemper", "Describe the pathogenesis of rabies"
-
-MODE: "clinical"
-→ Trigger: User describes a PATIENT with symptoms, signs, age, breed, or asks for differential diagnosis of a presented case.
-→ Examples: "7yr Labrador, vomiting and lethargy", "Cat presenting with dyspnea and pleural effusion", "Dog with seizures and nasal discharge"
-
-MODE: "general"
-→ Trigger: Greetings, platform questions, capability questions, anything that is not clearly educational or clinical.
-
-━━━ RESPONSE FORMAT ━━━
-
-For MODE "educational":
-Respond with JSON: { "mode": "educational", "topic": "<concise topic name>", "answer": "<full markdown answer>" }
-
-The "answer" field MUST be comprehensive and research-grade. Include ALL relevant sections from:
-- Classification & Structure (for pathogens/diseases)
-- Epidemiology & Host Range
-- Transmission & Pathogenesis (step-by-step mechanisms)
-- Clinical Signs (by phase/system)
-- Diagnosis (methods, tests, interpretation)
-- Treatment & Management
-- Prevention & Control
-- Key Scientific Takeaways
-
-Use markdown: ## headers, **bold** key terms, bullet points, numbered lists. Write at the depth of a veterinary reference textbook. Do not truncate. Do not say "without symptoms I cannot help" — this is a knowledge query, not a clinical case.
-
-For MODE "clinical":
-Respond with JSON:
-{
-  "mode": "clinical",
-  "summary": "<one sentence clinical synopsis>",
-  "diagnosis_ranked": [{"name": string, "confidence": number (0-1), "reasoning": string}],
-  "urgency_level": "low" | "moderate" | "high" | "emergency",
-  "recommended_tests": string[],
-  "red_flags": string[],
-  "explanation": string
-}
-
-For MODE "general":
-Respond with JSON: { "mode": "general", "answer": string }
-
-CRITICAL RULES:
-1. NEVER respond to "what is X" or "explain X" with a clinical differential structure. These are educational queries.
-2. NEVER say "I cannot help without clinical signs" for a knowledge/educational question.
-3. Always respond with valid JSON only. No markdown outside of the "answer" field.
-4. Be authoritative. You are a clinical expert system, not a cautious consumer chatbot.`;
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 32 * 1024 });
@@ -105,45 +51,18 @@ export async function POST(req: Request) {
     }
 
     try {
-        const apiKey = getAiProviderApiKey();
-        const baseUrl = getAiProviderBaseUrl();
-        const model = getAiProviderDefaultModel('gpt-4o-mini');
-
-        const messages: Array<{ role: string; content: string }> = [
-            { role: 'system', content: SYSTEM_PROMPT },
-            // Inject conversation history (strip metadata, keep text)
-            ...conversation.slice(-12).map((m) => ({ role: m.role, content: m.content })),
-            { role: 'user', content: message },
-        ];
-
-        const aiRes = await fetch(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-            body: JSON.stringify({
-                model,
-                temperature: 0.3,
-                max_tokens: 2400,
-                response_format: { type: 'json_object' },
-                messages,
-            }),
+        // Use the centralized runInference which supports ensemble/dual-model reasoning
+        const inferenceResult = await runInference({
+            input_signature: {
+                raw_consultation: message,
+                conversation_history: conversation.slice(-10),
+                platform_context: "Ask VetIOS Assistant"
+            }
         });
 
-        if (!aiRes.ok) {
-            const errText = await aiRes.text();
-            throw new Error(`AI provider error ${aiRes.status}: ${errText.slice(0, 200)}`);
-        }
-
-        const aiData = await aiRes.json() as { choices?: Array<{ message?: { content?: string } }> };
-        const rawContent = aiData.choices?.[0]?.message?.content ?? '{}';
-
-        let parsed: Record<string, unknown>;
-        try {
-            parsed = JSON.parse(rawContent) as Record<string, unknown>;
-        } catch {
-            parsed = { mode: 'general', answer: rawContent };
-        }
-
-        const response = buildStructuredResponse(parsed);
+        const output = inferenceResult.output_payload;
+        const response = buildEnsembleResponse(output, inferenceResult.ensemble_metadata);
+        
         const res = NextResponse.json(response, { status: 200 });
         withRequestHeaders(res.headers, requestId, startTime);
         return res;
@@ -151,7 +70,7 @@ export async function POST(req: Request) {
     } catch (error) {
         // Surface fallback on AI failure — still better than a 500
         const fallback = buildHeuristicResponse(message);
-        const res = NextResponse.json({ ...fallback, _fallback: true }, { status: 200 });
+        const res = NextResponse.json({ ...fallback, _fallback: true, _error: error instanceof Error ? error.message : 'Unknown' }, { status: 200 });
         withRequestHeaders(res.headers, requestId, startTime);
         return res;
     }
@@ -159,36 +78,42 @@ export async function POST(req: Request) {
 
 // ── Response normaliser ────────────────────────────────────────────────────
 
-function buildStructuredResponse(data: Record<string, unknown>) {
+function buildEnsembleResponse(data: Record<string, any>, ensembleMetadata: any) {
     const mode = (data.mode as string) || 'general';
 
     if (mode === 'educational') {
         return {
             mode: 'educational',
-            topic: (data.topic as string) || 'Veterinary Knowledge',
-            content: (data.answer as string) || 'No content returned.',
-            metadata: null,
+            topic: (data.topic as string) || (data.title as string) || 'Veterinary Knowledge',
+            content: (data.answer as string) || (data.content as string) || 'No content returned.',
+            metadata: {
+                ensemble_metadata: ensembleMetadata
+            },
         };
     }
 
     if (mode === 'clinical') {
+        const diagnosis = data.diagnosis || data;
         return {
             mode: 'clinical',
-            content: (data.summary as string) || 'Clinical assessment complete.',
+            content: (data.summary as string) || (diagnosis.analysis as string) || 'Clinical assessment complete.',
             metadata: {
-                diagnosis_ranked: (data.diagnosis_ranked as Array<{ name: string; confidence: number; reasoning: string }>) || [],
+                diagnosis_ranked: (data.diagnosis_ranked as any) || (diagnosis.top_differentials as any) || [],
                 urgency_level: (data.urgency_level as string) || 'low',
                 recommended_tests: (data.recommended_tests as string[]) || [],
                 red_flags: (data.red_flags as string[]) || [],
                 explanation: (data.explanation as string) || '',
+                ensemble_metadata: ensembleMetadata
             },
         };
     }
 
     return {
         mode: 'general',
-        content: (data.answer as string) || 'How can I assist you today?',
-        metadata: null,
+        content: (data.answer as string) || (data.content as string) || 'How can I assist you today?',
+        metadata: {
+            ensemble_metadata: ensembleMetadata
+        },
     };
 }
 
@@ -215,19 +140,21 @@ function buildHeuristicResponse(message: string) {
     }
 
     if (isClinical) {
-        return buildStructuredResponse({
+        return {
             mode: 'clinical',
-            summary: 'Clinical signals detected. Running heuristic differential protocol.',
-            diagnosis_ranked: [
-                { name: 'Acute Gastroenteritis', confidence: 0.42, reasoning: 'Most common presentation for GI signs' },
-                { name: 'Systemic Infectious Disease', confidence: 0.28, reasoning: 'Lethargy with multi-system involvement' },
-                { name: 'Metabolic Disorder', confidence: 0.18, reasoning: 'Chronic progression pattern' },
-            ],
-            urgency_level: 'moderate',
-            recommended_tests: ['Complete Blood Count (CBC)', 'Chemistry Panel', 'Urinalysis', 'Abdominal Radiographs'],
-            red_flags: [],
-            explanation: 'Heuristic mode active. Connect AI provider for precision differential ranking.',
-        });
+            content: 'Clinical signals detected. Running heuristic differential protocol.',
+            metadata: {
+                diagnosis_ranked: [
+                    { name: 'Acute Gastroenteritis', probability: 0.42, reasoning: 'Most common presentation for GI signs' },
+                    { name: 'Systemic Infectious Disease', probability: 0.28, reasoning: 'Lethargy with multi-system involvement' },
+                    { name: 'Metabolic Disorder', probability: 0.18, reasoning: 'Chronic progression pattern' },
+                ],
+                urgency_level: 'moderate',
+                recommended_tests: ['Complete Blood Count (CBC)', 'Chemistry Panel', 'Urinalysis', 'Abdominal Radiographs'],
+                red_flags: [],
+                explanation: 'Heuristic mode active. Connect AI provider for precision differential ranking.',
+            }
+        };
     }
 
     return {

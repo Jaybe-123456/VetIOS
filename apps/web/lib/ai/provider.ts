@@ -5,6 +5,10 @@ import {
     getAiProviderApiKey,
     getAiProviderBaseUrl,
     getAiProviderDefaultModel,
+    getHfProviderApiKey,
+    getHfProviderBaseUrl,
+    getHfProviderModel,
+    isHfEnabled,
     shouldUseAiHeuristicFallback,
 } from '@/lib/ai/config';
 
@@ -22,112 +26,83 @@ export interface InferenceOutput {
         original_confidence: number | null;
     }) | null;
     raw_content: string;
+    ensemble_metadata?: {
+        openai_status: 'success' | 'failed' | 'disabled';
+        hf_status: 'success' | 'failed' | 'disabled';
+        hf_raw_output?: string;
+    };
 }
 
 export async function runInference(input: InferenceInput): Promise<InferenceOutput> {
-    const model = input.model || getAiProviderDefaultModel();
+    const primaryModel = input.model || getAiProviderDefaultModel();
     const contradictionResult = detectContradictions(input.input_signature);
 
-    let apiKey: string;
-    try {
-        apiKey = getAiProviderApiKey();
-    } catch (error) {
-        if (shouldUseAiHeuristicFallback()) {
-            return buildFallbackInference(input, contradictionResult, model, error instanceof Error ? error.message : 'Missing API key');
-        }
-        throw error;
+    if (shouldUseAiHeuristicFallback()) {
+        return buildFallbackInference(input, contradictionResult, primaryModel, 'Heuristic fallback enabled');
     }
 
-    const baseUrl = getAiProviderBaseUrl();
+    const closedWorldDiseaseLibrary = getClosedWorldDiseasePromptBlock();
     const signatureOriginal = { ...input.input_signature };
-
     const contradictionBlock = contradictionResult.contradiction_reasons.length > 0
         ? `\n\nCRITICAL: The following contradictions were detected in the input data:\n${contradictionResult.contradiction_reasons.map((reason) => `- ${reason}`).join('\n')}\nYou MUST:\n1. Explicitly acknowledge the contradictions in uncertainty_notes\n2. Lower diagnosis confidence rather than deleting core symptom evidence\n3. Preserve dangerous high-risk hypotheses when multiple high-value signals remain\n4. Widen the differential rather than collapsing into common low-risk explanations`
         : '';
 
-    const closedWorldDiseaseLibrary = getClosedWorldDiseasePromptBlock();
+    const systemPrompt = `You are VetIOS, a veterinary clinical intelligence assistant.
+Your responsibility is to provide either structured clinical diagnostic reasoning or high-level educational clinical knowledge.
 
-    const systemPrompt = `You are the VetIOS Signal Integrity and Diagnostic Correction Layer.
-Your responsibility is to prevent hallucinated signals, enforce clinical truth hierarchy, and correct diagnostic ranking before final output.
+STEP 1: INTENT CLASSIFICATION
+First, classify the user's intent:
+- "clinical": User describes a patient with symptoms (species, age, signs).
+- "educational": User asks what a disease/condition is, its mechanism, epidemiology, treatment, etc.
+- "operational": User asks about VetIOS platform features.
 
-Respond ONLY with valid JSON and EXACTLY these top-level fields:
-1. "diagnosis"
-   - "analysis": detailed reasoning
-   - "primary_condition_class": one of the canonical classes
-   - "condition_class_probabilities": probabilities for each class
-   - "top_differentials": array of { "name": string, "probability": number }
-   - "confidence_score": number 0-1
-2. "correction_layer"
-   - "hallucinated_signals_removed": array of signals stripped because they weren't in input.
-   - "penalties_applied": array of specific penalties triggered (e.g. "Diabetes penalty: missing glucose evidence")
-   - "overrides_triggered": array of specific overrides (e.g. "CKD override: Tier 1 lab dominance")
-   - "ranking_shift_explanation": narrative explanation of consistency check and hierarchy logic.
-   - "correction_applied": boolean flag if any hallucination was cleaned or hierarchy overrode the default.
-3. "mechanism_class"
-   - "label": one of the canonical labels
-   - "confidence": number 0-1
-4. "risk_assessment"
-   - "severity_score": number 0-1
-   - "emergency_level": one of ["CRITICAL", "HIGH", "MODERATE", "LOW"]
-5. "diagnosis_feature_importance": object mapping features to weights
-6. "severity_feature_importance": object mapping features to weights
-7. "uncertainty_notes": array of strings
+STEP 2: RESPONSE MODES
 
----
-CORE PRINCIPLE:
-NO signal may influence diagnosis unless it is explicitly present or logically derived from input.
+--- MODE A: CLINICAL ---
+Trigger: User provides patient data or symptoms.
+Respond with ONLY a valid JSON object:
+{
+  "mode": "clinical",
+  "diagnosis_ranked": [
+    { "name": string, "probability": number, "reasoning": string }
+  ],
+  "urgency_level": "low" | "moderate" | "high" | "emergency",
+  "recommended_tests": string[],
+  "explanation": string
+}
 
-HIERARCHY & WEIGHTING:
-- TIER 1 (LABS/IMAGING): Explicit signals MUST dominate (weight 1.0).
-- input_derived: Logically inferred from input (weight 0.5).
-- ontology_inferred: Generated from knowledge base but NOT in input (weight 0.2). CANNOT be a primary driver.
+--- MODE B: EDUCATIONAL ---
+Trigger: User asks for a definition, mechanism, classification, or research-level overview.
+Respond with ONLY a valid JSON object:
+{
+  "mode": "educational",
+  "answer": string 
+}
 
----
-REASONING STEPS:
+--- MODE C: OPERATIONAL ---
+Trigger: User asks how to use the site.
+Respond with ONLY a valid JSON object:
+{
+  "mode": "operational",
+  "answer": "Instructions on navigating VetIOS."
+}
 
-STEP 1: SIGNAL ORIGIN VALIDATION
-Classify every signal (Explicit, Derived, Inferred). Cap Inferred weights at 0.2.
-
-STEP 2: HALLUCINATION DETECTION
-Scan for signals used in ranking that are ABSENT from input. If detected, remove from drivers and LOG ERROR: "HALLUCINATED SIGNAL DETECTED: [signal_name]".
-
-STEP 3: LAB PRIORITY ENFORCEMENT
-If (BUN ↑ AND Creatinine ↑ AND Isosthenuria) → CKD MUST rank #1 (Prob ≥ 0.5).
-
-STEP 4: NEGATIVE EVIDENCE PENALTY
-Apply -0.3 to -0.5 penalty if defining features are missing (e.g., Diabetes without glucose evidence).
-
-STEP 5: DUAL-SYSTEM GATING (ANTI-COLLAPSE)
-Keep Top 2 organ systems (e.g. Renal vs. Endocrine) active until final ranking. Prevent premature lock.
-
-STEP 6: PRIMARY DRIVER CORRECTION
-Hierarchy: 1. Labs -> 2. Organ markers -> 3. Syndromes -> 4. Symptoms. Generic symptoms (vomiting) are FORBIDDEN as primary drivers.
-
-STEP 7: SYSTEM COHERENCE CHECK
-Reward full-system explanation, penalize partial matches.
-
-STEP 8: RANKING RECONSTRUCTION
-Recalculate probabilities based on validated signals, lab overrides, and penalties.
-
-STEP 9: FAIL-SAFE
-If hallucination influenced top 2 OR labs were underweighted, automatically override and re-calculate internally before output.
-
----
-ADDITIONAL RULES:
-1. CLOSED-WORLD DISEASE LIBRARY: diagnosis.top_differentials MUST contain ONLY exact names from:\n${closedWorldDiseaseLibrary}
-2. Target disease hints in metadata must be ignored.
-3. Contradictions detected below MUST reflect in confidence_score reduction.
+--- CORE PRINCIPLES ---
+- Never return a differential diagnosis structure for educational queries.
+- All clinical diagnosis names in MODE A must come from this library:
+${closedWorldDiseaseLibrary}
+- Reflect detected contradictions in confidence scores:
 ${contradictionBlock}`;
 
+    // Prepare User Message Content (Images/Docs)
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];
     const docs = Array.isArray(signatureOriginal.lab_results) ? signatureOriginal.lab_results : [];
-
     delete signatureOriginal.diagnostic_images;
     delete signatureOriginal.lab_results;
 
     const userPromptText = JSON.stringify(signatureOriginal, null, 2);
-    const isVisionCapable = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision-preview'].some((prefix) => model.startsWith(prefix));
-    const userMessageContent: Array<Record<string, unknown>> = [{ type: 'text', text: userPromptText }];
+    const isVisionCapable = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision-preview'].some((prefix) => primaryModel.startsWith(prefix));
+    const userMessageContent: any[] = [{ type: 'text', text: userPromptText }];
 
     for (const image of images) {
         const img = image as Record<string, unknown>;
@@ -178,104 +153,100 @@ ${contradictionBlock}`;
         }
     }
 
-    let response: Response;
-    try {
-        response = await fetch(`${baseUrl}/chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${apiKey}`,
-            },
-            body: JSON.stringify({
-                model,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userMessageContent },
-                ],
-                temperature: 0.2,
-                max_tokens: 2048,
-                response_format: { type: 'json_object' },
-            }),
-        });
-    } catch (error) {
-        if (shouldUseAiHeuristicFallback()) {
-            return buildFallbackInference(input, contradictionResult, model, error instanceof Error ? error.message : 'Provider connection failure');
+    const primaryRequest = performApiRequest(
+        getAiProviderBaseUrl(),
+        getAiProviderApiKey(),
+        primaryModel,
+        systemPrompt,
+        userMessageContent
+    );
+
+    let hfRequest: Promise<any> | null = null;
+    if (isHfEnabled()) {
+        const hfBaseUrl = getHfProviderBaseUrl();
+        const hfApiKey = getHfProviderApiKey();
+        const hfModel = getHfProviderModel();
+        if (hfBaseUrl && hfApiKey) {
+            hfRequest = performApiRequest(hfBaseUrl, hfApiKey, hfModel, systemPrompt, userMessageContent);
         }
-        throw new Error(`AI provider connection failed: ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    if (!response.ok) {
-        const errorBody = await response.text();
-        if (shouldUseAiHeuristicFallback()) {
-            return buildFallbackInference(input, contradictionResult, model, `Provider returned ${response.status}: ${errorBody}`);
-        }
+    // Execute concurrently
+    const [primaryResult, hfResult] = await Promise.all([
+        primaryRequest.catch(err => ({ error: err.message })),
+        hfRequest ? hfRequest.catch(err => ({ error: err.message })) : Promise.resolve(null)
+    ]);
 
-        if (response.status === 429) {
-            throw new Error(`AI provider rate limited (429). Provider response: ${errorBody}`);
-        }
-        if (response.status === 402 || errorBody.includes('billing')) {
-            throw new Error(`AI provider billing error (${response.status}). Provider response: ${errorBody}`);
-        }
-        throw new Error(`AI provider returned ${response.status}: ${errorBody}`);
+    if ('error' in primaryResult) {
+        return buildFallbackInference(input, contradictionResult, primaryModel, `Primary AI failed: ${primaryResult.error}`);
     }
 
-    const json = (await response.json()) as {
-        choices: Array<{ message: { content: string } }>;
-    };
-    const rawContent = json.choices[0]?.message?.content ?? '';
-
-    let parsed: Record<string, unknown>;
+    const rawContent = primaryResult.choices[0]?.message?.content ?? '';
+    let parsed: Record<string, any>;
     try {
         parsed = JSON.parse(rawContent);
     } catch {
-        if (shouldUseAiHeuristicFallback()) {
-            return buildFallbackInference(input, contradictionResult, model, 'Provider returned non-JSON output');
-        }
         parsed = { raw: rawContent, parse_error: true };
     }
 
-    if (!parsed.diagnosis || typeof parsed.diagnosis !== 'object') {
-        if (shouldUseAiHeuristicFallback()) {
-            return buildFallbackInference(input, contradictionResult, model, 'Provider response missing diagnosis block');
+    // Inject HF validation if available
+    let ensembleMeta: InferenceOutput['ensemble_metadata'] = {
+        openai_status: 'success',
+        hf_status: isHfEnabled() ? (hfResult && !('error' in hfResult) ? 'success' : 'failed') : 'disabled'
+    };
+
+    if (hfResult && !('error' in hfResult)) {
+        ensembleMeta.hf_raw_output = hfResult.choices[0]?.message?.content;
+        // Optional: Perform cross-model comparison or merge results
+        if (parsed.mode === 'clinical' && ensembleMeta.hf_raw_output) {
+            try {
+                const hfParsed = JSON.parse(ensembleMeta.hf_raw_output);
+                parsed.custom_model_validation = hfParsed.diagnosis_ranked?.[0] || null;
+            } catch { /* ignore HF parse errors */ }
         }
-        parsed.diagnosis = {};
     }
 
-    let confidenceScore: number | null = null;
-    const diagnosis = parsed.diagnosis as Record<string, unknown>;
-    if (typeof diagnosis.confidence_score === 'number') {
-        confidenceScore = diagnosis.confidence_score;
-    }
-
-    const confidenceWouldBeCapped = confidenceScore != null && confidenceScore > contradictionResult.confidence_cap;
-    const uncertaintyMetrics =
-        parsed.uncertainty_notes || parsed.uncertainty_metrics
-            ? {
-                notes: Array.isArray(parsed.uncertainty_notes) ? parsed.uncertainty_notes : [],
-                ...(typeof parsed.uncertainty_metrics === 'object'
-                    ? (parsed.uncertainty_metrics as Record<string, unknown>)
-                    : {}),
-            }
-            : null;
+    const confidenceScore = (parsed.diagnosis as any)?.confidence_score ?? null;
 
     return {
         output_payload: parsed,
         confidence_score: confidenceScore,
-        uncertainty_metrics: uncertaintyMetrics,
+        uncertainty_metrics: parsed.uncertainty_notes ? { notes: parsed.uncertainty_notes } : null,
         contradiction_analysis: {
-            contradiction_score: contradictionResult.contradiction_score,
-            contradiction_reasons: contradictionResult.contradiction_reasons,
-            contradiction_details: contradictionResult.contradiction_details,
-            matched_rule_ids: contradictionResult.matched_rule_ids,
-            score_band: contradictionResult.score_band,
-            is_plausible: contradictionResult.is_plausible,
-            confidence_cap: contradictionResult.confidence_cap,
-            confidence_was_capped: confidenceWouldBeCapped,
+            ...contradictionResult,
+            confidence_was_capped: confidenceScore != null && confidenceScore > contradictionResult.confidence_cap,
             original_confidence: confidenceScore,
-            abstain: contradictionResult.abstain,
-        },
+        } as any,
         raw_content: rawContent,
+        ensemble_metadata: ensembleMeta
     };
+}
+
+async function performApiRequest(baseUrl: string, apiKey: string, model: string, systemPrompt: string, userContent: any[]): Promise<any> {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+            model,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userContent },
+            ],
+            temperature: 0.1, // Lower temperature for more consistent clinical results
+            max_tokens: 2048,
+            response_format: { type: 'json_object' },
+        }),
+    });
+
+    if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`API error (${response.status}): ${error}`);
+    }
+
+    return response.json();
 }
 
 function buildFallbackInference(
