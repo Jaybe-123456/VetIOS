@@ -31,7 +31,8 @@
         "../../packages/cire-engine/src/index.ts"
       ]
     },
-    "allowArbitraryExtensions": true
+    "allowArbitraryExtensions": true,
+    "ignoreDeprecations": "6.0"
   },
   "include": [
     "next-env.d.ts",
