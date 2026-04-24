@@ -7,8 +7,9 @@ export interface Message {
   content: string;
   timestamp: number;
   metadata?: {
+    query_type?: 'clinical' | 'educational' | 'general';
     diagnosis_ranked?: { disease: string; probability: number }[];
-    urgency_level?: 'low' | 'medium' | 'high' | 'critical';
+    urgency_level?: 'low' | 'medium' | 'high' | 'critical' | 'info';
     recommended_tests?: string[];
     explanation?: string;
   };
