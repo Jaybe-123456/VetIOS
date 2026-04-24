@@ -7,6 +7,7 @@ import {
   Stethoscope, Brain, Dna, Shield, Syringe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import type { SmartActionType } from '@/hooks/useAskVetIOS';
 
 interface SmartActionsProps {
   metadata: {
@@ -16,6 +17,7 @@ interface SmartActionsProps {
     recommended_tests?: string[];
     explanation?: string;
   };
+  onAction?: (action: SmartActionType) => void;
 }
 
 const urgencyConfig = {
@@ -32,7 +34,7 @@ const probabilityColor = (p: number) =>
 const probabilityBar = (p: number) =>
   p >= 0.6 ? 'bg-red-400' : p >= 0.35 ? 'bg-yellow-400' : 'bg-accent';
 
-export default function SmartActions({ metadata }: SmartActionsProps) {
+export default function SmartActions({ metadata, onAction }: SmartActionsProps) {
   const isEducational = metadata.query_type === 'educational' || metadata.query_type === 'general';
   const urgency = metadata.urgency_level ?? (isEducational ? 'info' : 'low');
   const uc = urgencyConfig[urgency as keyof typeof urgencyConfig] ?? urgencyConfig.low;
@@ -122,22 +124,22 @@ export default function SmartActions({ metadata }: SmartActionsProps) {
       <div className="flex flex-wrap gap-2 pt-1">
         {isEducational ? (
           <>
-            <ActionBtn icon={<Stethoscope className="w-3 h-3" />} label="Run Diagnosis" primary />
-            <ActionBtn icon={<FlaskConical className="w-3 h-3" />} label="View Diagnostics" />
-            <ActionBtn icon={<Microscope className="w-3 h-3" />} label="Research Mode" />
-            <ActionBtn icon={<BookOpen className="w-3 h-3" />} label="Exam Notes" />
-            <ActionBtn icon={<Brain className="w-3 h-3" />} label="Pathogenesis" />
-            <ActionBtn icon={<Dna className="w-3 h-3" />} label="Molecular Basis" />
-            <ActionBtn icon={<Shield className="w-3 h-3" />} label="Prevention" />
-            <ActionBtn icon={<Syringe className="w-3 h-3" />} label="Vaccine Info" />
+            <ActionBtn icon={<Stethoscope className="w-3 h-3" />} label="Run Diagnosis" primary onClick={() => onAction?.('run_diagnosis')} />
+            <ActionBtn icon={<FlaskConical className="w-3 h-3" />} label="View Diagnostics" onClick={() => onAction?.('view_diagnostics')} />
+            <ActionBtn icon={<Microscope className="w-3 h-3" />} label="Research Mode" onClick={() => onAction?.('research_mode')} />
+            <ActionBtn icon={<BookOpen className="w-3 h-3" />} label="Exam Notes" onClick={() => onAction?.('exam_notes')} />
+            <ActionBtn icon={<Brain className="w-3 h-3" />} label="Pathogenesis" onClick={() => onAction?.('pathogenesis')} />
+            <ActionBtn icon={<Dna className="w-3 h-3" />} label="Molecular Basis" onClick={() => onAction?.('molecular_basis')} />
+            <ActionBtn icon={<Shield className="w-3 h-3" />} label="Prevention" onClick={() => onAction?.('prevention')} />
+            <ActionBtn icon={<Syringe className="w-3 h-3" />} label="Vaccine Info" onClick={() => onAction?.('vaccine_info')} />
           </>
         ) : (
           <>
-            <ActionBtn icon={<Play className="w-3 h-3" />} label="Run Inference" primary />
-            <ActionBtn icon={<Plus className="w-3 h-3" />} label="Suggest Tests" />
-            <ActionBtn icon={<Info className="w-3 h-3" />} label="Explain Condition" />
-            <ActionBtn icon={<Brain className="w-3 h-3" />} label="Pathophysiology" />
-            <ActionBtn icon={<FlaskConical className="w-3 h-3" />} label="Lab Interpretation" />
+            <ActionBtn icon={<Play className="w-3 h-3" />} label="Run Inference" primary onClick={() => onAction?.('run_inference')} />
+            <ActionBtn icon={<Plus className="w-3 h-3" />} label="Suggest Tests" onClick={() => onAction?.('suggest_tests')} />
+            <ActionBtn icon={<Info className="w-3 h-3" />} label="Explain Condition" onClick={() => onAction?.('explain_condition')} />
+            <ActionBtn icon={<Brain className="w-3 h-3" />} label="Pathophysiology" onClick={() => onAction?.('pathophysiology')} />
+            <ActionBtn icon={<FlaskConical className="w-3 h-3" />} label="Lab Interpretation" onClick={() => onAction?.('lab_interpretation')} />
           </>
         )}
       </div>
@@ -146,14 +148,16 @@ export default function SmartActions({ metadata }: SmartActionsProps) {
 }
 
 function ActionBtn({
-  icon, label, primary = false,
+  icon, label, primary = false, onClick,
 }: {
   icon: React.ReactNode;
   label: string;
   primary?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
+      onClick={onClick}
       className={cn(
         'px-3 py-1.5 font-mono text-[10px] uppercase tracking-wider',
         'flex items-center gap-1.5 transition-all rounded-sm',

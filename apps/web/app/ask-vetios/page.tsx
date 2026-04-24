@@ -7,10 +7,12 @@ import ChatInput from '@/components/ask-vetios/ChatInput';
 import { DashboardMetrics, AnalyticsChart } from '@/components/ask-vetios/DashboardMetrics';
 import { RecentCases } from '@/components/ask-vetios/RecentCases';
 import { Plus, MessageSquare, History, Search, Bell, Moon, ChevronRight, Share2, Download } from 'lucide-react';
+import { useAskVetIOS } from '@/hooks/useAskVetIOS';
 import { motion } from 'framer-motion';
 
 export default function AskVetIOSPage() {
-  const { createChat, activeChatId, addMessage, setLoading, isLoading, switchChat, chats } = useChatStore();
+  const { createChat, activeChatId, isLoading, switchChat, chats } = useChatStore();
+  const { sendMessage } = useAskVetIOS();
   const [searchQuery, setSearchQuery] = useState('');
 
   // Auto-create first chat if none exists
@@ -22,39 +24,7 @@ export default function AskVetIOSPage() {
     }
   }, [chats, activeChatId, createChat, switchChat]);
 
-  const handleSendMessage = async (content: string) => {
-    if (!activeChatId) return;
-
-    // Add user message
-    addMessage(activeChatId, { role: 'user', content });
-    setLoading(true);
-
-    try {
-      const response = await fetch('/api/ask-vetios', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: content }),
-      });
-
-      const data = await response.json();
-
-      if (data.error) throw new Error(data.error);
-
-      // Add assistant message
-      addMessage(activeChatId, {
-        role: 'assistant',
-        content: data.content,
-        metadata: data.metadata
-      });
-    } catch (error) {
-      addMessage(activeChatId, {
-        role: 'assistant',
-        content: "I apologize, but I encountered an error while processing your request. Please ensure the intelligence gateway is operational."
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  // sendMessage and handleAction come from useAskVetIOS hook
 
   return (
     <div className="flex flex-col h-full bg-[#050505] text-white selection:bg-accent/30">
@@ -119,7 +89,7 @@ export default function AskVetIOSPage() {
             <ChatContainer />
             
             <div className="shrink-0 border-t border-white/5 bg-[#0a0a0a]">
-              <ChatInput onSend={handleSendMessage} disabled={isLoading} />
+              <ChatInput onSend={sendMessage} disabled={isLoading} />
             </div>
           </div>
         </section>

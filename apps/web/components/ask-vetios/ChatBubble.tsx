@@ -6,6 +6,7 @@ import { motion } from 'framer-motion';
 import { TerminalSquare, User } from 'lucide-react';
 import SmartActions from './SmartActions';
 import VetIOSMarkdown from './VetIOSMarkdown';
+import { useAskVetIOS } from '@/hooks/useAskVetIOS';
 
 interface ChatBubbleProps {
   message: Message;
@@ -13,6 +14,7 @@ interface ChatBubbleProps {
 
 export default function ChatBubble({ message }: ChatBubbleProps) {
   const isAssistant = message.role === 'assistant';
+  const { handleAction } = useAskVetIOS();
 
   return (
     <motion.div
@@ -62,7 +64,7 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
         </div>
 
         {isAssistant && message.metadata && (
-          <SmartActions metadata={message.metadata} />
+          <SmartActions metadata={message.metadata} onAction={handleAction} />
         )}
       </div>
     </motion.div>
