@@ -22,7 +22,7 @@ export interface PlatformActor {
     userId: string | null;
     tenantId: string | null;
     role: PlatformRole;
-    authMode: 'jwt' | 'session' | 'dev_bypass' | 'service_account' | 'connector_installation' | 'internal_token';
+    authMode: 'jwt' | 'session' | 'dev_bypass' | 'service_account' | 'connector_installation';
     scopes: string[];
     tenantScope: string | null;
 }

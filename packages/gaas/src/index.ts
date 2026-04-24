@@ -13,12 +13,9 @@ import type { AgentRun } from "./types/agent";
 
 // Re-export API route handlers and types for consumers
 export {
-  executeRunAgent,
   handleRunAgent,
   handleResumeAgent,
   handleListInterrupts,
-  isAgentRole,
-  toAgentRunResponse,
   type RunAgentRequest,
   type ResumeAgentRequest,
 } from "./api/routes";
