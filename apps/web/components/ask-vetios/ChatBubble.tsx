@@ -1,5 +1,7 @@
 'use client';
 
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Message } from '@/store/useChatStore';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
@@ -100,7 +102,7 @@ function inlineFormat(text: string): string {
 
 export default function ChatBubble({ message, onFollowUp }: ChatBubbleProps) {
     const isAssistant = message.role === 'assistant';
-    const mode = message.metadata?.mode;
+    const mode = message.mode || message.metadata?.mode;
     const isEducational = mode === 'educational';
     const hasMetadata = isAssistant && message.metadata;
 
@@ -145,9 +147,18 @@ export default function ChatBubble({ message, onFollowUp }: ChatBubbleProps) {
                             {mode}
                         </span>
                     )}
-                    {isAssistant && isEducational && message.metadata?.topic && (
+
+                    {/* Dual Intelligence Badge */}
+                    {message.metadata?.ensemble_metadata?.hf_status === 'success' && (
+                        <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 font-mono uppercase tracking-tighter border border-blue-500/30 flex items-center gap-1">
+                            <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
+                            Dual_Intel
+                        </span>
+                    )}
+
+                    {isAssistant && isEducational && (message.metadata as any)?.topic && (
                         <span className="font-mono text-[10px] text-accent/50 truncate">
-                            {message.metadata.topic}
+                            {(message.metadata as any).topic}
                         </span>
                     )}
                     <span className="font-mono text-[10px] text-white/20 ml-auto">

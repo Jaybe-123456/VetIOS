@@ -10,6 +10,7 @@
 // ============================================================
 
 import type {
+  AgentRun,
   AgentGoal,
   AgentPolicy,
   AgentRole,
@@ -87,31 +88,32 @@ export interface ResumeAgentRequest {
   modified_input?: Record<string, unknown>;
 }
 
-// ─── Route: POST /api/agent/run ──────────────────────────────
-export async function handleRunAgent(
-  req: RunAgentRequest,
-  runtime: AgentRuntime
-): Promise<AgentRunResponse> {
-  const { tenant_id, agent_role, patient_context, goal, policy_overrides } = req;
+export function isAgentRole(value: string): value is AgentRole {
+  return value in DEFAULT_POLICIES;
+}
 
+export function buildAgentPolicy(
+  agent_role: AgentRole,
+  policy_overrides?: Partial<AgentPolicy>
+): AgentPolicy {
   const basePolicy = DEFAULT_POLICIES[agent_role];
-  const policy: AgentPolicy = { ...basePolicy, ...policy_overrides };
+  return { ...basePolicy, ...policy_overrides };
+}
 
-  const fullGoal: AgentGoal = {
+export function buildAgentGoal(
+  agent_role: AgentRole,
+  patient_context: PatientContext,
+  goal?: Partial<AgentGoal>
+): AgentGoal {
+  return {
     description: `Perform ${agent_role} assessment for patient ${patient_context.patient_id}`,
     success_criteria: ["Produce ranked differential", "All safe terminal criteria met"],
     max_steps: 10,
     ...goal,
   };
+}
 
-  const run = await runtime.startRun({
-    tenant_id,
-    agent_role,
-    goal: fullGoal,
-    policy,
-    patient_context,
-  });
-
+export function toAgentRunResponse(run: AgentRun): AgentRunResponse {
   return {
     run_id: run.run_id,
     status: run.status,
@@ -122,6 +124,34 @@ export async function handleRunAgent(
     result: run.result,
     request_id: `req_${Date.now()}`,
   };
+}
+
+export async function executeRunAgent(
+  req: RunAgentRequest,
+  runtime: AgentRuntime
+): Promise<AgentRun> {
+  const { tenant_id, agent_role, patient_context, goal, policy_overrides } = req;
+
+  if (!isAgentRole(agent_role)) {
+    throw new Error(`Unsupported agent role: ${agent_role}`);
+  }
+
+  return runtime.startRun({
+    tenant_id,
+    agent_role,
+    goal: buildAgentGoal(agent_role, patient_context, goal),
+    policy: buildAgentPolicy(agent_role, policy_overrides),
+    patient_context,
+  });
+}
+
+// ─── Route: POST /api/agent/run ──────────────────────────────
+export async function handleRunAgent(
+  req: RunAgentRequest,
+  runtime: AgentRuntime
+): Promise<AgentRunResponse> {
+  const run = await executeRunAgent(req, runtime);
+  return toAgentRunResponse(run);
 }
 
 // ─── Route: POST /api/agent/resume ───────────────────────────
