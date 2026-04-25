@@ -24,6 +24,8 @@ import {
     type ClinicalSignalSpecificity,
 } from './clinical-signal-ontology';
 import { selectTreatmentProtocol, type TreatmentContext } from '../treatment/treatment-engine';
+import { computeAnatomicalLocalization, getLocalizationMultiplier } from './anatomical-localizer';
+import { routeSyndrome, getSyndromeMultiplier } from './syndrome-router';
 import type {
     AbstainDecision,
     ContradictionAnalysis,
@@ -1497,6 +1499,41 @@ export function runClinicalInferenceEngine(
     applyAdjustments(states, applyImagingPriors(request));
     scoreSymptoms(states, signalProfile, routingSummary);
     applyFelineRespiratoryRouting(states, request, signalProfile, routingSummary);
+
+
+    // ── Anatomical Localization (Layer 1) + Syndrome Routing (Layer 4) ────────
+    // Collect all signals from presenting signs, history, and diagnostic tests
+    const allSignals: string[] = [
+        ...(request.presenting_signs ?? []),
+        ...(request.symptom_vector ?? []),
+        ...((request.history as { owner_observations?: string[] })?.owner_observations ?? []),
+    ];
+
+    // Inject diagnostic test results as named signals for localization
+    const dt = (request.diagnostic_tests ?? {}) as Record<string, Record<string, string>>;
+    if (dt.serology?.clostridium_enterotoxin_elisa === 'positive') allSignals.push('clostridium_enterotoxin_elisa_positive');
+    if (dt.serology?.parvovirus_antigen === 'positive') allSignals.push('parvovirus_antigen_positive');
+    if (dt.cytology?.fecal_gram_positive_rods === 'present') allSignals.push('fecal_gram_positive_rods');
+    if (dt.serology?.spec_cpl === 'elevated') allSignals.push('spec_cpl_elevated');
+    if (dt.cytology?.abdominocentesis === 'septic_exudate') allSignals.push('abdominocentesis_septic_exudate');
+    if (dt.ultrasound?.whirlpool_sign === 'present') allSignals.push('whirlpool_sign');
+
+    const historyStr = String((request.history as { dietary_history?: string })?.dietary_history ?? '');
+    if (historyStr.toLowerCase().includes('spoiled') || historyStr.toLowerCase().includes('meat')) {
+        allSignals.push('spoiled_meat_ingestion');
+    }
+
+    const localization = computeAnatomicalLocalization(allSignals);
+    const syndrome = routeSyndrome(allSignals);
+
+    // Apply combined multiplier: localization (60%) + syndrome (40%)
+    for (const [conditionId, state] of states.entries()) {
+        const locMult = getLocalizationMultiplier(conditionId, localization);
+        const synMult = getSyndromeMultiplier(conditionId, syndrome);
+        const combinedMult = (locMult * 0.60) + (synMult * 0.40);
+        state.score = Math.max(0, Number((state.score * combinedMult).toFixed(3)));
+    }
+    // ──────────────────────────────────────────────────────────────────────────
 
     let differentials = buildDifferentials(states);
     const plausibility = applyEtiologicalPlausibilityGate(differentials, request);
