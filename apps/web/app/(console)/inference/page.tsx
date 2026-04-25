@@ -894,7 +894,7 @@ export default function InferenceConsole() {
                                                         <span>{(f.impact * 100).toFixed(0)}</span>
                                                     </div>
                                                     <div className="w-full h-[2px] bg-dim">
-                                                        <div className="bg-accent h-full" style={{ width: `${f.impact * 100}%`, opacity: f.impact }} />
+                                                        <div className="bg-accent h-full" style={{ width: `${f.impact * 100}%` }} />
                                                     </div>
                                                 </div>
                                             ))}
@@ -910,7 +910,7 @@ export default function InferenceConsole() {
                                                         <span>{(f.impact * 100).toFixed(0)}</span>
                                                     </div>
                                                     <div className="w-full h-[2px] bg-dim">
-                                                        <div className="bg-orange-500 h-full" style={{ width: `${f.impact * 100}%`, opacity: f.impact }} />
+                                                        <div className="bg-orange-500 h-full" style={{ width: `${f.impact * 100}%` }} />
                                                     </div>
                                                 </div>
                                             ))}
@@ -948,7 +948,7 @@ export default function InferenceConsole() {
                                                     <div className="h-full bg-accent" style={{ width: `${state.riskModelOutput.catastrophic_deterioration_risk_6h * 100}%` }} />
                                                 </div>
                                             </div>
-                                            <p className="mt-4 text-[10px] text-muted font-mono uppercase truncate opacity-50">
+                                            <p className="mt-4 text-[10px] text-muted font-mono uppercase truncate">
                                                 {state.riskModelOutput.definition}
                                             </p>
                                         </ConsoleCard>
