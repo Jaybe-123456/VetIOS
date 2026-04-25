@@ -115,6 +115,28 @@ const PATHOGNOMIC_CONFIG: Record<string, PathognomonicConditionConfig> = {
             'Start enteral nutrition as soon as vomiting is controlled',
         ],
     },
+    clostridial_enterotoxicosis: {
+        condition_id: 'clostridial_enterotoxicosis',
+        exclusions: [
+            { condition: 'Septic Peritonitis', reason: 'Excluded: positive Clostridium enterotoxin ELISA confirms toxin-mediated large-bowel disease; no peritoneal signs present' },
+            { condition: 'Mesenteric Volvulus', reason: 'Excluded: stable patient without shock or abdominal distension; positive toxin assay confirms enterotoxicosis' },
+            { condition: 'Acute Pancreatitis', reason: 'Excluded: large-bowel signal pattern with positive clostridial toxin is inconsistent with primary pancreatic disease' },
+            { condition: 'Gastric Dilatation-Volvulus', reason: 'Excluded: no unproductive retching or gastric distension; positive enterotoxin assay explains the presentation' },
+            { condition: 'Intestinal Obstruction', reason: 'Excluded: hematochezia-dominant large-bowel pattern with positive clostridial toxin excludes mechanical obstruction' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'acute_hemorrhagic_diarrhea_syndrome', probability: 0.18, relationship_type: 'co-morbidity' },
+            { condition_id: 'infectious_colitis', probability: 0.12, relationship_type: 'secondary' },
+            { condition_id: 'dietary_enterocolitis', probability: 0.10, relationship_type: 'co-morbidity' },
+        ],
+        recommended_next_steps: [
+            'Initiate IV fluid therapy to correct dehydration',
+            'Begin metronidazole or amoxicillin-clavulanate for clostridial overgrowth',
+            'Withhold food for 12-24 hours then introduce bland diet',
+            'Monitor PCV and total protein every 6-8 hours',
+            'Consider probiotics after antibiotic course',
+        ],
+    },
     diabetes_mellitus_canine: {
         condition_id: 'diabetes_mellitus_canine',
         exclusions: [],
