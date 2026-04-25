@@ -10,6 +10,9 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { safeJson } from '@/lib/http/safeJson';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { z } from 'zod';
+import { generateFingerprint, attachResponseFingerprint, hashContent } from '@/lib/protection/fingerprint';
+import { writeAuditLog, buildAuditContext } from '@/lib/protection/auditLog';
+import { checkOrigin, buildCorsHeaders } from '@/lib/protection/originGuard';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -22,10 +25,25 @@ const RequestSchema = z.object({
     })).max(20).default([]),
 });
 
+export async function OPTIONS(req: Request) {
+    const origin = req.headers.get('origin');
+    const res = new Response(null, { status: 204 });
+    Object.entries(buildCorsHeaders(origin)).forEach(([k, v]) => res.headers.set(k, v));
+    return res;
+}
+
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 32 * 1024 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
+
+    // ── Origin enforcement ──
+    const auditCtx = buildAuditContext(req);
+    const originCheck = checkOrigin(req, requestId);
+    if (!originCheck.allowed) {
+        writeAuditLog({ ...auditCtx, request_id: requestId, tenant_id: null, status_code: 403, latency_ms: Date.now() - startTime, blocked: true, block_reason: 'origin_forbidden', timestamp: new Date().toISOString() });
+        return originCheck.response!;
+    }
 
     const parsedJson = await safeJson(req);
     if (!parsedJson.ok) {
@@ -45,8 +63,12 @@ export async function POST(req: Request) {
 
     // ── Heuristic fallback (dev / test) ──
     if (shouldUseAiHeuristicFallback()) {
-        const res = NextResponse.json(buildHeuristicResponse(message), { status: 200 });
+        const heuristicBody = buildHeuristicResponse(message);
+        const fp = generateFingerprint({ tenantId: 'vetios-platform', requestId, endpoint: auditCtx.endpoint, issuedAt: startTime });
+        writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, fingerprint: fp, mode: heuristicBody.mode, metadata: { heuristic: true }, timestamp: new Date().toISOString() });
+        const res = NextResponse.json(attachResponseFingerprint(heuristicBody as Record<string, unknown>, fp), { status: 200 });
         withRequestHeaders(res.headers, requestId, startTime);
+        res.headers.set('x-vetios-fingerprint', fp);
         return res;
     }
 
@@ -70,7 +92,8 @@ export async function POST(req: Request) {
     } catch (error) {
         // Surface fallback on AI failure — still better than a 500
         const fallback = buildHeuristicResponse(message);
-        const res = NextResponse.json({ ...fallback, _fallback: true, _error: error instanceof Error ? error.message : 'Unknown' }, { status: 200 });
+        writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, metadata: { fallback: true, error: error instanceof Error ? error.message : 'Unknown' }, timestamp: new Date().toISOString() });
+        const res = NextResponse.json({ ...fallback, _fallback: true }, { status: 200 });
         withRequestHeaders(res.headers, requestId, startTime);
         return res;
     }
