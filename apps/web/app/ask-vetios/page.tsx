@@ -36,7 +36,7 @@ export default function AskVetIOSPage() {
         // Capture history before adding new message
         const activeChat = chats.find(c => c.id === activeChatId);
         const history = (activeChat?.messages ?? [])
-            .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim().length > 0)
+            .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim().length > 0 && m.content.trim().length <= 4000)
             .slice(-16)
             .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 

@@ -54,7 +54,7 @@ export async function POST(req: Request) {
 
     const parsed = RequestSchema.safeParse(parsedJson.data);
     if (!parsed.success) {
-        const res = NextResponse.json({ error: 'Invalid request', request_id: requestId }, { status: 400 });
+        const res = NextResponse.json({ error: 'Invalid request', details: parsed.error.flatten(), request_id: requestId }, { status: 400 });
         withRequestHeaders(res.headers, requestId, startTime);
         return res;
     }
