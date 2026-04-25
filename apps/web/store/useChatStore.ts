@@ -37,6 +37,8 @@ interface ChatState {
     chats: Chat[];
     activeChatId: string | null;
     isLoading: boolean;
+    username: string | null;
+    setUsername: (username: string | null) => void;
     addMessage: (chatId: string, message: Omit<Message, 'id' | 'timestamp'>) => void;
     createChat: (title?: string) => string;
     deleteChat: (chatId: string) => void;
@@ -52,6 +54,8 @@ export const useChatStore = create<ChatState>()(
             chats: [],
             activeChatId: null,
             isLoading: false,
+            username: null,
+            setUsername: (username) => set({ username }),
 
             setLoading: (loading) => set({ isLoading: loading }),
 
