@@ -281,6 +281,50 @@ function normalizeFromText(raw: string): NormalizedInput {
     if (/positive parvovirus antigen|parvo positive/i.test(raw)) serology.parvovirus_antigen = 'positive';
     if (Object.keys(serology).length > 0) diagnostic_tests.serology = serology;
 
+    // ── GI / Large-Bowel Signal Extraction ──────────────────────────────────
+    // Serology: Clostridium enterotoxin ELISA
+    if (/positive clostridium enterotoxin|clostridium.*elisa.*positive|enterotoxin.*positive|clostridial.*toxin.*positive/i.test(raw)) {
+        (diagnostic_tests.serology as Record<string, unknown> ?? (diagnostic_tests.serology = {}));
+        (diagnostic_tests.serology as Record<string, unknown>).clostridium_enterotoxin_elisa = 'positive';
+    }
+    if (/negative parvovirus|parvo.*negative|parvovirus.*negative/i.test(raw)) {
+        (diagnostic_tests.serology as Record<string, unknown> ?? (diagnostic_tests.serology = {}));
+        (diagnostic_tests.serology as Record<string, unknown>).parvovirus_antigen = 'negative';
+    }
+    if (/negative giardia|giardia.*negative/i.test(raw)) {
+        (diagnostic_tests.serology as Record<string, unknown> ?? (diagnostic_tests.serology = {}));
+        (diagnostic_tests.serology as Record<string, unknown>).giardia_antigen = 'negative';
+    }
+
+    // Cytology: fecal gram-positive rods
+    const cytology: Record<string, unknown> = {};
+    if (/gram.positive rods|gram+.*rods|gram positive rods.*fecal|fecal.*gram.positive/i.test(raw)) {
+        cytology.fecal_gram_positive_rods = 'present';
+    }
+    if (Object.keys(cytology).length > 0) diagnostic_tests.cytology = cytology;
+
+    // Presenting signs: large-bowel specific
+    const giSignals: string[] = [];
+    if (/hematochezia|fresh.*blood.*stool|blood.*stool.*fresh|bright.*red.*blood.*stool/i.test(raw)) giSignals.push('hematochezia');
+    if (/tenesmus|straining.*defecate|straining.*stool/i.test(raw)) giSignals.push('tenesmus');
+    if (/mucus.*stool|mucus.*feces|stool.*mucus|mucoid.*stool/i.test(raw)) giSignals.push('mucus_in_stool');
+    if (/bloody diarrhea|hemorrhagic diarrhea|blood.*diarrhea/i.test(raw)) giSignals.push('bloody_diarrhea');
+    if (/hematochezia|fresh blood/i.test(raw) && /mucus/i.test(raw)) giSignals.push('colitis');
+
+    // Dietary history
+    if (/spoiled meat|garbage|contaminated food|dietary indiscretion|ate.*spoiled|spoiled.*food/i.test(raw)) {
+        (metadata.history as Record<string, unknown>).dietary_history = 'spoiled_meat_ingestion';
+        giSignals.push('spoiled_meat_ingestion');
+    }
+
+    // CBC: hemoconcentration
+    if (/packed cell volume.*[6-9][0-9]|pcv.*[6-9][0-9]|hemoconcentration|hemoconcentrated/i.test(raw)) {
+        const cbc2 = (diagnostic_tests.cbc as Record<string, unknown>) ?? {};
+        cbc2.packed_cell_volume = 'hemoconcentration';
+        diagnostic_tests.cbc = cbc2;
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const cbc: Record<string, unknown> = {};
     if (/severe thrombocytopenia/i.test(raw)) cbc.thrombocytopenia = 'severe';
     else if (/thrombocytopenia/i.test(raw)) cbc.thrombocytopenia = 'mild';
@@ -352,7 +396,10 @@ function normalizeFromText(raw: string): NormalizedInput {
         species,
         breed,
         symptoms,
-        presenting_signs: symptoms.map((entry) => entry.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')),
+        presenting_signs: [
+            ...symptoms.map((entry) => entry.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')),
+            ...giSignals.filter((s) => !symptoms.map((e) => e.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')).includes(s)),
+        ],
         history,
         preventive_history,
         diagnostic_tests,
