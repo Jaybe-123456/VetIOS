@@ -36,7 +36,7 @@ export default function AskVetIOSPage() {
         // Capture history before adding new message
         const activeChat = chats.find(c => c.id === activeChatId);
         const history = (activeChat?.messages ?? [])
-            .filter(m => m.role === 'user' || m.role === 'assistant')
+            .filter(m => (m.role === 'user' || m.role === 'assistant') && m.content.trim().length > 0)
             .slice(-16)
             .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
 
@@ -65,10 +65,11 @@ export default function AskVetIOSPage() {
                     ...(data.metadata as object ?? {}),
                 },
             });
-        } catch {
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Intelligence gateway error. Please check that the AI provider key is configured and the gateway is operational.';
             addMessage(activeChatId, {
                 role: 'assistant',
-                content: 'Intelligence gateway error. Please check that the AI provider key is configured and the gateway is operational.',
+                content: msg,
                 metadata: { mode: 'general' },
             });
         } finally {
