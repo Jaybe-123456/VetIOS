@@ -313,7 +313,7 @@ function normalizeFromText(raw: string): NormalizedInput {
 
     // Dietary history
     if (/spoiled meat|garbage|contaminated food|dietary indiscretion|ate.*spoiled|spoiled.*food/i.test(raw)) {
-        (metadata.history as Record<string, unknown>).dietary_history = 'spoiled_meat_ingestion';
+        history.dietary_history = 'spoiled_meat_ingestion';
         giSignals.push('spoiled_meat_ingestion');
     }
 
