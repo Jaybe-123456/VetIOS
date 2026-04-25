@@ -74,11 +74,19 @@ export async function POST(req: Request) {
 
     try {
         // Use the centralized runInference which supports ensemble/dual-model reasoning
+        // Build conversation context string for the AI
+        const conversationContext = conversation.slice(-10)
+            .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+            .join('\n');
+
         const inferenceResult = await runInference({
             input_signature: {
-                raw_consultation: message,
-                conversation_history: conversation.slice(-10),
-                platform_context: "Ask VetIOS Assistant"
+                // Pass the raw user message as a direct text query — not wrapped in JSON
+                // so the AI receives it as a plain question, not a JSON object to parse
+                raw_consultation: conversation.length > 0
+                    ? `CONVERSATION CONTEXT:\n${conversationContext}\n\nCURRENT QUERY: ${message}`
+                    : message,
+                query_type: 'ask_vetios',
             }
         });
 
@@ -101,25 +109,41 @@ export async function POST(req: Request) {
 
 // ── Response normaliser ────────────────────────────────────────────────────
 
-function buildEnsembleResponse(data: Record<string, any>, ensembleMetadata: any) {
+function buildEnsembleResponse(data: Record<string, unknown>, _ensembleMetadata: unknown) {
     const mode = (data.mode as string) || 'general';
 
-    if (mode === 'educational') {
+    // 'operational' is a legacy mode — if the content is veterinary, treat as educational
+    if (mode === 'educational' || mode === 'operational') {
+        const answer = (data.answer as string) || (data.content as string) || '';
+        const isNavigationResponse = answer.toLowerCase().includes('navigating vetios') ||
+            answer.toLowerCase().includes('instructions on') ||
+            answer.length < 80;
+
+        if (!isNavigationResponse && answer.length > 0) {
+            return {
+                mode: 'educational',
+                topic: extractTopic(data),
+                content: answer,
+                metadata: null,
+            };
+        }
+
+        // Genuine operational query — return general mode
         return {
-            mode: 'educational',
-            topic: (data.topic as string) || (data.title as string) || 'Veterinary Knowledge',
-            content: (data.answer as string) || (data.content as string) || 'No content returned.',
+            mode: 'general',
+            content: 'I can help you navigate VetIOS or answer any veterinary question. What would you like to know?',
             metadata: null,
         };
     }
 
     if (mode === 'clinical') {
-        const diagnosis = data.diagnosis || data;
+        const diagnosis = (data.diagnosis as Record<string, unknown>) || data;
         return {
             mode: 'clinical',
             content: (data.summary as string) || (diagnosis.analysis as string) || 'Clinical assessment complete.',
             metadata: {
-                diagnosis_ranked: (data.diagnosis_ranked as any) || (diagnosis.top_differentials as any) || [],
+                diagnosis_ranked: (data.diagnosis_ranked as Array<{name: string; confidence: number; reasoning: string}>) ||
+                    (diagnosis.top_differentials as Array<{name: string; confidence: number; reasoning: string}>) || [],
                 urgency_level: (data.urgency_level as string) || 'low',
                 recommended_tests: (data.recommended_tests as string[]) || [],
                 red_flags: (data.red_flags as string[]) || [],
@@ -133,6 +157,23 @@ function buildEnsembleResponse(data: Record<string, any>, ensembleMetadata: any)
         content: (data.answer as string) || (data.content as string) || 'How can I assist you today?',
         metadata: null,
     };
+}
+
+function extractTopic(data: Record<string, unknown>): string {
+    const raw = (data.topic as string) || (data.title as string) || '';
+    // Reject generic fallback strings the AI sometimes emits
+    const genericStrings = ['veterinary knowledge', 'veterinary topic', 'general', 'unknown', ''];
+    if (raw && !genericStrings.includes(raw.toLowerCase().trim())) {
+        return raw;
+    }
+    // Try to extract from the answer itself
+    const answer = (data.answer as string) || '';
+    const firstLine = answer.split('\n')[0] ?? '';
+    const h1Match = firstLine.match(/^#+\s+(.+)/);
+    if (h1Match?.[1]) return h1Match[1].trim();
+    const capsMatch = answer.match(/^([A-Z][^,.(]{2,50}?)(?:\s+(?:is|are|refers|belongs|commonly)\b)/);
+    if (capsMatch?.[1]) return capsMatch[1].trim();
+    return raw || 'Veterinary Knowledge';
 }
 
 // ── Heuristic fallback (no AI key / dev mode) ─────────────────────────────

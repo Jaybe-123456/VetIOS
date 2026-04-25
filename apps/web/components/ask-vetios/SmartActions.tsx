@@ -421,6 +421,26 @@ export default function SmartActions({ metadata, messageContent, onFollowUp }: S
 }
 
 function extractTopicFromContent(content: string): string {
-    const words = content.split(/\s+/);
-    return words.slice(0, 6).join(' ') || 'this topic';
+    // Try to extract a real disease/condition name from the response content.
+    // The first sentence usually follows patterns like "X is a...", "X, also known as..."
+    const firstSentence = content.split(/[.!?]/)[0] ?? '';
+
+    // Pattern: "Disease Name is a..." or "Disease Name, also known as..."
+    const namedMatch = firstSentence.match(/^([A-Z][^,.(]{2,60}?)(?:\s+(?:is|are|also|refers|belongs|commonly|primarily)\b)/);
+    if (namedMatch?.[1]) {
+        const candidate = namedMatch[1].trim();
+        const genericOpeners = ['The ', 'This ', 'In ', 'It ', 'There ', 'These '];
+        if (candidate.length >= 3 && !genericOpeners.some(p => candidate.startsWith(p))) {
+            return candidate;
+        }
+    }
+
+    // Pattern: leading capitalised multi-word phrase (e.g. "Canine Distemper Virus is...")
+    const capsMatch = firstSentence.match(/^((?:[A-Z][a-z]+\s+){1,4}[A-Z][a-z]+)/);
+    if (capsMatch?.[1] && capsMatch[1].trim().split(' ').length <= 5) {
+        return capsMatch[1].trim();
+    }
+
+    // Fallback: first 4 words
+    return content.split(/\s+/).slice(0, 4).join(' ') || 'this topic';
 }
