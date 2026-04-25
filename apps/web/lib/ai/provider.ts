@@ -179,7 +179,7 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
 3. NEVER use "Veterinary Knowledge" as a topic name — always extract the specific subject
 4. ALWAYS respond with valid JSON only — no markdown or text outside the JSON object
 5. For follow-up queries about a previously discussed topic, infer the topic from conversation context
-6. If a query contains "for [X]" or "of [X]" or "about [X]" where X is a veterinary term — that IS educational mode\`;
+6. If a query contains "for [X]" or "of [X]" or "about [X]" where X is a veterinary term — that IS educational mode`;
 
     // Prepare User Message Content (Images/Docs)
     const images = Array.isArray(signatureOriginal.diagnostic_images) ? signatureOriginal.diagnostic_images : [];

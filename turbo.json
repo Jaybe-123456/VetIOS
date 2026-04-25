@@ -45,7 +45,8 @@
         "VETIOS_ADMIN_EMAIL",
         "NEXT_PUBLIC_VETIOS_DEV_BYPASS",
         "DEBUG_INFERENCE",
-        "NODE_ENV"
+        "NODE_ENV",
+        "VETIOS_FINGERPRINT_KEY"
     ],
     "tasks": {
         "build": {
@@ -94,7 +95,8 @@
                 "VETIOS_ADMIN_EMAIL",
                 "NEXT_PUBLIC_VETIOS_DEV_BYPASS",
                 "DEBUG_INFERENCE",
-                "NODE_ENV"
+                "NODE_ENV",
+                "VETIOS_FINGERPRINT_KEY"
             ],
             "outputs": [
                 ".next/**",
