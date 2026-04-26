@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runInference } from '@/lib/ai/provider';
+import { embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
+import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import {
     getAiProviderApiKey,
     getAiProviderBaseUrl,
@@ -79,14 +81,30 @@ export async function POST(req: Request) {
             .map(m => `${m.role.toUpperCase()}: ${m.content}`)
             .join('\n');
 
+        // ── RAG: retrieve similar historical cases ──────────────────────────
+        let ragContextBlock = '';
+        try {
+            const vs = getVectorStore();
+            const qe = await embedQuery(message);
+            const similar = await vs.findSimilar({ embedding: qe, limit: 6, minSimilarity: 0.74 });
+            if (similar.totalFound > 0) {
+                ragContextBlock = similar.retrievalSummary;
+                // Inject into input signature so provider picks it up
+                // stored for injection below
+                void 0;
+            }
+        } catch { /* RAG non-critical */ }
+        // ─────────────────────────────────────────────────────────────────────
+
         const inferenceResult = await runInference({
             input_signature: {
-                // Pass the raw user message as a direct text query — not wrapped in JSON
-                // so the AI receives it as a plain question, not a JSON object to parse
                 raw_consultation: conversation.length > 0
                     ? `CONVERSATION CONTEXT:\n${conversationContext}\n\nCURRENT QUERY: ${message}`
                     : message,
                 query_type: 'ask_vetios',
+                ...(ragContextBlock ? {
+                    rag_context: ragContextBlock,
+                } : {}),
             }
         });
 
