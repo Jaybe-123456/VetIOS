@@ -16,7 +16,7 @@ import { getConstitutionalAI } from '@/lib/constitutionalAI/constitutionalAIEngi
 import { getVKG } from '@/lib/vkg/veterinaryKnowledgeGraph';
 import { getDrugInteractionEngine } from '@/lib/drugInteraction/drugInteractionEngine';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
-import { embedClinicalCase } from '@/lib/embeddings/vetEmbeddingEngine';
+import { embedClinicalCase, embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
 
 export interface OrchestratorParams {
     model: string;
@@ -64,6 +64,21 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     pipelineTrace.push({ stage: 'clinical_signal_enrichment', status: 'completed' });
     normalizedSig = attachSignalWeightProfile(normalizedSig);
     pipelineTrace.push({ stage: 'signal_weighting', status: 'completed' });
+
+    // Phase 2: RAG Retrieval
+    let ragContext = '';
+    try {
+        const vs = getVectorStore();
+        const _species = typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine';
+        const _symptoms = Array.isArray(normalizedSig.presenting_signs) ? normalizedSig.presenting_signs as string[] : [];
+        const _qe = await embedQuery(_species + ' ' + _symptoms.join(' '), { species: _species });
+        const _sim = await vs.findSimilar({ embedding: _qe, species: _species, limit: 8, minSimilarity: 0.72 });
+        if (_sim.totalFound > 0) {
+            ragContext = _sim.retrievalSummary;
+            normalizedSig = { ...normalizedSig, rag_context: ragContext, rag_case_count: _sim.totalFound, rag_top_diagnosis: _sim.topDiagnosis };
+        }
+    } catch { /* RAG non-critical */ }
+    pipelineTrace.push({ stage: 'rag_retrieval', status: 'completed', detail: ragContext || 'no similar cases' });
 
     const inferenceResult = await runInference({
         model,
