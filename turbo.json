@@ -46,7 +46,13 @@
         "NEXT_PUBLIC_VETIOS_DEV_BYPASS",
         "DEBUG_INFERENCE",
         "NODE_ENV",
-        "VETIOS_FINGERPRINT_KEY"
+        "VETIOS_FINGERPRINT_KEY",
+        "HF_PROVIDER_API_KEY",
+        "HF_PROVIDER_BASE_URL",
+        "HF_PROVIDER_MODEL",
+        "VETIOS_DEV_BYPASS",
+        "VETIOS_LOCAL_REASONER",
+        "VETIOS_INTERNAL_API_TOKEN"
     ],
     "tasks": {
         "build": {
@@ -96,7 +102,13 @@
                 "NEXT_PUBLIC_VETIOS_DEV_BYPASS",
                 "DEBUG_INFERENCE",
                 "NODE_ENV",
-                "VETIOS_FINGERPRINT_KEY"
+                "VETIOS_FINGERPRINT_KEY",
+                "HF_PROVIDER_API_KEY",
+                "HF_PROVIDER_BASE_URL",
+                "HF_PROVIDER_MODEL",
+                "VETIOS_DEV_BYPASS",
+                "VETIOS_LOCAL_REASONER",
+                "VETIOS_INTERNAL_API_TOKEN"
             ],
             "outputs": [
                 ".next/**",
