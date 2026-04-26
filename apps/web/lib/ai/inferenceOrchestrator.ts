@@ -12,6 +12,11 @@ import {
 } from '@/lib/ai/abdominalEmergency';
 import { mlPredict } from '@/lib/ml/mlClient';
 import { buildClinicalReasoningAlignmentSnapshot } from '@/lib/intelligence/clinicalAlignment';
+import { getConstitutionalAI } from '@/lib/constitutionalAI/constitutionalAIEngine';
+import { getVKG } from '@/lib/vkg/veterinaryKnowledgeGraph';
+import { getDrugInteractionEngine } from '@/lib/drugInteraction/drugInteractionEngine';
+import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
+import { embedClinicalCase } from '@/lib/embeddings/vetEmbeddingEngine';
 
 export interface OrchestratorParams {
     model: string;
@@ -166,6 +171,157 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
         inputSignature: normalizedSig,
         outputPayload: payload,
     });
+
+    // ── Phase 1: VKG Differential Enrichment ─────────────────────────────────
+    try {
+        const vkg = getVKG();
+        const topDiff = Array.isArray(payload.differentials) ? payload.differentials as Array<Record<string, unknown>> : [];
+        if (topDiff.length > 0) {
+            const topName = String(topDiff[0]?.name ?? topDiff[0]?.condition ?? '');
+            if (topName) {
+                const vkgDiffs = vkg.getDifferentials(topName);
+                payload.vkg_related_differentials = vkgDiffs.map(d => ({
+                    disease: d.id,
+                    relationship: d.type,
+                    weight: 1.0,
+                }));
+                const pathways = vkg.getDiseasesForSymptoms(
+                    Array.isArray(normalizedSig.presenting_signs) ? normalizedSig.presenting_signs as string[] : []
+                );
+                payload.vkg_symptom_pathways = pathways.slice(0, 5);
+            }
+        }
+        // Drug contraindication check from VKG
+        const treatmentPlans = payload.treatment_plans as Record<string, unknown> | null;
+        if (treatmentPlans) {
+            const drugs = Object.values(treatmentPlans).flatMap((plan: unknown) => {
+                const p = plan as Record<string, unknown>;
+                return Array.isArray(p?.drugs) ? p.drugs as string[] : [];
+            });
+            const species = typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine';
+            payload.vkg_drug_contraindications = drugs.flatMap(drug =>
+                vkg.getDrugContraindications(drug, species).map(c => ({
+                    drug,
+                    contraindication: c.id,
+                    weight: 1.0,
+                }))
+            );
+        }
+    } catch { /* VKG enrichment non-critical */ }
+    pipelineTrace.push({ stage: 'vkg_enrichment', status: 'completed' });
+
+    // ── Phase 1: Drug Interaction Safety ─────────────────────────────────────
+    try {
+        const die = getDrugInteractionEngine();
+        const treatmentPlans = payload.treatment_plans as Record<string, unknown> | null;
+        if (treatmentPlans) {
+            const drugs = Object.values(treatmentPlans).flatMap((plan: unknown) => {
+                const p = plan as Record<string, unknown>;
+                return Array.isArray(p?.drugs) ? p.drugs as string[] : [];
+            });
+            const species = typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine';
+            const conditions: string[] = [];
+            if (Array.isArray(payload.differentials)) {
+                (payload.differentials as Array<Record<string, unknown>>).slice(0, 3).forEach(d => {
+                    const name = String(d?.name ?? d?.condition ?? '');
+                    if (name) conditions.push(name);
+                });
+            }
+            if (drugs.length > 1) {
+                const interactions = die.check({ drugs, species, conditions });
+                payload.drug_interaction_analysis = {
+                    interactions: interactions.interactions.map(i => ({
+                        drug_a: i.drug1,
+                        drug_b: i.drug2,
+                        severity: i.severity,
+                        mechanism: i.mechanism,
+                        clinical_effect: i.clinicalEffect,
+                        clinical_note: i.clinicalEffect,
+                    })),
+                    overall_safety: interactions.overallRisk,
+                    critical_alerts: [],
+                };
+            }
+        }
+    } catch { /* Drug interaction check non-critical */ }
+    pipelineTrace.push({ stage: 'drug_interaction_check', status: 'completed' });
+
+    // ── Phase 1: Constitutional AI Safety Gate ────────────────────────────────
+    try {
+        const constitutional = getConstitutionalAI();
+        const species = typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine';
+        const topDiff = Array.isArray(payload.differentials) ? payload.differentials as Array<Record<string, unknown>> : [];
+        const primaryDiag = String(topDiff[0]?.name ?? topDiff[0]?.condition ?? '');
+        const diagObj = payload.diagnosis as Record<string, unknown> | null;
+        const confidence = typeof (diagObj?.confidence_score) === 'number' ? (diagObj.confidence_score as number) :
+            typeof payload.confidence_score === 'number' ? payload.confidence_score : 0.5;
+        const recommendations: string[] = [];
+        if (payload.treatment_plans && typeof payload.treatment_plans === 'object') {
+            Object.values(payload.treatment_plans as Record<string, unknown>).forEach((plan: unknown) => {
+                const p = plan as Record<string, unknown>;
+                if (Array.isArray(p?.drugs)) (p.drugs as string[]).forEach(d => recommendations.push(d));
+                if (typeof p?.protocol === 'string') recommendations.push(p.protocol);
+            });
+        }
+        const constitutionalEval = constitutional.evaluate(
+            payload as Record<string, unknown>,
+            {
+                species,
+                confidence_score: confidence,
+                raw_output: payload as Record<string, unknown>,
+            }
+        );
+        payload.constitutional_evaluation = {
+            decision: constitutionalEval.decision,
+            violations: constitutionalEval.violations,
+            requires_hitl: constitutionalEval.requiresHITL,
+            confidence_gate_passed: constitutionalEval.confidenceGate.passed,
+            uncertainty_statement: constitutionalEval.uncertaintySurface.uncertaintyStatement,
+        };
+        // If blocked, surface the reason prominently
+        if (constitutionalEval.decision === 'block') {
+            payload.constitutional_block = true;
+            payload.constitutional_block_reason = constitutionalEval.blockedReason;
+            if (!Array.isArray(payload.uncertainty_notes)) payload.uncertainty_notes = [];
+            (payload.uncertainty_notes as string[]).unshift(
+                `SAFETY GATE: ${constitutionalEval.blockedReason ?? 'Constitutional AI blocked this output.'}`
+            );
+        }
+    } catch { /* Constitutional AI non-critical */ }
+    pipelineTrace.push({ stage: 'constitutional_ai_gate', status: 'completed' });
+
+    // ── Phase 1: Vector Store Upsert (async, non-blocking) ───────────────────
+    const tenantIdForVector = typeof (normalizedSig as Record<string, unknown>).tenant_id === 'string'
+        ? (normalizedSig as Record<string, unknown>).tenant_id as string
+        : 'platform';
+    const inferenceEventIdForVector = typeof (normalizedSig as Record<string, unknown>).inference_event_id === 'string'
+        ? (normalizedSig as Record<string, unknown>).inference_event_id as string
+        : '';
+    if (inferenceEventIdForVector) {
+        const clinicalCaseForEmbed = {
+            species: typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine',
+            breed: typeof normalizedSig.breed === 'string' ? normalizedSig.breed : null,
+            symptoms: Array.isArray(normalizedSig.presenting_signs) ? normalizedSig.presenting_signs as string[] : [],
+            diagnosis: String(Array.isArray(payload.differentials) && payload.differentials.length > 0
+                ? ((payload.differentials as Array<Record<string, unknown>>)[0]?.name ?? '')
+                : ''),
+        };
+        embedClinicalCase(clinicalCaseForEmbed).then(embedding => {
+            const vs = getVectorStore();
+            return vs.upsert({
+                inferenceEventId: inferenceEventIdForVector,
+                tenantId: tenantIdForVector,
+                clinicalCase: clinicalCaseForEmbed,
+                embedding,
+                diagnosis: clinicalCaseForEmbed.diagnosis || null,
+                confidenceScore: typeof payload.confidence_score === 'number' ? payload.confidence_score : null,
+            });
+        }).catch(() => { /* non-critical */ });
+    }
+    pipelineTrace.push({ stage: 'vector_store_upsert', status: 'completed' });
+
+
+
     const finalDiagnosis = payload.diagnosis as InferencePipelineDiagnosis;
     finalDiagnosis.primary_condition_class = resolveConditionClass(finalDiagnosis);
     const resolvedSeverityScore = resolveSeverityScore(risk);
