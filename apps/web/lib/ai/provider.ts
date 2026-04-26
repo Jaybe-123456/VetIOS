@@ -194,6 +194,24 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
     const userPromptText = typeof rawConsultation === 'string' && rawConsultation.length > 0
         ? rawConsultation
         : JSON.stringify(signatureOriginal, null, 2);
+
+    // ── RAG: Inject historical case evidence into system prompt ──────────────
+    const ragContext = typeof signatureOriginal.rag_context === 'string' && signatureOriginal.rag_context.length > 0
+        ? signatureOriginal.rag_context
+        : null;
+    const ragCaseCount = typeof signatureOriginal.rag_case_count === 'number' ? signatureOriginal.rag_case_count : 0;
+    const ragTopDiagnosis = typeof signatureOriginal.rag_top_diagnosis === 'string' ? signatureOriginal.rag_top_diagnosis : null;
+    const ragBlock = ragContext
+        ? `\n\n━━━ RETRIEVED CLINICAL EVIDENCE ━━━\n` +
+          `The VetIOS network has retrieved ${ragCaseCount} similar historical cases.\n` +
+          (ragTopDiagnosis ? `Most frequent confirmed diagnosis in similar cases: ${ragTopDiagnosis}\n` : '') +
+          `Evidence summary: ${ragContext}\n` +
+          `INSTRUCTION: When relevant, cite this evidence in your clinical reasoning using phrases like ` +
+          `"In similar network cases..." or "Historical VetIOS data shows...". ` +
+          `This is real clinical data from the VetIOS network, not hypothetical examples.\n` +
+          `━━━ END RETRIEVED EVIDENCE ━━━`
+        : '';
+    const enrichedSystemPrompt = ragBlock ? systemPrompt + ragBlock : systemPrompt;
     const isVisionCapable = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision-preview'].some((prefix) => primaryModel.startsWith(prefix));
     const userMessageContent: any[] = [{ type: 'text', text: userPromptText }];
 
@@ -250,7 +268,7 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
         getAiProviderBaseUrl(),
         getAiProviderApiKey(),
         primaryModel,
-        systemPrompt,
+        enrichedSystemPrompt,
         userMessageContent
     );
 
@@ -260,7 +278,7 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
         const hfApiKey = getHfProviderApiKey();
         const hfModel = getHfProviderModel();
         if (hfBaseUrl && hfApiKey) {
-            hfRequest = performApiRequest(hfBaseUrl, hfApiKey, hfModel, systemPrompt, userMessageContent);
+            hfRequest = performApiRequest(hfBaseUrl, hfApiKey, hfModel, enrichedSystemPrompt, userMessageContent);
         }
     }
 
