@@ -409,6 +409,10 @@ export async function POST(req: Request) {
             governance_policy_id: governanceDecision.policyId,
             orphaned: false,
             orphaned_at: null,
+            species: typeof inferenceResult.normalizedInput?.species === 'string' ? inferenceResult.normalizedInput.species : null,
+            top_diagnosis: (() => { try { const d = inferenceResult.output_payload?.diagnosis as Record<string,unknown>; const diffs = Array.isArray(d?.top_differentials) ? d.top_differentials as Array<Record<string,unknown>> : []; return String(diffs[0]?.name ?? diffs[0]?.condition ?? d?.top_diagnosis ?? ''); } catch { return null; } })(),
+            contradiction_score: typeof inferenceResult.uncertainty_metrics?.contradiction_score === 'number' ? inferenceResult.uncertainty_metrics.contradiction_score as number : null,
+            outcome_confirmed: false,
         });
 
         logClinicalDatasetMutation({
