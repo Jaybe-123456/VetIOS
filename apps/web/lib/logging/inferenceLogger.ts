@@ -32,6 +32,11 @@ export interface InferenceLogInput {
     governance_policy_id?: string | null;
     orphaned?: boolean;
     orphaned_at?: string | null;
+    species?: string | null;
+    top_diagnosis?: string | null;
+    contradiction_score?: number | null;
+    outcome_confirmed?: boolean;
+    region?: string | null;
 }
 
 export async function logInference(
@@ -58,6 +63,11 @@ export async function logInference(
             [C.compute_profile]: input.compute_profile ?? null,
             [C.inference_latency_ms]: input.inference_latency_ms,
             [C.blocked]: input.blocked ?? false,
+            ...(input.species !== undefined ? { species: input.species } : {}),
+            ...(input.top_diagnosis !== undefined ? { top_diagnosis: input.top_diagnosis } : {}),
+            ...(input.contradiction_score !== undefined ? { contradiction_score: input.contradiction_score } : {}),
+            ...(input.outcome_confirmed !== undefined ? { outcome_confirmed: input.outcome_confirmed } : {}),
+            ...(input.region !== undefined ? { region: input.region } : {}),
             [C.flagged]: input.flagged ?? false,
             [C.flag_reason]: input.flag_reason ?? null,
             [C.blocked_reason]: input.blocked_reason ?? null,
