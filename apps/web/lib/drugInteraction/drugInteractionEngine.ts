@@ -480,6 +480,7 @@ export class DrugInteractionEngine {
   }
 }
 
+
 // ─── Singleton ───────────────────────────────────────────────
 
 let _engine: DrugInteractionEngine | null = null;
@@ -487,4 +488,19 @@ let _engine: DrugInteractionEngine | null = null;
 export function getDrugInteractionEngine(): DrugInteractionEngine {
   if (!_engine) _engine = new DrugInteractionEngine();
   return _engine;
+}
+
+// ─── Extended Database Loader ─────────────────────────────────
+
+/**
+ * Merges the extended Plumb's-grade database into the engine singleton.
+ * Call once at app startup via the drug-interaction API route initialisation.
+ */
+export async function loadExtendedDrugDatabase(engine: DrugInteractionEngine): Promise<void> {
+  try {
+    const mod = await import('./data/extendedDrugDatabase');
+    engine.mergeExtended(mod.EXTENDED_DRUG_DATABASE, mod.EXTENDED_DRUG_INTERACTIONS);
+  } catch (err) {
+    console.error('[DrugInteractionEngine] Failed to load extended database:', err);
+  }
 }
