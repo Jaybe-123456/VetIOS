@@ -312,6 +312,30 @@ export class DrugInteractionEngine {
   private interactions = DRUG_INTERACTIONS;
 
   /**
+   * Merges an extended drug database into this engine instance.
+   * Existing entries are overwritten; new entries are appended.
+   * Called by loadExtendedDrugDatabase() at startup.
+   */
+  mergeExtended(
+    extendedDrugs: Record<string, DrugProfile>,
+    extendedInteractions: DrugInteractionResult[]
+  ): void {
+    // Merge drug profiles — extended entries take precedence
+    this.db = { ...this.db, ...extendedDrugs };
+    // Append interaction records, avoiding exact duplicates by drug pair key
+    const existingKeys = new Set(
+      this.interactions.map(i => [i.drug1, i.drug2].sort().join('|'))
+    );
+    for (const interaction of extendedInteractions) {
+      const key = [interaction.drug1, interaction.drug2].sort().join('|');
+      if (!existingKeys.has(key)) {
+        this.interactions.push(interaction);
+        existingKeys.add(key);
+      }
+    }
+  }
+
+  /**
    * Primary public API: check a drug combination for a patient.
    */
   check(request: DrugCheckRequest): DrugCheckResult {
