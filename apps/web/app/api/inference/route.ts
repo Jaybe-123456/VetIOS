@@ -44,6 +44,7 @@ import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequ
 import { evaluateGovernancePolicyForInference } from '@/lib/platform/governance';
 import { PlatformAuthError } from '@/lib/platform/tenantContext';
 import { recordPlatformTelemetry } from '@/lib/platform/telemetry';
+import { recordUsageEvent } from '@/lib/api/usage-recorder';
 import { runInferenceFlywheel } from '@/lib/platform/flywheel';
 import { dispatchWebhookEvent } from '@/lib/platform/webhooks';
 import { evaluateInferenceReliability } from '@/lib/cire/engine';
@@ -689,6 +690,27 @@ export async function POST(req: Request) {
                     triggerSource: 'inference',
                 }),
                 { timeoutMs: DECISION_ENGINE_TIMEOUT_MS },
+            ),
+            settleNonCriticalEffect(
+                requestId,
+                'Usage metering',
+                (async () => {
+                    if (actor.authMode === 'jwt' || actor.authMode === 'session') return;
+                    const partnerId = (actor as unknown as Record<string, unknown>).partnerId as string | undefined;
+                    const credentialId = (actor as unknown as Record<string, unknown>).credentialId as string | undefined;
+                    if (!partnerId || !credentialId) return;
+                    await recordUsageEvent({
+                        partnerId,
+                        credentialId,
+                        endpoint: '/api/inference',
+                        method: 'POST',
+                        statusCode: 200,
+                        responseTimeMs: measuredLatencyMs,
+                        region: process.env.VERCEL_REGION ?? undefined,
+                        aggregateType: 'clinical_inference',
+                        isBillable: true,
+                    });
+                })(),
             ),
         ]);
 
