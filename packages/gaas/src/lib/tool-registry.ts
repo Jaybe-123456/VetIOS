@@ -156,16 +156,42 @@ export function buildDefaultTools(baseUrl: string, authToken: string): ToolDefin
         species: { type: "string", description: "Patient species", required: true },
         weight_kg: { type: "number", description: "Patient weight in kg" },
       },
-      executor: async (_input) => {
-        // Stub: integrate with external vet pharmacology API
-        return {
-          interactions: [],
-          dosages: {},
-          warnings: [],
-          source: "vetios-drug-db-v1",
-          queried_at: new Date().toISOString(),
-          note: "Drug DB integration pending — stub response",
-        };
+      executor: async (input) => {
+        const drugs = Array.isArray(input.drug_names) ? input.drug_names as string[] : [];
+        const species = typeof input.species === 'string' ? input.species : 'canine';
+        const weight_kg = typeof input.weight_kg === 'number' ? input.weight_kg : null;
+        const conditions = Array.isArray(input.conditions) ? input.conditions as string[] : [];
+        try {
+          const res = await fetch(`${baseUrl}/api/drug-interaction`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ drugs, species, conditions, weight_kg }),
+          });
+          if (!res.ok) throw new Error(`Drug API error: ${res.status}`);
+          const json = await res.json() as Record<string, unknown>;
+          const data = json.data as Record<string, unknown> ?? {};
+          return {
+            safe_to_administer: data.safeToAdminister ?? false,
+            overall_risk: data.overallRisk ?? 'unknown',
+            interactions: data.interactions ?? [],
+            contraindications: data.contraindications ?? [],
+            dose_recommendations: data.doseRecommendations ?? {},
+            clinical_summary: data.clinicalSummary ?? '',
+            requires_vet_review: data.requiresVetReview ?? true,
+            constitutional_safety: data.constitutional_safety ?? null,
+            source: 'vetios-drug-db-v2',
+            queried_at: new Date().toISOString(),
+          };
+        } catch (err) {
+          return {
+            interactions: [],
+            contraindications: [],
+            warnings: [String(err)],
+            source: 'vetios-drug-db-v2',
+            queried_at: new Date().toISOString(),
+            error: 'Drug interaction check failed — see warnings',
+          };
+        }
       },
     },
     {
