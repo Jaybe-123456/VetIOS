@@ -22,6 +22,22 @@
     {
       "path": "/api/cron/platform-drift-monitor",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/rlhf-batch",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/population-signal-sweep",
+      "schedule": "0 */4 * * *"
+    },
+    {
+      "path": "/api/cron/active-learning-sweep",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/cron/calibration-recompute",
+      "schedule": "0 2 * * *"
     }
   ]
 }
