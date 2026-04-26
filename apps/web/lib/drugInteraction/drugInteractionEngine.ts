@@ -276,6 +276,33 @@ const DRUG_INTERACTIONS: DrugInteractionResult[] = [
     speciesRelevant: true,
     references: ['Plumb\'s Veterinary Drug Handbook, 9th Edition'],
   },
+  {
+    drug1: 'meloxicam',
+    drug2: 'enrofloxacin',
+    severity: 'moderate',
+    mechanism: 'renal_toxicity_additive',
+    clinicalEffect: 'Both drugs undergo significant renal excretion. In CKD patients, co-administration increases nephrotoxic burden. Enrofloxacin accumulates in renal failure, increasing retinal degeneration risk in cats. Meloxicam is contraindicated in feline CKD independently. Combined use in CKD cats carries serious risk of acute-on-chronic kidney injury and irreversible retinal degeneration.',
+    managementRecommendation: 'AVOID in CKD cats. If both required: (1) Do NOT use meloxicam in CKD cats — consider buprenorphine for analgesia instead. (2) If enrofloxacin essential, dose at 5 mg/kg q24h max and monitor renal values q48-72h. (3) Consider marbofloxacin as safer fluoroquinolone alternative. (4) Recheck BUN/Cr/USG before and 5 days after starting.',
+    evidence: 'published_study',
+    speciesRelevant: true,
+    references: [
+      'Wiebe & Hamilton. JAVMA 2002 — enrofloxacin retinal degeneration in cats',
+      'Lees et al. Vet J 2004 — NSAID renal safety in cats',
+      'Plumb\'s Veterinary Drug Handbook, 9th Edition',
+      'ISFM Feline CKD Guidelines 2023',
+    ],
+  },
+  {
+    drug1: 'enrofloxacin',
+    drug2: 'meloxicam',
+    severity: 'moderate',
+    mechanism: 'renal_toxicity_additive',
+    clinicalEffect: 'See meloxicam + enrofloxacin. Combined renal burden in CKD cats with additional risk of fluoroquinolone-induced retinal degeneration at elevated plasma concentrations.',
+    managementRecommendation: 'AVOID in CKD cats. Use buprenorphine instead of meloxicam. If fluoroquinolone needed, monitor renal function closely.',
+    evidence: 'published_study',
+    speciesRelevant: true,
+    references: ['Wiebe & Hamilton. JAVMA 2002', 'ISFM Feline CKD Guidelines 2023'],
+  },
 ];
 
 // ─── Drug Interaction Engine ──────────────────────────────────
