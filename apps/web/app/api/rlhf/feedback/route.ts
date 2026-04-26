@@ -47,7 +47,7 @@ export async function POST(req: Request) {
     const engine = getRLHFEngine();
     const result = await engine.processFeedback({
       inferenceEventId: body.inferenceEventId!,
-      tenantId,
+      tenantId: tenantId ?? "",
       patientId: body.patientId ?? null,
       feedbackType: body.feedbackType!,
       predictedDiagnosis: body.predictedDiagnosis ?? null,

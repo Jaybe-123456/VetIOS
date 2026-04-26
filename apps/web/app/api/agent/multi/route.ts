@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     const orchestrator = new MultiAgentOrchestrator(baseUrl, authToken);
     const result = await orchestrator.resolveCase({
       caseId,
-      tenantId,
+      tenantId: tenantId ?? "",
       species: body.species,
       breed: body.breed ?? null,
       ageYears: body.ageYears ?? null,
@@ -108,7 +108,7 @@ export async function POST(req: Request) {
       const differentialProbs = result.synthesisOutput.differentials.map((d) => d.probability);
       await alService.evaluateForQueue({
         inferenceEventId: caseId,
-        tenantId,
+        tenantId: tenantId ?? "",
         species: body.species,
         breed: body.breed ?? null,
         predictedDiagnosis: result.synthesisOutput.primaryDiagnosis,

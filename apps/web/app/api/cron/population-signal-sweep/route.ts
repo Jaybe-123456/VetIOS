@@ -1,7 +1,7 @@
 /**
  * GET /api/cron/population-signal-sweep
  *
- * Runs every 4 hours (0 */4 * * *).
+ * Runs every 4 hours (cron: 0-slash-4 * * *).
  * Aggregates cross-clinic disease signals and runs outbreak detection:
  *   1. Run outbreak detection across all regions
  *   2. Escalate emergency/alert-severity outbreaks to platform alerts
@@ -13,7 +13,7 @@
 
 import { NextResponse } from 'next/server';
 import { withRequestHeaders } from '@/lib/http/requestId';
-import { getPopulationSignalService } from '@/lib/populationSignal/populationSignalService';
+import { getPopulationSignalEngine } from '@/lib/epidemiology/populationSignalEngine';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
@@ -31,14 +31,15 @@ export async function GET(req: Request) {
   }
 
   const supabase = getSupabaseServer();
-  const service = getPopulationSignalService();
+  const service = getPopulationSignalEngine();
 
   try {
     // ── Run outbreak detection ──
-    const alerts = await service.detectOutbreaks();
+    const snapshot = await service.computeSignals();
+    const alerts = snapshot.outbreakAlerts;
 
-    const emergencyAlerts = alerts.filter((a) => a.severity === 'emergency');
-    const activeAlerts = alerts.filter((a) => a.severity !== 'watch');
+    const emergencyAlerts = alerts.filter((a) => a.alertLevel === 'alert');
+    const activeAlerts = alerts.filter((a) => a.alertLevel !== 'watch');
 
     // ── Escalate emergency alerts to platform_alerts table ──
     for (const alert of emergencyAlerts) {
@@ -53,10 +54,10 @@ export async function GET(req: Request) {
             disease: alert.disease,
             species: alert.species,
             region: alert.region,
-            increase_percent: alert.increasePercent,
-            affected_clinics: alert.affectedClinics,
-            current_count: alert.currentCount,
-            baseline_count: alert.baselineCount,
+            increase_percent: alert.anomalyScore,
+            affected_clinics: alert.caseCount,
+            current_count: alert.caseCount,
+            baseline_count: 0,
           },
           resolved: false,
           updated_at: new Date().toISOString(),
@@ -66,7 +67,7 @@ export async function GET(req: Request) {
     }
 
     // ── Build heatmap snapshot for telemetry ──
-    const heatmap = await service.buildHeatmap();
+    const heatmap = snapshot.topDiseases;
 
     const latencyMs = Date.now() - startTime;
 
@@ -83,13 +84,14 @@ export async function GET(req: Request) {
         active_alerts: activeAlerts.length,
         watch_alerts: alerts.length - activeAlerts.length,
         heatmap_entries: heatmap.length,
+        total_cases_this_week: snapshot.totalCasesThisWeek,
         latency_ms: latencyMs,
       },
       emergency_alerts: emergencyAlerts.map((a) => ({
         disease: a.disease,
         region: a.region,
-        severity: a.severity,
-        increase_percent: a.increasePercent,
+        severity: a.alertLevel,
+        anomaly_score: a.anomalyScore,
       })),
       request_id: requestId,
     });

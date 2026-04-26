@@ -39,7 +39,7 @@ export async function GET(req: Request) {
     }
 
     const service = getLongitudinalService();
-    const trajectory = await service.buildTrajectory(patientId, tenantId);
+    const trajectory = await service.buildTrajectory(patientId, tenantId ?? "");
 
     if (!trajectory) {
       const res = NextResponse.json(
@@ -95,7 +95,7 @@ export async function POST(req: Request) {
     const service = getLongitudinalService();
     const result = await service.recordVisit({
       patient_id: body.patient_id,
-      tenant_id: tenantId,
+      tenant_id: tenantId ?? "",
       visit_date: body.visit_date,
       species: body.species,
       breed: body.breed ?? null,
