@@ -1894,3 +1894,51 @@ export const EDGE_SYNC_ARTIFACTS = {
         updated_at: 'updated_at',
     },
 } as const;
+
+// ─── vet_override_signals ────────────────────────────────────────────────────
+export const VET_OVERRIDE_SIGNALS = {
+    TABLE: 'vet_override_signals',
+    COLUMNS: {
+        id: 'id',
+        created_at: 'created_at',
+        inference_event_id: 'inference_event_id',
+        tenant_id: 'tenant_id',
+        vet_user_id: 'vet_user_id',
+        override_type: 'override_type',
+        ai_output: 'ai_output',
+        vet_correction: 'vet_correction',
+        correction_notes: 'correction_notes',
+        species: 'species',
+        breed: 'breed',
+        age_years: 'age_years',
+        presenting_symptoms: 'presenting_symptoms',
+        top_ai_diagnosis: 'top_ai_diagnosis',
+        ai_confidence: 'ai_confidence',
+        vet_diagnosis: 'vet_diagnosis',
+        vet_confidence: 'vet_confidence',
+        is_confirmed_by_outcome: 'is_confirmed_by_outcome',
+        outcome_event_id: 'outcome_event_id',
+        status: 'status',
+        batch_id: 'batch_id',
+        processed_at: 'processed_at',
+        processing_notes: 'processing_notes',
+        signal_weight: 'signal_weight',
+    },
+} as const;
+
+// ─── rlhf_batch_runs ─────────────────────────────────────────────────────────
+export const RLHF_BATCH_RUNS = {
+    TABLE: 'rlhf_batch_runs',
+    COLUMNS: {
+        id: 'id',
+        created_at: 'created_at',
+        completed_at: 'completed_at',
+        status: 'status',
+        signals_queued: 'signals_queued',
+        signals_applied: 'signals_applied',
+        signals_rejected: 'signals_rejected',
+        signals_skipped: 'signals_skipped',
+        error_message: 'error_message',
+        metadata: 'metadata',
+    },
+} as const;
