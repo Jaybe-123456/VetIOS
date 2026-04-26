@@ -84,7 +84,7 @@ export async function POST(req: Request) {
 
     const service = getPopulationSignalService();
     await service.ingestSignal({
-      tenantId,
+      tenantId: tenantId ?? "",
       disease: body.disease,
       species: body.species,
       region: body.region,

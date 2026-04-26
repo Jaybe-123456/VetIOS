@@ -298,10 +298,10 @@ function synthesiseOutputs(
   tasks: AgentTask[]
 ): SynthesisOutput {
   const completed = tasks.filter((t) => t.status === 'completed' && t.output);
-  const triage = completed.find((t) => t.specialty === 'triage')?.output;
-  const diagnostic = completed.find((t) => t.specialty === 'diagnostic')?.output;
-  const lab = completed.find((t) => t.specialty === 'lab_interpretation')?.output;
-  const treatment = completed.find((t) => t.specialty === 'treatment')?.output;
+  const triage = completed.find((task) => task.specialty === 'triage')?.output;
+  const diagnostic = completed.find((task) => task.specialty === 'diagnostic')?.output;
+  const lab = completed.find((task) => task.specialty === 'lab_interpretation')?.output;
+  const treatment = completed.find((task) => task.specialty === 'treatment')?.output;
 
   const urgencyLevel =
     (triage?.findings as Record<string, unknown>)?.urgencyLevel as SynthesisOutput['urgencyLevel'] ?? 'routine';
@@ -398,7 +398,7 @@ export class MultiAgentOrchestrator {
     trace.push('parallel_agents:start');
     const ragContext = input.ragContext ?? '';
 
-    const parallelTasks = await Promise.all([
+    const parallelTasks: Awaited<ReturnType<typeof this.runTask>>[] = await Promise.all([
       this.runTask('diagnostic', () =>
         runDiagnosticAgent(input, ragContext, this.baseUrl, this.headers)
       ),
@@ -409,7 +409,7 @@ export class MultiAgentOrchestrator {
         ? Promise.resolve(this.skippedTask('treatment'))
         : this.runTask('treatment', async () => {
             // Treatment agent depends on diagnostic output
-            const diagOutput = tasks.find((t) => t.specialty === 'diagnostic')?.output ??
+            const diagOutput = tasks.find((task) => task.specialty === 'diagnostic')?.output ??
               parallelTasks?.[0]?.output ?? null;
             return diagOutput
               ? runTreatmentAgent(input, diagOutput, this.baseUrl, this.headers)

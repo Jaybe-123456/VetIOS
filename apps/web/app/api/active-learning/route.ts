@@ -32,7 +32,7 @@ export async function GET(req: Request) {
     const service = getActiveLearningService();
 
     if (statsOnly) {
-      const stats = await service.getQueueStats(tenantId);
+      const stats = await service.getQueueStats(tenantId ?? "");
       const res = NextResponse.json(
         {
           data: stats,
@@ -44,7 +44,7 @@ export async function GET(req: Request) {
       return res;
     }
 
-    const queue = await service.getPrioritisedQueue(tenantId, limit);
+    const queue = await service.getPrioritisedQueue(tenantId ?? "", limit);
 
     const res = NextResponse.json(
       {
