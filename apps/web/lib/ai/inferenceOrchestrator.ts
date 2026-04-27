@@ -14,6 +14,7 @@ import { mlPredict } from '@/lib/ml/mlClient';
 import { buildClinicalReasoningAlignmentSnapshot } from '@/lib/intelligence/clinicalAlignment';
 import { getConstitutionalAI } from '@/lib/constitutionalAI/constitutionalAIEngine';
 import { getVKG } from '@/lib/vkg/veterinaryKnowledgeGraph';
+import { rankDifferentialsWithVKG } from '@/lib/vkg/vkgDifferentialRanker';
 import { getDrugInteractionEngine } from '@/lib/drugInteraction/drugInteractionEngine';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import { embedClinicalCase, embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
@@ -144,6 +145,37 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     payload.diagnosis = safetyLayer.diagnosis;
     payload.inference_explanation = safetyLayer.inference_explanation ?? null;
     payload.differentials = (safetyLayer.diagnosis.top_differentials as unknown[]) ?? [];
+
+    // ── VKG Differential Re-ranking ───────────────────────────────────────────
+    // Pipeline: Symptoms → VKG traversal → Graph scoring → Blend with LLM → Re-ranked
+    try {
+        const _vkgSymptoms = Array.isArray(normalizedSig.presenting_signs)
+            ? normalizedSig.presenting_signs as string[]
+            : [];
+        const _vkgSpecies = typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine';
+        const _vkgLabs = Array.isArray(normalizedSig.lab_findings)
+            ? normalizedSig.lab_findings as string[]
+            : [];
+
+        if (_vkgSymptoms.length > 0 && Array.isArray(payload.differentials) && payload.differentials.length > 0) {
+            const _vkgRanking = rankDifferentialsWithVKG(
+                payload.differentials as Array<Record<string, unknown>>,
+                _vkgSymptoms,
+                _vkgSpecies,
+                _vkgLabs,
+            );
+            payload.differentials = _vkgRanking.ranked_differentials;
+            payload.vkg_ranking = {
+                pre_rank: _vkgRanking.vkg_pre_rank,
+                symptom_coverage: _vkgRanking.symptom_coverage,
+                ranking_confidence: _vkgRanking.ranking_confidence,
+                graph_nodes_traversed: _vkgRanking.graph_nodes_traversed,
+                llm_weight: 0.60,
+                vkg_weight: 0.40,
+            };
+        }
+    } catch { /* VKG re-ranking non-critical — fallback to LLM order */ }
+    pipelineTrace.push({ stage: 'vkg_differential_reranking', status: 'completed' });
     payload.treatment_plans = safetyLayer.treatment_plans ?? {};
     payload.ground_truth_summary = safetyLayer.ground_truth_summary ?? null;
     payload.mechanism_class = safetyLayer.mechanism_class;
