@@ -3,6 +3,7 @@
 import { Message } from '@/store/useChatStore';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
+import { useChatStore } from '@/store/useChatStore';
 import { TerminalSquare, User, GraduationCap } from 'lucide-react';
 import SmartActions from './SmartActions';
 
@@ -97,7 +98,7 @@ function inlineFormat(text: string): string {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-
+const username = useChatStore((s) => s.username);
 export default function ChatBubble({ message, onFollowUp }: ChatBubbleProps) {
     const isAssistant = message.role === 'assistant';
     const mode = message.metadata?.mode;
@@ -133,7 +134,7 @@ export default function ChatBubble({ message, onFollowUp }: ChatBubbleProps) {
                 {/* Header row */}
                 <div className="flex items-center gap-3 flex-wrap">
                     <span className="font-mono text-[10px] uppercase tracking-widest text-white/40">
-                        {isAssistant ? 'VETIOS_AI // KOS-MOS' : 'USER_OPERATOR'}
+                        {isAssistant ? 'VETIOS_AI // KOS-MOS' : (username ?? 'OPERATOR')}
                     </span>
                     {isAssistant && mode && (
                         <span className={cn(

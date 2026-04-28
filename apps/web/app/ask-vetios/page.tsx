@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect } from 'react';
 import { useChatStore } from '@/store/useChatStore';
+import UsernamePrompt from '@/components/ask-vetios/UsernamePrompt';
 import ChatContainer from '@/components/ask-vetios/ChatContainer';
 import ChatInput from '@/components/ask-vetios/ChatInput';
 import { DashboardMetrics, AnalyticsChart } from '@/components/ask-vetios/DashboardMetrics';
@@ -15,9 +16,9 @@ import { useState } from 'react';
 
 export default function AskVetIOSPage() {
     const {
-        createChat, activeChatId, addMessage, setLoading, isLoading,
-        switchChat, chats, deleteChat
-    } = useChatStore();
+    createChat, activeChatId, addMessage, setLoading, isLoading,
+    switchChat, chats, deleteChat, username   // ← add username here
+} = useChatStore();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -83,7 +84,45 @@ export default function AskVetIOSPage() {
 
     const activeChat = chats.find(c => c.id === activeChatId);
 
-    return (
+
+const [shareFeedback, setShareFeedback] = useState('');
+
+const handleDownload = useCallback(() => {
+    if (!activeChat?.messages.length) return;
+    const date = new Date().toISOString().slice(0, 10);
+    const lines = [
+        `# VetIOS Session — ${username}`,
+        `Date: ${date}`, `Session: ${activeChat.title}`, ``,
+        ...activeChat.messages.map(m => [
+            `### ${m.role === 'user' ? username : 'VETIOS_AI'} — ${new Date(m.timestamp).toLocaleTimeString()}`,
+            ``, m.content, ``, `---`, ``
+        ].join('\n')),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `vetios-${date}.md`; a.click();
+    URL.revokeObjectURL(url);
+}, [activeChat, username]);
+
+const handleShare = useCallback(async () => {
+    if (!activeChat?.messages.length) return;
+    const text = activeChat.messages.slice(0, 6)
+        .map(m => `${m.role === 'user' ? username : 'VETIOS_AI'}:\n${m.content.slice(0, 200)}`)
+        .join('\n\n');
+    if (navigator.share) {
+        await navigator.share({ title: `VetIOS — ${username}`, text }).catch(() => {});
+    } else {
+        await navigator.clipboard.writeText(text);
+        setShareFeedback('COPIED');
+        setTimeout(() => setShareFeedback(''), 2000);
+    }
+}, [activeChat, username]);
+
+if (!username) return <UsernamePrompt />;
+
+return (
+    
         <div className="flex h-full bg-[#050505] text-white overflow-hidden">
 
             {/* ── Chat history sidebar ─────────────────────────────────── */}
@@ -189,12 +228,22 @@ export default function AskVetIOSPage() {
                             <Plus className="w-3.5 h-3.5" />
                             New Chat
                         </button>
-                        <button className="p-2 border border-white/10 hover:border-white/20 transition-all text-white/40 hover:text-white">
-                            <Share2 className="w-4 h-4" />
-                        </button>
-                        <button className="p-2 border border-white/10 hover:border-white/20 transition-all text-white/40 hover:text-white">
-                            <Download className="w-4 h-4" />
-                        </button>
+                        <button
+    onClick={handleShare}
+    title={shareFeedback || 'Share session'}
+    className="p-2 border border-white/10 hover:border-white/20 transition-all text-white/40 hover:text-white relative"
+>
+    {shareFeedback
+        ? <span className="font-mono text-[8px] text-accent uppercase tracking-widest px-1">{shareFeedback}</span>
+        : <Share2 className="w-4 h-4" />}
+</button>
+<button
+    onClick={handleDownload}
+    title="Download session"
+    className="p-2 border border-white/10 hover:border-white/20 transition-all text-white/40 hover:text-white"
+>
+    <Download className="w-4 h-4" />
+</button>
                     </div>
                 </header>
 
