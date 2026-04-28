@@ -12,8 +12,8 @@ import { NextResponse } from 'next/server';
 /**
  * Create a Supabase server client from the request cookies.
  */
-export function createApiSupabaseClient() {
-    const cookieStore = cookies();
+export async function createApiSupabaseClient() {
+    const cookieStore = await cookies();
 
     return createServerClient(
         process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -45,7 +45,7 @@ export async function requireAuth(): Promise<
     | { user: { id: string; email?: string }; error: null }
     | { user: null; error: NextResponse }
 > {
-    const supabase = createApiSupabaseClient();
+    const supabase = await createApiSupabaseClient();
     const {
         data: { user },
     } = await supabase.auth.getUser();

@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     }
 
     try {
-        const supabase = createApiSupabaseClient();
+        const supabase = await createApiSupabaseClient();
         const { data: { user }, error } = await supabase.auth.getUser();
 
         if (error || !user) {
