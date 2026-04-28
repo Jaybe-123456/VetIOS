@@ -57,7 +57,7 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="Ask VetIOS..."
-              className="w-full bg-transparent border-none focus:ring-0 text-white/90 placeholder:text-white/20 font-mono text-sm resize-none py-1 max-h-48 scrollbar-hide"
+              className="w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-white/90 placeholder:text-white/20 font-mono text-sm resize-none py-1 max-h-48 scrollbar-hide"
               rows={1}
             />
           </div>

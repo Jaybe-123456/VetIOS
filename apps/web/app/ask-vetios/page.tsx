@@ -123,7 +123,7 @@ if (!username) return <UsernamePrompt />;
 
 return (
     
-        <div className="flex h-full bg-[#050505] text-white overflow-hidden">
+        <div className="flex h-dvh bg-[#050505] text-white overflow-hidden">
 
             {/* ── Chat history sidebar ─────────────────────────────────── */}
             <AnimatePresence>
