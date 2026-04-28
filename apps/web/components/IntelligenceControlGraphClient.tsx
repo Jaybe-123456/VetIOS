@@ -41,6 +41,10 @@ const NODE_TYPES = {
     topologyNode: TopologyGraphNode,
 };
 
+const PANEL_LABEL_CLASS = 'font-mono text-[11px] uppercase tracking-[0.14em] text-[hsl(0_0%_74%)]';
+const PANEL_META_CLASS = 'font-mono text-[12px] leading-relaxed text-[hsl(0_0%_86%)]';
+const PANEL_HINT_CLASS = 'font-mono text-[11px] leading-relaxed text-[hsl(0_0%_68%)]';
+
 export default function IntelligenceControlGraphClient() {
     const [snapshot, setSnapshot] = useState<TopologySnapshot | null>(null);
     const [streamStatus, setStreamStatus] = useState<StreamStatus>('connecting');
@@ -240,7 +244,7 @@ export default function IntelligenceControlGraphClient() {
             <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr] gap-4 sm:gap-6 mb-4 sm:mb-6">
                 <ConsoleCard className="p-4 sm:p-5">
                     <div className="flex flex-wrap items-center gap-3 font-mono">
-                        <div className="text-xs text-muted uppercase">Network Health</div>
+                        <div className={PANEL_LABEL_CLASS}>Network Health</div>
                         <div className={`text-3xl ${healthTone(snapshot?.network_health_score ?? 0)}`}>
                             {snapshot ? `${snapshot.network_health_score}%` : 'NO DATA'}
                         </div>
@@ -260,7 +264,7 @@ export default function IntelligenceControlGraphClient() {
                 </ConsoleCard>
 
                 <ConsoleCard className="p-4 sm:p-5">
-                    <div className="flex items-center gap-2 mb-3 font-mono text-xs uppercase text-muted">
+                    <div className={`flex items-center gap-2 mb-3 ${PANEL_LABEL_CLASS}`}>
                         <Clock3 className="w-3.5 h-3.5" />
                         Time Controls
                     </div>
@@ -282,7 +286,7 @@ export default function IntelligenceControlGraphClient() {
                                 </TerminalButton>
                                 <button
                                     type="button"
-                                    className="font-mono text-xs text-muted hover:text-accent transition-colors"
+                                    className={`${PANEL_HINT_CLASS} hover:text-accent transition-colors`}
                                     onClick={() => setReplayIndex(Math.max(0, replayIndex - 1))}
                                     disabled={replayMarkers.length === 0}
                                 >
@@ -290,7 +294,7 @@ export default function IntelligenceControlGraphClient() {
                                 </button>
                                 <button
                                     type="button"
-                                    className="font-mono text-xs text-muted hover:text-accent transition-colors"
+                                    className={`${PANEL_HINT_CLASS} hover:text-accent transition-colors`}
                                     onClick={() => setReplayIndex(Math.min(replayMarkers.length - 1, replayIndex + 1))}
                                     disabled={replayMarkers.length === 0}
                                 >
@@ -306,7 +310,7 @@ export default function IntelligenceControlGraphClient() {
                                 className="w-full"
                                 disabled={replayMarkers.length === 0}
                             />
-                            <div className="mt-2 font-mono text-[11px] text-muted">
+                            <div className={PANEL_HINT_CLASS}>
                                 {replayMarkers[replayIndex]?.label ?? 'NO DATA'} {replayMarkers[replayIndex] ? `@ ${new Date(replayMarkers[replayIndex]!.timestamp).toLocaleString()}` : ''}
                             </div>
                         </div>
@@ -322,7 +326,7 @@ export default function IntelligenceControlGraphClient() {
 
             <div className="grid grid-cols-1 xl:grid-cols-[2.1fr_1fr] gap-4 sm:gap-6">
                 <ConsoleCard title="Operational Control Graph" className="h-[760px]">
-                    <div className="flex flex-wrap items-center gap-3 mb-4 font-mono text-xs text-muted">
+                    <div className={`flex flex-wrap items-center gap-3 mb-4 ${PANEL_HINT_CLASS}`}>
                         <div className="flex items-center gap-2"><div className="w-2 h-2 bg-[#00ff41]" /> Healthy</div>
                         <div className="flex items-center gap-2"><div className="w-2 h-2 bg-[#facc15]" /> Degraded</div>
                         <div className="flex items-center gap-2"><div className="w-2 h-2 bg-[#ef4444]" /> Critical</div>
@@ -383,7 +387,7 @@ export default function IntelligenceControlGraphClient() {
                                     }}
                                 />
                             )) : (
-                                <div className="font-mono text-xs text-muted">{fallbackValue(streamStatus)}</div>
+                                <div className={PANEL_HINT_CLASS}>{fallbackValue(streamStatus)}</div>
                             )}
                         </div>
                     </ConsoleCard>
@@ -391,10 +395,10 @@ export default function IntelligenceControlGraphClient() {
                     <ConsoleCard title="Simulation Mode">
                         <div className="space-y-3 font-mono text-xs">
                             <div className="flex items-center justify-between">
-                                <span className="uppercase text-muted">Injection Controls</span>
+                                <span className={PANEL_LABEL_CLASS}>Injection Controls</span>
                                 <button
                                     type="button"
-                                    className={`text-xs transition-colors ${simulationMode ? 'text-accent' : 'text-muted hover:text-accent'}`}
+                                    className={`text-xs transition-colors ${simulationMode ? 'text-accent' : 'text-[hsl(0_0%_72%)] hover:text-accent'}`}
                                     onClick={() => void handleSimulationModeToggle()}
                                 >
                                     {simulationBusy ? 'SYNCING' : simulationMode ? 'ENABLED' : 'DISABLED'}
@@ -408,7 +412,7 @@ export default function IntelligenceControlGraphClient() {
                             {simulationMode ? (
                                 <>
                                     <label className="block">
-                                        <span className="text-muted uppercase">Scenario</span>
+                                        <span className={PANEL_LABEL_CLASS}>Scenario</span>
                                         <select
                                             value={simulationScenario}
                                             onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationScenario(event.target.value as TopologySimulationScenario)}
@@ -420,7 +424,7 @@ export default function IntelligenceControlGraphClient() {
                                         </select>
                                     </label>
                                     <label className="block">
-                                        <span className="text-muted uppercase">Target Node</span>
+                                        <span className={PANEL_LABEL_CLASS}>Target Node</span>
                                         <select
                                             value={simulationTarget}
                                             onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationTarget(event.target.value)}
@@ -432,7 +436,7 @@ export default function IntelligenceControlGraphClient() {
                                         </select>
                                     </label>
                                     <label className="block">
-                                        <span className="text-muted uppercase">Severity</span>
+                                        <span className={PANEL_LABEL_CLASS}>Severity</span>
                                         <select
                                             value={simulationSeverity}
                                             onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationSeverity(event.target.value as 'degraded' | 'critical')}
@@ -450,13 +454,13 @@ export default function IntelligenceControlGraphClient() {
                                         {simulationBusy ? 'Injecting...' : 'Inject'}
                                     </TerminalButton>
                                     {simulationMessage && (
-                                        <div className="border border-grid bg-black/30 p-2 text-muted">
+                                        <div className={`border border-grid bg-black/30 p-2 ${PANEL_META_CLASS}`}>
                                             {simulationMessage}
                                         </div>
                                     )}
                                 </>
                             ) : (
-                                <div className="text-muted">Enable simulation mode to inject failure, drift, or adversarial attack conditions into the live graph.</div>
+                                <div className={PANEL_META_CLASS}>Enable simulation mode to inject failure, drift, or adversarial attack conditions into the live graph.</div>
                             )}
                         </div>
                     </ConsoleCard>
@@ -564,7 +568,7 @@ function TopologyGraphNode({ data }: NodeProps<{ node: TopologyNodeSnapshot; sel
     return (
         <div
             style={rootStyle}
-            className={`relative rounded-sm px-3 py-2 font-mono text-[10px] uppercase ${node.propagated_risk ? 'animate-pulse' : ''}`}
+            className={`relative rounded-sm px-3 py-2 font-mono text-[11px] uppercase ${node.propagated_risk ? 'animate-pulse' : ''}`}
             title={`Drift: ${formatMetric(node.state.drift_score, 'NO DATA')}`}
         >
             <Handle type="target" position={Position.Left} className="!opacity-0 !bg-transparent !border-0" />
@@ -573,21 +577,21 @@ function TopologyGraphNode({ data }: NodeProps<{ node: TopologyNodeSnapshot; sel
                 <div className="absolute inset-0 rounded-sm border border-danger/50 animate-ping pointer-events-none" />
             )}
             <div className="flex items-center gap-2">
-                <span className="font-semibold tracking-wider">{node.label}</span>
+                <span className="font-semibold tracking-[0.12em] leading-tight">{node.label}</span>
                 {node.alert_count > 0 && (
                     <span className="ml-auto text-[9px] px-1 py-0.5 border border-danger text-danger">{node.alert_count}</span>
                 )}
             </div>
-            <div className="mt-1 flex items-center gap-2 text-[9px] text-muted">
+            <div className="mt-1 flex items-center gap-2 text-[10px] tracking-[0.08em]" style={{ color: accent.secondary }}>
                 <span>{node.state.status}</span>
                 {node.governance?.registry_role && <span>{node.governance.registry_role}</span>}
                 {node.governance?.model_version && <span>{node.governance.model_version}</span>}
             </div>
-            <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[9px]">
-                <MetricMini label="LAT" value={formatMetric(node.state.latency, 'NO DATA', 'ms')} />
-                <MetricMini label="THR" value={formatMetric(node.state.throughput, 'NO DATA', '/m')} />
-                <MetricMini label="ERR" value={formatPercent(node.state.error_rate)} />
-                <MetricMini label="DRIFT" value={formatMetric(node.state.drift_score, 'NO DATA')} />
+            <div className="mt-2 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
+                <MetricMini label="LAT" value={formatMetric(node.state.latency, 'NO DATA', 'ms')} labelStyle={{ color: accent.tertiary }} valueStyle={{ color: accent.secondary }} />
+                <MetricMini label="THR" value={formatMetric(node.state.throughput, 'NO DATA', '/m')} labelStyle={{ color: accent.tertiary }} valueStyle={{ color: accent.secondary }} />
+                <MetricMini label="ERR" value={formatPercent(node.state.error_rate)} labelStyle={{ color: accent.tertiary }} valueStyle={{ color: accent.secondary }} />
+                <MetricMini label="DRIFT" value={formatMetric(node.state.drift_score, 'NO DATA')} labelStyle={{ color: accent.tertiary }} valueStyle={{ color: accent.secondary }} />
             </div>
         </div>
     );
@@ -667,7 +671,7 @@ function OverviewPanel({
 }) {
     return (
         <div className="space-y-4 font-mono text-xs">
-            <div className="text-muted uppercase">Operational Intelligence</div>
+            <div className={PANEL_LABEL_CLASS}>Operational Intelligence</div>
             {snapshot ? (
                 <>
                     <div className="space-y-2">
@@ -678,7 +682,7 @@ function OverviewPanel({
                         ))}
                     </div>
                     <div>
-                        <div className="text-muted uppercase mb-2">Hot Nodes</div>
+                        <div className={`${PANEL_LABEL_CLASS} mb-2`}>Hot Nodes</div>
                         <div className="space-y-2">
                             {snapshot.nodes
                                 .filter((node) => node.alert_count > 0 || node.propagated_risk)
@@ -690,15 +694,15 @@ function OverviewPanel({
                                         className="w-full text-left border border-grid p-2 hover:border-accent transition-colors"
                                         onClick={() => onInspectNode(node.id)}
                                     >
-                                        <div className="text-foreground">{node.label}</div>
-                                        <div className="text-muted text-[11px]">{node.state.status} | alerts={node.alert_count} | drift={formatMetric(node.state.drift_score, 'NO DATA')}</div>
+                                        <div className="text-[13px] text-foreground leading-relaxed">{node.label}</div>
+                                        <div className={PANEL_HINT_CLASS}>{node.state.status} | alerts={node.alert_count} | drift={formatMetric(node.state.drift_score, 'NO DATA')}</div>
                                     </button>
                                 ))}
                         </div>
                     </div>
                 </>
             ) : (
-                <div className="text-muted">{fallbackValue(streamStatus)}</div>
+                <div className={PANEL_HINT_CLASS}>{fallbackValue(streamStatus)}</div>
             )}
         </div>
     );
@@ -723,11 +727,11 @@ function AlertRow({ alert, onClick }: { alert: TopologyAlert; onClick: () => voi
 function SummaryTile({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
     return (
         <div className="border border-grid p-3 bg-black/20">
-            <div className="flex items-center gap-2 text-muted uppercase">
+            <div className={`flex items-center gap-2 ${PANEL_LABEL_CLASS}`}>
                 {icon}
                 {label}
             </div>
-            <div className="mt-2 break-words text-foreground leading-relaxed break-all">{value}</div>
+            <div className={`mt-2 ${PANEL_META_CLASS} break-words whitespace-normal`}>{value}</div>
         </div>
     );
 }
@@ -737,18 +741,28 @@ function ModeButton({ active, onClick, children }: { active: boolean; onClick: (
         <button
             type="button"
             onClick={onClick}
-            className={`font-mono text-xs uppercase border px-3 py-2 transition-colors ${active ? 'border-accent text-accent bg-accent/5' : 'border-grid text-muted hover:text-accent hover:border-accent/60'}`}
+            className={`font-mono text-xs uppercase border px-3 py-2 transition-colors ${active ? 'border-accent text-accent bg-accent/5' : 'border-grid text-[hsl(0_0%_72%)] hover:text-accent hover:border-accent/60'}`}
         >
             {children}
         </button>
     );
 }
 
-function MetricMini({ label, value }: { label: string; value: string }) {
+function MetricMini({
+    label,
+    value,
+    labelStyle,
+    valueStyle,
+}: {
+    label: string;
+    value: string;
+    labelStyle?: CSSProperties;
+    valueStyle?: CSSProperties;
+}) {
     return (
         <div>
-            <div className="text-muted">{label}</div>
-            <div>{value}</div>
+            <div style={labelStyle}>{label}</div>
+            <div style={valueStyle}>{value}</div>
         </div>
     );
 }
@@ -759,6 +773,8 @@ function nodeAccent(node: TopologyNodeSnapshot) {
             background: 'rgba(69, 10, 10, 0.92)',
             foreground: '#f87171',
             glow: 'rgba(239, 68, 68, 0.35)',
+            secondary: '#fecaca',
+            tertiary: '#fca5a5',
         };
     }
     if (node.state.status === 'degraded') {
@@ -766,6 +782,8 @@ function nodeAccent(node: TopologyNodeSnapshot) {
             background: 'rgba(69, 44, 4, 0.92)',
             foreground: '#facc15',
             glow: 'rgba(250, 204, 21, 0.28)',
+            secondary: '#fef3c7',
+            tertiary: '#fcd34d',
         };
     }
     if (node.state.status === 'offline') {
@@ -773,12 +791,16 @@ function nodeAccent(node: TopologyNodeSnapshot) {
             background: 'rgba(17, 24, 39, 0.92)',
             foreground: '#9ca3af',
             glow: 'rgba(107, 114, 128, 0.2)',
+            secondary: '#e5e7eb',
+            tertiary: '#cbd5e1',
         };
     }
     return {
         background: 'rgba(3, 22, 12, 0.92)',
         foreground: '#4ade80',
         glow: 'rgba(74, 222, 128, 0.25)',
+        secondary: '#d1fae5',
+        tertiary: '#86efac',
     };
 }
 
