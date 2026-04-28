@@ -9,6 +9,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const STREAM_INTERVAL_MS = 10_000;
+const STREAM_MAX_LIFETIME_MS = 290_000;
 
 export async function GET(req: Request) {
     const session = await resolveSessionTenant();
@@ -22,6 +23,7 @@ export async function GET(req: Request) {
     const simulationMode = url.searchParams.get('simulation') === '1';
     const encoder = new TextEncoder();
     let intervalId: ReturnType<typeof setInterval> | null = null;
+    let lifetimeTimeoutId: ReturnType<typeof setTimeout> | null = null;
     let closed = false;
     let lastPayloadSignature: string | null = null;
 
@@ -33,6 +35,10 @@ export async function GET(req: Request) {
                 if (intervalId) {
                     clearInterval(intervalId);
                     intervalId = null;
+                }
+                if (lifetimeTimeoutId) {
+                    clearTimeout(lifetimeTimeoutId);
+                    lifetimeTimeoutId = null;
                 }
                 controller.close();
             };
@@ -86,6 +92,7 @@ export async function GET(req: Request) {
             intervalId = setInterval(() => {
                 void pushSnapshot();
             }, STREAM_INTERVAL_MS);
+            lifetimeTimeoutId = setTimeout(closeStream, STREAM_MAX_LIFETIME_MS);
 
             req.signal.addEventListener('abort', closeStream);
         },
@@ -94,6 +101,10 @@ export async function GET(req: Request) {
             if (intervalId) {
                 clearInterval(intervalId);
                 intervalId = null;
+            }
+            if (lifetimeTimeoutId) {
+                clearTimeout(lifetimeTimeoutId);
+                lifetimeTimeoutId = null;
             }
         },
     });

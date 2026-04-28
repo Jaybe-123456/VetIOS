@@ -33,7 +33,10 @@ export interface InferenceOutput {
     };
 }
 
-export async function runInference(input: InferenceInput): Promise<InferenceOutput> {
+export async function runInference(
+    input: InferenceInput,
+    options?: { signal?: AbortSignal },
+): Promise<InferenceOutput> {
     const primaryModel = input.model || getAiProviderDefaultModel();
     const contradictionResult = detectContradictions(input.input_signature);
 
@@ -269,7 +272,8 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
         getAiProviderApiKey(),
         primaryModel,
         enrichedSystemPrompt,
-        userMessageContent
+        userMessageContent,
+        options?.signal,
     );
 
     let hfRequest: Promise<any> | null = null;
@@ -278,7 +282,7 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
         const hfApiKey = getHfProviderApiKey();
         const hfModel = getHfProviderModel();
         if (hfBaseUrl && hfApiKey) {
-            hfRequest = performApiRequest(hfBaseUrl, hfApiKey, hfModel, enrichedSystemPrompt, userMessageContent);
+            hfRequest = performApiRequest(hfBaseUrl, hfApiKey, hfModel, enrichedSystemPrompt, userMessageContent, options?.signal);
         }
     }
 
@@ -333,13 +337,21 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
     };
 }
 
-async function performApiRequest(baseUrl: string, apiKey: string, model: string, systemPrompt: string, userContent: any[]): Promise<any> {
+async function performApiRequest(
+    baseUrl: string,
+    apiKey: string,
+    model: string,
+    systemPrompt: string,
+    userContent: any[],
+    signal?: AbortSignal,
+): Promise<any> {
     const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${apiKey}`,
         },
+        signal,
         body: JSON.stringify({
             model,
             messages: [

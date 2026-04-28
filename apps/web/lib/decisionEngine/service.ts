@@ -92,7 +92,9 @@ export async function evaluateDecisionEngine(input: {
         listDecisionEngineRecords(input.client, input.tenantId),
     ]);
 
-    await syncTopologyNodeStates(input.client, input.tenantId, topologySnapshot.nodes);
+    if (input.readOnly !== true) {
+        await syncTopologyNodeStates(input.client, input.tenantId, topologySnapshot.nodes);
+    }
     const candidates = buildDecisionCandidates({
         topologySnapshot,
         registrySnapshot,

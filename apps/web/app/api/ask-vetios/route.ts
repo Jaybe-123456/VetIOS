@@ -18,6 +18,7 @@ import { checkOrigin, buildCorsHeaders } from '@/lib/protection/originGuard';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
+const ASK_VETIOS_INFERENCE_TIMEOUT_MS = 25_000;
 
 const RequestSchema = z.object({
     message: z.string().trim().min(1).max(2000),
@@ -106,6 +107,8 @@ export async function POST(req: Request) {
                     rag_context: ragContextBlock,
                 } : {}),
             }
+        }, {
+            signal: AbortSignal.timeout(ASK_VETIOS_INFERENCE_TIMEOUT_MS),
         });
 
         const output = inferenceResult.output_payload;
