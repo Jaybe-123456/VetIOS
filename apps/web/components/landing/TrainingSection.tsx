@@ -114,8 +114,8 @@ export default function TrainingSection() {
   setInterval(function(){
     const m1=document.getElementById('m1'),m3=document.getElementById('m3'),m4=document.getElementById('m4'),m5=document.getElementById('m5');
     if(m1){const b=parseInt(m1.textContent.replace(/,/g,''));animateCount(m1,b,b+Math.floor(Math.random()*80-20),800,0);}
-    if(m3){const b=parseFloat(m3.textContent),n=Math.min(99.9,Math.max(90,b+(Math.random()*0.4-0.2)));animateCount(m3,b*10,n*10,600,1);setTimeout(function(){if(m3)m3.textContent=n.toFixed(1);},700);}
-    if(m4){const b=parseFloat(m4.textContent),n=Math.min(99,Math.max(85,b+(Math.random()*0.6-0.2)));animateCount(m4,b*10,n*10,600,1);setTimeout(function(){if(m4)m4.textContent=n.toFixed(1);},700);}
+    if(m3){const b=parseFloat(m3.textContent);const n=Math.min(99.9,Math.max(90,b+(Math.random()*0.4-0.2)));animateCount(m3,b,n,600,1);}
+    if(m4){const b=parseFloat(m4.textContent);const n=Math.min(99,Math.max(85,b+(Math.random()*0.6-0.2)));animateCount(m4,b,n,600,1);}
     if(m5){const b=parseInt(m5.textContent.replace(/,/g,''));animateCount(m5,b,b+Math.floor(Math.random()*40-15),800,0);}
   },2200);
   function updateClock(){const now=new Date(),el=document.getElementById('clock');if(el)el.textContent=String(now.getUTCHours()).padStart(2,'0')+':'+String(now.getUTCMinutes()).padStart(2,'0')+':'+String(now.getUTCSeconds()).padStart(2,'0')+' UTC';}
@@ -183,8 +183,6 @@ export default function TrainingSection() {
     .t-status{color:#00FF88}
     .t-muted{color:#6B8A76}
     .t-amber{color:#F5A623}
-    .t-cursor{display:inline-block;width:8px;height:14px;background:#00FF88;animation:vt-blink 1s step-end infinite;vertical-align:text-bottom;margin-left:2px}
-    @keyframes vt-blink{50%{opacity:0}}
     .metrics-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(0,255,136,0.12);border-bottom:1px solid rgba(0,255,136,0.12)}
     .metric{background:rgba(5,10,8,0.95);padding:16px 20px}
     .metric-label{font-family:'JetBrains Mono',monospace;font-size:9px;color:#6B8A76;text-transform:uppercase;letter-spacing:0.15em;margin-bottom:6px}
