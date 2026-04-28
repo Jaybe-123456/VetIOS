@@ -98,8 +98,8 @@ function inlineFormat(text: string): string {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-const username = useChatStore((s) => s.username);
 export default function ChatBubble({ message, onFollowUp }: ChatBubbleProps) {
+    const username = useChatStore((s) => s.username);
     const isAssistant = message.role === 'assistant';
     const mode = message.metadata?.mode;
     const isEducational = mode === 'educational';
