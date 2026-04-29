@@ -66,7 +66,7 @@ const SPECIES_VITALS: Record<string, VitalRange> = {
 };
 
 // Default for unknown species
-const DEFAULT_VITALS: VitalRange = SPECIES_VITALS.canine;
+const DEFAULT_VITALS: VitalRange = SPECIES_VITALS["canine"] as VitalRange;
 
 // ─── Critical Symptom Keywords ───────────────────────────────
 
@@ -350,11 +350,11 @@ export class TriageEngine {
 
     // Weighted approach: max factor dominates, but additional factors add 10% each
     const sorted = [...factors].sort((a, b) => b.score - a.score);
-    let composite = sorted[0].score;
+    let composite = sorted[0]!.score;
 
     for (let i = 1; i < sorted.length; i++) {
       // Each additional factor adds a diminishing contribution
-      composite += sorted[i].score * (0.1 / i);
+      composite += sorted[i]!.score * (0.1 / i);
     }
 
     return Math.min(100, Math.round(composite));
