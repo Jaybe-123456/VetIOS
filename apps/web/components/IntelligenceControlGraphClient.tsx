@@ -36,6 +36,7 @@ import type { ControlPlaneSimulationModeResponse } from '@/lib/settings/types';
 
 type ControlMode = 'live' | 'rewind_1h' | 'rewind_24h' | 'replay';
 type StreamStatus = 'connecting' | 'live' | 'disconnected';
+type SimulationMessageTone = 'success' | 'error';
 
 const NODE_TYPES = {
     topologyNode: TopologyGraphNode,
@@ -61,6 +62,7 @@ export default function IntelligenceControlGraphClient() {
     const [simulationTarget, setSimulationTarget] = useState('diagnostics_model');
     const [simulationSeverity, setSimulationSeverity] = useState<'degraded' | 'critical'>('critical');
     const [simulationMessage, setSimulationMessage] = useState<string | null>(null);
+    const [simulationMessageTone, setSimulationMessageTone] = useState<SimulationMessageTone | null>(null);
     const [simulationBusy, setSimulationBusy] = useState(false);
     const [simulationModeError, setSimulationModeError] = useState<string | null>(null);
     const [pageVisible, setPageVisible] = useState(true);
@@ -200,6 +202,7 @@ export default function IntelligenceControlGraphClient() {
 
     const selectedNode = snapshot?.nodes.find((node) => node.id === selectedNodeId) ?? null;
     const selectedEdge = snapshot?.edges.find((edge) => edge.id === selectedEdgeId) ?? null;
+    const selectedSimulationTargetNode = snapshot?.nodes.find((node) => node.id === simulationTarget) ?? null;
     const graphNodes = (snapshot?.nodes ?? []).map<Node>((node) => ({
         id: node.id,
         type: 'topologyNode',
@@ -405,7 +408,7 @@ export default function IntelligenceControlGraphClient() {
                                 </button>
                             </div>
                             {simulationModeError ? (
-                                <div className="border border-[#ffcc00] bg-[#ffcc00]/5 p-2 text-[#ffcc00]">
+                                <div className="border border-danger bg-danger/10 p-2 text-danger">
                                     {simulationModeError}
                                 </div>
                             ) : null}
@@ -416,7 +419,7 @@ export default function IntelligenceControlGraphClient() {
                                         <select
                                             value={simulationScenario}
                                             onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationScenario(event.target.value as TopologySimulationScenario)}
-                                            className="mt-1 w-full bg-black border border-grid p-2 text-foreground"
+                                            className={simulationSelectClass(resolveScenarioSelectTone(simulationScenario))}
                                         >
                                             <option value="failure">Inject Failure</option>
                                             <option value="drift">Simulate Drift</option>
@@ -428,7 +431,7 @@ export default function IntelligenceControlGraphClient() {
                                         <select
                                             value={simulationTarget}
                                             onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationTarget(event.target.value)}
-                                            className="mt-1 w-full bg-black border border-grid p-2 text-foreground"
+                                            className={simulationSelectClass(resolveNodeSelectTone(selectedSimulationTargetNode))}
                                         >
                                             {(snapshot?.nodes ?? []).map((node) => (
                                                 <option key={node.id} value={node.id}>{node.label}</option>
@@ -440,21 +443,21 @@ export default function IntelligenceControlGraphClient() {
                                         <select
                                             value={simulationSeverity}
                                             onChange={(event: ChangeEvent<HTMLSelectElement>) => setSimulationSeverity(event.target.value as 'degraded' | 'critical')}
-                                            className="mt-1 w-full bg-black border border-grid p-2 text-foreground"
+                                            className={simulationSelectClass(resolveSeveritySelectTone(simulationSeverity))}
                                         >
                                             <option value="degraded">Degraded</option>
                                             <option value="critical">Critical</option>
                                         </select>
                                     </label>
                                     <TerminalButton
-                                        variant={simulationScenario === 'adversarial_attack' ? 'danger' : 'secondary'}
+                                        variant={simulationSeverity === 'critical' || simulationScenario === 'adversarial_attack' || simulationScenario === 'failure' ? 'danger' : 'primary'}
                                         disabled={simulationBusy}
                                         onClick={() => void injectSimulation()}
                                     >
                                         {simulationBusy ? 'Injecting...' : 'Inject'}
                                     </TerminalButton>
                                     {simulationMessage && (
-                                        <div className={`border border-grid bg-black/30 p-2 ${PANEL_META_CLASS}`}>
+                                        <div className={`${PANEL_META_CLASS} border p-2 ${simulationMessageTone === 'error' ? 'border-danger bg-danger/10 text-danger' : 'border-accent/60 bg-accent/10 text-accent'}`}>
                                             {simulationMessage}
                                         </div>
                                     )}
@@ -495,6 +498,7 @@ export default function IntelligenceControlGraphClient() {
     async function injectSimulation() {
         setSimulationBusy(true);
         setSimulationMessage(null);
+        setSimulationMessageTone(null);
         try {
             const response = await fetch('/api/intelligence/topology', {
                 method: 'POST',
@@ -511,12 +515,14 @@ export default function IntelligenceControlGraphClient() {
             }
 
             setSimulationMessage(`Injected ${simulationScenario} into ${payload.target?.node_id ?? simulationTarget}.`);
+            setSimulationMessageTone('success');
             if (mode !== 'live') {
                 const activeWindow = mode === 'rewind_1h' ? '1h' : '24h';
                 await loadHistoricalSnapshot(activeWindow, mode === 'replay' && replayMarkers[replayIndex] ? replayMarkers[replayIndex]!.timestamp : undefined, mode === 'replay');
             }
         } catch (error) {
             setSimulationMessage(error instanceof Error ? error.message : 'Failed to inject simulation');
+            setSimulationMessageTone('error');
         } finally {
             setSimulationBusy(false);
         }
@@ -542,8 +548,10 @@ export default function IntelligenceControlGraphClient() {
             }
             setSimulationMode(payload.snapshot?.configuration?.simulation_enabled ?? nextMode);
             setSimulationMessage(nextMode ? 'Simulation mode enabled from the control plane.' : 'Simulation mode disabled from the control plane.');
+            setSimulationMessageTone('success');
         } catch (error) {
             setSimulationModeError(error instanceof Error ? error.message : 'Failed to update simulation mode.');
+            setSimulationMessageTone('error');
         } finally {
             setSimulationBusy(false);
         }
@@ -691,11 +699,13 @@ function OverviewPanel({
                                     <button
                                         key={node.id}
                                         type="button"
-                                        className="w-full text-left border border-grid p-2 hover:border-accent transition-colors"
+                                        className={`w-full text-left border p-3 transition-colors ${hotNodeCardClass(node)}`}
                                         onClick={() => onInspectNode(node.id)}
                                     >
                                         <div className="text-[13px] text-foreground leading-relaxed">{node.label}</div>
-                                        <div className={PANEL_HINT_CLASS}>{node.state.status} | alerts={node.alert_count} | drift={formatMetric(node.state.drift_score, 'NO DATA')}</div>
+                                        <div className={PANEL_HINT_CLASS} style={{ color: hotNodeMetaColor(node) }}>
+                                            {node.state.status} | alerts={node.alert_count} | drift={formatMetric(node.state.drift_score, 'NO DATA')}
+                                        </div>
                                     </button>
                                 ))}
                         </div>
@@ -746,6 +756,36 @@ function ModeButton({ active, onClick, children }: { active: boolean; onClick: (
             {children}
         </button>
     );
+}
+
+function simulationSelectClass(tone: 'success' | 'warning' | 'danger' | 'neutral') {
+    const toneClass = tone === 'danger'
+        ? 'border-danger bg-danger/10 text-danger focus:border-danger'
+        : tone === 'warning'
+            ? 'border-[#facc15]/70 bg-[#facc15]/10 text-[#fde68a] focus:border-[#facc15]'
+            : tone === 'success'
+                ? 'border-accent/70 bg-accent/10 text-accent focus:border-accent'
+                : 'border-grid bg-black text-foreground focus:border-accent/60';
+
+    return `mt-1 w-full appearance-none border px-3 py-2.5 font-mono text-[13px] transition-colors outline-none ${toneClass}`;
+}
+
+function resolveScenarioSelectTone(scenario: TopologySimulationScenario) {
+    if (scenario === 'adversarial_attack' || scenario === 'failure') return 'danger';
+    if (scenario === 'drift') return 'warning';
+    return 'neutral';
+}
+
+function resolveSeveritySelectTone(severity: 'degraded' | 'critical') {
+    return severity === 'critical' ? 'danger' : 'warning';
+}
+
+function resolveNodeSelectTone(node: TopologyNodeSnapshot | null): 'success' | 'warning' | 'danger' | 'neutral' {
+    if (!node) return 'neutral';
+    if (node.state.status === 'critical') return 'danger';
+    if (node.state.status === 'degraded') return 'warning';
+    if (node.state.status === 'healthy') return 'success';
+    return 'neutral';
 }
 
 function MetricMini({
@@ -802,6 +842,26 @@ function nodeAccent(node: TopologyNodeSnapshot) {
         secondary: '#d1fae5',
         tertiary: '#86efac',
     };
+}
+
+function hotNodeCardClass(node: TopologyNodeSnapshot) {
+    if (node.state.status === 'critical') {
+        return 'border-danger bg-danger/10 hover:border-danger/80';
+    }
+    if (node.state.status === 'degraded') {
+        return 'border-[#facc15]/70 bg-[#facc15]/10 hover:border-[#facc15]';
+    }
+    if (node.propagated_risk || node.alert_count > 0) {
+        return 'border-accent/60 bg-accent/10 hover:border-accent';
+    }
+    return 'border-grid bg-black/20 hover:border-accent/60';
+}
+
+function hotNodeMetaColor(node: TopologyNodeSnapshot) {
+    if (node.state.status === 'critical') return '#fca5a5';
+    if (node.state.status === 'degraded') return '#fde68a';
+    if (node.propagated_risk || node.alert_count > 0) return '#86efac';
+    return '#9ca3af';
 }
 
 function governanceBorderAccent(node: TopologyNodeSnapshot) {
