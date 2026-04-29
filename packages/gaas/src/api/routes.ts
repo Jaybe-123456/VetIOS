@@ -23,11 +23,11 @@ import { HITLManager, buildDecisionCard } from "../lib/hitl";
 // ─── Default policies per role ───────────────────────────────
 export const DEFAULT_POLICIES: Record<AgentRole, AgentPolicy> = {
   triage: {
-    allowed_tools: ["run_inference", "fetch_patient_history", "send_alert"],
+    allowed_tools: ["run_inference", "fetch_patient_history", "send_alert", "query_drug_db"],
     confidence_threshold_for_escalation: 0.3,
     max_autonomous_actions: 5,
     require_human_approval_for: [],
-    safe_terminal_states: ["triaged", "escalated_to_diagnostic"],
+    safe_terminal_states: ["triaged", "escalated_to_diagnostic", "triage_complete"],
   },
   diagnostic: {
     allowed_tools: ["run_inference", "run_simulation", "fetch_patient_history", "order_lab", "send_alert"],

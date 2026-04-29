@@ -3,7 +3,9 @@
 // Message bus and handoff schema for specialist agents.
 // ============================================================
 
-import type { AgentMessage, AgentRole, AgentRun } from "../types/agent";
+import type { AgentMessage, AgentRole, AgentRun, TenantConfig } from "../types/agent";
+import { getTriageEngine, type TriageAssessment } from "./triage-engine";
+import type { NotificationDispatcher } from "./notification-dispatcher";
 
 export type MessageHandler = (message: AgentMessage) => Promise<void>;
 
@@ -46,7 +48,10 @@ export class InProcessMessageBus implements MessageBus {
 
 // ─── Coordinator — manages agent handoffs ────────────────────
 export class AgentCoordinator {
-  constructor(private bus: MessageBus) {}
+  constructor(
+    private bus: MessageBus,
+    private notificationDispatcher?: NotificationDispatcher
+  ) {}
 
   // Triage → Diagnostic handoff
   async handoffToDiagnostic(
@@ -68,6 +73,52 @@ export class AgentCoordinator {
       },
       timestamp: new Date().toISOString(),
     });
+  }
+
+  // Autonomous Triage Routing
+  async triageAndRoute(
+    from_run: AgentRun,
+    tenant_config: TenantConfig
+  ): Promise<{ assessment: TriageAssessment; dispatched: boolean }> {
+    const engine = getTriageEngine();
+    const assessment = engine.assess(from_run.patient_context);
+    
+    let dispatched = false;
+
+    // Persist triage assessment in patient context
+    from_run.patient_context.triage_assessment = assessment;
+
+    if (assessment.requires_immediate_notification && this.notificationDispatcher) {
+      await this.notificationDispatcher.dispatchTriageAlert(
+        tenant_config,
+        from_run.patient_context.patient_id,
+        assessment,
+        { run_id: from_run.run_id }
+      );
+      dispatched = true;
+
+      // Broadcast escalation internal message
+      await this.bus.publish({
+        message_id: `msg_${Date.now()}_escalation`,
+        from_agent: "triage",
+        to_agent: "diagnostic",
+        run_id: from_run.run_id,
+        patient_id: from_run.patient_context.patient_id,
+        type: "triage_escalation",
+        payload: { assessment },
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Still handoff to diagnostic, but with urgency
+    await this.handoffToDiagnostic(
+      from_run,
+      `Triage Level: ${assessment.level} (Score: ${assessment.score}). ${
+        dispatched ? "CRITICAL ALERT DISPATCHED." : ""
+      }`
+    );
+
+    return { assessment, dispatched };
   }
 
   // Diagnostic → Treatment handoff

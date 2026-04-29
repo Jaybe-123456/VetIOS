@@ -2,6 +2,8 @@
 // VetIOS GaaS — Core Agent Types
 // ============================================================
 
+import type { TriageAssessment } from "../lib/triage-engine";
+
 export type AgentStatus =
   | "idle"
   | "running"
@@ -63,6 +65,7 @@ export interface PatientContext {
     heart_rate?: number;
     [key: string]: unknown;
   };
+  triage_assessment?: TriageAssessment;
 }
 
 // ─── Memory Entry ────────────────────────────────────────────
@@ -142,7 +145,7 @@ export interface AgentMessage {
   to_agent: AgentRole;
   run_id: string;
   patient_id: string;
-  type: "handoff" | "consultation" | "alert" | "result";
+  type: "handoff" | "consultation" | "alert" | "result" | "triage_escalation";
   payload: Record<string, unknown>;
   timestamp: string;
   acknowledged?: boolean;

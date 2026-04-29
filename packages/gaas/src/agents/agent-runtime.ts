@@ -18,6 +18,7 @@ import type { MemoryStoreAdapter } from "../lib/memory-store";
 import { buildMemoryContext } from "../lib/memory-store";
 import type { ToolExecutor } from "../lib/tool-registry";
 import type { HITLManager } from "../lib/hitl";
+import { getTriageEngine } from "../lib/triage-engine";
 
 // ─── Planner Response ────────────────────────────────────────
 interface PlannerOutput {
@@ -86,6 +87,12 @@ export class AgentRuntime {
     const maxSteps = run.goal.max_steps;
 
     while (run.steps.length < maxSteps && run.status === "running") {
+      // Autonomous Triage: auto-run assessment after first step
+      if (run.agent_role === "triage" && run.steps.length >= 1 && !run.patient_context.triage_assessment) {
+        const engine = getTriageEngine();
+        run.patient_context.triage_assessment = engine.assess(run.patient_context);
+      }
+
       const plannerOutput = await this.callPlanner(run, memory_summary);
 
       const step: AgentStep = {
@@ -321,9 +328,15 @@ Always respond with valid JSON matching the PlannerOutput schema.`;
 }
 
 function buildPlannerUserPrompt(run: AgentRun, memory_summary: string): string {
+  const triage = run.patient_context.triage_assessment;
+  const triageWarning = (triage && (triage.level === "CRITICAL" || triage.level === "URGENT")) 
+    ? `[SYSTEM ESCALATION WARNING]: Triage engine assessed patient as ${triage.level} (Score ${triage.score}). Recommended: ${triage.recommended_actions.join("; ")}. You MUST consider escalating this case or firing critical alerts.`
+    : undefined;
+
   return JSON.stringify({
     goal: run.goal,
     patient_context: run.patient_context,
+    triage_warning: triageWarning,
     memory_summary,
     recent_memory: run.memory_context.slice(-5),
     steps_so_far: run.steps.length,

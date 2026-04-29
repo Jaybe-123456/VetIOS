@@ -8,6 +8,7 @@ import { InMemoryStore, SupabaseMemoryStore } from "./lib/memory-store";
 import { ToolRegistry, ToolExecutor, buildDefaultTools } from "./lib/tool-registry";
 import { HITLManager, InMemoryHITLStore } from "./lib/hitl";
 import { InProcessMessageBus, AgentCoordinator } from "./lib/coordination";
+import { NotificationDispatcher } from "./lib/notification-dispatcher";
 import { TenantProvisioner, InMemoryTenantStore, UsageMeter } from "./lib/tenant";
 import type { AgentRun } from "./types/agent";
 
@@ -29,6 +30,7 @@ export type {
   PatientContext,
   TenantConfig,
 } from "./types/agent";
+export type { TriageLevel, TriageAssessment, TriageFactor } from "./lib/triage-engine";
 
 export interface GaaSPlatformConfig {
   vetiosBaseUrl: string;
@@ -42,6 +44,7 @@ export interface GaaSPlatform {
   runtime: AgentRuntime;
   hitlManager: HITLManager;
   coordinator: AgentCoordinator;
+  notificationDispatcher: NotificationDispatcher;
   tenantProvisioner: TenantProvisioner;
   usageMeter: UsageMeter;
   runStore: Map<string, AgentRun>;
@@ -67,7 +70,8 @@ export function bootstrapGaaSPlatform(config: GaaSPlatformConfig): GaaSPlatform 
 
   // ─── Coordination Layer ──────────────────────────────────
   const messageBus = new InProcessMessageBus();
-  const coordinator = new AgentCoordinator(messageBus);
+  const notificationDispatcher = new NotificationDispatcher();
+  const coordinator = new AgentCoordinator(messageBus, notificationDispatcher);
 
   // ─── Agent Runtime ───────────────────────────────────────
   const runtimeConfig: AgentRuntimeConfig = {
@@ -90,6 +94,7 @@ export function bootstrapGaaSPlatform(config: GaaSPlatformConfig): GaaSPlatform 
   return {
     runtime,
     hitlManager,
+    notificationDispatcher,
     coordinator,
     tenantProvisioner,
     usageMeter,
