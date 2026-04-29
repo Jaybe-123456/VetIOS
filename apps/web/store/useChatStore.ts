@@ -37,8 +37,12 @@ interface ChatState {
     chats: Chat[];
     activeChatId: string | null;
     isLoading: boolean;
-    username: string | null;
+    userTier: 'free' | 'premium';
+    dailyMessageCount: number;
+    lastMessageDate: string | null;
     setUsername: (username: string | null) => void;
+    setTier: (tier: 'free' | 'premium') => void;
+    incrementUsage: () => boolean; // Returns true if allowed, false if limit exceeded
     addMessage: (chatId: string, message: Omit<Message, 'id' | 'timestamp'>) => void;
     createChat: (title?: string) => string;
     deleteChat: (chatId: string) => void;
@@ -55,7 +59,27 @@ export const useChatStore = create<ChatState>()(
             activeChatId: null,
             isLoading: false,
             username: null,
+            userTier: 'free',
+            dailyMessageCount: 0,
+            lastMessageDate: null,
             setUsername: (username) => set({ username }),
+            setTier: (tier) => set({ userTier: tier }),
+
+            incrementUsage: () => {
+                let allowed = true;
+                set((state) => {
+                    const today = new Date().toISOString().slice(0, 10);
+                    let newCount = state.lastMessageDate === today ? state.dailyMessageCount + 1 : 1;
+                    
+                    if (state.userTier === 'free' && newCount > 20) {
+                        allowed = false;
+                        return state; // Do not increment if blocked
+                    }
+                    
+                    return { dailyMessageCount: newCount, lastMessageDate: today };
+                });
+                return allowed;
+            },
 
             setLoading: (loading) => set({ isLoading: loading }),
 

@@ -17,7 +17,7 @@ import { useState } from 'react';
 export default function AskVetIOSPage() {
     const {
     createChat, activeChatId, addMessage, setLoading, isLoading,
-    switchChat, chats, deleteChat, username   // ← add username here
+    switchChat, chats, deleteChat, username, incrementUsage
 } = useChatStore();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -40,6 +40,16 @@ export default function AskVetIOSPage() {
             .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim().length > 0 && m.content.trim().length <= 4000)
             .slice(-16)
             .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+        if (!incrementUsage()) {
+            addMessage(activeChatId, { role: 'user', content });
+            addMessage(activeChatId, {
+                role: 'assistant',
+                content: "Free tier daily limit reached (20/20). Upgrade to Premium for unmetered intelligence access.",
+                metadata: { mode: 'operational' },
+            });
+            return;
+        }
 
         addMessage(activeChatId, { role: 'user', content });
         setLoading(true);
@@ -76,7 +86,7 @@ export default function AskVetIOSPage() {
         } finally {
             setLoading(false);
         }
-    }, [activeChatId, chats, addMessage, setLoading]);
+    }, [activeChatId, chats, addMessage, setLoading, incrementUsage]);
 
     const handleFollowUp = useCallback((prompt: string) => {
         void sendMessage(prompt);
@@ -123,7 +133,7 @@ if (!username) return <UsernamePrompt />;
 
 return (
     
-        <div className="flex h-dvh bg-[#050505] text-white overflow-hidden">
+        <div className="fixed inset-0 flex bg-[#050505] text-white overflow-hidden">
 
             {/* ── Chat history sidebar ─────────────────────────────────── */}
             <AnimatePresence>
