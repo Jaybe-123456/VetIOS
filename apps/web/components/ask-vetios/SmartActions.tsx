@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Activity, AlertTriangle, BookOpen, ChevronDown, ChevronUp,
-    ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search
+    ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MessageMetadata } from '@/store/useChatStore';
@@ -15,7 +15,7 @@ interface SmartActionsProps {
     onFollowUp: (prompt: string) => void;
 }
 
-type ActivePanel = 'diagnosis' | 'tests' | 'research' | 'exam' | 'pathogenesis' | 'molecular' | 'prevention' | 'vaccine' | null;
+type ActivePanel = 'diagnosis' | 'tests' | 'research' | 'exam' | 'pathogenesis' | 'molecular' | 'prevention' | 'vaccine' | 'override' | null;
 
 // ── Confidence bar ─────────────────────────────────────────────────────────
 
@@ -375,6 +375,10 @@ export default function SmartActions({ metadata, messageContent, onFollowUp }: S
                     </Panel>
                 )}
 
+                {activePanel === 'override' && isClinical && (
+                    <OverridePanel key="override" metadata={metadata} messageContent={messageContent} onClose={() => setActivePanel(null)} />
+                )}
+
                 {activePanel === 'tests' && isClinical && (
                     <Panel key="tests" title="View Diagnostics" icon={Microscope} onClose={() => setActivePanel(null)}>
                         <div className="space-y-3">
@@ -407,6 +411,7 @@ export default function SmartActions({ metadata, messageContent, onFollowUp }: S
                     <>
                         <ActionBtn icon={Play}         label="Run Diagnosis"    primary active={activePanel === 'diagnosis'} onClick={() => toggle('diagnosis')} />
                         <ActionBtn icon={Microscope}   label="View Diagnostics" active={activePanel === 'tests'}      onClick={() => toggle('tests')} />
+                        <ActionBtn icon={CheckCircle}  label="Override Diagnosis" active={activePanel === 'override'} onClick={() => toggle('override')} />
                     </>
                 )}
                 <ActionBtn icon={Search}       label="Research Mode"   active={activePanel === 'research'}    onClick={() => toggle('research')} />
@@ -417,6 +422,129 @@ export default function SmartActions({ metadata, messageContent, onFollowUp }: S
                 <ActionBtn icon={Syringe}      label="Vaccine Info"    active={activePanel === 'vaccine'}     onClick={() => toggle('vaccine')} />
             </div>
         </div>
+    );
+}
+
+
+// ── Override panel ─────────────────────────────────────────────────────────
+
+function extractSpecies(content: string): string {
+    const lower = content.toLowerCase();
+    if (lower.includes('canine') || lower.includes('dog')) return 'canine';
+    if (lower.includes('feline') || lower.includes('cat')) return 'feline';
+    if (lower.includes('equine') || lower.includes('horse')) return 'equine';
+    if (lower.includes('bovine') || lower.includes('cow') || lower.includes('cattle')) return 'bovine';
+    if (lower.includes('avian') || lower.includes('bird')) return 'avian';
+    return '';
+}
+
+function OverridePanel({ metadata, messageContent, onClose }: {
+    metadata: MessageMetadata;
+    messageContent: string;
+    onClose: () => void;
+}) {
+    const [diagnosis, setDiagnosis] = useState('');
+    const [confidence, setConfidence] = useState(0.8);
+    const [notes, setNotes] = useState('');
+    const [species, setSpecies] = useState(extractSpecies(messageContent));
+    const [status, setStatus] = useState<'idle' | 'sending' | 'done' | 'error'>('idle');
+
+    const topAiDiagnosis = metadata.diagnosis_ranked?.[0]?.name ?? '';
+
+    const handleSubmit = async () => {
+        if (!diagnosis.trim() || !species.trim()) return;
+        setStatus('sending');
+        try {
+            await fetch('/api/rlhf/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    inferenceEventId: crypto.randomUUID(),
+                    feedbackType: 'diagnosis_corrected',
+                    predictedDiagnosis: topAiDiagnosis,
+                    actualDiagnosis: diagnosis.trim(),
+                    predictedConfidence: metadata.diagnosis_ranked?.[0]?.confidence ?? 0.5,
+                    vetConfidence: confidence,
+                    species: species.trim(),
+                    vetNotes: notes.trim() || null,
+                    labelType: 'expert',
+                    extractedFeatures: {},
+                }),
+            });
+            setStatus('done');
+        } catch {
+            setStatus('error');
+        }
+    };
+
+    return (
+        <Panel title="Override Diagnosis" icon={CheckCircle} onClose={onClose}>
+            {status === 'done' ? (
+                <div className="text-center py-4 space-y-2">
+                    <CheckCircle className="w-6 h-6 text-accent mx-auto" />
+                    <p className="font-mono text-[11px] text-accent uppercase tracking-widest">Override Recorded</p>
+                    <p className="font-mono text-[10px] text-white/40">This correction will improve VetIOS accuracy.</p>
+                </div>
+            ) : (
+                <div className="space-y-3">
+                    {topAiDiagnosis && (
+                        <div className="p-2 bg-white/[0.03] border border-white/8">
+                            <span className="font-mono text-[9px] text-white/30 uppercase tracking-widest">AI suggested</span>
+                            <p className="font-mono text-[11px] text-white/60 mt-0.5">{topAiDiagnosis}</p>
+                        </div>
+                    )}
+                    <div className="space-y-1">
+                        <label className="font-mono text-[9px] text-white/40 uppercase tracking-widest">Correct Diagnosis *</label>
+                        <input
+                            value={diagnosis}
+                            onChange={e => setDiagnosis(e.target.value)}
+                            placeholder="e.g. Canine Parvovirus"
+                            className="w-full bg-white/[0.04] border border-white/10 text-white/90 font-mono text-xs px-3 py-2 outline-none focus:border-accent/40 placeholder:text-white/20"
+                        />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="font-mono text-[9px] text-white/40 uppercase tracking-widest">Species *</label>
+                        <input
+                            value={species}
+                            onChange={e => setSpecies(e.target.value)}
+                            placeholder="e.g. canine"
+                            className="w-full bg-white/[0.04] border border-white/10 text-white/90 font-mono text-xs px-3 py-2 outline-none focus:border-accent/40 placeholder:text-white/20"
+                        />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="font-mono text-[9px] text-white/40 uppercase tracking-widest">
+                            Your Confidence — {Math.round(confidence * 100)}%
+                        </label>
+                        <input
+                            type="range" min={0.1} max={1} step={0.05}
+                            value={confidence}
+                            onChange={e => setConfidence(parseFloat(e.target.value))}
+                            className="w-full accent-[#00ff66]"
+                        />
+                    </div>
+                    <div className="space-y-1">
+                        <label className="font-mono text-[9px] text-white/40 uppercase tracking-widest">Notes (optional)</label>
+                        <textarea
+                            value={notes}
+                            onChange={e => setNotes(e.target.value)}
+                            placeholder="Clinical reasoning, supporting findings..."
+                            rows={2}
+                            className="w-full bg-white/[0.04] border border-white/10 text-white/90 font-mono text-xs px-3 py-2 outline-none focus:border-accent/40 placeholder:text-white/20 resize-none"
+                        />
+                    </div>
+                    {status === 'error' && (
+                        <p className="font-mono text-[10px] text-red-400">Submission failed. Please try again.</p>
+                    )}
+                    <button
+                        onClick={handleSubmit}
+                        disabled={!diagnosis.trim() || !species.trim() || status === 'sending'}
+                        className="w-full py-2 font-mono text-[10px] uppercase tracking-widest bg-accent/10 border border-accent/30 text-accent hover:bg-accent/20 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                    >
+                        {status === 'sending' ? 'Submitting...' : 'Submit Override →'}
+                    </button>
+                </div>
+            )}
+        </Panel>
     );
 }
 
