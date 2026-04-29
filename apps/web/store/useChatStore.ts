@@ -37,6 +37,7 @@ interface ChatState {
     chats: Chat[];
     activeChatId: string | null;
     isLoading: boolean;
+    username: string | null;
     userTier: 'free' | 'premium';
     dailyMessageCount: number;
     lastMessageDate: string | null;
