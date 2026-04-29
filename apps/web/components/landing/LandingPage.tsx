@@ -11,6 +11,7 @@ import InterfacePreviewSection from './sections/InterfacePreviewSection';
 import DeveloperInfraSection from './sections/DeveloperInfraSection';
 import TechStackSection from './sections/TechStackSection';
 import FinalCTASection from './sections/FinalCTASection';
+import TrainingSection from './TrainingSection';
 import Footer from './sections/Footer';
 
 export default function LandingPage() {
@@ -65,6 +66,7 @@ export default function LandingPage() {
                 <ArchitectureSection />
                 <ModulesSection />
                 <FlywheelSection />
+                <TrainingSection />
                 <GlobalNetworkSection />
                 <InterfacePreviewSection />
                 <DeveloperInfraSection />
