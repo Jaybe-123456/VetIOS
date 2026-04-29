@@ -293,13 +293,21 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
     ]);
 
     if ('error' in primaryResult) {
+        if (input.input_signature.query_type === 'ask_vetios') {
+            throw new Error(`Primary AI failed: ${primaryResult.error}`);
+        }
         return buildFallbackInference(input, contradictionResult, primaryModel, `Primary AI failed: ${primaryResult.error}`);
     }
 
     const rawContent = primaryResult.choices[0]?.message?.content ?? '';
+    let cleanContent = rawContent.trim();
+    if (cleanContent.startsWith('```')) {
+        cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
+    }
+    
     let parsed: Record<string, any>;
     try {
-        parsed = JSON.parse(rawContent);
+        parsed = JSON.parse(cleanContent);
     } catch {
         parsed = { raw: rawContent, parse_error: true };
     }

@@ -112,6 +112,9 @@ export async function POST(req: Request) {
         });
 
         const output = inferenceResult.output_payload;
+        if (output.parse_error) {
+            throw new Error(`AI generated invalid JSON: ${inferenceResult.raw_content}`);
+        }
         const response = buildEnsembleResponse(output, inferenceResult.ensemble_metadata);
         
         const res = NextResponse.json(response, { status: 200 });
@@ -202,7 +205,7 @@ function extractTopic(data: Record<string, unknown>): string {
 function buildHeuristicResponse(message: string) {
     const lower = message.toLowerCase();
 
-    const educationalKeywords = ['what is', 'explain', 'describe', 'how does', 'pathogenesis', 'mechanism',
+    const educationalKeywords = ['what are', 'what is', 'explain', 'describe', 'how does', 'pathogenesis', 'mechanism',
         'epidemiology', 'classification', 'structure', 'treatment of', 'prevention of', 'vaccine', 'overview of'];
     const isEducational = educationalKeywords.some((k) => lower.includes(k));
 
