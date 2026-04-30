@@ -43,7 +43,12 @@ export default function ChatContainer({ onFollowUp }: ChatContainerProps) {
             <div className="flex flex-col min-h-full">
                 <AnimatePresence initial={false}>
                     {messages.map((message) => (
-                        <ChatBubble key={message.id} message={message} onFollowUp={onFollowUp} />
+                        <ChatBubble
+                            key={message.id}
+                            message={message}
+                            conversationMessages={messages}
+                            onFollowUp={onFollowUp}
+                        />
                     ))}
                 </AnimatePresence>
 

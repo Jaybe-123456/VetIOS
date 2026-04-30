@@ -1,21 +1,53 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-    Activity, AlertTriangle, BookOpen, ChevronDown, ChevronUp,
-    ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle
+    Activity, AlertTriangle, BookOpen,
+    ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle,
+    Eye, ImageIcon, Pill, GitBranch, LibraryBig
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MessageMetadata } from '@/store/useChatStore';
+import GenomicVisualizer from './GenomicVisualizer';
+import ClinicalSignsAtlas from './ClinicalSignsAtlas';
+import DiseaseImagePanel from './DiseaseImagePanel';
+import DrugFormulary from './DrugFormulary';
+import DifferentialDriftPanel from './DifferentialDriftPanel';
+import SimilarCasesPanel from './SimilarCasesPanel';
 
 interface SmartActionsProps {
     metadata: MessageMetadata;
     messageContent: string;
+    messageId: string;
+    messageTimestamp: number;
+    conversationMessages: Array<{
+        id: string;
+        role: 'user' | 'assistant';
+        content: string;
+        timestamp: number;
+        metadata?: {
+            mode?: string;
+            diagnosis_ranked?: Array<{ name: string; confidence: number; reasoning?: string }>;
+        };
+    }>;
     onFollowUp: (prompt: string) => void;
 }
 
-type ActivePanel = 'diagnosis' | 'tests' | 'research' | 'exam' | 'pathogenesis' | 'molecular' | 'prevention' | 'vaccine' | 'override' | null;
+type ActivePanel =
+    | 'diagnosis'
+    | 'tests'
+    | 'research'
+    | 'exam'
+    | 'pathogenesis'
+    | 'molecular'
+    | 'prevention'
+    | 'vaccine'
+    | 'override'
+    | 'visualAtlas'
+    | 'clinicalImages'
+    | 'drugFormulary'
+    | null;
 
 // ── Confidence bar ─────────────────────────────────────────────────────────
 
@@ -105,14 +137,34 @@ function ActionBtn({
 
 // ── Main component ─────────────────────────────────────────────────────────
 
-export default function SmartActions({ metadata, messageContent, onFollowUp }: SmartActionsProps) {
+export default function SmartActions({
+    metadata,
+    messageContent,
+    messageId,
+    messageTimestamp,
+    conversationMessages,
+    onFollowUp,
+}: SmartActionsProps) {
     const [activePanel, setActivePanel] = useState<ActivePanel>(null);
+    const [showDriftPanel, setShowDriftPanel] = useState((metadata.diagnosis_ranked?.length ?? 0) >= 2);
+    const [showSimilarCasesPanel, setShowSimilarCasesPanel] = useState(metadata.mode === 'clinical');
 
     const toggle = (panel: ActivePanel) => setActivePanel(prev => prev === panel ? null : panel);
 
     const isClinical = metadata.mode === 'clinical';
     const isEducational = metadata.mode === 'educational';
     const topic = metadata.topic ?? extractTopicFromContent(messageContent);
+    const hasRankedDifferentials = (metadata.diagnosis_ranked?.length ?? 0) > 0;
+    const canShowDrift = isClinical && (metadata.diagnosis_ranked?.length ?? 0) >= 2;
+    const canShowSimilarCases = isClinical && hasRankedDifferentials;
+    const scopedConversationMessages = conversationMessages.filter(
+        (message) => message.timestamp < messageTimestamp || message.id === messageId,
+    );
+
+    useEffect(() => {
+        setShowDriftPanel((metadata.diagnosis_ranked?.length ?? 0) >= 2);
+        setShowSimilarCasesPanel(metadata.mode === 'clinical' && (metadata.diagnosis_ranked?.length ?? 0) > 0);
+    }, [messageId, metadata.diagnosis_ranked, metadata.mode]);
 
     // ── Follow-up prompt builders ──────────────────────────────────────────
     const ask = (prompt: string) => {
@@ -153,6 +205,28 @@ export default function SmartActions({ metadata, messageContent, onFollowUp }: S
                             </div>
                         </div>
                     )}
+
+                    <AnimatePresence>
+                        {canShowDrift && showDriftPanel && (
+                            <Panel key="drift-inline" title="Differential Drift" icon={GitBranch} onClose={() => setShowDriftPanel(false)}>
+                                <DifferentialDriftPanel
+                                    messageId={messageId}
+                                    messageTimestamp={messageTimestamp}
+                                    conversationMessages={scopedConversationMessages}
+                                />
+                            </Panel>
+                        )}
+
+                        {canShowSimilarCases && showSimilarCasesPanel && (
+                            <Panel key="similar-inline" title="Similar Cases" icon={LibraryBig} onClose={() => setShowSimilarCasesPanel(false)}>
+                                <SimilarCasesPanel
+                                    messageContent={messageContent}
+                                    conversationMessages={scopedConversationMessages}
+                                    onFollowUp={onFollowUp}
+                                />
+                            </Panel>
+                        )}
+                    </AnimatePresence>
 
                     {/* Red flags */}
                     {metadata.red_flags && metadata.red_flags.length > 0 && (
@@ -281,6 +355,9 @@ export default function SmartActions({ metadata, messageContent, onFollowUp }: S
                             <p className="font-mono text-[11px] text-white/60 leading-relaxed mb-3">
                                 Molecular and genetic analysis for: <span className="text-accent">{topic}</span>
                             </p>
+                            {isEducational && (
+                                <GenomicVisualizer messageContent={messageContent} topic={topic} />
+                            )}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                                 {[
                                     { label: 'Genome & Structure', prompt: `Describe the genomic organization and structural biology of ${topic}: genome type, key proteins and their functions.` },
@@ -297,6 +374,24 @@ export default function SmartActions({ metadata, messageContent, onFollowUp }: S
                                 ))}
                             </div>
                         </div>
+                    </Panel>
+                )}
+
+                {activePanel === 'visualAtlas' && isClinical && (
+                    <Panel key="visualAtlas" title="Clinical Signs Atlas" icon={Eye} onClose={() => setActivePanel(null)}>
+                        <ClinicalSignsAtlas messageContent={messageContent} />
+                    </Panel>
+                )}
+
+                {activePanel === 'clinicalImages' && isEducational && (
+                    <Panel key="clinicalImages" title="Clinical Images" icon={ImageIcon} onClose={() => setActivePanel(null)}>
+                        <DiseaseImagePanel messageContent={messageContent} topic={topic} />
+                    </Panel>
+                )}
+
+                {activePanel === 'drugFormulary' && (
+                    <Panel key="drugFormulary" title="Drug Doses" icon={Pill} onClose={() => setActivePanel(null)}>
+                        <DrugFormulary messageContent={messageContent} topic={topic} />
                     </Panel>
                 )}
 
@@ -412,12 +507,23 @@ export default function SmartActions({ metadata, messageContent, onFollowUp }: S
                         <ActionBtn icon={Play}         label="Run Diagnosis"    primary active={activePanel === 'diagnosis'} onClick={() => toggle('diagnosis')} />
                         <ActionBtn icon={Microscope}   label="View Diagnostics" active={activePanel === 'tests'}      onClick={() => toggle('tests')} />
                         <ActionBtn icon={CheckCircle}  label="Override Diagnosis" active={activePanel === 'override'} onClick={() => toggle('override')} />
+                        <ActionBtn icon={Eye}          label="Visual Atlas" active={activePanel === 'visualAtlas'} onClick={() => toggle('visualAtlas')} />
+                        {canShowDrift && (
+                            <ActionBtn icon={GitBranch} label="Drift Tracker" active={showDriftPanel} onClick={() => setShowDriftPanel(prev => !prev)} />
+                        )}
+                        {canShowSimilarCases && (
+                            <ActionBtn icon={LibraryBig} label="Similar Cases" active={showSimilarCasesPanel} onClick={() => setShowSimilarCasesPanel(prev => !prev)} />
+                        )}
                     </>
                 )}
                 <ActionBtn icon={Search}       label="Research Mode"   active={activePanel === 'research'}    onClick={() => toggle('research')} />
                 <ActionBtn icon={BookOpen}     label="Exam Notes"      active={activePanel === 'exam'}        onClick={() => toggle('exam')} />
                 <ActionBtn icon={FlaskConical} label="Pathogenesis"    active={activePanel === 'pathogenesis'} onClick={() => toggle('pathogenesis')} />
                 <ActionBtn icon={Dna}          label="Molecular Basis" active={activePanel === 'molecular'}   onClick={() => toggle('molecular')} />
+                {isEducational && (
+                    <ActionBtn icon={ImageIcon} label="Clinical Images" active={activePanel === 'clinicalImages'} onClick={() => toggle('clinicalImages')} />
+                )}
+                <ActionBtn icon={Pill}         label="Drug Doses"      active={activePanel === 'drugFormulary'} onClick={() => toggle('drugFormulary')} />
                 <ActionBtn icon={Shield}       label="Prevention"      active={activePanel === 'prevention'}  onClick={() => toggle('prevention')} />
                 <ActionBtn icon={Syringe}      label="Vaccine Info"    active={activePanel === 'vaccine'}     onClick={() => toggle('vaccine')} />
             </div>

@@ -9,6 +9,7 @@ import SmartActions from './SmartActions';
 
 interface ChatBubbleProps {
     message: Message;
+    conversationMessages: Message[];
     onFollowUp: (prompt: string) => void;
 }
 
@@ -98,7 +99,7 @@ function inlineFormat(text: string): string {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function ChatBubble({ message, onFollowUp }: ChatBubbleProps) {
+export default function ChatBubble({ message, conversationMessages, onFollowUp }: ChatBubbleProps) {
     const username = useChatStore((s) => s.username);
     const isAssistant = message.role === 'assistant';
     const mode = message.metadata?.mode;
@@ -174,6 +175,9 @@ export default function ChatBubble({ message, onFollowUp }: ChatBubbleProps) {
                     <SmartActions
                         metadata={message.metadata!}
                         messageContent={message.content}
+                        messageId={message.id}
+                        messageTimestamp={message.timestamp}
+                        conversationMessages={conversationMessages}
                         onFollowUp={onFollowUp}
                     />
                 )}
