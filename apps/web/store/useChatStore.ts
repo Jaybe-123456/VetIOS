@@ -40,7 +40,7 @@ interface ChatState {
     username: string | null;
     userTier: 'free' | 'premium';
     dailyMessageCount: number;
-    lastMessageDate: string | null;
+    lastResetTimestamp: number | null;
     setUsername: (username: string | null) => void;
     setTier: (tier: 'free' | 'premium') => void;
     incrementUsage: () => boolean; // Returns true if allowed, false if limit exceeded
@@ -62,22 +62,27 @@ export const useChatStore = create<ChatState>()(
             username: null,
             userTier: 'free',
             dailyMessageCount: 0,
-            lastMessageDate: null,
+            lastResetTimestamp: null,
             setUsername: (username) => set({ username }),
             setTier: (tier) => set({ userTier: tier }),
 
             incrementUsage: () => {
                 let allowed = true;
+                const SIX_HOURS = 6 * 60 * 60 * 1000;
+                
                 set((state) => {
-                    const today = new Date().toISOString().slice(0, 10);
-                    let newCount = state.lastMessageDate === today ? state.dailyMessageCount + 1 : 1;
+                    const now = Date.now();
+                    const shouldReset = !state.lastResetTimestamp || (now - state.lastResetTimestamp > SIX_HOURS);
                     
-                    if (state.userTier === 'free' && newCount > 20) {
+                    const newCount = shouldReset ? 1 : state.dailyMessageCount + 1;
+                    const newTimestamp = shouldReset ? now : state.lastResetTimestamp;
+                    
+                    if (state.userTier === 'free' && newCount > 40) {
                         allowed = false;
-                        return state; // Do not increment if blocked
+                        return state;
                     }
                     
-                    return { dailyMessageCount: newCount, lastMessageDate: today };
+                    return { dailyMessageCount: newCount, lastResetTimestamp: newTimestamp };
                 });
                 return allowed;
             },

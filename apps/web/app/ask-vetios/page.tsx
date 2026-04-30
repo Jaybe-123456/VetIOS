@@ -45,7 +45,7 @@ export default function AskVetIOSPage() {
             addMessage(activeChatId, { role: 'user', content });
             addMessage(activeChatId, {
                 role: 'assistant',
-                content: "Free tier daily limit reached (20/20). Upgrade to Premium for unmetered intelligence access.",
+                content: "Free tier usage limit reached (40/40). Intelligence access will refresh in 6 hours. Upgrade to Premium for unmetered access.",
                 metadata: { mode: 'operational' },
             });
             return;
