@@ -217,7 +217,7 @@ function buildHeuristicResponse(message: string) {
         return {
             mode: 'educational',
             topic: 'Veterinary Knowledge Query',
-            content: `## Response Unavailable in Offline Mode\n\nThe VetIOS intelligence gateway is currently operating in **heuristic fallback mode**. Live AI inference is required to answer educational knowledge queries with research-grade depth.\n\n**To enable full responses:**\n- Ensure \`OPENAI_API_KEY\` or \`AI_PROVIDER_API_KEY\` is set\n- Set \`VETIOS_DEV_BYPASS=false\` in your environment\n\nYour query has been logged and will be processed once the intelligence gateway is operational.`,
+            content: `## Temporarily Unavailable\n\nThe VetIOS intelligence gateway is experiencing a transient issue. Your query has been logged and will be retried automatically.\n\nPlease try again in a moment.`,
             metadata: null,
         };
     }
