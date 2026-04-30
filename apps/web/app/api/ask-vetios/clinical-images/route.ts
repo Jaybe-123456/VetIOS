@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { compactSearchTerms, detectSpeciesFromTexts, type DetectedVetiosSpecies } from '@/lib/askVetios/context';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -7,6 +8,7 @@ export const maxDuration = 30;
 const RequestSchema = z.object({
     topic: z.string().trim().optional(),
     messageContent: z.string().trim().min(1).max(12000),
+    queryText: z.string().trim().max(4000).optional(),
 });
 
 type FindingId = 'gross' | 'histopathology' | 'radiography' | 'cytology';
@@ -25,23 +27,24 @@ interface ReferenceImage {
     thumbnailUrl: string;
     pageUrl: string;
     source: string;
+    license?: string;
+    attribution?: string;
 }
 
 type ImageProvider = 'bing' | 'google_cse' | 'wikimedia';
 
-function detectSpecies(content: string) {
-    const lower = content.toLowerCase();
-    if (/\bfeline|cat|kitten\b/.test(lower)) return 'feline';
-    if (/\bequine|horse|foal\b/.test(lower)) return 'equine';
-    if (/\bbovine|cow|cattle|calf\b/.test(lower)) return 'bovine';
-    if (/\bavian|bird|chicken|parrot|psittacine\b/.test(lower)) return 'avian';
-    if (/\bporcine|pig|swine|piglet\b/.test(lower)) return 'porcine';
-    if (/\bovine|sheep|lamb\b/.test(lower)) return 'ovine';
-    return 'canine';
+interface ResearchSource {
+    title: string;
+    url: string;
+    snippet: string;
+    source: string;
+    sourceType: 'wikipedia' | 'pubmed';
 }
 
-function detectDisease(topic: string | undefined, messageContent: string) {
+function detectDisease(topic: string | undefined, messageContent: string, queryText?: string) {
     if (topic?.trim()) return topic.trim();
+    const queryDisease = queryText?.match(/\b(?:for|of|about)\s+([A-Za-z][A-Za-z\s-]{2,80})/i)?.[1]?.trim();
+    if (queryDisease) return queryDisease;
     const firstSentence = messageContent.split(/[.!?]/)[0] ?? '';
     const match = firstSentence.match(/^([A-Z][^,.(]{2,80}?)(?:\s+(?:is|are|causes|results|presents)\b)/);
     return match?.[1]?.trim() || 'Current disease process';
@@ -51,7 +54,15 @@ function stripCodeFences(value: string) {
     return value.trim().replace(/^```(?:json)?/i, '').replace(/```$/i, '').trim();
 }
 
-function buildFallbackFindings(disease: string, species: string): ImageFinding[] {
+function buildFindingQuery(disease: string, species: DetectedVetiosSpecies, finding: string) {
+    return compactSearchTerms([
+        species === 'unknown' ? 'veterinary' : species,
+        disease,
+        finding,
+    ]);
+}
+
+function buildFallbackFindings(disease: string, species: DetectedVetiosSpecies): ImageFinding[] {
     return [
         {
             id: 'gross',
@@ -59,7 +70,7 @@ function buildFallbackFindings(disease: string, species: string): ImageFinding[]
             description: 'Gross lesion enrichment unavailable. Review external pathology references using the generated query.',
             confidence: 0.46,
             sourceType: 'fallback',
-            searchQuery: `${species} ${disease} gross pathology`,
+            searchQuery: buildFindingQuery(disease, species, 'gross pathology'),
         },
         {
             id: 'histopathology',
@@ -67,7 +78,7 @@ function buildFallbackFindings(disease: string, species: string): ImageFinding[]
             description: 'Histopathology enrichment unavailable. Query tissue architecture patterns directly.',
             confidence: 0.42,
             sourceType: 'fallback',
-            searchQuery: `${species} ${disease} histopathology`,
+            searchQuery: buildFindingQuery(disease, species, 'histopathology'),
         },
         {
             id: 'radiography',
@@ -75,7 +86,7 @@ function buildFallbackFindings(disease: string, species: string): ImageFinding[]
             description: 'Radiographic enrichment unavailable. Search representative imaging externally.',
             confidence: 0.39,
             sourceType: 'fallback',
-            searchQuery: `${species} ${disease} radiograph`,
+            searchQuery: buildFindingQuery(disease, species, 'radiograph'),
         },
         {
             id: 'cytology',
@@ -83,12 +94,12 @@ function buildFallbackFindings(disease: string, species: string): ImageFinding[]
             description: 'Cytology enrichment unavailable. Search cytologic appearance references externally.',
             confidence: 0.37,
             sourceType: 'fallback',
-            searchQuery: `${species} ${disease} cytology`,
+            searchQuery: buildFindingQuery(disease, species, 'cytology'),
         },
     ];
 }
 
-async function fetchClaudeFindings(disease: string, species: string, messageContent: string) {
+async function fetchClaudeFindings(disease: string, species: DetectedVetiosSpecies, messageContent: string, queryText?: string) {
     const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_API_KEY;
     if (!apiKey) return null;
 
@@ -98,6 +109,7 @@ async function fetchClaudeFindings(disease: string, species: string, messageCont
         '{"findings":[{"id":"gross"|"histopathology"|"radiography"|"cytology","label":"string","description":"string","confidence":0.0,"sourceType":"claude","searchQuery":"string"}]}',
         `Disease: ${disease}`,
         `Species: ${species}`,
+        `Current Ask VetIOS query: ${queryText ?? 'not supplied'}`,
         `Context: ${messageContent.slice(0, 6000)}`,
         'Each description should explain what the disease looks like visually in this species.',
         'Keep descriptions concrete and clinically useful.',
@@ -141,7 +153,7 @@ async function searchWikimediaImages(query: string): Promise<ReferenceImage[]> {
     url.searchParams.set('gsrnamespace', '6');
     url.searchParams.set('gsrlimit', '2');
     url.searchParams.set('prop', 'imageinfo');
-    url.searchParams.set('iiprop', 'url');
+    url.searchParams.set('iiprop', 'url|extmetadata');
     url.searchParams.set('iiurlwidth', '480');
 
     const response = await fetch(url.toString(), { cache: 'no-store' });
@@ -151,13 +163,22 @@ async function searchWikimediaImages(query: string): Promise<ReferenceImage[]> {
         query?: {
             pages?: Record<string, {
                 title?: string;
-                imageinfo?: Array<{ thumburl?: string; descriptionurl?: string; url?: string }>;
+                imageinfo?: Array<{
+                    thumburl?: string;
+                    descriptionurl?: string;
+                    url?: string;
+                    extmetadata?: {
+                        LicenseShortName?: { value?: string };
+                        Artist?: { value?: string };
+                        Credit?: { value?: string };
+                    };
+                }>;
             }>;
         };
     };
 
     return Object.values(data.query?.pages ?? {})
-        .map((page) => {
+        .map((page): ReferenceImage | null => {
             const image = page.imageinfo?.[0];
             if (!image?.thumburl || !image.descriptionurl) return null;
             return {
@@ -165,9 +186,11 @@ async function searchWikimediaImages(query: string): Promise<ReferenceImage[]> {
                 thumbnailUrl: image.thumburl,
                 pageUrl: image.descriptionurl,
                 source: 'Wikimedia Commons',
+                license: stripHtml(image.extmetadata?.LicenseShortName?.value ?? ''),
+                attribution: stripHtml(image.extmetadata?.Artist?.value ?? image.extmetadata?.Credit?.value ?? ''),
             };
         })
-        .filter((item): item is ReferenceImage => item !== null);
+        .filter((item): item is ReferenceImage => item !== null && isLikelyClinicalImage(item));
 }
 
 async function searchBingImages(query: string): Promise<ReferenceImage[]> {
@@ -209,6 +232,7 @@ async function searchBingImages(query: string): Promise<ReferenceImage[]> {
                 source: image.hostPageDisplayUrl ? `Bing // ${image.hostPageDisplayUrl}` : 'Bing Image Search',
             };
         })
+        .filter(isLikelyClinicalImage)
         .filter((item): item is ReferenceImage => item !== null);
 }
 
@@ -252,29 +276,138 @@ async function searchGoogleCseImages(query: string): Promise<ReferenceImage[]> {
                 source: image.displayLink ? `Google CSE // ${image.displayLink}` : 'Google Custom Search',
             };
         })
+        .filter(isLikelyClinicalImage)
         .filter((item): item is ReferenceImage => item !== null);
 }
 
 function resolveImageProvider(): ImageProvider {
-    if (process.env.BING_IMAGE_SEARCH_API_KEY) return 'bing';
     if (process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_ID) return 'google_cse';
+    if (process.env.BING_IMAGE_SEARCH_API_KEY) return 'bing';
     return 'wikimedia';
 }
 
 async function searchConfiguredImages(query: string): Promise<ReferenceImage[]> {
     const provider = resolveImageProvider();
 
-    if (provider === 'bing') {
-        const results = await searchBingImages(query);
-        if (results.length > 0) return results;
-    }
-
     if (provider === 'google_cse') {
         const results = await searchGoogleCseImages(query);
         if (results.length > 0) return results;
     }
 
+    if (provider === 'bing') {
+        const results = await searchBingImages(query);
+        if (results.length > 0) return results;
+    }
+
     return searchWikimediaImages(query);
+}
+
+function stripHtml(value: string) {
+    return value.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function isLikelyClinicalImage(image: ReferenceImage | null): image is ReferenceImage {
+    if (!image) return false;
+    const haystack = `${image.title} ${image.source}`.toLowerCase();
+    const blocked = ['logo', 'map', 'flag', 'book cover', 'pesticides documentation', 'reporter (philadelphia)'];
+    return !blocked.some((term) => haystack.includes(term));
+}
+
+function buildResearchQuery(disease: string, species: DetectedVetiosSpecies, queryText?: string) {
+    return compactSearchTerms([
+        queryText,
+        species === 'unknown' ? 'veterinary' : species,
+        disease,
+    ]);
+}
+
+async function searchWikipediaSources(query: string): Promise<ResearchSource[]> {
+    const url = new URL('https://en.wikipedia.org/w/api.php');
+    url.searchParams.set('action', 'query');
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('list', 'search');
+    url.searchParams.set('srsearch', query);
+    url.searchParams.set('srlimit', '4');
+
+    const response = await fetch(url.toString(), { cache: 'no-store' });
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as {
+        query?: {
+            search?: Array<{ title?: string; snippet?: string }>;
+        };
+    };
+
+    return (data.query?.search ?? [])
+        .filter((item) => item.title)
+        .map((item) => ({
+            title: item.title ?? 'Wikipedia result',
+            url: `https://en.wikipedia.org/wiki/${encodeURIComponent((item.title ?? '').replace(/\s+/g, '_'))}`,
+            snippet: stripHtml(item.snippet ?? ''),
+            source: 'Wikipedia',
+            sourceType: 'wikipedia' as const,
+        }));
+}
+
+async function searchPubMedSources(query: string): Promise<ResearchSource[]> {
+    const searchUrl = new URL('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi');
+    searchUrl.searchParams.set('db', 'pubmed');
+    searchUrl.searchParams.set('term', compactSearchTerms([query, 'veterinary']));
+    searchUrl.searchParams.set('retmode', 'json');
+    searchUrl.searchParams.set('retmax', '4');
+    searchUrl.searchParams.set('sort', 'relevance');
+    searchUrl.searchParams.set('tool', 'VetIOS');
+    if (process.env.NCBI_TOOL_EMAIL) {
+        searchUrl.searchParams.set('email', process.env.NCBI_TOOL_EMAIL);
+    }
+
+    const searchResponse = await fetch(searchUrl.toString(), { cache: 'no-store' });
+    if (!searchResponse.ok) return [];
+
+    const searchData = (await searchResponse.json()) as {
+        esearchresult?: { idlist?: string[] };
+    };
+    const ids = searchData.esearchresult?.idlist ?? [];
+    if (ids.length === 0) return [];
+
+    const summaryUrl = new URL('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi');
+    summaryUrl.searchParams.set('db', 'pubmed');
+    summaryUrl.searchParams.set('id', ids.join(','));
+    summaryUrl.searchParams.set('retmode', 'json');
+    summaryUrl.searchParams.set('tool', 'VetIOS');
+    if (process.env.NCBI_TOOL_EMAIL) {
+        summaryUrl.searchParams.set('email', process.env.NCBI_TOOL_EMAIL);
+    }
+
+    const summaryResponse = await fetch(summaryUrl.toString(), { cache: 'no-store' });
+    if (!summaryResponse.ok) return [];
+
+    const summaryData = (await summaryResponse.json()) as {
+        result?: Record<string, { title?: string; source?: string; pubdate?: string } | string[]>;
+    };
+
+    return ids
+        .map((id): ResearchSource | null => {
+            const result = summaryData.result?.[id];
+            if (!result || Array.isArray(result)) return null;
+            return {
+                title: result.title ?? `PubMed ${id}`,
+                url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
+                snippet: compactSearchTerms([result.source, result.pubdate]),
+                source: 'PubMed',
+                sourceType: 'pubmed' as const,
+            };
+        })
+        .filter((item): item is ResearchSource => item !== null);
+}
+
+async function resolveResearchSources(disease: string, species: DetectedVetiosSpecies, queryText?: string) {
+    const query = buildResearchQuery(disease, species, queryText);
+    const [wikipedia, pubmed] = await Promise.all([
+        searchWikipediaSources(query),
+        searchPubMedSources(query),
+    ]);
+    return [...wikipedia, ...pubmed].slice(0, 8);
 }
 
 export async function POST(req: Request) {
@@ -284,14 +417,14 @@ export async function POST(req: Request) {
             return NextResponse.json({ error: 'Invalid payload', details: parsed.error.flatten() }, { status: 400 });
         }
 
-        const { topic, messageContent } = parsed.data;
-        const species = detectSpecies(messageContent);
-        const disease = detectDisease(topic, messageContent);
+        const { topic, messageContent, queryText } = parsed.data;
+        const species = detectSpeciesFromTexts([queryText, topic, messageContent]);
+        const disease = detectDisease(topic, messageContent, queryText);
 
         let findings = buildFallbackFindings(disease, species);
 
         try {
-            const claudeFindings = await fetchClaudeFindings(disease, species, messageContent);
+            const claudeFindings = await fetchClaudeFindings(disease, species, messageContent, queryText);
             if (claudeFindings?.length) {
                 findings = claudeFindings;
             }
@@ -305,6 +438,7 @@ export async function POST(req: Request) {
                 imagesByFinding[finding.id] = await searchConfiguredImages(finding.searchQuery);
             }),
         );
+        const researchSources = await resolveResearchSources(disease, species, queryText);
 
         return NextResponse.json({
             disease,
@@ -312,6 +446,7 @@ export async function POST(req: Request) {
             findings,
             imagesByFinding,
             imageProvider: resolveImageProvider(),
+            researchSources,
         });
     } catch (error) {
         return NextResponse.json(

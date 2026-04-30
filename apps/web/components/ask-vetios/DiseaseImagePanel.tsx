@@ -2,10 +2,13 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { ImageIcon, ExternalLink } from 'lucide-react';
+import { compactSearchTerms, detectSpeciesFromTexts, type DetectedVetiosSpecies } from '@/lib/askVetios/context';
 
 interface DiseaseImagePanelProps {
     messageContent: string;
     topic?: string;
+    queryText?: string;
+    messageId?: string;
 }
 
 interface ImageFinding {
@@ -22,36 +25,47 @@ interface ReferenceImage {
     thumbnailUrl: string;
     pageUrl: string;
     source: string;
+    license?: string;
+    attribution?: string;
+}
+
+interface ResearchSource {
+    title: string;
+    url: string;
+    snippet: string;
+    source: string;
+    sourceType: 'wikipedia' | 'pubmed';
 }
 
 interface DiseaseImagePayload {
     disease: string;
-    species: string;
+    species: DetectedVetiosSpecies;
     findings: ImageFinding[];
     imagesByFinding: Record<string, ReferenceImage[]>;
+    imageProvider?: string;
+    researchSources?: ResearchSource[];
 }
 
-function detectSpecies(content: string) {
-    const lower = content.toLowerCase();
-    if (/\bfeline|cat|kitten\b/.test(lower)) return 'feline';
-    if (/\bequine|horse|foal\b/.test(lower)) return 'equine';
-    if (/\bbovine|cow|cattle|calf\b/.test(lower)) return 'bovine';
-    if (/\bavian|bird|chicken|parrot|psittacine\b/.test(lower)) return 'avian';
-    if (/\bporcine|pig|swine|piglet\b/.test(lower)) return 'porcine';
-    if (/\bovine|sheep|lamb\b/.test(lower)) return 'ovine';
-    return 'canine';
-}
-
-function fallbackDisease(topic: string | undefined, messageContent: string) {
+function fallbackDisease(topic: string | undefined, messageContent: string, queryText?: string) {
     if (topic?.trim()) return topic.trim();
+    const queryDisease = queryText?.match(/\b(?:for|of|about)\s+([A-Za-z][A-Za-z\s-]{2,70})/i)?.[1]?.trim();
+    if (queryDisease) return queryDisease;
     const firstSentence = messageContent.split(/[.!?]/)[0] ?? '';
     const match = firstSentence.match(/^([A-Z][^,.(]{2,70}?)(?:\s+(?:is|are|causes|results|presents)\b)/);
     return match?.[1]?.trim() || 'Current disease process';
 }
 
-function fallbackFindings(topic: string | undefined, messageContent: string): DiseaseImagePayload {
-    const disease = fallbackDisease(topic, messageContent);
-    const species = detectSpecies(messageContent);
+function buildFindingQuery(species: DetectedVetiosSpecies, disease: string, finding: string) {
+    return compactSearchTerms([
+        species === 'unknown' ? 'veterinary' : species,
+        disease,
+        finding,
+    ]);
+}
+
+function fallbackFindings(topic: string | undefined, messageContent: string, queryText?: string): DiseaseImagePayload {
+    const disease = fallbackDisease(topic, messageContent, queryText);
+    const species = detectSpeciesFromTexts([queryText, topic, messageContent]);
 
     const findings: ImageFinding[] = [
         {
@@ -60,7 +74,7 @@ function fallbackFindings(topic: string | undefined, messageContent: string): Di
             description: 'Structured visual description unavailable from the model route. Use the search query to review gross lesions for external reference.',
             confidence: 0.46,
             sourceType: 'fallback',
-            searchQuery: `${species} ${disease} gross pathology`,
+            searchQuery: buildFindingQuery(species, disease, 'gross pathology'),
         },
         {
             id: 'histopathology',
@@ -68,7 +82,7 @@ function fallbackFindings(topic: string | undefined, messageContent: string): Di
             description: 'Histopathology detail is unavailable in fallback mode. Search the tissue pattern directly for reference slides.',
             confidence: 0.42,
             sourceType: 'fallback',
-            searchQuery: `${species} ${disease} histopathology`,
+            searchQuery: buildFindingQuery(species, disease, 'histopathology'),
         },
         {
             id: 'radiography',
@@ -76,7 +90,7 @@ function fallbackFindings(topic: string | undefined, messageContent: string): Di
             description: 'Radiographic patterning is unavailable in fallback mode. Use the query to inspect representative imaging.',
             confidence: 0.39,
             sourceType: 'fallback',
-            searchQuery: `${species} ${disease} radiograph`,
+            searchQuery: buildFindingQuery(species, disease, 'radiograph'),
         },
         {
             id: 'cytology',
@@ -84,15 +98,15 @@ function fallbackFindings(topic: string | undefined, messageContent: string): Di
             description: 'Cytology detail is unavailable in fallback mode. Query is still generated for manual image review.',
             confidence: 0.37,
             sourceType: 'fallback',
-            searchQuery: `${species} ${disease} cytology`,
+            searchQuery: buildFindingQuery(species, disease, 'cytology'),
         },
     ];
 
-    return { disease, species, findings, imagesByFinding: {} };
+    return { disease, species, findings, imagesByFinding: {}, researchSources: [] };
 }
 
-export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImagePanelProps) {
-    const fallback = useMemo(() => fallbackFindings(topic, messageContent), [messageContent, topic]);
+export default function DiseaseImagePanel({ messageContent, topic, queryText, messageId }: DiseaseImagePanelProps) {
+    const fallback = useMemo(() => fallbackFindings(topic, messageContent, queryText), [messageContent, queryText, topic]);
     const [payload, setPayload] = useState<DiseaseImagePayload>(fallback);
     const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
 
@@ -100,13 +114,14 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
         let cancelled = false;
 
         const load = async () => {
+            setPayload(fallback);
             setStatus('loading');
 
             try {
                 const response = await fetch('/api/ask-vetios/clinical-images', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ topic, messageContent }),
+                    body: JSON.stringify({ topic, messageContent, queryText }),
                 });
 
                 if (!response.ok) {
@@ -120,6 +135,8 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
                         species: data.species || fallback.species,
                         findings: Array.isArray(data.findings) && data.findings.length > 0 ? data.findings : fallback.findings,
                         imagesByFinding: data.imagesByFinding ?? {},
+                        imageProvider: data.imageProvider,
+                        researchSources: Array.isArray(data.researchSources) ? data.researchSources : [],
                     });
                     setStatus('ready');
                 }
@@ -135,7 +152,7 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
         return () => {
             cancelled = true;
         };
-    }, [fallback, messageContent, topic]);
+    }, [fallback, messageContent, messageId, queryText, topic]);
 
     return (
         <div className="space-y-4">
@@ -148,7 +165,7 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
                         </h3>
                     </div>
                     <p className="max-w-2xl font-mono text-[11px] leading-relaxed text-white/58">
-                        Visual descriptors are generated for {payload.species} {payload.disease} and paired with web-search references when available.
+                        Visual descriptors are generated for {payload.species === 'unknown' ? 'the current species context' : payload.species} {payload.disease} and paired with inline reference images when available.
                     </p>
                 </div>
 
@@ -161,6 +178,12 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
                         <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/34">Signal</div>
                         <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.14em] text-white/76">
                             {status === 'loading' ? 'loading' : status === 'error' ? 'fallback' : 'live'}
+                        </div>
+                    </div>
+                    <div className="border border-white/10 bg-white/[0.02] px-3 py-2">
+                        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/34">Images</div>
+                        <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.14em] text-white/76">
+                            {payload.imageProvider ?? 'pending'}
                         </div>
                     </div>
                 </div>
@@ -199,14 +222,9 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
                                     </div>
                                 </div>
 
-                                <button
-                                    type="button"
-                                    onClick={() => window.open(`https://www.google.com/search?tbm=isch&q=${encodeURIComponent(finding.searchQuery)}`, '_blank', 'noopener,noreferrer')}
-                                    className="inline-flex items-center gap-2 border border-white/10 bg-black/30 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-white/70 transition-colors hover:border-white/20 hover:text-white"
-                                >
-                                    <ExternalLink className="h-3 w-3" />
-                                    Open Search
-                                </button>
+                                <div className="border border-white/10 bg-black/30 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-white/42">
+                                    Inline references
+                                </div>
                             </div>
 
                             <p className="font-mono text-[11px] leading-relaxed text-white/74">
@@ -220,11 +238,8 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
                             {images.length > 0 ? (
                                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                                     {images.map((image) => (
-                                        <a
+                                        <figure
                                             key={`${finding.id}-${image.pageUrl}`}
-                                            href={image.pageUrl}
-                                            target="_blank"
-                                            rel="noreferrer"
                                             className="overflow-hidden border border-white/10 bg-black/20 transition-colors hover:border-white/20"
                                         >
                                             <img src={image.thumbnailUrl} alt={image.title} className="h-36 w-full object-cover" />
@@ -232,11 +247,22 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
                                                 <div className="line-clamp-2 font-mono text-[11px] leading-relaxed text-white/76">
                                                     {image.title}
                                                 </div>
-                                                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/36">
+                                                <a
+                                                    href={image.pageUrl}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.18em] text-white/42 hover:text-[#00ff88]"
+                                                >
                                                     {image.source}
-                                                </div>
+                                                    <ExternalLink className="h-2.5 w-2.5" />
+                                                </a>
+                                                {(image.license || image.attribution) && (
+                                                    <div className="font-mono text-[10px] leading-relaxed text-white/32">
+                                                        {[image.license, image.attribution].filter(Boolean).join(' // ')}
+                                                    </div>
+                                                )}
                                             </div>
-                                        </a>
+                                        </figure>
                                     ))}
                                 </div>
                             ) : (
@@ -247,6 +273,33 @@ export default function DiseaseImagePanel({ messageContent, topic }: DiseaseImag
                         </div>
                     );
                 })}
+            </div>
+
+            <div className="border border-white/10 bg-white/[0.02] p-3">
+                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/36">Research Sources</div>
+                <div className="mt-3 grid gap-2">
+                    {(payload.researchSources ?? []).length > 0 ? payload.researchSources!.map((source) => (
+                        <a
+                            key={`${source.sourceType}-${source.url}`}
+                            href={source.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="border border-white/8 bg-black/25 px-3 py-2 transition-colors hover:border-white/18"
+                        >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-mono text-[11px] leading-relaxed text-white/76">{source.title}</span>
+                                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#00ff88]">{source.source}</span>
+                            </div>
+                            {source.snippet && (
+                                <p className="mt-1 line-clamp-2 font-mono text-[11px] leading-relaxed text-white/48">{source.snippet}</p>
+                            )}
+                        </a>
+                    )) : (
+                        <p className="font-mono text-[11px] leading-relaxed text-white/46">
+                            No inline Wikipedia or PubMed sources were resolved for this query.
+                        </p>
+                    )}
+                </div>
             </div>
         </div>
     );

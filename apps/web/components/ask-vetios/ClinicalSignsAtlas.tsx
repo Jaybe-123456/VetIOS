@@ -2,13 +2,15 @@
 
 import { useMemo, useState } from 'react';
 import { Eye, Flame } from 'lucide-react';
+import { detectSpeciesFromTexts, type VetiosSpecies } from '@/lib/askVetios/context';
 
-type Species = 'canine' | 'feline' | 'equine' | 'bovine' | 'avian' | 'porcine' | 'ovine';
+type Species = VetiosSpecies;
 type BodySystem = 'neurological' | 'gi' | 'respiratory' | 'dermatological' | 'musculoskeletal';
 type RegionKey = 'head' | 'thorax' | 'abdomen' | 'forelimb' | 'hindlimb' | 'spine' | 'skin';
 
 interface ClinicalSignsAtlasProps {
     messageContent: string;
+    queryText?: string;
 }
 
 interface AtlasSignDefinition {
@@ -213,17 +215,6 @@ const AVIAN_POINTS: Record<RegionKey, MarkerPoint> = {
     skin: { x: 228, y: 172 },
 };
 
-function detectSpecies(content: string): Species {
-    const lower = content.toLowerCase();
-    if (/\bfeline|cat|kitten\b/.test(lower)) return 'feline';
-    if (/\bequine|horse|foal\b/.test(lower)) return 'equine';
-    if (/\bbovine|cow|cattle|calf\b/.test(lower)) return 'bovine';
-    if (/\bavian|bird|chicken|parrot|psittacine\b/.test(lower)) return 'avian';
-    if (/\bporcine|pig|swine|piglet\b/.test(lower)) return 'porcine';
-    if (/\bovine|sheep|lamb\b/.test(lower)) return 'ovine';
-    return 'canine';
-}
-
 function extractSnippet(content: string, match: RegExpMatchArray): string {
     const index = match.index ?? 0;
     const start = Math.max(0, index - 48);
@@ -343,8 +334,14 @@ function getSilhouette(species: Species) {
     }
 }
 
-export default function ClinicalSignsAtlas({ messageContent }: ClinicalSignsAtlasProps) {
-    const species = useMemo(() => detectSpecies(messageContent), [messageContent]);
+export default function ClinicalSignsAtlas({ messageContent, queryText }: ClinicalSignsAtlasProps) {
+    const species = useMemo(
+        () => {
+            const detected = detectSpeciesFromTexts([queryText, messageContent]);
+            return detected === 'unknown' ? 'canine' : detected;
+        },
+        [messageContent, queryText],
+    );
     const signs = useMemo(() => extractSigns(messageContent), [messageContent]);
     const silhouette = useMemo(() => getSilhouette(species), [species]);
     const [heatmapMode, setHeatmapMode] = useState(false);

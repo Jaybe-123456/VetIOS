@@ -133,7 +133,7 @@ if (!username) return <UsernamePrompt />;
 
 return (
     
-        <div className="fixed inset-0 flex bg-[#050505] text-white overflow-hidden">
+        <div className="h-full min-h-0 w-full flex bg-[#050505] text-white overflow-hidden">
 
             {/* ── Chat history sidebar ─────────────────────────────────── */}
             <AnimatePresence>
@@ -198,8 +198,8 @@ return (
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
 
                 {/* Page header */}
-                <header className="px-5 py-4 flex items-center justify-between gap-4 border-b border-white/5 shrink-0">
-                    <div className="flex items-center gap-4 min-w-0">
+                <header className="px-4 sm:px-5 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 shrink-0">
+                    <div className="flex items-center gap-3 sm:gap-4 min-w-0 w-full sm:w-auto">
                         <button
                             onClick={() => setSidebarOpen(v => !v)}
                             className={cn(
@@ -230,10 +230,10 @@ return (
                         </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0">
+                    <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
                         <button
                             onClick={() => createChat()}
-                            className="flex items-center gap-1.5 px-3 py-2 bg-accent text-black font-mono text-[10px] font-bold uppercase tracking-widest hover:bg-accent/90 transition-all shadow-[0_0_12px_rgba(0,255,102,0.2)]"
+                            className="flex items-center gap-1.5 px-3 py-2 bg-accent text-black font-mono text-[10px] font-bold uppercase tracking-widest hover:bg-accent/90 transition-all shadow-[0_0_12px_rgba(0,255,102,0.2)] whitespace-nowrap"
                         >
                             <Plus className="w-3.5 h-3.5" />
                             New Chat

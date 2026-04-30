@@ -160,6 +160,9 @@ export default function SmartActions({
     const scopedConversationMessages = conversationMessages.filter(
         (message) => message.timestamp < messageTimestamp || message.id === messageId,
     );
+    const currentUserPrompt = [...scopedConversationMessages]
+        .reverse()
+        .find((message) => message.role === 'user')?.content ?? '';
 
     useEffect(() => {
         setShowDriftPanel((metadata.diagnosis_ranked?.length ?? 0) >= 2);
@@ -222,6 +225,7 @@ export default function SmartActions({
                                 <SimilarCasesPanel
                                     messageContent={messageContent}
                                     conversationMessages={scopedConversationMessages}
+                                    queryText={currentUserPrompt}
                                     onFollowUp={onFollowUp}
                                 />
                             </Panel>
@@ -379,19 +383,19 @@ export default function SmartActions({
 
                 {activePanel === 'visualAtlas' && isClinical && (
                     <Panel key="visualAtlas" title="Clinical Signs Atlas" icon={Eye} onClose={() => setActivePanel(null)}>
-                        <ClinicalSignsAtlas messageContent={messageContent} />
+                        <ClinicalSignsAtlas messageContent={messageContent} queryText={currentUserPrompt} />
                     </Panel>
                 )}
 
                 {activePanel === 'clinicalImages' && isEducational && (
                     <Panel key="clinicalImages" title="Clinical Images" icon={ImageIcon} onClose={() => setActivePanel(null)}>
-                        <DiseaseImagePanel messageContent={messageContent} topic={topic} />
+                        <DiseaseImagePanel messageContent={messageContent} topic={topic} queryText={currentUserPrompt} messageId={messageId} />
                     </Panel>
                 )}
 
                 {activePanel === 'drugFormulary' && (
                     <Panel key="drugFormulary" title="Drug Doses" icon={Pill} onClose={() => setActivePanel(null)}>
-                        <DrugFormulary messageContent={messageContent} topic={topic} />
+                        <DrugFormulary messageContent={messageContent} topic={topic} queryText={currentUserPrompt} messageId={messageId} />
                     </Panel>
                 )}
 

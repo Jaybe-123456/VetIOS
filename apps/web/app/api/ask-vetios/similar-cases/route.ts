@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { getAiProviderApiKey, getAiProviderBaseUrl } from '../../../../lib/ai/config';
+import { detectSpeciesFromTexts } from '@/lib/askVetios/context';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -22,17 +23,6 @@ interface StoredCaseVector {
     diagnosis: string | null;
     outcome_confirmed: boolean;
     similarity: number;
-}
-
-function detectSpecies(content: string) {
-    const lower = content.toLowerCase();
-    if (/\bfeline|cat|kitten\b/.test(lower)) return 'feline';
-    if (/\bequine|horse|foal\b/.test(lower)) return 'equine';
-    if (/\bbovine|cow|cattle|calf\b/.test(lower)) return 'bovine';
-    if (/\bavian|bird|chicken|parrot|psittacine\b/.test(lower)) return 'avian';
-    if (/\bporcine|pig|swine|piglet\b/.test(lower)) return 'porcine';
-    if (/\bovine|sheep|lamb\b/.test(lower)) return 'ovine';
-    return 'canine';
 }
 
 function getSupabaseServerClient() {
@@ -91,7 +81,7 @@ export async function POST(req: Request) {
             ...parsed.data.conversation.slice(-6).map((item) => `${item.role}: ${item.content}`),
             `assistant_summary: ${parsed.data.messageContent}`,
         ].join('\n');
-        const species = detectSpecies(combinedText);
+        const species = detectSpeciesFromTexts([combinedText], 'canine');
         const embedding = await embedQuery(combinedText);
 
         if (embedding.length === 0) {

@@ -2,12 +2,23 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Pill, Printer } from 'lucide-react';
+import { detectSpeciesFromTexts, isVetiosSpecies, type DetectedVetiosSpecies, type VetiosSpecies, VETIOS_SPECIES } from '@/lib/askVetios/context';
 
-type Species = 'canine' | 'feline' | 'equine' | 'bovine' | 'avian' | 'porcine' | 'ovine';
+type Species = VetiosSpecies;
 
 interface DrugFormularyProps {
     messageContent: string;
     topic?: string;
+    queryText?: string;
+    messageId?: string;
+}
+
+interface DrugSource {
+    type: string;
+    label: string;
+    url: string;
+    evidence: string;
+    verified: boolean;
 }
 
 interface DrugDose {
@@ -19,6 +30,9 @@ interface DrugDose {
     notes: string;
     withdrawalPeriod: string | null;
     contraindications: string[];
+    sourceText?: string;
+    sourceBacked?: boolean;
+    sources?: DrugSource[];
 }
 
 interface DrugEntry {
@@ -28,16 +42,17 @@ interface DrugEntry {
     speciesDoses: DrugDose[];
     interactions: string[];
     globalContraindications: string[];
+    sources?: DrugSource[];
 }
 
 interface FormularyPayload {
-    species: Species;
+    species: DetectedVetiosSpecies;
     drugs: DrugEntry[];
     summary: string;
 }
 
-const SPECIES_ORDER: Species[] = ['canine', 'feline', 'equine', 'bovine', 'avian', 'porcine', 'ovine'];
-const FOOD_ANIMALS = new Set<Species>(['bovine', 'porcine', 'ovine']);
+const SPECIES_ORDER: Species[] = [...VETIOS_SPECIES];
+const FOOD_ANIMALS = new Set<Species>(['bovine', 'avian', 'porcine', 'ovine']);
 
 const FALLBACK_DRUG_PATTERNS: Array<{ name: string; drugClass: string; patterns: RegExp[] }> = [
     { name: 'Amoxicillin', drugClass: 'Antibiotic', patterns: [/\bamoxicillin\b/i] },
@@ -50,20 +65,10 @@ const FALLBACK_DRUG_PATTERNS: Array<{ name: string; drugClass: string; patterns:
     { name: 'Gabapentin', drugClass: 'Analgesic', patterns: [/\bgabapentin\b/i] },
 ];
 
-function detectSpecies(content: string): Species {
-    const lower = content.toLowerCase();
-    if (/\bfeline|cat|kitten\b/.test(lower)) return 'feline';
-    if (/\bequine|horse|foal\b/.test(lower)) return 'equine';
-    if (/\bbovine|cow|cattle|calf\b/.test(lower)) return 'bovine';
-    if (/\bavian|bird|chicken|parrot|psittacine\b/.test(lower)) return 'avian';
-    if (/\bporcine|pig|swine|piglet\b/.test(lower)) return 'porcine';
-    if (/\bovine|sheep|lamb\b/.test(lower)) return 'ovine';
-    return 'canine';
-}
-
-function buildFallbackPayload(messageContent: string, topic?: string): FormularyPayload {
-    const species = detectSpecies(messageContent);
-    const detected = FALLBACK_DRUG_PATTERNS.filter((drug) => drug.patterns.some((pattern) => pattern.test(messageContent)));
+function buildFallbackPayload(messageContent: string, topic?: string, queryText?: string): FormularyPayload {
+    const species = detectSpeciesFromTexts([queryText, topic, messageContent]);
+    const searchText = [queryText, topic, messageContent].filter(Boolean).join(' ');
+    const detected = FALLBACK_DRUG_PATTERNS.filter((drug) => drug.patterns.some((pattern) => pattern.test(searchText)));
     const drugs: DrugEntry[] = detected.map((drug) => ({
         name: drug.name,
         drugClass: drug.drugClass,
@@ -74,12 +79,16 @@ function buildFallbackPayload(messageContent: string, topic?: string): Formulary
             doseMgPerKgMax: null,
             route: 'See formulary source',
             frequency: 'See formulary source',
-            notes: 'Structured Claude dosing output is unavailable in fallback mode.',
+            notes: 'Source-backed public label dosing is unavailable in fallback mode.',
             withdrawalPeriod: FOOD_ANIMALS.has(currentSpecies) ? 'Check labeled withdrawal period before use.' : null,
             contraindications: ['Verify species-specific dose before administration.'],
+            sourceText: 'No source-backed public label was resolved in fallback mode.',
+            sourceBacked: false,
+            sources: [],
         })),
         interactions: detected.length > 1 ? [`Review ${drug.name} against the other extracted agents before dispensing.`] : [],
         globalContraindications: ['Fallback mode active: confirm published dose ranges manually.'],
+        sources: [],
     }));
 
     return {
@@ -87,12 +96,12 @@ function buildFallbackPayload(messageContent: string, topic?: string): Formulary
         drugs,
         summary: drugs.length > 0
             ? 'Fallback extraction found drug mentions, but structured dose ranges are unavailable.'
-            : 'No drug mentions were extracted from the current response.',
+            : 'No medication candidates were extracted from the current response.',
     };
 }
 
 function formatDoseRange(dose: DrugDose) {
-    if (dose.doseMgPerKgMin == null && dose.doseMgPerKgMax == null) return 'Unavailable';
+    if (dose.doseMgPerKgMin == null && dose.doseMgPerKgMax == null) return 'Source-backed mg/kg unavailable';
     if (dose.doseMgPerKgMin != null && dose.doseMgPerKgMax != null) {
         return `${dose.doseMgPerKgMin.toFixed(2)}-${dose.doseMgPerKgMax.toFixed(2)} mg/kg`;
     }
@@ -111,24 +120,26 @@ function calculateTotalDose(weightKg: number, dose: DrugDose) {
     return `${value.toFixed(1)} mg total`;
 }
 
-export default function DrugFormulary({ messageContent, topic }: DrugFormularyProps) {
-    const fallback = useMemo(() => buildFallbackPayload(messageContent, topic), [messageContent, topic]);
+export default function DrugFormulary({ messageContent, topic, queryText, messageId }: DrugFormularyProps) {
+    const fallback = useMemo(() => buildFallbackPayload(messageContent, topic, queryText), [messageContent, queryText, topic]);
     const [payload, setPayload] = useState<FormularyPayload>(fallback);
     const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-    const [selectedSpecies, setSelectedSpecies] = useState<Species>(fallback.species);
+    const [selectedSpecies, setSelectedSpecies] = useState<Species>(isVetiosSpecies(fallback.species) ? fallback.species : 'canine');
     const [weightKg, setWeightKg] = useState('10');
 
     useEffect(() => {
         let cancelled = false;
 
         const load = async () => {
+            setPayload(fallback);
+            setSelectedSpecies(isVetiosSpecies(fallback.species) ? fallback.species : 'canine');
             setStatus('loading');
 
             try {
                 const response = await fetch('/api/ask-vetios/drug-formulary', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ topic, messageContent }),
+                    body: JSON.stringify({ topic, messageContent, queryText }),
                 });
 
                 if (!response.ok) {
@@ -143,13 +154,13 @@ export default function DrugFormulary({ messageContent, topic }: DrugFormularyPr
                         summary: data.summary || fallback.summary,
                     };
                     setPayload(next);
-                    setSelectedSpecies(next.species);
+                    setSelectedSpecies(isVetiosSpecies(next.species) ? next.species : 'canine');
                     setStatus('ready');
                 }
             } catch {
                 if (!cancelled) {
                     setPayload(fallback);
-                    setSelectedSpecies(fallback.species);
+                    setSelectedSpecies(isVetiosSpecies(fallback.species) ? fallback.species : 'canine');
                     setStatus('error');
                 }
             }
@@ -159,7 +170,7 @@ export default function DrugFormulary({ messageContent, topic }: DrugFormularyPr
         return () => {
             cancelled = true;
         };
-    }, [fallback, messageContent, topic]);
+    }, [fallback, messageContent, messageId, queryText, topic]);
 
     const weightValue = Number.parseFloat(weightKg);
     const crossDrugWarnings = useMemo(
@@ -173,17 +184,16 @@ export default function DrugFormulary({ messageContent, topic }: DrugFormularyPr
 
         const rows = payload.drugs.map((drug) => {
             const dose = drug.speciesDoses.find((item) => item.species === selectedSpecies);
-            if (!dose) return '';
 
             return `
                 <tr>
                     <td>${drug.name}</td>
                     <td>${drug.drugClass}</td>
-                    <td>${formatDoseRange(dose)}</td>
-                    <td>${calculateTotalDose(weightValue, dose) ?? 'n/a'}</td>
-                    <td>${dose.route}</td>
-                    <td>${dose.frequency}</td>
-                    <td>${dose.withdrawalPeriod ?? 'n/a'}</td>
+                    <td>${dose ? formatDoseRange(dose) : 'source-backed dose unavailable'}</td>
+                    <td>${dose ? calculateTotalDose(weightValue, dose) ?? 'n/a' : 'n/a'}</td>
+                    <td>${dose?.route ?? 'n/a'}</td>
+                    <td>${dose?.frequency ?? 'n/a'}</td>
+                    <td>${dose?.withdrawalPeriod ?? 'n/a'}</td>
                 </tr>
             `;
         }).join('');
@@ -261,7 +271,7 @@ export default function DrugFormulary({ messageContent, topic }: DrugFormularyPr
 
             {status === 'error' && (
                 <div className="border border-amber-500/20 bg-amber-500/6 px-4 py-3 font-mono text-[11px] leading-relaxed text-amber-200/80">
-                    Structured formulary enrichment is unavailable right now. The panel is showing fallback extraction only.
+                    Source-backed formulary enrichment is unavailable right now. The panel is showing local extraction only.
                 </div>
             )}
 
@@ -301,7 +311,9 @@ export default function DrugFormulary({ messageContent, topic }: DrugFormularyPr
 
                     <div className="space-y-3">
                         {payload.drugs.length > 0 ? payload.drugs.map((drug) => {
-                            const dose = drug.speciesDoses.find((item) => item.species === selectedSpecies) ?? drug.speciesDoses[0];
+                            const dose = drug.speciesDoses.find((item) => item.species === selectedSpecies);
+                            const sourceList = dose?.sources?.length ? dose.sources : drug.sources ?? [];
+                            const warnings = Array.from(new Set([...drug.globalContraindications, ...(dose?.contraindications ?? [])])).slice(0, 4);
 
                             return (
                                 <div key={drug.name} className="space-y-3 border border-white/10 bg-white/[0.02] p-3">
@@ -320,46 +332,67 @@ export default function DrugFormulary({ messageContent, topic }: DrugFormularyPr
                                         <div className="border border-white/10 bg-black/30 px-3 py-2">
                                             <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Dose</div>
                                             <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.14em] text-white/76">
-                                                {dose ? formatDoseRange(dose) : 'Unavailable'}
+                                                {dose ? formatDoseRange(dose) : 'Source-backed dose unavailable'}
                                             </div>
                                         </div>
                                     </div>
 
-                                    {dose && (
-                                        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                                            <div className="border border-white/8 bg-black/25 px-3 py-2">
-                                                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Total Dose</div>
-                                                <div className="mt-1 font-mono text-[11px] text-white/76">
-                                                    {calculateTotalDose(weightValue, dose) ?? 'Enter weight'}
-                                                </div>
-                                            </div>
-                                            <div className="border border-white/8 bg-black/25 px-3 py-2">
-                                                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Route</div>
-                                                <div className="mt-1 font-mono text-[11px] text-white/76">{dose.route}</div>
-                                            </div>
-                                            <div className="border border-white/8 bg-black/25 px-3 py-2">
-                                                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Frequency</div>
-                                                <div className="mt-1 font-mono text-[11px] text-white/76">{dose.frequency}</div>
-                                            </div>
-                                            <div className="border border-white/8 bg-black/25 px-3 py-2">
-                                                <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Withdrawal</div>
-                                                <div className="mt-1 font-mono text-[11px] text-white/76">
-                                                    {dose.withdrawalPeriod ?? (FOOD_ANIMALS.has(selectedSpecies) ? 'Not provided' : 'n/a')}
-                                                </div>
+                                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                        <div className="border border-white/8 bg-black/25 px-3 py-2">
+                                            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Total Dose</div>
+                                            <div className="mt-1 font-mono text-[11px] text-white/76">
+                                                {dose ? calculateTotalDose(weightValue, dose) ?? 'Source-backed mg/kg unavailable' : 'No source for species'}
                                             </div>
                                         </div>
-                                    )}
+                                        <div className="border border-white/8 bg-black/25 px-3 py-2">
+                                            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Route</div>
+                                            <div className="mt-1 font-mono text-[11px] text-white/76">{dose?.route ?? 'n/a'}</div>
+                                        </div>
+                                        <div className="border border-white/8 bg-black/25 px-3 py-2">
+                                            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Frequency</div>
+                                            <div className="mt-1 font-mono text-[11px] text-white/76">{dose?.frequency ?? 'n/a'}</div>
+                                        </div>
+                                        <div className="border border-white/8 bg-black/25 px-3 py-2">
+                                            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Withdrawal</div>
+                                            <div className="mt-1 max-h-24 overflow-y-auto font-mono text-[11px] leading-relaxed text-white/76">
+                                                {dose?.withdrawalPeriod ?? (FOOD_ANIMALS.has(selectedSpecies) ? 'Check FARAD/VetGRAM and product label' : 'n/a')}
+                                            </div>
+                                        </div>
+                                    </div>
 
                                     {dose?.notes && (
-                                        <p className="font-mono text-[11px] leading-relaxed text-white/58">
+                                        <p className="max-h-40 overflow-y-auto font-mono text-[11px] leading-relaxed text-white/58">
                                             {dose.notes}
                                         </p>
                                     )}
 
-                                    {(drug.globalContraindications.length > 0 || (dose?.contraindications.length ?? 0) > 0) && (
+                                    {sourceList.length > 0 && (
+                                        <div className="space-y-2 border border-white/10 bg-black/25 p-3">
+                                            <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/34">Verified Sources</div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {sourceList.map((source) => (
+                                                    <a
+                                                        key={`${drug.name}-${source.type}-${source.url}`}
+                                                        href={source.url}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className={`border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] transition-colors ${
+                                                            source.verified
+                                                                ? 'border-[#00ff88]/22 bg-[#00ff88]/8 text-[#00ff88] hover:bg-[#00ff88]/12'
+                                                                : 'border-white/10 bg-white/[0.02] text-white/50 hover:text-white'
+                                                        }`}
+                                                    >
+                                                        {source.type}
+                                                    </a>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {warnings.length > 0 && (
                                         <div className="space-y-2 border border-red-500/20 bg-red-500/6 p-3">
                                             <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-red-300">Contraindications</div>
-                                            {[...drug.globalContraindications, ...(dose?.contraindications ?? [])].map((warning) => (
+                                            {warnings.map((warning) => (
                                                 <div key={`${drug.name}-${warning}`} className="font-mono text-[11px] leading-relaxed text-red-200/84">
                                                     {warning}
                                                 </div>
@@ -370,7 +403,7 @@ export default function DrugFormulary({ messageContent, topic }: DrugFormularyPr
                             );
                         }) : (
                             <div className="border border-dashed border-white/10 bg-black/20 px-4 py-5 font-mono text-[11px] text-white/48">
-                                No drug mentions were extracted from the current response.
+                                No medication candidates were resolved for the current response.
                             </div>
                         )}
                     </div>

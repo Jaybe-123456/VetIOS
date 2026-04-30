@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { LibraryBig, Check, X } from 'lucide-react';
+import { detectSpeciesFromTexts } from '@/lib/askVetios/context';
 
 interface ConversationMessage {
     id: string;
@@ -13,6 +14,7 @@ interface ConversationMessage {
 interface SimilarCasesPanelProps {
     messageContent: string;
     conversationMessages: ConversationMessage[];
+    queryText?: string;
     onFollowUp: (prompt: string) => void;
 }
 
@@ -33,28 +35,17 @@ interface SimilarCasesPayload {
     cases: SimilarCase[];
 }
 
-function detectSpecies(content: string) {
-    const lower = content.toLowerCase();
-    if (/\bfeline|cat|kitten\b/.test(lower)) return 'feline';
-    if (/\bequine|horse|foal\b/.test(lower)) return 'equine';
-    if (/\bbovine|cow|cattle|calf\b/.test(lower)) return 'bovine';
-    if (/\bavian|bird|chicken|parrot|psittacine\b/.test(lower)) return 'avian';
-    if (/\bporcine|pig|swine|piglet\b/.test(lower)) return 'porcine';
-    if (/\bovine|sheep|lamb\b/.test(lower)) return 'ovine';
-    return 'canine';
-}
-
 function extractFallbackSigns(content: string) {
     const matches = content.toLowerCase().match(/\b(vomiting|diarrhea|cough|dyspnea|ataxia|seizure|lameness|anorexia|fever|lethargy)\b/g) ?? [];
     return Array.from(new Set(matches)).slice(0, 4);
 }
 
-export default function SimilarCasesPanel({ messageContent, conversationMessages, onFollowUp }: SimilarCasesPanelProps) {
+export default function SimilarCasesPanel({ messageContent, conversationMessages, queryText, onFollowUp }: SimilarCasesPanelProps) {
     const fallbackPayload = useMemo<SimilarCasesPayload>(() => ({
-        species: detectSpecies(messageContent),
+        species: detectSpeciesFromTexts([queryText, messageContent]),
         retrievalSummary: 'No live similar-case retrieval available yet for this message.',
         cases: [],
-    }), [messageContent]);
+    }), [messageContent, queryText]);
 
     const [payload, setPayload] = useState<SimilarCasesPayload>(fallbackPayload);
     const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
