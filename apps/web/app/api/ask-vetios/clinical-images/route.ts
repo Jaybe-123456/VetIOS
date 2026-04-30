@@ -287,18 +287,27 @@ function resolveImageProvider(): ImageProvider {
 }
 
 async function searchConfiguredImages(query: string): Promise<ReferenceImage[]> {
-    const provider = resolveImageProvider();
-
-    if (provider === 'google_cse') {
-        const results = await searchGoogleCseImages(query);
-        if (results.length > 0) return results;
+    // Try Google CSE if configured
+    if (process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_ID) {
+        try {
+            const results = await searchGoogleCseImages(query);
+            if (results.length > 0) return results;
+        } catch (error) {
+            console.error('Google CSE search failed:', error);
+        }
     }
 
-    if (provider === 'bing') {
-        const results = await searchBingImages(query);
-        if (results.length > 0) return results;
+    // Try Bing Image Search if configured
+    if (process.env.BING_IMAGE_SEARCH_API_KEY) {
+        try {
+            const results = await searchBingImages(query);
+            if (results.length > 0) return results;
+        } catch (error) {
+            console.error('Bing Image Search failed:', error);
+        }
     }
 
+    // Always fallback to Wikimedia Commons
     return searchWikimediaImages(query);
 }
 
