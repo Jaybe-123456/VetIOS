@@ -896,9 +896,9 @@ export default function InferenceConsole() {
                                         <div className="space-y-3">
                                             {state.explainability?.featureImportance.slice(0, 8).map((f, i) => (
                                                 <div key={i} className="flex flex-col gap-1">
-                                                    <div className="flex justify-between font-mono text-[10px] uppercase text-muted">
-                                                        <span>{f.feature}</span>
-                                                        <span>{(f.impact * 100).toFixed(0)}</span>
+                                                    <div className="flex justify-between font-mono text-[10px] uppercase">
+                                                        <span className="text-foreground/70">{f.feature}</span>
+                                                        <span className="text-foreground">{(f.impact * 100).toFixed(0)}</span>
                                                     </div>
                                                     <div className="w-full h-[2px] bg-dim">
                                                         <div className="bg-accent h-full" style={{ width: `${f.impact * 100}%` }} />
@@ -912,9 +912,9 @@ export default function InferenceConsole() {
                                         <div className="space-y-3">
                                             {state.explainability?.severityFeatureImportance.slice(0, 8).map((f, i) => (
                                                 <div key={i} className="flex flex-col gap-1">
-                                                    <div className="flex justify-between font-mono text-[10px] uppercase text-muted">
-                                                        <span>{f.feature}</span>
-                                                        <span>{(f.impact * 100).toFixed(0)}</span>
+                                                    <div className="flex justify-between font-mono text-[10px] uppercase">
+                                                        <span className="text-foreground/70">{f.feature}</span>
+                                                        <span className="text-foreground">{(f.impact * 100).toFixed(0)}</span>
                                                     </div>
                                                     <div className="w-full h-[2px] bg-dim">
                                                         <div className="bg-orange-500 h-full" style={{ width: `${f.impact * 100}%` }} />
