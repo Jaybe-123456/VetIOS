@@ -32,3 +32,7 @@ infra/supabase/.temp/
 
 supabase_*.txt
 *_results.txt
+
+# Local sidecar repos / model checkouts
+/VetIOS/
+/models/

@@ -21,7 +21,7 @@ function hasSupabaseAuthCookie(request: NextRequest): boolean {
     );
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
     const origin = request.headers.get('origin');
     const pathname = request.nextUrl.pathname;
     const isApiRoute = pathname.startsWith('/api/');
