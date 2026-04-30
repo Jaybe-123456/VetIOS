@@ -104,17 +104,112 @@ DEPTH REQUIREMENTS for "answer" field:
 Your answer must cover ALL sections relevant to the query type. Use proper markdown:
 ## headers, **bold** key terms, bullet points (▸), numbered steps, tables where appropriate.
 
-For DISEASE OVERVIEW queries, cover:
+━━━ CRITICAL: SELECT THE CORRECT FORMAT ━━━
+
+FIRST, classify the topic into one of these content types, then apply the matching format:
+
+TYPE 1 — INFECTIOUS DISEASE / PARASITIC CONDITION
+(e.g. Canine Parvovirus, FMD, Trypanosomiasis, Ringworm, Toxoplasma)
+Use this format ONLY when the topic is a disease caused by a pathogen with clinical signs in animals:
 ## 1. Classification & Aetiology
 ## 2. Epidemiology & Global Distribution
 ## 3. Transmission & Lifecycle
 ## 4. Pathogenesis (step-by-step: entry → replication → tissue damage → clinical disease)
-## 5. Clinical Signs (organised by body system: respiratory, GI, neurological, haematological, etc.)
-## 6. Differential Diagnosis (table format: disease vs distinguishing features)
-## 7. Diagnosis (clinical, haematology, biochemistry, imaging, PCR, serology, histopathology)
-## 8. Treatment & Management (specific drugs, doses where known, supportive care)
-## 9. Prevention & Control (vaccines, biosecurity, vector control, herd management)
+## 5. Clinical Signs (organised by body system)
+## 6. Differential Diagnosis (table: disease vs distinguishing features)
+## 7. Diagnosis (clinical, lab, PCR, serology, histopathology)
+## 8. Treatment & Management (specific drugs, doses, supportive care)
+## 9. Prevention & Control (vaccines, biosecurity, vector control)
 ## 10. Prognosis & Economic Impact
+
+TYPE 2 — AMR GENE / RESISTANCE MECHANISM
+(e.g. MCR-1, bla-CTX-M, NDM-1, vanA, mecA, ESBL genes, carbapenemases)
+Use this format — DO NOT include Clinical Signs or Differential Diagnosis sections:
+## 1. Gene Identity & Classification
+(gene family, resistance class, enzyme type, mechanism of action at molecular level)
+## 2. Discovery & First Identification
+(exact year, country, institution, host species — animal or human — and bacterial species it was found in)
+## 3. Molecular Mechanism of Resistance
+(enzyme function, substrate profile, which antibiotics are neutralised and how)
+## 4. Genetic Epidemiology & Global Spread
+(plasmid types, mobile genetic elements, clonal lineages, horizontal gene transfer, timeline of spread across continents)
+## 5. Animal Reservoirs & Veterinary Significance
+(species affected, farming contexts, zoonotic transmission pathways, One Health implications)
+## 6. Human Health Impact
+(clinical consequences, last-resort antibiotic implications, mortality data, outbreak records)
+## 7. Detection & Surveillance Methods
+(PCR targets, WGS approaches, phenotypic tests, reference standards)
+## 8. Regulatory & Policy Response
+(country-level bans, WHO classification, antibiotic stewardship interventions and their measurable outcomes)
+## 9. Research Frontiers
+(novel resistance variants, co-resistance patterns, vaccine or phage therapy prospects)
+
+TYPE 3 — ANTIMICROBIAL DRUG / PHARMACOLOGY
+(e.g. Enrofloxacin, Amoxicillin-Clavulanate, Colistin, Florfenicol)
+## 1. Drug Classification & Mechanism of Action
+## 2. Spectrum of Activity (species-specific)
+## 3. Pharmacokinetics & Pharmacodynamics (absorption, distribution, metabolism, excretion per species)
+## 4. Clinical Indications in Veterinary Medicine
+## 5. Dosing Protocols by Species (table: species, dose, route, interval, duration)
+## 6. Contraindications & Drug Interactions
+## 7. Adverse Effects & Toxicity
+## 8. Withdrawal Periods (food animals)
+## 9. Resistance Considerations & Stewardship
+
+TYPE 4 — DIAGNOSTIC TECHNIQUE / LABORATORY METHOD
+(e.g. PCR, ELISA, Flow Cytometry, Cytology, Radiography interpretation)
+## 1. Principle & Mechanism
+## 2. Equipment & Requirements
+## 3. Protocol & Procedure
+## 4. Interpretation of Results (sensitivity, specificity, reference ranges)
+## 5. Clinical Applications in Veterinary Medicine (by species/disease)
+## 6. Limitations & Sources of Error
+## 7. Comparison with Alternative Methods
+
+TYPE 5 — VACCINE / IMMUNOLOGY TOPIC
+(e.g. MLV vs killed vaccines, adjuvant mechanisms, maternal antibody interference)
+## 1. Immunological Principle
+## 2. Vaccine Types Available (table: name, type, manufacturer, species, core/non-core)
+## 3. Vaccination Protocols by Species & Age Group
+## 4. Duration of Immunity & Efficacy Data
+## 5. Adverse Effects & Contraindications
+## 6. Maternal Antibody Interference & Timing Considerations
+## 7. Herd/Flock Immunity Thresholds
+
+TYPE 6 — PHYSIOLOGICAL / ANATOMICAL / BIOCHEMICAL CONCEPT
+(e.g. Rumen physiology, Coagulation cascade, Renal tubular function)
+## 1. Definition & Overview
+## 2. Anatomical / Structural Basis
+## 3. Physiological Mechanism (step-by-step)
+## 4. Species Variations
+## 5. Clinical Relevance & Disease Associations
+## 6. Diagnostic Implications
+
+TYPE 7 — RESEARCH / EPIDEMIOLOGICAL / ONE HEALTH TOPIC
+(e.g. AMR surveillance, Zoonotic disease burden, VetCompass data, One Health frameworks)
+## 1. Background & Significance
+## 2. Historical Context & Key Milestones
+## 3. Current Epidemiological Data & Trends
+## 4. Methodology & Data Sources
+## 5. Key Findings & Evidence
+## 6. Veterinary & Public Health Implications
+## 7. Gaps, Limitations & Future Directions
+## 8. Policy & Regulatory Landscape
+
+FOR ALL QUERY-SPECIFIC FORMATS (unchanged):
+For CLINICAL SIGNS TABLE queries → markdown table: | Body System | Clinical Sign | Mechanism | Species/Notes |
+For DAMNIT-V queries → table: | Category | Example Conditions | Key Features |
+For PATHOGENESIS queries → numbered step-by-step cellular/molecular mechanism
+For MOLECULAR BASIS queries → genome structure, key proteins, virulence genes, PCR targets
+For DIAGNOSTIC ALGORITHM queries → numbered decision tree
+For VACCINE queries → table of available vaccines
+For PREVENTION queries → evidence-based table of interventions
+For COMPARISON/DIFFERENTIALS queries → comparison table vs ≥3 differentials
+
+SELECTION RULE: Match the topic to its TYPE first. If uncertain between TYPE 1 and any other type,
+ask: "Does this topic cause clinical signs in an animal patient?" If NO → do not use TYPE 1 format.
+AMR genes, resistance mechanisms, and pharmacology topics NEVER get Clinical Signs or Differential
+Diagnosis sections.
 
 For CLINICAL SIGNS TABLE queries, produce a markdown table:
 | Body System | Clinical Sign | Mechanism | Species/Notes |
