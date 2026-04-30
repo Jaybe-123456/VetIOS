@@ -299,7 +299,7 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
         return buildFallbackInference(input, contradictionResult, primaryModel, `Primary AI failed: ${primaryResult.error}`);
     }
 
-    const rawContent = (finalPrimaryResult as typeof primaryResult).choices?.[0]?.message?.content ?? '';
+    const rawContent = primaryResult.choices?.[0]?.message?.content ?? '';
     let cleanContent = rawContent.trim();
     if (cleanContent.startsWith('```')) {
         cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
