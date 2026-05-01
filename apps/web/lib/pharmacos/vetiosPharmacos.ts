@@ -682,7 +682,8 @@ export async function buildPharmacOSProtocol(input: BuildPharmacOSInput): Promis
     const combinedText = compactSearchTerms([input.queryText, input.topic, input.messageContent]);
     const detectedSpecies = detectSpeciesFromTexts([input.selectedSpecies, input.queryText, input.topic, input.messageContent], 'unknown');
     const species = isVetiosSpecies(detectedSpecies) ? detectedSpecies : 'canine';
-    const condition = inferCondition(input.topic, combinedText, species);
+    const currentText = compactSearchTerms([input.queryText, input.topic]);
+    const condition = inferCondition(input.topic, currentText || combinedText, species, combinedText);
     const patientWeightKg = normalizeWeight(input.patientWeightKg) ?? extractWeightKg(combinedText) ?? 10;
     const drugNames = extractDrugNames(combinedText);
     const inferredDrugNames = drugNames.length > 0 ? drugNames : inferConditionDrugNames(condition, combinedText);
@@ -714,13 +715,21 @@ export function extractDrugNames(text: string): string[] {
     return Array.from(new Set(detected));
 }
 
-export function inferCondition(inputTopic: string | undefined, text: string, species: VetiosSpecies): string {
+export function inferCondition(inputTopic: string | undefined, text: string, species: VetiosSpecies, fallbackText = ''): string {
     const direct = inputTopic?.trim();
     const conditionRule = CONDITION_CANDIDATES.find((entry) => entry.patterns.some((pattern) => pattern.test(text)));
     if (conditionRule) {
         if (conditionRule.condition === 'Parvoviral enteritis' && species === 'feline') return 'Feline panleukopenia virus enteritis';
         if (conditionRule.condition === 'Parvoviral enteritis' && species === 'canine') return 'Canine parvoviral enteritis';
         return conditionRule.condition;
+    }
+    const fallbackConditionRule = fallbackText
+        ? CONDITION_CANDIDATES.find((entry) => entry.patterns.some((pattern) => pattern.test(fallbackText)))
+        : undefined;
+    if (fallbackConditionRule) {
+        if (fallbackConditionRule.condition === 'Parvoviral enteritis' && species === 'feline') return 'Feline panleukopenia virus enteritis';
+        if (fallbackConditionRule.condition === 'Parvoviral enteritis' && species === 'canine') return 'Canine parvoviral enteritis';
+        return fallbackConditionRule.condition;
     }
     if (direct && !/^veterinary knowledge$/i.test(direct)) return direct;
     const sentence = text.split(/[.!?]/)[0]?.trim();

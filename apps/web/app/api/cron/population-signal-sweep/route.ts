@@ -1,11 +1,7 @@
 /**
  * GET /api/cron/population-signal-sweep
  *
-<<<<<<< Updated upstream
- * Runs every 4 hours (cron: 0-slash-4 * * *).
-=======
- * Runs every 4 hours (0 *-slash-4 * * *).
->>>>>>> Stashed changes
+ * Runs every 4 hours by Vercel cron.
  * Aggregates cross-clinic disease signals and runs outbreak detection:
  *   1. Run outbreak detection across all regions
  *   2. Escalate emergency/alert-severity outbreaks to platform alerts

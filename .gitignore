@@ -26,12 +26,18 @@ Thumbs.db
 
 # Supabase
 infra/supabase/.temp/
+supabase_env*.txt
+supabase_start*.txt
+supabase_restart.txt
+supabase_status.txt
 
 # Logs
 *.log
 
 supabase_*.txt
 *_results.txt
+check.html
+simulator.html
 
 # Local sidecar repos / model checkouts
 /VetIOS/

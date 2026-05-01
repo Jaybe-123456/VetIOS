@@ -10,6 +10,7 @@ describe('Ask VetIOS context detection', () => {
     });
 
     it('detects the supported species terms', () => {
+        expect(detectSpeciesFromTexts(['dog with cough'])).toBe('canine');
         expect(detectSpeciesFromTexts(['cat with nasal discharge'])).toBe('feline');
         expect(detectSpeciesFromTexts(['equine glanders clinical images'])).toBe('equine');
         expect(detectSpeciesFromTexts(['avian aspergillosis'])).toBe('avian');

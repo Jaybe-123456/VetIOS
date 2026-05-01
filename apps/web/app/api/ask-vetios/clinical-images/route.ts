@@ -35,7 +35,7 @@ interface ReferenceImage {
     attribution?: string;
 }
 
-type ImageProvider = 'bing' | 'google_cse' | 'wikimedia';
+type ImageProvider = 'bing' | 'google_cse' | 'not_configured';
 
 interface ResearchSource {
     title: string;
@@ -503,7 +503,7 @@ async function searchGoogleCseImages(query: string): Promise<ReferenceImage[]> {
 function resolveImageProvider(): ImageProvider {
     if (process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_ID) return 'google_cse';
     if (process.env.BING_IMAGE_SEARCH_API_KEY) return 'bing';
-    return 'wikimedia';
+    return 'not_configured';
 }
 
 async function searchConfiguredImages(finding: ImageFinding): Promise<ReferenceImage[]> {
@@ -527,12 +527,7 @@ async function searchConfiguredImages(finding: ImageFinding): Promise<ReferenceI
         }
     }
 
-    try {
-        return await searchWikimediaImages(finding.wikimedia_query || finding.searchQuery);
-    } catch (error) {
-        console.error('Wikimedia Commons search failed:', error);
-        return [];
-    }
+    return [];
 }
 
 function stripHtml(value: string) {
