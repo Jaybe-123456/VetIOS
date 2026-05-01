@@ -125,7 +125,7 @@ export async function POST(req: Request) {
             const species = (output.species as string) ?? 'unknown';
             const region = (output.region as string) ?? 'unknown';
             getPopulationSignalService().ingestSignal({
-                tenantId: auditCtx.tenant_id ?? 'public',
+                tenantId: 'public',
                 disease: topDiagnosis,
                 species,
                 region,
