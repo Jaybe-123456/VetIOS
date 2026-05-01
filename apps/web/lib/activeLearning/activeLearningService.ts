@@ -175,7 +175,7 @@ export class ActiveLearningService {
   ): Promise<CasePrioritisation> {
     const { data, error } = await this.supabase
       .from('active_learning_queue')
-      .select('*')
+      .select('id, inference_event_id, tenant_id, species, breed, predicted_diagnosis, predicted_confidence, differential_entropy, uncertainty_score, strategy, priority, reason, status, assigned_to, created_at, reviewed_at')
       .eq('tenant_id', tenantId)
       .eq('status', 'pending_review')
       .order('priority', { ascending: true })     // critical first
@@ -219,9 +219,10 @@ export class ActiveLearningService {
   async getQueueStats(tenantId: string): Promise<ActiveLearningQueueStats> {
     const { data } = await this.supabase
       .from('active_learning_queue')
-      .select('*')
+      .select('id, inference_event_id, tenant_id, species, breed, predicted_diagnosis, predicted_confidence, differential_entropy, uncertainty_score, strategy, priority, reason, status, assigned_to, created_at, reviewed_at')
       .eq('tenant_id', tenantId)
-      .eq('status', 'pending_review');
+      .eq('status', 'pending_review')
+      .limit(500);
 
     return this.computeStats(this.mapRows(data ?? []));
   }

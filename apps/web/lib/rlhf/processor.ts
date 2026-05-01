@@ -94,7 +94,7 @@ export async function runRlhfBatch(supabase: SupabaseClient): Promise<RlhfBatchR
 
     const { data: signals, error: fetchErr } = await supabase
         .from(VET_OVERRIDE_SIGNALS.TABLE)
-        .select('*')
+        .select('id, created_at, inference_event_id, tenant_id, vet_user_id, override_type, ai_output, vet_correction, correction_notes, species, breed, age_years, presenting_symptoms, top_ai_diagnosis, ai_confidence, vet_diagnosis, vet_confidence, is_confirmed_by_outcome, outcome_event_id, status')
         .eq(VET_OVERRIDE_SIGNALS.COLUMNS.status, 'pending')
         .order(VET_OVERRIDE_SIGNALS.COLUMNS.created_at, { ascending: true })
         .limit(BATCH_SIZE);

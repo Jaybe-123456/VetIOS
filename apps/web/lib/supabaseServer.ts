@@ -6,6 +6,9 @@
  *   - NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY (fallback)
  *
  * Prefers SUPABASE_SERVICE_ROLE_KEY for server-side inserts if available.
+ *
+ * SUPABASE_DB_POOLER_URL is exposed for direct Postgres clients. The Supabase
+ * JS client below still needs the Supabase API URL, not a postgresql:// URL.
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
@@ -15,6 +18,7 @@ import { getEmailVerificationState } from '@/lib/auth/emailVerification';
 
 let _client: SupabaseClient | null = null;
 let _publicClient: SupabaseClient | null = null;
+const SLOW_QUERY_WARNING_MS = 100;
 
 function resolveEnv(primary: string, fallback: string, label: string): string {
     const value = process.env[primary] || process.env[fallback];
@@ -30,7 +34,7 @@ function resolveEnv(primary: string, fallback: string, label: string): string {
 export function getSupabaseServer(): SupabaseClient {
     if (_client) return _client;
 
-    const url = resolveEnv('SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL', 'Supabase URL');
+    const url = resolveSupabaseApiUrl();
 
     // Prefer service role key for server-side inserts (bypasses RLS)
     // Fall back to anon key if service role is not set
@@ -46,9 +50,9 @@ export function getSupabaseServer(): SupabaseClient {
         );
     }
 
-    _client = createClient(url, key, {
+    _client = withSupabaseQueryTiming(createClient(url, key, {
         auth: { persistSession: false },
-    });
+    }));
 
     return _client;
 }
@@ -59,14 +63,95 @@ export function getSupabasePublicServer(): SupabaseClient {
     const url = resolveEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL', 'Supabase URL');
     const anonKey = resolveEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY', 'Supabase anon key');
 
-    _publicClient = createClient(url, anonKey, {
+    _publicClient = withSupabaseQueryTiming(createClient(url, anonKey, {
         auth: {
             persistSession: false,
             autoRefreshToken: false,
         },
-    });
+    }));
 
     return _publicClient;
+}
+
+export function getSupabaseDbPoolerUrl(): string | null {
+    const value = process.env.SUPABASE_DB_POOLER_URL?.trim();
+    return value && isPostgresConnectionString(value) ? value : null;
+}
+
+function resolveSupabaseApiUrl(): string {
+    return resolveEnv('SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_URL', 'Supabase API URL');
+}
+
+function isPostgresConnectionString(value: string): boolean {
+    return value.startsWith('postgresql://') || value.startsWith('postgres://');
+}
+
+function withSupabaseQueryTiming(client: SupabaseClient): SupabaseClient {
+    return new Proxy(client, {
+        get(target, prop, receiver) {
+            if (prop === 'from') {
+                return (tableName: string) => wrapQueryBuilder(
+                    target.from(tableName),
+                    tableName
+                );
+            }
+
+            const value = Reflect.get(target, prop, receiver);
+            return typeof value === 'function' ? value.bind(target) : value;
+        },
+    });
+}
+
+function wrapQueryBuilder<T extends object>(builder: T, tableName: string): T {
+    return new Proxy(builder, {
+        get(target, prop, receiver) {
+            const value = Reflect.get(target, prop, receiver);
+
+            if (prop === 'then' && typeof value === 'function') {
+                return (onFulfilled?: unknown, onRejected?: unknown) => {
+                    const startMs = Date.now();
+                    const timedFulfilled = (result: unknown) => {
+                        warnOnSlowQuery(tableName, startMs);
+                        return typeof onFulfilled === 'function'
+                            ? (onFulfilled as (value: unknown) => unknown)(result)
+                            : result;
+                    };
+                    const timedRejected = (error: unknown) => {
+                        warnOnSlowQuery(tableName, startMs);
+                        if (typeof onRejected === 'function') {
+                            return (onRejected as (reason: unknown) => unknown)(error);
+                        }
+                        throw error;
+                    };
+
+                    return (value as (onFulfilled?: unknown, onRejected?: unknown) => unknown)
+                        .call(target, timedFulfilled, timedRejected);
+                };
+            }
+
+            if (typeof value === 'function') {
+                return (...args: unknown[]) => {
+                    const next = (value as (...args: unknown[]) => unknown).apply(target, args);
+                    return isThenableObject(next) ? wrapQueryBuilder(next, tableName) : next;
+                };
+            }
+
+            return value;
+        },
+    });
+}
+
+function isThenableObject(value: unknown): value is object {
+    return typeof value === 'object'
+        && value !== null
+        && typeof (value as { then?: unknown }).then === 'function';
+}
+
+function warnOnSlowQuery(tableName: string, startMs: number): void {
+    const queryMs = Date.now() - startMs;
+    if (queryMs > SLOW_QUERY_WARNING_MS) {
+        console.warn(`[SLOW QUERY] table=${tableName} duration=${queryMs}ms`);
+    }
 }
 
 export async function resolveSessionState(): Promise<

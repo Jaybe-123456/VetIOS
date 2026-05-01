@@ -170,7 +170,8 @@ export class VetVectorStore {
       .from(this.TABLE)
       .select('confidence_score, outcome_confirmed, diagnosis')
       .eq('species', species)
-      .ilike('diagnosis', `%${diagnosis}%`);
+      .ilike('diagnosis', `%${diagnosis}%`)
+      .limit(500);
 
     if (error) throw new Error(`VectorStore calibration query failed: ${error.message}`);
 

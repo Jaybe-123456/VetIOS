@@ -19,6 +19,8 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
+const CRON_CACHE_CONTROL = 'no-store';
+const POPULATION_SWEEP_QUERY_LIMIT = 1000;
 
 export async function GET(req: Request) {
   const requestId = `cron_popsig_${Date.now()}`;
@@ -27,6 +29,7 @@ export async function GET(req: Request) {
   if (!isAuthorizedCronRequest(req)) {
     const res = NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
     withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', CRON_CACHE_CONTROL);
     return res;
   }
 
@@ -35,16 +38,16 @@ export async function GET(req: Request) {
 
   try {
     // ── Run outbreak detection ──
-    const snapshot = await service.computeSignals();
+    const snapshot = await service.computeSignals(undefined, undefined, POPULATION_SWEEP_QUERY_LIMIT);
     const alerts = snapshot.outbreakAlerts;
 
     const emergencyAlerts = alerts.filter((a) => a.alertLevel === 'alert');
     const activeAlerts = alerts.filter((a) => a.alertLevel !== 'watch');
 
     // ── Escalate emergency alerts to platform_alerts table ──
-    for (const alert of emergencyAlerts) {
+    if (emergencyAlerts.length > 0) {
       await supabase.from('platform_alerts').upsert(
-        {
+        emergencyAlerts.map((alert) => ({
           alert_key: `outbreak_${alert.disease}_${alert.region}`.toLowerCase().replace(/\s+/g, '_'),
           alert_type: 'population_outbreak_emergency',
           severity: 'critical',
@@ -61,7 +64,7 @@ export async function GET(req: Request) {
           },
           resolved: false,
           updated_at: new Date().toISOString(),
-        },
+        })),
         { onConflict: 'alert_key' }
       );
     }
@@ -96,6 +99,7 @@ export async function GET(req: Request) {
       request_id: requestId,
     });
     withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', CRON_CACHE_CONTROL);
     return res;
   } catch (err) {
     const res = NextResponse.json(
@@ -107,6 +111,7 @@ export async function GET(req: Request) {
       { status: 500 }
     );
     withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', CRON_CACHE_CONTROL);
     return res;
   }
 }

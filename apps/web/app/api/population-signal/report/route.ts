@@ -10,6 +10,8 @@ import { getPopulationSignalService } from '@/lib/populationSignal/populationSig
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+const SEMI_STATIC_CACHE_CONTROL = 'public, s-maxage=300, stale-while-revalidate=600';
+const REALTIME_CACHE_CONTROL = 'no-store';
 
 export async function GET(req: Request) {
   const guard = await apiGuard(req, { maxRequests: 20, windowMs: 60_000 });
@@ -28,6 +30,7 @@ export async function GET(req: Request) {
       { status: 200 }
     );
     withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', SEMI_STATIC_CACHE_CONTROL);
     return res;
   } catch (err) {
     const res = NextResponse.json(
@@ -35,6 +38,7 @@ export async function GET(req: Request) {
       { status: 500 }
     );
     withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', REALTIME_CACHE_CONTROL);
     return res;
   }
 }

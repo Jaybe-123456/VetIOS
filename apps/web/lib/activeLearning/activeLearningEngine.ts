@@ -38,7 +38,8 @@ export class ActiveLearningEngine {
         priority: p, createdAt: row.created_at });
     }
     const { data: conf2 } = await this.supabase.from('ai_inference_events')
-      .select('species, top_diagnosis').eq('outcome_confirmed', true).not('top_diagnosis', 'is', null);
+      .select('species, top_diagnosis').eq('outcome_confirmed', true).not('top_diagnosis', 'is', null)
+      .limit(500);
     const cm: Record<string,number> = {};
     for (const r of (conf2 ?? [])) { const k = r.species+'::'+r.top_diagnosis; cm[k]=(cm[k]??0)+1; }
     const coverageGaps = Object.entries(cm).filter(([,c])=>c<10)
@@ -58,7 +59,8 @@ export class ActiveLearningEngine {
     weakestDiagnoses: Array<{ diagnosis: string; accuracyRate: number; sampleSize: number }>;
   }> {
     const { data } = await this.supabase.from('ai_inference_events')
-      .select('species, top_diagnosis, outcome_confirmed, confirmed_diagnosis').eq('outcome_confirmed', true);
+      .select('species, top_diagnosis, outcome_confirmed, confirmed_diagnosis').eq('outcome_confirmed', true)
+      .limit(500);
     const rows = data ?? [];
     const sm: Record<string,{correct:number;total:number}> = {};
     const dm: Record<string,{correct:number;total:number}> = {};

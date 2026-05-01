@@ -20,21 +20,24 @@ export interface EpidemiologySnapshot {
   topDiseases: Array<{ disease: string; count: number; trend: 'rising' | 'stable' | 'falling' }>;
   generatedAt: string;
 }
+const POPULATION_SWEEP_QUERY_LIMIT = 1000;
 
 export class PopulationSignalEngine {
   private supabase = getSupabaseServer();
 
-  async computeSignals(species?: string, region?: string): Promise<EpidemiologySnapshot> {
+  async computeSignals(species?: string, region?: string, limit = POPULATION_SWEEP_QUERY_LIMIT): Promise<EpidemiologySnapshot> {
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const monthAgo = new Date(now.getTime() - 28 * 24 * 60 * 60 * 1000);
     const { data: cw } = await this.supabase.from('ai_inference_events')
       .select('top_diagnosis, species, region, created_at')
-      .gte('created_at', weekAgo.toISOString()).not('top_diagnosis', 'is', null);
+      .gte('created_at', weekAgo.toISOString()).not('top_diagnosis', 'is', null)
+      .limit(limit);
     const { data: bl } = await this.supabase.from('ai_inference_events')
       .select('top_diagnosis, species, region, created_at')
       .gte('created_at', monthAgo.toISOString()).lt('created_at', weekAgo.toISOString())
-      .not('top_diagnosis', 'is', null);
+      .not('top_diagnosis', 'is', null)
+      .limit(limit);
     const cur = (cw ?? []).filter(r => !species || r.species === species);
     const base = (bl ?? []).filter(r => !species || r.species === species);
     const cc = this.agg(cur); const bc = this.agg(base);
@@ -78,7 +81,8 @@ export class PopulationSignalEngine {
   }>> {
     const { data } = await this.supabase.from('ai_inference_events')
       .select('species, top_diagnosis, confidence_score, outcome_confirmed, confirmed_diagnosis')
-      .not('top_diagnosis', 'is', null);
+      .not('top_diagnosis', 'is', null)
+      .limit(500);
     const map: Record<string, { total: number; correct: number; conf: number[] }> = {};
     for (const r of (data ?? [])) {
       const k = r.species + '::' + r.top_diagnosis;

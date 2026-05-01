@@ -2,6 +2,31 @@
   "framework": "nextjs",
   "buildCommand": "cd ../.. && pnpm run build --filter=@vetios/web",
   "outputDirectory": ".next",
+  "functions": {
+    "apps/web/app/api/ask-vetios/route.ts": {
+      "maxDuration": 30,
+      "memory": 1024
+    },
+    "apps/web/app/api/inference/route.ts": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "apps/web/app/api/cron/**": {
+      "maxDuration": 120,
+      "memory": 512
+    }
+  },
+  "headers": [
+    {
+      "source": "/api/public/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, s-maxage=300, stale-while-revalidate=600"
+        }
+      ]
+    }
+  ],
   "crons": [
     {
       "path": "/api/cron/outbox-dispatch",

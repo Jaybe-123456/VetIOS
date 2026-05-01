@@ -18,6 +18,8 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
+const CRON_CACHE_CONTROL = 'no-store';
+const ACTIVE_LEARNING_SWEEP_LIMIT = 1000;
 
 export async function GET(req: Request) {
   const requestId = `cron_al_${Date.now()}`;
@@ -26,6 +28,7 @@ export async function GET(req: Request) {
   if (!isAuthorizedCronRequest(req)) {
     const res = NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
     withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', CRON_CACHE_CONTROL);
     return res;
   }
 
@@ -45,7 +48,8 @@ export async function GET(req: Request) {
       .from('active_learning_queue')
       .select('id')
       .eq('status', 'pending_review')
-      .lt('created_at', thirtyDaysAgo);
+      .lt('created_at', thirtyDaysAgo)
+      .limit(ACTIVE_LEARNING_SWEEP_LIMIT);
 
     if (staleErr) throw new Error(`Stale query failed: ${staleErr.message}`);
 
@@ -70,15 +74,16 @@ export async function GET(req: Request) {
       .select('id, tenant_id, predicted_diagnosis, species, reason')
       .eq('status', 'pending_review')
       .in('priority', ['critical', 'high'])
-      .lt('created_at', sevenDaysAgo);
+      .lt('created_at', sevenDaysAgo)
+      .limit(ACTIVE_LEARNING_SWEEP_LIMIT);
 
     if (escalateQueryErr) errors.push(`Escalate query failed: ${escalateQueryErr.message}`);
 
-    for (const row of escalateRows ?? []) {
+    if ((escalateRows ?? []).length > 0) {
       try {
         // Create platform alert for overdue high-priority cases
         await supabase.from('platform_alerts').upsert(
-          {
+          (escalateRows ?? []).map((row) => ({
             alert_key: `al_overdue_${row.id}`,
             alert_type: 'active_learning_overdue',
             severity: 'warning',
@@ -91,12 +96,12 @@ export async function GET(req: Request) {
             },
             resolved: false,
             updated_at: now.toISOString(),
-          },
+          })),
           { onConflict: 'alert_key' }
         );
-        escalated++;
+        escalated += (escalateRows ?? []).length;
       } catch (e) {
-        errors.push(`Escalate ${row.id}: ${String(e)}`);
+        errors.push(`Escalate overdue active-learning alerts: ${String(e)}`);
       }
     }
 
@@ -104,7 +109,8 @@ export async function GET(req: Request) {
     const { data: queueStats } = await supabase
       .from('active_learning_queue')
       .select('tenant_id, status, priority')
-      .gte('created_at', sevenDaysAgo);
+      .gte('created_at', sevenDaysAgo)
+      .limit(ACTIVE_LEARNING_SWEEP_LIMIT);
 
     const tenantHealth: Record<string, { pending: number; reviewed: number; critical: number }> = {};
     for (const row of queueStats ?? []) {
@@ -147,6 +153,7 @@ export async function GET(req: Request) {
       request_id: requestId,
     });
     withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', CRON_CACHE_CONTROL);
     return res;
   } catch (err) {
     const res = NextResponse.json(
@@ -158,6 +165,7 @@ export async function GET(req: Request) {
       { status: 500 }
     );
     withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', CRON_CACHE_CONTROL);
     return res;
   }
 }

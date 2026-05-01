@@ -869,7 +869,8 @@ async function emitOrphanRateAlerts(client: SupabaseClient) {
   const { data, error } = await client
     .from('ai_inference_events')
     .select('tenant_id,orphaned,created_at')
-    .gte('created_at', oneHourAgo);
+    .gte('created_at', oneHourAgo)
+    .limit(500);
 
   if (error) {
     throw new Error(`Failed to compute orphan rate: ${error.message}`);

@@ -20,6 +20,7 @@ import { checkOrigin, buildCorsHeaders } from '@/lib/protection/originGuard';
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 const ASK_VETIOS_INFERENCE_TIMEOUT_MS = 25_000;
+const REALTIME_CACHE_CONTROL = 'no-store';
 
 const RequestSchema = z.object({
     message: z.string().trim().min(1).max(2000),
@@ -46,21 +47,19 @@ export async function POST(req: Request) {
     const originCheck = checkOrigin(req, requestId);
     if (!originCheck.allowed) {
         writeAuditLog({ ...auditCtx, request_id: requestId, tenant_id: null, status_code: 403, latency_ms: Date.now() - startTime, blocked: true, block_reason: 'origin_forbidden', timestamp: new Date().toISOString() });
-        return originCheck.response!;
+        return withAskVetiosHeaders(originCheck.response!, requestId, startTime);
     }
 
     const parsedJson = await safeJson(req);
     if (!parsedJson.ok) {
         const res = NextResponse.json({ error: parsedJson.error, request_id: requestId }, { status: 400 });
-        withRequestHeaders(res.headers, requestId, startTime);
-        return res;
+        return withAskVetiosHeaders(res, requestId, startTime);
     }
 
     const parsed = RequestSchema.safeParse(parsedJson.data);
     if (!parsed.success) {
         const res = NextResponse.json({ error: 'Invalid request', details: parsed.error.flatten(), request_id: requestId }, { status: 400 });
-        withRequestHeaders(res.headers, requestId, startTime);
-        return res;
+        return withAskVetiosHeaders(res, requestId, startTime);
     }
 
     const { message, conversation } = parsed.data;
@@ -71,9 +70,8 @@ export async function POST(req: Request) {
         const fp = generateFingerprint({ tenantId: 'vetios-platform', requestId, endpoint: auditCtx.endpoint, issuedAt: startTime });
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, fingerprint: fp, mode: heuristicBody.mode, metadata: { heuristic: true }, timestamp: new Date().toISOString() });
         const res = NextResponse.json(attachResponseFingerprint(heuristicBody as Record<string, unknown>, fp), { status: 200 });
-        withRequestHeaders(res.headers, requestId, startTime);
         res.headers.set('x-vetios-fingerprint', fp);
-        return res;
+        return withAskVetiosHeaders(res, requestId, startTime);
     }
 
     try {
@@ -117,6 +115,8 @@ export async function POST(req: Request) {
             throw new Error(`AI generated invalid JSON: ${inferenceResult.raw_content}`);
         }
         const response = buildEnsembleResponse(output, inferenceResult.ensemble_metadata);
+        const res = NextResponse.json(response, { status: 200 });
+        withAskVetiosHeaders(res, requestId, startTime);
 
         // ── Passive population signal ingestion (fire-and-forget) ──
         if (response.mode === 'clinical' && response.metadata?.diagnosis_ranked?.[0]?.name) {
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
             const topConfidence = (response.metadata.diagnosis_ranked[0].confidence as number) ?? 0.5;
             const species = (output.species as string) ?? 'unknown';
             const region = (output.region as string) ?? 'unknown';
-            getPopulationSignalService().ingestSignal({
+            void getPopulationSignalService().ingestSignal({
                 tenantId: 'public',
                 disease: topDiagnosis,
                 species,
@@ -134,8 +134,6 @@ export async function POST(req: Request) {
             }).catch(() => { /* non-critical — never block the response */ });
         }
 
-        const res = NextResponse.json(response, { status: 200 });
-        withRequestHeaders(res.headers, requestId, startTime);
         return res;
 
     } catch (error) {
@@ -143,9 +141,14 @@ export async function POST(req: Request) {
         const fallback = buildHeuristicResponse(message);
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, metadata: { fallback: true, error: error instanceof Error ? error.message : 'Unknown' }, timestamp: new Date().toISOString() });
         const res = NextResponse.json({ ...fallback, _fallback: true }, { status: 200 });
-        withRequestHeaders(res.headers, requestId, startTime);
-        return res;
+        return withAskVetiosHeaders(res, requestId, startTime);
     }
+}
+
+function withAskVetiosHeaders(res: NextResponse, requestId: string, startTime: number): NextResponse {
+    withRequestHeaders(res.headers, requestId, startTime);
+    res.headers.set('Cache-Control', REALTIME_CACHE_CONTROL);
+    return res;
 }
 
 // ── Response normaliser ────────────────────────────────────────────────────

@@ -71,6 +71,7 @@ const OUTBREAK_THRESHOLDS = {
   min_cases_for_alert: 3,        // ignore statistical noise < 3 cases
   lookback_weeks: 4,             // baseline period
 };
+const POPULATION_SIGNAL_QUERY_LIMIT = 500;
 
 const HIGH_PRIORITY_DISEASES = new Set([
   'canine parvovirus', 'parvovirus', 'rabies', 'distemper', 'foot and mouth disease',
@@ -127,7 +128,8 @@ export class PopulationSignalService {
     const { data: currentData, error: currErr } = await this.supabase
       .from('population_disease_signals')
       .select('disease, species, region, tenant_id, confidence')
-      .eq('period', currentWeek);
+      .eq('period', currentWeek)
+      .limit(POPULATION_SIGNAL_QUERY_LIMIT);
 
     if (currErr) throw new Error(`Outbreak detection current query failed: ${currErr.message}`);
 
@@ -135,7 +137,8 @@ export class PopulationSignalService {
     const { data: baselineData, error: baseErr } = await this.supabase
       .from('population_disease_signals')
       .select('disease, species, region, period, tenant_id')
-      .in('period', priorWeeks);
+      .in('period', priorWeeks)
+      .limit(POPULATION_SIGNAL_QUERY_LIMIT);
 
     if (baseErr) throw new Error(`Outbreak detection baseline query failed: ${baseErr.message}`);
 
@@ -217,12 +220,13 @@ export class PopulationSignalService {
     const periods = this.getPriorWeeks(weeks);
     const currentWeek = this.getISOWeek(new Date());
 
-    const query = this.supabase
+    let query = this.supabase
       .from('population_disease_signals')
       .select('disease, species, region, period, tenant_id, confidence')
-      .in('period', [...periods, currentWeek]);
+      .in('period', [...periods, currentWeek])
+      .limit(POPULATION_SIGNAL_QUERY_LIMIT);
 
-    if (region) query.ilike('region', `%${region}%`);
+    if (region) query = query.ilike('region', `%${region}%`);
 
     const { data, error } = await query;
     if (error) throw new Error(`Heatmap query failed: ${error.message}`);
@@ -287,7 +291,8 @@ export class PopulationSignalService {
     const { data: clinicData } = await this.supabase
       .from('population_disease_signals')
       .select('tenant_id')
-      .eq('period', currentWeek);
+      .eq('period', currentWeek)
+      .limit(POPULATION_SIGNAL_QUERY_LIMIT);
 
     const totalClinics = new Set((clinicData ?? []).map((r) => r.tenant_id)).size;
 
