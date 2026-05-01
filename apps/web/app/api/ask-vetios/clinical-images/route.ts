@@ -503,7 +503,7 @@ async function searchGoogleCseImages(query: string): Promise<ReferenceImage[]> {
 function resolveImageProvider(): ImageProvider {
     if (process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_ID) return 'google_cse';
     if (process.env.BING_IMAGE_SEARCH_API_KEY) return 'bing';
-    return 'not_configured';
+    return 'wikimedia';
 }
 
 async function searchConfiguredImages(finding: ImageFinding): Promise<ReferenceImage[]> {
