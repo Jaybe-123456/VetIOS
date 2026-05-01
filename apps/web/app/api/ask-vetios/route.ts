@@ -123,7 +123,7 @@ export async function POST(req: Request) {
             const topDiagnosis = response.metadata.diagnosis_ranked[0].name as string;
             const topConfidence = (response.metadata.diagnosis_ranked[0].confidence as number) ?? 0.5;
             const species = (output.species as string) ?? 'unknown';
-            const region = (output.region as string) ?? (auditCtx.ip_country as string) ?? 'unknown';
+            const region = (output.region as string) ?? 'unknown';
             getPopulationSignalService().ingestSignal({
                 tenantId: auditCtx.tenant_id ?? 'public',
                 disease: topDiagnosis,
