@@ -14,6 +14,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { z } from 'zod';
 import { generateFingerprint, attachResponseFingerprint, hashContent } from '@/lib/protection/fingerprint';
 import { writeAuditLog, buildAuditContext } from '@/lib/protection/auditLog';
+import { getPopulationSignalService } from '@/lib/populationSignal/populationSignalService';
 import { checkOrigin, buildCorsHeaders } from '@/lib/protection/originGuard';
 
 export const runtime = 'nodejs';
@@ -116,7 +117,23 @@ export async function POST(req: Request) {
             throw new Error(`AI generated invalid JSON: ${inferenceResult.raw_content}`);
         }
         const response = buildEnsembleResponse(output, inferenceResult.ensemble_metadata);
-        
+
+        // ── Passive population signal ingestion (fire-and-forget) ──
+        if (response.mode === 'clinical' && response.metadata?.diagnosis_ranked?.[0]?.name) {
+            const topDiagnosis = response.metadata.diagnosis_ranked[0].name as string;
+            const topConfidence = (response.metadata.diagnosis_ranked[0].confidence as number) ?? 0.5;
+            const species = (output.species as string) ?? 'unknown';
+            const region = (output.region as string) ?? (auditCtx.ip_country as string) ?? 'unknown';
+            getPopulationSignalService().ingestSignal({
+                tenantId: auditCtx.tenant_id ?? 'public',
+                disease: topDiagnosis,
+                species,
+                region,
+                confidence: topConfidence,
+                inferenceEventId: requestId,
+            }).catch(() => { /* non-critical — never block the response */ });
+        }
+
         const res = NextResponse.json(response, { status: 200 });
         withRequestHeaders(res.headers, requestId, startTime);
         return res;
