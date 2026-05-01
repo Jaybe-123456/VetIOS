@@ -38,7 +38,11 @@ interface ResearchSource {
     url: string;
     snippet: string;
     source: string;
-    sourceType: 'wikipedia' | 'pubmed';
+    sourceType: string;
+    tier?: 1 | 2;
+    relevance?: 'high' | 'medium' | 'low';
+    open_access?: boolean;
+    species_specific?: boolean;
 }
 
 interface DiseaseImagePayload {
@@ -353,6 +357,26 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <span className="font-mono text-[11px] leading-relaxed text-white/76">{source.title}</span>
                                 <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#00ff88]">{source.source}</span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                                {source.tier && (
+                                    <span className="border border-white/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.16em] text-white/42">
+                                        Tier {source.tier}
+                                    </span>
+                                )}
+                                {source.relevance && (
+                                    <span className="border border-[#00ff88]/15 bg-[#00ff88]/5 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.16em] text-[#00ff88]/80">
+                                        {source.relevance}
+                                    </span>
+                                )}
+                                <span className="border border-white/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.16em] text-white/42">
+                                    {source.open_access ? 'open' : 'restricted'}
+                                </span>
+                                {source.species_specific && (
+                                    <span className="border border-white/10 px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.16em] text-white/42">
+                                        species
+                                    </span>
+                                )}
                             </div>
                             {source.snippet && (
                                 <p className="mt-1 line-clamp-2 font-mono text-[11px] leading-relaxed text-white/48">{source.snippet}</p>

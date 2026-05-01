@@ -42,8 +42,33 @@ interface ResearchSource {
     url: string;
     snippet: string;
     source: string;
-    sourceType: 'wikipedia' | 'pubmed';
+    sourceType: ResearchSourceType;
+    tier: 1 | 2;
+    relevance: 'high' | 'medium' | 'low';
+    open_access: boolean;
+    species_specific: boolean;
 }
+
+type ResearchSourceType =
+    | 'pubmed'
+    | 'wikipedia'
+    | 'idexx'
+    | 'vetcompass'
+    | 'merck'
+    | 'abcd'
+    | 'wsava'
+    | 'aaha'
+    | 'acvim'
+    | 'woah'
+    | 'bsava'
+    | 'cfsph'
+    | 'researchgate'
+    | 'antech'
+    | 'vin'
+    | 'rvc'
+    | 'vetevidence'
+    | 'fao'
+    | 'farad';
 
 function detectDisease(topic: string | undefined, messageContent: string, queryText?: string) {
     if (topic?.trim()) return topic.trim();
@@ -521,21 +546,358 @@ function isLikelyClinicalImage(image: ReferenceImage | null): image is Reference
     return !blocked.some((term) => haystack.includes(term));
 }
 
-function buildResearchQuery(disease: string, species: DetectedVetiosSpecies, queryText?: string) {
-    return compactSearchTerms([
-        queryText,
+const FOOD_ANIMAL_SPECIES = new Set<DetectedVetiosSpecies>(['bovine', 'porcine', 'ovine']);
+const FOOD_ANIMAL_TERMS = /\b(food animal|livestock|cattle|cow|calf|calves|bovine|swine|pig|porcine|sheep|ovine|goat|caprine|poultry|chicken|turkey|duck|goose|broiler|layer|flock)\b/i;
+const DIAGNOSTIC_TERMS = /\b(diagnos\w*|tests?|panels?|cbc|chemistry|reference ranges?|cytology|histopath\w*|biopsy|pcr|serology|culture|susceptibility|snap|sedivue|catalyst|procyte|imaging|radiograph|ultrasound)\b/i;
+const UK_EUROPE_TERMS = /\b(uk|united kingdom|britain|british|england|scotland|wales|ireland|europe|european|rvc|bsava|vetcompass)\b/i;
+const EXOTIC_TERMS = /\b(exotic|zoo|wildlife|reptile|snake|lizard|turtle|chelonian|rabbit|ferret|rodent|guinea pig|hamster|zoological)\b/i;
+const AMR_TERMS = /\b(amr|antimicrobial resistance|antibiotic resistance|resistan(?:t|ce)|mdr|multidrug|esbl|mrsa|vre)\b/i;
+
+interface ResearchContext {
+    disease: string;
+    species: DetectedVetiosSpecies;
+    queryText?: string;
+    combinedText: string;
+    researchQuery: string;
+    isFoodAnimal: boolean;
+    isDiagnostic: boolean;
+    isUkEurope: boolean;
+    isExoticZoo: boolean;
+    isAmr: boolean;
+}
+
+interface Tier2SourceDefinition {
+    sourceType: ResearchSourceType;
+    source: string;
+    title: string;
+    url: (encodedQuery: string) => string;
+    focus: string;
+    note?: string;
+    openAccess: boolean;
+    speciesSpecific: (context: ResearchContext) => boolean;
+    relevance: (context: ResearchContext) => ResearchSource['relevance'];
+    priority: number;
+}
+
+function buildResearchContext(disease: string, species: DetectedVetiosSpecies, queryText?: string): ResearchContext {
+    const combinedText = compactSearchTerms([queryText, disease, species]).toLowerCase();
+    const researchQuery = compactSearchTerms([
         species === 'unknown' ? 'veterinary' : species,
         disease,
     ]);
+
+    return {
+        disease,
+        species,
+        queryText,
+        combinedText,
+        researchQuery,
+        isFoodAnimal: FOOD_ANIMAL_SPECIES.has(species) || FOOD_ANIMAL_TERMS.test(combinedText),
+        isDiagnostic: DIAGNOSTIC_TERMS.test(combinedText),
+        isUkEurope: UK_EUROPE_TERMS.test(combinedText),
+        isExoticZoo: EXOTIC_TERMS.test(combinedText),
+        isAmr: AMR_TERMS.test(combinedText),
+    };
 }
 
-async function searchWikipediaSources(query: string): Promise<ResearchSource[]> {
+function encodeResearchQuery(query: string) {
+    return encodeURIComponent(query).replace(/%20/g, '+');
+}
+
+function sourceSnippet(source: Tier2SourceDefinition, context: ResearchContext) {
+    return compactSearchTerms([
+        `${source.focus} for ${context.species === 'unknown' ? 'veterinary' : context.species} ${context.disease}.`,
+        source.note,
+    ]);
+}
+
+function isCompanionAnimal(context: ResearchContext) {
+    return context.species === 'canine' || context.species === 'feline';
+}
+
+const TIER_2_SOURCES: Tier2SourceDefinition[] = [
+    {
+        sourceType: 'merck',
+        source: 'Merck VMM',
+        title: 'Merck Veterinary Manual clinical reference',
+        url: (query) => `https://www.merckvetmanual.com/search?query=${query}`,
+        focus: 'Authoritative clinical reference, species-specific protocols, diagnosis, treatment, and prevention summaries',
+        openAccess: true,
+        speciesSpecific: () => true,
+        relevance: () => 'high',
+        priority: 10,
+    },
+    {
+        sourceType: 'idexx',
+        source: 'IDEXX',
+        title: 'IDEXX diagnostic resources',
+        url: (query) => `https://www.idexx.com/en/veterinary/resources-for-vets/?q=${query}`,
+        focus: 'Diagnostic panels, reference ranges, test interpretation guides, SediVue, Catalyst, ProCyte, and SNAP references',
+        openAccess: true,
+        speciesSpecific: () => true,
+        relevance: (context) => context.isDiagnostic ? 'high' : 'medium',
+        priority: 20,
+    },
+    {
+        sourceType: 'antech',
+        source: 'Antech',
+        title: 'Antech Diagnostics test resources',
+        url: (query) => `https://www.antechdiagnostics.com/search?q=${query}`,
+        focus: 'Diagnostic laboratory reference intervals, test menus, infectious disease testing, and oncology panels',
+        openAccess: true,
+        speciesSpecific: () => true,
+        relevance: (context) => context.isDiagnostic ? 'high' : 'medium',
+        priority: 21,
+    },
+    {
+        sourceType: 'wsava',
+        source: 'WSAVA',
+        title: 'WSAVA global veterinary guidelines',
+        url: (query) => `https://wsava.org/?s=${query}`,
+        focus: 'Global vaccination, diagnostic, nutrition, welfare, and treatment guidelines for small animal practice',
+        openAccess: true,
+        speciesSpecific: (context) => isCompanionAnimal(context),
+        relevance: (context) => isCompanionAnimal(context) ? 'high' : 'medium',
+        priority: 30,
+    },
+    {
+        sourceType: 'aaha',
+        source: 'AAHA',
+        title: 'AAHA practice guidelines',
+        url: (query) => `https://www.aaha.org/search/?q=${query}`,
+        focus: 'Practice guidelines, accreditation standards, and AAHA/AAFP joint guidance',
+        openAccess: true,
+        speciesSpecific: (context) => isCompanionAnimal(context),
+        relevance: (context) => context.species === 'canine' || context.species === 'feline' ? 'high' : 'medium',
+        priority: 31,
+    },
+    {
+        sourceType: 'abcd',
+        source: 'ABCD',
+        title: 'ABCD feline disease guidelines',
+        url: (query) => `https://www.abcdcatsvets.org/?s=${query}`,
+        focus: 'Feline-specific evidence-based infectious disease guidelines and vaccination guidance',
+        openAccess: true,
+        speciesSpecific: (context) => context.species === 'feline',
+        relevance: (context) => context.species === 'feline' ? 'high' : 'low',
+        priority: 32,
+    },
+    {
+        sourceType: 'acvim',
+        source: 'ACVIM',
+        title: 'ACVIM consensus statements',
+        url: (query) => `https://www.acvim.org/News/Consensus-Statements?search=${query}`,
+        focus: 'Board-certified specialist consensus statements for internal medicine, cardiology, oncology, neurology, and large animal medicine',
+        openAccess: true,
+        speciesSpecific: () => true,
+        relevance: () => 'high',
+        priority: 40,
+    },
+    {
+        sourceType: 'vetcompass',
+        source: 'VetCompass',
+        title: 'RVC VetCompass epidemiology publications',
+        url: (query) => `https://www.rvc.ac.uk/vetcompass/publications?search=${query}`,
+        focus: 'UK epidemiology, breed prevalence, risk factors, and outcome data from large primary-care datasets',
+        openAccess: true,
+        speciesSpecific: (context) => isCompanionAnimal(context),
+        relevance: (context) => context.isUkEurope || isCompanionAnimal(context) ? 'high' : 'medium',
+        priority: 50,
+    },
+    {
+        sourceType: 'rvc',
+        source: 'RVC Repository',
+        title: 'Royal Veterinary College repository',
+        url: (query) => `https://repository.rvc.ac.uk/search?query=${query}`,
+        focus: 'RVC dissertations, clinical studies, case series, theses, and institutional research outputs',
+        openAccess: true,
+        speciesSpecific: () => true,
+        relevance: (context) => context.isUkEurope ? 'high' : 'medium',
+        priority: 51,
+    },
+    {
+        sourceType: 'bsava',
+        source: 'BSAVA',
+        title: 'BSAVA clinical resources',
+        url: (query) => `https://www.bsava.com/Resources/search?q=${query}`,
+        focus: 'UK clinical manuals, formulary resources, congress proceedings, and small animal clinical guidance',
+        openAccess: false,
+        speciesSpecific: (context) => isCompanionAnimal(context),
+        relevance: (context) => context.isUkEurope || isCompanionAnimal(context) ? 'high' : 'medium',
+        priority: 52,
+    },
+    {
+        sourceType: 'woah',
+        source: 'WOAH',
+        title: 'WOAH disease and diagnostic standards',
+        url: (query) => `https://www.woah.org/en/search/?q=${query}`,
+        focus: 'Notifiable disease status, international movement rules, terrestrial and aquatic diagnostic manual chapters',
+        openAccess: true,
+        speciesSpecific: () => true,
+        relevance: (context) => context.isFoodAnimal || context.isAmr ? 'high' : 'medium',
+        priority: 60,
+    },
+    {
+        sourceType: 'cfsph',
+        source: 'CFSPH',
+        title: 'CFSPH zoonotic disease and biosecurity resources',
+        url: (query) => `https://www.cfsph.iastate.edu/search/?q=${query}`,
+        focus: 'Zoonotic disease fact sheets, biosecurity protocols, foreign animal disease resources, and client handouts',
+        openAccess: true,
+        speciesSpecific: () => true,
+        relevance: (context) => context.isFoodAnimal || context.isAmr ? 'high' : 'medium',
+        priority: 61,
+    },
+    {
+        sourceType: 'fao',
+        source: 'FAO EMPRES',
+        title: 'FAO EMPRES disease surveillance',
+        url: (query) => `https://www.fao.org/empres-i/en/search?q=${query}`,
+        focus: 'Livestock disease surveillance, food animal outbreaks, transboundary animal disease intelligence, and production impact',
+        openAccess: true,
+        speciesSpecific: (context) => context.isFoodAnimal,
+        relevance: (context) => context.isFoodAnimal ? 'high' : 'medium',
+        priority: 62,
+    },
+    {
+        sourceType: 'farad',
+        source: 'FARAD VetGRAM',
+        title: 'FARAD VetGRAM residue avoidance search',
+        url: (query) => `https://vetgram.farad.org/Search.asp?search=${query}`,
+        focus: 'Food animal drug approvals, indications, restrictions, and residue avoidance or withdrawal-time decision support',
+        openAccess: true,
+        speciesSpecific: (context) => context.isFoodAnimal,
+        relevance: (context) => context.isFoodAnimal ? 'high' : 'low',
+        priority: 63,
+    },
+    {
+        sourceType: 'vetevidence',
+        source: 'Veterinary Evidence',
+        title: 'Veterinary Evidence journal search',
+        url: (query) => `https://veterinaryevidence.org/?s=${query}`,
+        focus: 'Evidence-based veterinary medicine, critically appraised topics, systematic questions, and open-access reviews',
+        openAccess: true,
+        speciesSpecific: () => true,
+        relevance: () => 'medium',
+        priority: 70,
+    },
+    {
+        sourceType: 'researchgate',
+        source: 'ResearchGate',
+        title: 'ResearchGate veterinary medicine search',
+        url: (query) => `https://www.researchgate.net/search?q=${query}+veterinary`,
+        focus: 'Preprints, author profiles, full-text requests, conference material, and emerging research outside PubMed',
+        openAccess: false,
+        speciesSpecific: () => false,
+        relevance: () => 'medium',
+        priority: 80,
+    },
+    {
+        sourceType: 'vin',
+        source: 'VIN',
+        title: 'VIN public veterinary resources',
+        url: (query) => `https://www.vin.com/search/?q=${query}`,
+        focus: 'Public clinical case discussions, drug formulary references, specialist consultations, and exotic or zoo medicine leads',
+        openAccess: false,
+        speciesSpecific: (context) => context.isExoticZoo,
+        relevance: (context) => context.isExoticZoo ? 'high' : 'medium',
+        priority: 90,
+    },
+];
+
+function buildTier2Source(source: Tier2SourceDefinition, context: ResearchContext): ResearchSource {
+    const encodedQuery = encodeResearchQuery(context.researchQuery);
+    return {
+        title: `${source.title}: ${context.disease}`,
+        url: source.url(encodedQuery),
+        snippet: sourceSnippet(source, context),
+        source: source.source,
+        sourceType: source.sourceType,
+        tier: 2,
+        relevance: source.relevance(context),
+        open_access: source.openAccess,
+        species_specific: source.speciesSpecific(context),
+    };
+}
+
+function buildPubMedSearchSource(context: ResearchContext): ResearchSource {
+    const query = encodeResearchQuery(compactSearchTerms([context.species === 'unknown' ? undefined : context.species, context.disease, 'veterinary']));
+    return {
+        title: `PubMed search: ${context.disease}`,
+        url: `https://pubmed.ncbi.nlm.nih.gov/?term=${query}`,
+        snippet: `Peer-reviewed veterinary literature search for ${context.species === 'unknown' ? 'veterinary' : context.species} ${context.disease}, sorted by PubMed relevance when available.`,
+        source: 'PubMed',
+        sourceType: 'pubmed',
+        tier: 1,
+        relevance: 'high',
+        open_access: true,
+        species_specific: context.species !== 'unknown',
+    };
+}
+
+function buildMandatoryTier2Types(context: ResearchContext) {
+    const required = new Set<ResearchSourceType>(['merck']);
+
+    if (context.species === 'feline') {
+        required.add('abcd');
+        required.add('wsava');
+    }
+
+    if (context.species === 'canine') {
+        required.add('wsava');
+        required.add('aaha');
+    }
+
+    if (context.isFoodAnimal) {
+        required.add('woah');
+        required.add('cfsph');
+        required.add('fao');
+        required.add('farad');
+    }
+
+    if (context.isDiagnostic) {
+        required.add('idexx');
+        required.add('antech');
+    }
+
+    if (context.isUkEurope) {
+        required.add('bsava');
+        required.add('vetcompass');
+    }
+
+    if (context.isExoticZoo) {
+        required.add('vin');
+    }
+
+    if (context.isAmr) {
+        required.add('woah');
+        required.add('cfsph');
+    }
+
+    return required;
+}
+
+function mergeResearchSources(sources: ResearchSource[]) {
+    const seen = new Set<string>();
+    const merged: ResearchSource[] = [];
+
+    for (const source of sources) {
+        const key = `${source.sourceType}:${source.url}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(source);
+    }
+
+    return merged;
+}
+
+async function searchWikipediaSources(context: ResearchContext): Promise<ResearchSource[]> {
     const url = new URL('https://en.wikipedia.org/w/api.php');
     url.searchParams.set('action', 'query');
     url.searchParams.set('format', 'json');
     url.searchParams.set('list', 'search');
-    url.searchParams.set('srsearch', query);
-    url.searchParams.set('srlimit', '4');
+    url.searchParams.set('srsearch', compactSearchTerms([context.disease, 'veterinary', speciesSearchTerm(context.species)]));
+    url.searchParams.set('srlimit', '3');
 
     const response = await fetch(url.toString(), { cache: 'no-store' });
     if (!response.ok) return [];
@@ -551,16 +913,20 @@ async function searchWikipediaSources(query: string): Promise<ResearchSource[]> 
         .map((item) => ({
             title: item.title ?? 'Wikipedia result',
             url: `https://en.wikipedia.org/wiki/${encodeURIComponent((item.title ?? '').replace(/\s+/g, '_'))}`,
-            snippet: stripHtml(item.snippet ?? ''),
+            snippet: stripHtml(item.snippet ?? '') || `General encyclopedia context for ${context.disease} with veterinary and species terms applied to the search.`,
             source: 'Wikipedia',
-            sourceType: 'wikipedia' as const,
+            sourceType: 'wikipedia',
+            tier: 1,
+            relevance: 'medium',
+            open_access: true,
+            species_specific: context.species !== 'unknown',
         }));
 }
 
-async function searchPubMedSources(query: string): Promise<ResearchSource[]> {
+async function searchPubMedSources(context: ResearchContext): Promise<ResearchSource[]> {
     const searchUrl = new URL('https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi');
     searchUrl.searchParams.set('db', 'pubmed');
-    searchUrl.searchParams.set('term', compactSearchTerms([query, 'veterinary']));
+    searchUrl.searchParams.set('term', compactSearchTerms([speciesSearchTerm(context.species), context.disease, 'veterinary']));
     searchUrl.searchParams.set('retmode', 'json');
     searchUrl.searchParams.set('retmax', '4');
     searchUrl.searchParams.set('sort', 'relevance');
@@ -601,27 +967,52 @@ async function searchPubMedSources(query: string): Promise<ResearchSource[]> {
             return {
                 title: result.title ?? `PubMed ${id}`,
                 url: `https://pubmed.ncbi.nlm.nih.gov/${id}/`,
-                snippet: compactSearchTerms([result.source, result.pubdate]),
+                snippet: compactSearchTerms([result.source, result.pubdate]) || `Peer-reviewed PubMed result for ${context.researchQuery}.`,
                 source: 'PubMed',
-                sourceType: 'pubmed' as const,
+                sourceType: 'pubmed',
+                tier: 1,
+                relevance: 'high',
+                open_access: true,
+                species_specific: context.species !== 'unknown',
             };
         })
         .filter((item): item is ResearchSource => item !== null);
 }
 
 async function resolveResearchSources(disease: string, species: DetectedVetiosSpecies, queryText?: string) {
-    const query = buildResearchQuery(disease, species, queryText);
+    const context = buildResearchContext(disease, species, queryText);
     const [wikipedia, pubmed] = await Promise.all([
-        searchWikipediaSources(query).catch((error) => {
+        searchWikipediaSources(context).catch((error) => {
             console.error('Wikipedia source search failed:', error);
             return [];
         }),
-        searchPubMedSources(query).catch((error) => {
+        searchPubMedSources(context).catch((error) => {
             console.error('PubMed source search failed:', error);
             return [];
         }),
     ]);
-    return [...wikipedia, ...pubmed].slice(0, 8);
+
+    const pubmedSources = pubmed.length > 0 ? pubmed : [buildPubMedSearchSource(context)];
+    const tier2Sources = TIER_2_SOURCES.map((source) => buildTier2Source(source, context));
+    const tier2ByType = new Map(tier2Sources.map((source) => [source.sourceType, source]));
+    const mandatoryTypes = buildMandatoryTier2Types(context);
+    const mandatoryTier2 = Array.from(mandatoryTypes)
+        .map((type) => tier2ByType.get(type))
+        .filter((source): source is ResearchSource => Boolean(source));
+
+    const remainingTier2 = tier2Sources
+        .filter((source) => !mandatoryTypes.has(source.sourceType))
+        .sort((a, b) => {
+            const relevanceRank = { high: 0, medium: 1, low: 2 };
+            return relevanceRank[a.relevance] - relevanceRank[b.relevance];
+        });
+
+    return mergeResearchSources([
+        ...pubmedSources,
+        ...mandatoryTier2,
+        ...wikipedia,
+        ...remainingTier2,
+    ]).slice(0, 15);
 }
 
 export async function POST(req: Request) {
