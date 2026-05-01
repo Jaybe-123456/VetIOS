@@ -17,6 +17,9 @@ export default function FinalCTASection() {
                         <p className="mt-4 max-w-2xl text-base leading-7 text-white/62 sm:mt-5 sm:text-lg sm:leading-8">
                             VetIOS is building the infrastructure layer for veterinary intelligence systems.
                         </p>
+                        <p className="mt-6 text-sm font-medium tracking-wide text-white/45">
+                            FOR DIRECT ASSISTANCE: <a href="mailto:johnbruce12g@gmail.com" className="text-[#6BF7CF] hover:text-[#7CFF4E] transition-colors underline decoration-white/20 underline-offset-4">johnbruce12g@gmail.com</a>
+                        </p>
                     </div>
 
                     <div className="mt-8 flex flex-col gap-4 sm:flex-row">

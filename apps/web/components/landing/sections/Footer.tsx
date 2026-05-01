@@ -21,6 +21,8 @@ export default function Footer() {
                     ))}
                     <span>Platform Status: Controlled access</span>
                     <span>Build: V1.0 OMEGA</span>
+                    <span className="hidden sm:inline text-white/20">|</span>
+                    <span className="text-[#6BF7CF]">johnbruce12g@gmail.com</span>
                 </div>
             </div>
         </footer>
