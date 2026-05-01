@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { dispatchBatch, releaseStaleLeases } from '@/lib/outbox/outbox-service';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
+import { authorizeCronRequest, buildCronExecutionRecord } from '@/lib/http/cronAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,11 +25,12 @@ async function runCronDispatch(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    if (!isAuthorizedCronRequest(req)) {
-        const response = NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
-        withRequestHeaders(response.headers, requestId, startTime);
-        return response;
-    }
+  const _cronAuth = authorizeCronRequest(req, 'outbox-dispatch');
+  if (!_cronAuth.authorized) {
+    const res = NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
+    withRequestHeaders(res.headers, requestId, startTime);
+    return res;
+  }
 
     const url = new URL(req.url);
     const batchSize = readPositiveInteger(url.searchParams.get('batch_size'), DEFAULT_BATCH_SIZE);
@@ -91,15 +93,6 @@ async function runCronDispatch(req: Request) {
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     }
-}
-
-function isAuthorizedCronRequest(req: Request): boolean {
-    const cronSecret = process.env.CRON_SECRET?.trim();
-    const authHeader = req.headers.get('authorization');
-    if (!cronSecret) {
-        return false;
-    }
-    return authHeader === `Bearer ${cronSecret}`;
 }
 
 function readPositiveInteger(value: unknown, fallback: number): number {

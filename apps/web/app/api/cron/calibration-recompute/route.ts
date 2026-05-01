@@ -17,6 +17,7 @@
 import { NextResponse } from 'next/server';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { getSupabaseServer } from '@/lib/supabaseServer';
+import { authorizeCronRequest, buildCronExecutionRecord } from '@/lib/http/cronAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,7 +37,8 @@ export async function GET(req: Request) {
   const requestId = `cron_cal_${Date.now()}`;
   const startTime = Date.now();
 
-  if (!isAuthorizedCronRequest(req)) {
+  const _cronAuth = authorizeCronRequest(req, 'calibration-recompute');
+  if (!_cronAuth.authorized) {
     const res = NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
     withRequestHeaders(res.headers, requestId, startTime);
     return res;
@@ -160,7 +162,7 @@ export async function GET(req: Request) {
       cron: {
         job: 'calibration-recompute',
         schedule: '0 2 * * *',
-        authorized_by: resolveCronAuthLabel(req),
+        authorized_by: _cronAuth.method,
         ran_at: new Date().toISOString(),
       },
       summary: {
@@ -194,22 +196,8 @@ export async function GET(req: Request) {
   }
 }
 
-function isAuthorizedCronRequest(req: Request): boolean {
-  const token = extractBearerToken(req.headers.get('authorization'));
-  const cronSecret = process.env.CRON_SECRET?.trim();
-  const internalToken = process.env.VETIOS_INTERNAL_API_TOKEN?.trim();
-  if (cronSecret && token === cronSecret) return true;
-  return Boolean(internalToken && token === internalToken);
-}
 
-function resolveCronAuthLabel(req: Request): string {
-  const token = extractBearerToken(req.headers.get('authorization'));
-  const cronSecret = process.env.CRON_SECRET?.trim();
-  return cronSecret && token === cronSecret ? 'cron_secret' : 'internal_token';
-}
 
-function extractBearerToken(authorization: string | null): string | null {
-  if (!authorization) return null;
-  const parts = authorization.split(' ');
-  return parts.length === 2 && parts[0].toLowerCase() === 'bearer' ? parts[1] : null;
-}
+
+
+

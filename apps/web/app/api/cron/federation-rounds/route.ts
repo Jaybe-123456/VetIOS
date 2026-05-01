@@ -3,6 +3,7 @@ import { runDueFederationAutomation } from '@/lib/federation/service';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { getSupabaseServer } from '@/lib/supabaseServer';
+import { authorizeCronRequest, buildCronExecutionRecord } from '@/lib/http/cronAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,15 +13,16 @@ export async function GET(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    if (!isAuthorizedCronRequest(req)) {
-        const response = NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
-        withRequestHeaders(response.headers, requestId, startTime);
-        return response;
-    }
+  const _cronAuth = authorizeCronRequest(req, 'federation-rounds');
+  if (!_cronAuth.authorized) {
+    const res = NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
+    withRequestHeaders(res.headers, requestId, startTime);
+    return res;
+  }
 
     const url = new URL(req.url);
-    const tenantId = normalizeOptionalText(url.searchParams.get('tenant_id'));
-    const federationKey = normalizeOptionalText(url.searchParams.get('federation_key'));
+    const tenantId = url.searchParams.get('tenant_id') ?? undefined;
+    const federationKey = url.searchParams.get('federation_key') ?? undefined;
     const runs = await runDueFederationAutomation(getSupabaseServer(), {
         tenantId,
         federationKey,
@@ -30,7 +32,7 @@ export async function GET(req: Request) {
     const response = NextResponse.json({
         cron: {
             schedule: '0 * * * *',
-            authorized_by: resolveCronAuthLabel(req),
+            authorized_by: _cronAuth.method,
             tenant_id: tenantId,
             federation_key: federationKey,
         },
@@ -46,29 +48,8 @@ export async function GET(req: Request) {
     return response;
 }
 
-function isAuthorizedCronRequest(req: Request): boolean {
-    const token = extractBearerToken(req.headers.get('authorization'));
-    const cronSecret = normalizeOptionalText(process.env.CRON_SECRET);
-    const internalToken = normalizeOptionalText(process.env.VETIOS_INTERNAL_API_TOKEN);
 
-    if (cronSecret && token === cronSecret) {
-        return true;
-    }
 
-    return Boolean(internalToken && token === internalToken);
-}
 
-function resolveCronAuthLabel(req: Request): string {
-    const token = extractBearerToken(req.headers.get('authorization'));
-    const cronSecret = normalizeOptionalText(process.env.CRON_SECRET);
-    return cronSecret && token === cronSecret ? 'cron_secret' : 'internal_token';
-}
 
-function extractBearerToken(authorization: string | null): string | null {
-    const match = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
-    return match && match.length > 0 ? match : null;
-}
 
-function normalizeOptionalText(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}

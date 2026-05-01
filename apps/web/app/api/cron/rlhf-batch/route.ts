@@ -3,10 +3,13 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { getRequestId } from '@/lib/http/requestId';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runRlhfBatch } from '@/lib/rlhf/processor';
+import { authorizeCronRequest, buildCronExecutionRecord } from '@/lib/http/cronAuth';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-export async function POST(req: Request) {
+export async function GET(req: Request) {
     const requestId = getRequestId(req);
     const startTime = Date.now();
 
