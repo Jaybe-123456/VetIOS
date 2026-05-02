@@ -737,7 +737,12 @@ export async function POST(req: Request) {
                         clinicalCase.species,
                         clinicalCase.symptoms.join(' '),
                     ].filter(Boolean).join(' ');
-                    const embedding = await embedQuery(queryText, clinicalCase);
+                    const embedding = await Promise.race([
+                        embedQuery(queryText, clinicalCase),
+                        new Promise<never>((_, reject) =>
+                            setTimeout(() => reject(new Error('EMBED_TIMEOUT')), 6_000),
+                        ),
+                    ]);
                     await getVectorStore().upsert({
                         inferenceEventId: persistedInferenceEventId,
                         tenantId,
@@ -749,7 +754,7 @@ export async function POST(req: Request) {
                         confidenceScore: inferenceResult.confidence_score ?? null,
                     });
                 })(),
-                { timeoutMs: 8_000 },
+                { timeoutMs: 8_000 }, // errors logged by settleNonCriticalEffect
             ),
             settleNonCriticalEffect(
                 requestId,
