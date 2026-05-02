@@ -35,7 +35,7 @@ interface ReferenceImage {
     attribution?: string;
 }
 
-type ImageProvider = 'bing' | 'google_cse' | 'not_configured';
+type ImageProvider = 'bing' | 'google_cse' | 'wikimedia';
 
 interface ResearchSource {
     title: string;
