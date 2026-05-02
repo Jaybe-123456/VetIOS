@@ -749,7 +749,7 @@ export async function POST(req: Request) {
                         confidenceScore: inferenceResult.confidence_score ?? null,
                     });
                 })(),
-                { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+                { timeoutMs: 8_000 },
             ),
             settleNonCriticalEffect(
                 requestId,
