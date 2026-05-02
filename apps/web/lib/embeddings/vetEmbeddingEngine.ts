@@ -36,7 +36,7 @@ export interface EmbeddingResult {
 
 // ─── Constants ───────────────────────────────────────────────
 
-const EMBEDDING_MODEL = 'text-embedding-3-large';
+const EMBEDDING_MODEL = 'text-embedding-3-small';
 const EMBEDDING_DIMENSIONS = 1536;
 
 // Species-specific clinical weight modifiers.
