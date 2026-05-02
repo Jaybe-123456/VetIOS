@@ -445,6 +445,39 @@ export async function POST(req: Request) {
             outcome_confirmed: false,
         });
 
+        // ── Vector store upsert (inline, capped at 8s, non-blocking on error) ──
+        try {
+            const sig = body.input.input_signature;
+            const clinicalCase = {
+                species: typeof sig.species === 'string' ? sig.species : 'unknown',
+                breed:   typeof sig.breed   === 'string' ? sig.breed   : null,
+                age_years:  null,
+                weight_kg:  null,
+                symptoms: Array.isArray(sig.symptoms) ? (sig.symptoms as string[]) : [],
+                biomarkers: null,
+            };
+            const queryText = [clinicalCase.species, clinicalCase.symptoms.join(' ')].filter(Boolean).join(' ');
+            const embedding = await Promise.race([
+                embedQuery(queryText, clinicalCase),
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('EMBED_TIMEOUT')), 8_000),
+                ),
+            ]);
+            await getVectorStore().upsert({
+                inferenceEventId: persistedInferenceEventId,
+                tenantId,
+                clinicalCase,
+                embedding,
+                diagnosis: typeof inferenceResult.output_payload?.diagnosis === 'object'
+                    ? String((inferenceResult.output_payload.diagnosis as Record<string,unknown>)?.top_diagnosis ?? '') || null
+                    : null,
+                confidenceScore: inferenceResult.confidence_score ?? null,
+            });
+        } catch (vsErr) {
+            console.error(`[${requestId}] Vector store upsert failed (non-fatal):`, vsErr);
+        }
+        // ─────────────────────────────────────────────────────────────────────
+
         logClinicalDatasetMutation({
             source: 'api/inference',
             mutationType: 'inference',
@@ -719,42 +752,6 @@ export async function POST(req: Request) {
                     triggerSource: 'inference',
                 }),
                 { timeoutMs: DECISION_ENGINE_TIMEOUT_MS },
-            ),
-            settleNonCriticalEffect(
-                requestId,
-                'Vector store upsert',
-                (async () => {
-                    const sig = body.input.input_signature;
-                    const clinicalCase = {
-                        species: typeof sig.species === 'string' ? sig.species : 'unknown',
-                        breed:   typeof sig.breed   === 'string' ? sig.breed   : null,
-                        age_years:  null,
-                        weight_kg:  null,
-                        symptoms: Array.isArray(sig.symptoms) ? (sig.symptoms as string[]) : [],
-                        biomarkers: null,
-                    };
-                    const queryText = [
-                        clinicalCase.species,
-                        clinicalCase.symptoms.join(' '),
-                    ].filter(Boolean).join(' ');
-                    const embedding = await Promise.race([
-                        embedQuery(queryText, clinicalCase),
-                        new Promise<never>((_, reject) =>
-                            setTimeout(() => reject(new Error('EMBED_TIMEOUT')), 6_000),
-                        ),
-                    ]);
-                    await getVectorStore().upsert({
-                        inferenceEventId: persistedInferenceEventId,
-                        tenantId,
-                        clinicalCase,
-                        embedding,
-                        diagnosis: typeof inferenceResult.output_payload?.diagnosis === 'object'
-                            ? String((inferenceResult.output_payload.diagnosis as Record<string,unknown>)?.top_diagnosis ?? '') || null
-                            : null,
-                        confidenceScore: inferenceResult.confidence_score ?? null,
-                    });
-                })(),
-                { timeoutMs: 8_000 }, // errors logged by settleNonCriticalEffect
             ),
             settleNonCriticalEffect(
                 requestId,
