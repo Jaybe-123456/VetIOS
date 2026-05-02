@@ -57,6 +57,10 @@ import {
     finalizeRoutingDecisionRecord,
     planModelRoute,
 } from '@/lib/routingEngine/service';
+import { getRAGPipeline } from '@/lib/rag/ragPipeline';
+import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
+import { embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
+import type { RAGContext } from '@/lib/rag/ragPipeline';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -233,6 +237,31 @@ export async function POST(req: Request) {
     }
 
     const body = result.data;
+
+    // ── RAG: build grounded evidence context (non-blocking, 750 ms hard cap) ──
+    let ragCtx: RAGContext | null = null;
+    try {
+        const sig = body.input.input_signature;
+        ragCtx = await Promise.race([
+            getRAGPipeline().buildContext({
+                species: typeof sig.species === 'string' ? sig.species : 'unknown',
+                breed:   typeof sig.breed   === 'string' ? sig.breed   : null,
+                age_years:  null,
+                weight_kg:  null,
+                symptoms: Array.isArray(sig.symptoms) ? (sig.symptoms as string[]) : [],
+                biomarkers: null,
+            }),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('RAG_TIMEOUT')), 750),
+            ),
+        ]);
+        if (ragCtx?.promptContext && sig.metadata && typeof sig.metadata === 'object') {
+            (sig.metadata as Record<string, unknown>).rag_context = ragCtx.promptContext;
+        }
+    } catch {
+        // Non-critical — inference proceeds without retrieval grounding.
+    }
+
     const governanceDecision = await evaluateGovernancePolicyForInference(supabase, {
         actor,
         tenantId,
@@ -693,6 +722,54 @@ export async function POST(req: Request) {
             ),
             settleNonCriticalEffect(
                 requestId,
+                'Vector store upsert',
+                (async () => {
+                    const sig = body.input.input_signature;
+                    const clinicalCase = {
+                        species: typeof sig.species === 'string' ? sig.species : 'unknown',
+                        breed:   typeof sig.breed   === 'string' ? sig.breed   : null,
+                        age_years:  null,
+                        weight_kg:  null,
+                        symptoms: Array.isArray(sig.symptoms) ? (sig.symptoms as string[]) : [],
+                        biomarkers: null,
+                    };
+                    const queryText = [
+                        clinicalCase.species,
+                        clinicalCase.symptoms.join(' '),
+                    ].filter(Boolean).join(' ');
+                    const embedding = await embedQuery(queryText, clinicalCase);
+                    await getVectorStore().upsert({
+                        inferenceEventId: persistedInferenceEventId,
+                        tenantId,
+                        clinicalCase,
+                        embedding,
+                        diagnosis: typeof inferenceResult.output_payload?.diagnosis === 'object'
+                            ? String((inferenceResult.output_payload.diagnosis as Record<string,unknown>)?.top_diagnosis ?? '') || null
+                            : null,
+                        confidenceScore: inferenceResult.confidence_score ?? null,
+                    });
+                })(),
+                { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+            ),
+            settleNonCriticalEffect(
+                requestId,
+                'RAG citation persistence',
+                ragCtx !== null
+                    ? Promise.resolve(
+                          supabase
+                              .from('ai_inference_events')
+                              .update({
+                                  rag_grounded:     ragCtx.retrievalStats.totalRetrieved > 0,
+                                  rag_citations:    ragCtx.evidenceBlocks,
+                                  retrieval_stats:  ragCtx.retrievalStats,
+                              })
+                              .eq('id', persistedInferenceEventId),
+                      ).then(() => {})
+                    : Promise.resolve(),
+                { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+            ),
+            settleNonCriticalEffect(
+                requestId,
                 'Usage metering',
                 (async () => {
                     if (actor.authMode === 'jwt' || actor.authMode === 'session') return;
@@ -759,6 +836,8 @@ export async function POST(req: Request) {
                 analysis: routingPlan.analysis,
                 reason: routingPlan.reason,
             },
+            rag_grounded: ragCtx !== null && ragCtx.retrievalStats.totalRetrieved > 0,
+            rag_citations: ragCtx?.evidenceBlocks ?? [],
         };
 
         if (cirePayload.available !== false && cirePayload.safety_state === 'blocked') {
@@ -831,6 +910,8 @@ export async function POST(req: Request) {
             auto_outcome: flywheelEvaluation?.outcome ?? null,
             flywheel_error: flywheelError,
             ml_risk: inferenceResult.mlRisk,
+            rag_grounded: ragCtx !== null && ragCtx.retrievalStats.totalRetrieved > 0,
+            rag_citations: ragCtx?.evidenceBlocks ?? [],
             routing: {
                 routing_decision_id: routingPlan.routing_decision_id,
                 requested_model_name: body.model.name,

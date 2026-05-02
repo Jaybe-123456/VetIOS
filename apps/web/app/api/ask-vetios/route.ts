@@ -81,17 +81,19 @@ export async function POST(req: Request) {
             .map(m => `${m.role.toUpperCase()}: ${m.content}`)
             .join('\n');
 
-        // ── RAG: retrieve similar historical cases ──────────────────────────
+        // ── RAG: retrieve similar historical cases (non-blocking, 750 ms cap) ──
         let ragContextBlock = '';
         try {
             const vs = getVectorStore();
             const qe = await embedQuery(message);
-            const similar = await vs.findSimilar({ embedding: qe, limit: 6, minSimilarity: 0.74 });
+            const similar = await Promise.race([
+                vs.findSimilar({ embedding: qe, limit: 6, minSimilarity: 0.74 }),
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('RAG_TIMEOUT')), 750),
+                ),
+            ]);
             if (similar.totalFound > 0) {
                 ragContextBlock = similar.retrievalSummary;
-                // Inject into input signature so provider picks it up
-                // stored for injection below
-                void 0;
             }
         } catch { /* RAG non-critical */ }
         // ─────────────────────────────────────────────────────────────────────
