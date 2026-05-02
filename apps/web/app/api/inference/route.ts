@@ -252,7 +252,7 @@ export async function POST(req: Request) {
                 biomarkers: null,
             }),
             new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('RAG_TIMEOUT')), 750),
+                setTimeout(() => reject(new Error('RAG_TIMEOUT')), 5_000),
             ),
         ]);
         if (ragCtx?.promptContext && sig.metadata && typeof sig.metadata === 'object') {
