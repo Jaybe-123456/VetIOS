@@ -434,6 +434,125 @@ export const TREATMENT_OUTCOMES = {
     },
 } as const;
 
+export const CAUSAL_DAG_NODES = {
+    TABLE: 'causal_dag_nodes',
+    COLUMNS: {
+        id: 'id',
+        node_key: 'node_key',
+        node_type: 'node_type',
+        label: 'label',
+        species_scope: 'species_scope',
+        observation_count: 'observation_count',
+        metadata: 'metadata',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const CAUSAL_DAG_EDGES = {
+    TABLE: 'causal_dag_edges',
+    COLUMNS: {
+        id: 'id',
+        from_node_key: 'from_node_key',
+        to_node_key: 'to_node_key',
+        edge_type: 'edge_type',
+        ate: 'ate',
+        ate_lower: 'ate_lower',
+        ate_upper: 'ate_upper',
+        support_count: 'support_count',
+        treated_count: 'treated_count',
+        control_count: 'control_count',
+        confidence: 'confidence',
+        species_scope: 'species_scope',
+        adjustment_set: 'adjustment_set',
+        last_computed: 'last_computed',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const CAUSAL_OBSERVATIONS = {
+    TABLE: 'causal_observations',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        inference_event_id: 'inference_event_id',
+        treatment_event_id: 'treatment_event_id',
+        treatment_outcome_id: 'treatment_outcome_id',
+        rlhf_feedback_id: 'rlhf_feedback_id',
+        patient_id: 'patient_id',
+        species: 'species',
+        breed: 'breed',
+        age_years: 'age_years',
+        weight_kg: 'weight_kg',
+        treatment_applied: 'treatment_applied',
+        treatment_snapshot: 'treatment_snapshot',
+        clinician_override: 'clinician_override',
+        clinician_validation_status: 'clinician_validation_status',
+        predicted_diagnosis: 'predicted_diagnosis',
+        confirmed_diagnosis: 'confirmed_diagnosis',
+        outcome_status: 'outcome_status',
+        recovery_time_days: 'recovery_time_days',
+        had_complications: 'had_complications',
+        complications: 'complications',
+        outcome_horizon: 'outcome_horizon',
+        observed_at: 'observed_at',
+        symptom_vector: 'symptom_vector',
+        biomarker_snapshot: 'biomarker_snapshot',
+        feature_snapshot: 'feature_snapshot',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const COUNTERFACTUAL_RECORDS = {
+    TABLE: 'counterfactual_records',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        inference_event_id: 'inference_event_id',
+        species: 'species',
+        breed: 'breed',
+        age_years: 'age_years',
+        confirmed_diagnosis: 'confirmed_diagnosis',
+        treatment_actual: 'treatment_actual',
+        outcome_actual: 'outcome_actual',
+        treatment_counterfactual: 'treatment_counterfactual',
+        estimated_outcome: 'estimated_outcome',
+        estimated_recovery_days: 'estimated_recovery_days',
+        estimated_outcome_score: 'estimated_outcome_score',
+        confidence: 'confidence',
+        supporting_case_count: 'supporting_case_count',
+        causal_path: 'causal_path',
+        adjustment_set: 'adjustment_set',
+        computed_at: 'computed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const LIVING_CASE_NODES = {
+    TABLE: 'living_case_nodes',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        patient_id: 'patient_id',
+        latest_inference_event_id: 'latest_inference_event_id',
+        species: 'species',
+        breed: 'breed',
+        active_diagnoses: 'active_diagnoses',
+        last_symptoms: 'last_symptoms',
+        last_biomarkers: 'last_biomarkers',
+        last_treatment: 'last_treatment',
+        last_outcome: 'last_outcome',
+        deterioration_risk: 'deterioration_risk',
+        causal_risk_factors: 'causal_risk_factors',
+        similar_patient_ids: 'similar_patient_ids',
+        first_seen_at: 'first_seen_at',
+        last_updated_at: 'last_updated_at',
+        inference_count: 'inference_count',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const OUTCOME_CALIBRATIONS = {
     TABLE: 'outcome_calibrations',
     COLUMNS: {

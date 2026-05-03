@@ -332,6 +332,7 @@ export async function POST(req: Request) {
             caseId: body.case_id ?? null,
         });
 
+        const inferenceEventId = randomUUID();
         const executionSample = beginTelemetryExecutionSample();
         const routingExecution = await Promise.race([
             executeRoutingPlan({
@@ -340,6 +341,9 @@ export async function POST(req: Request) {
                     model: profile.provider_model,
                     rawInput: body.input,
                     inputMode: 'json',
+                    tenantId,
+                    patientId: extractPatientIdForCausalMemory(body.input.input_signature),
+                    inferenceEventId,
                 }),
             }),
             new Promise<never>((_, reject) =>
@@ -356,7 +360,6 @@ export async function POST(req: Request) {
         const executionMetrics = finishTelemetryExecutionSample(executionSample);
         const measuredLatencyMs = executionMetrics.latencyMs;
         const latencyMs = Math.max(1, Math.round(measuredLatencyMs));
-        const inferenceEventId = randomUUID();
         const telemetryRunId = resolveTelemetryRunId(
             routedModel.model_version,
             resolveTelemetryRunCandidate(body.input.input_signature),
@@ -801,6 +804,9 @@ export async function POST(req: Request) {
             episode_id: episodeId,
             episode_reconcile_error: episodeReconcileError,
             output: inferenceResult.output_payload,
+            causal_context: inferenceResult.output_payload.causal_context ?? null,
+            causal_counterfactuals: inferenceResult.output_payload.causal_counterfactuals ?? [],
+            living_case_context: inferenceResult.output_payload.living_case_context ?? null,
             differentials: Array.isArray(asRecord(inferenceResult.output_payload.diagnosis).top_differentials)
                 ? asRecord(inferenceResult.output_payload.diagnosis).top_differentials
                 : [],
@@ -883,6 +889,9 @@ export async function POST(req: Request) {
             episode_reconcile_error: episodeReconcileError,
             prediction: inferenceResult.output_payload,
             output: inferenceResult.output_payload,
+            causal_context: inferenceResult.output_payload.causal_context ?? null,
+            causal_counterfactuals: inferenceResult.output_payload.causal_counterfactuals ?? [],
+            living_case_context: inferenceResult.output_payload.living_case_context ?? null,
             data: responseData,
             cire: cirePayload,
             meta: {
@@ -993,10 +1002,24 @@ function resolveTelemetryRunCandidate(inputSignature: Record<string, unknown>): 
     return inputSignature.run_id ?? metadata.run_id ?? null;
 }
 
+function extractPatientIdForCausalMemory(inputSignature: Record<string, unknown>): string | null {
+    const metadata = asRecord(inputSignature.metadata);
+    return readText(inputSignature.patient_id)
+        ?? readText(inputSignature.patientId)
+        ?? readText(inputSignature.pet_id)
+        ?? readText(metadata.patient_id)
+        ?? readText(metadata.patientId)
+        ?? readText(metadata.pet_id);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function readText(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function asNullableRecord(value: unknown): Record<string, unknown> | null {

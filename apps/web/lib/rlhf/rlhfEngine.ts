@@ -18,6 +18,8 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import { getLongitudinalService } from '@/lib/longitudinal/longitudinalPatientService';
 import { getPopulationSignalService } from '@/lib/populationSignal/populationSignalService';
+import { getCausalEngine } from '@/lib/causal/causalEngine';
+import { getLivingCaseMemory } from '@/lib/causal/livingCaseMemory';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -61,6 +63,8 @@ export interface RLHFResult {
   longitudinalUpdated: boolean;
   populationSignalIngested: boolean;
   activeLearningFlagged: boolean;
+  causalObservationRecorded: boolean;
+  livingNodeUpdated: boolean;
   impactDelta: number;
   summary: string;
 }
@@ -88,6 +92,8 @@ export class RLHFEngine {
   private vectorStore = getVectorStore();
   private longitudinalService = getLongitudinalService();
   private populationSignal = getPopulationSignalService();
+  private causalEngine = getCausalEngine();
+  private livingCaseMemory = getLivingCaseMemory();
 
   /**
    * Primary entry point. Called whenever a vet submits feedback.
@@ -103,6 +109,8 @@ export class RLHFEngine {
     let longitudinalUpdated = false;
     let populationSignalIngested = false;
     let activeLearningFlagged = false;
+    let causalObservationRecorded = false;
+    let livingNodeUpdated = false;
 
     // ── 1. Persist raw feedback record ──
     await this.persistFeedback(feedbackId, input, impactDelta);
@@ -138,6 +146,14 @@ export class RLHFEngine {
     // ── 7. Flag for active learning if high-value case ──
     activeLearningFlagged = await this.flagForActiveLearning(input, impactDelta);
 
+    if (input.actualDiagnosis) {
+      causalObservationRecorded = await this.recordCausalObservation(input, feedbackId);
+    }
+
+    if (input.patientId && input.actualDiagnosis) {
+      livingNodeUpdated = await this.updateLivingNode(input);
+    }
+
     const summary = this.buildSummary(input, {
       reinforcementApplied,
       calibrationUpdated,
@@ -145,6 +161,8 @@ export class RLHFEngine {
       longitudinalUpdated,
       populationSignalIngested,
       activeLearningFlagged,
+      causalObservationRecorded,
+      livingNodeUpdated,
       impactDelta,
     });
 
@@ -157,6 +175,8 @@ export class RLHFEngine {
       longitudinalUpdated,
       populationSignalIngested,
       activeLearningFlagged,
+      causalObservationRecorded,
+      livingNodeUpdated,
       impactDelta,
       summary,
     };
@@ -339,6 +359,118 @@ export class RLHFEngine {
     }
   }
 
+  private async recordCausalObservation(
+    input: VetFeedbackInput,
+    feedbackId: string
+  ): Promise<boolean> {
+    try {
+      const { treatmentEvent, treatmentOutcome } = await this.loadTreatmentLink(input.inferenceEventId);
+      const treatmentLabel = treatmentEvent
+        ? formatTreatmentLabel(
+          treatmentEvent.selected_treatment,
+          readText(treatmentEvent.disease) ?? input.predictedDiagnosis ?? input.actualDiagnosis ?? null
+        )
+        : 'no_recorded_treatment';
+      const outcomeStatus = readText(treatmentOutcome?.outcome_status) ?? inferOutcomeStatus(input);
+      const complications = readStringArray(treatmentOutcome?.complications);
+      if (!treatmentOutcome && outcomeStatus === 'unknown') {
+        return false;
+      }
+
+      await this.causalEngine.recordObservation({
+        tenantId: input.tenantId,
+        inferenceEventId: input.inferenceEventId,
+        treatmentEventId: readText(treatmentEvent?.id),
+        treatmentOutcomeId: readText(treatmentOutcome?.id),
+        rlhfFeedbackId: feedbackId,
+        patientId: input.patientId ?? null,
+        species: input.species,
+        breed: input.breed ?? null,
+        ageYears: input.ageYears ?? null,
+        weightKg: null,
+        treatmentApplied: treatmentLabel,
+        treatmentSnapshot: asRecord(treatmentEvent?.selected_treatment),
+        clinicianOverride: readBoolean(treatmentEvent?.clinician_override) ?? false,
+        clinicianValidationStatus: readText(treatmentEvent?.clinician_validation_status),
+        predictedDiagnosis: input.predictedDiagnosis,
+        confirmedDiagnosis: input.actualDiagnosis!,
+        outcomeStatus,
+        recoveryTimeDays: readNumber(treatmentOutcome?.recovery_time_days),
+        hadComplications: complications.length > 0 || outcomeStatus === 'complication',
+        complications,
+        outcomeHorizon: resolveOutcomeHorizon(input, treatmentOutcome),
+        observedAt: readText(treatmentOutcome?.observed_at) ?? new Date().toISOString(),
+        symptomVector: Object.keys(input.extractedFeatures),
+        biomarkerSnapshot: null,
+        featureSnapshot: input.extractedFeatures,
+      });
+
+      return true;
+    } catch (err) {
+      console.error('[RLHFEngine] recordCausalObservation failed:', err);
+      return false;
+    }
+  }
+
+  private async updateLivingNode(input: VetFeedbackInput): Promise<boolean> {
+    try {
+      const { treatmentEvent, treatmentOutcome } = await this.loadTreatmentLink(input.inferenceEventId);
+      await this.livingCaseMemory.upsertNode({
+        tenantId: input.tenantId,
+        patientId: input.patientId!,
+        inferenceEventId: input.inferenceEventId,
+        species: input.species,
+        breed: input.breed ?? null,
+        activeDiagnoses: input.actualDiagnosis ? [input.actualDiagnosis] : [],
+        lastSymptoms: Object.keys(input.extractedFeatures),
+        lastBiomarkers: null,
+        lastTreatment: treatmentEvent
+          ? formatTreatmentLabel(
+            treatmentEvent.selected_treatment,
+            readText(treatmentEvent.disease) ?? input.actualDiagnosis ?? input.predictedDiagnosis
+          )
+          : null,
+        lastOutcome: readText(treatmentOutcome?.outcome_status) ?? inferOutcomeStatus(input),
+      });
+      return true;
+    } catch (err) {
+      console.error('[RLHFEngine] updateLivingNode failed:', err);
+      return false;
+    }
+  }
+
+  private async loadTreatmentLink(inferenceEventId: string): Promise<{
+    treatmentEvent: Record<string, unknown> | null;
+    treatmentOutcome: Record<string, unknown> | null;
+  }> {
+    if (!isUuid(inferenceEventId)) {
+      return { treatmentEvent: null, treatmentOutcome: null };
+    }
+
+    const { data: treatmentEvent } = await this.supabase
+      .from('treatment_events')
+      .select('id, disease, selected_treatment, clinician_override, clinician_validation_status')
+      .eq('inference_event_id', inferenceEventId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!treatmentEvent) {
+      return { treatmentEvent: null, treatmentOutcome: null };
+    }
+
+    const { data: treatmentOutcome } = await this.supabase
+      .from('treatment_outcomes')
+      .select('id, event_id, outcome_status, recovery_time_days, complications, observed_at, outcome_json')
+      .eq('event_id', String((treatmentEvent as Record<string, unknown>).id))
+      .maybeSingle();
+
+    return {
+      treatmentEvent: treatmentEvent as Record<string, unknown>,
+      treatmentOutcome: treatmentOutcome ? treatmentOutcome as Record<string, unknown> : null,
+    };
+  }
+
   private resolveConditionClass(diagnosis: string): string {
     const d = diagnosis.toLowerCase();
     if (d.includes('parvo') || d.includes('distemper') || d.includes('uri') || d.includes('lepto')) return 'Infectious';
@@ -360,6 +492,8 @@ export class RLHFEngine {
       longitudinalUpdated: boolean;
       populationSignalIngested: boolean;
       activeLearningFlagged: boolean;
+      causalObservationRecorded: boolean;
+      livingNodeUpdated: boolean;
       impactDelta: number;
     }
   ): string {
@@ -373,6 +507,8 @@ export class RLHFEngine {
     if (results.longitudinalUpdated) applied.push('longitudinal record updated');
     if (results.populationSignalIngested) applied.push('population signal ingested');
     if (results.activeLearningFlagged) applied.push('flagged for active learning');
+    if (results.causalObservationRecorded) applied.push('causal observation recorded');
+    if (results.livingNodeUpdated) applied.push('living patient node updated');
 
     if (applied.length > 0) parts.push(`Systems updated: ${applied.join(', ')}.`);
     return parts.join(' ');
@@ -386,4 +522,91 @@ let _engine: RLHFEngine | null = null;
 export function getRLHFEngine(): RLHFEngine {
   if (!_engine) _engine = new RLHFEngine();
   return _engine;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i;
+
+function isUuid(value: string | null | undefined): boolean {
+  return typeof value === 'string' && UUID_PATTERN.test(value);
+}
+
+function inferOutcomeStatus(input: VetFeedbackInput): string {
+  const notes = (input.vetNotes ?? '').toLowerCase();
+  if (/\b(deceased|died|death|euthan)/.test(notes)) return 'deceased';
+  if (/\b(recovered|resolved|recovery|resolve)\b/.test(notes)) return 'resolved';
+  if (/\b(improved|improving|better)\b/.test(notes)) return 'improved';
+  if (/\b(complication|complicated)\b/.test(notes)) return 'complication';
+  if (/\b(deteriorated|worse|worsening|declined)\b/.test(notes)) return 'deteriorated';
+  if (input.feedbackType === 'outcome_at_48h' || input.feedbackType === 'outcome_at_7d' || input.feedbackType === 'outcome_at_30d') {
+    return 'stable';
+  }
+  return 'unknown';
+}
+
+function resolveOutcomeHorizon(
+  input: VetFeedbackInput,
+  treatmentOutcome: Record<string, unknown> | null
+): '48h' | '7d' | '30d' | 'final' | 'unknown' {
+  if (input.feedbackType === 'outcome_at_48h') return '48h';
+  if (input.feedbackType === 'outcome_at_7d') return '7d';
+  if (input.feedbackType === 'outcome_at_30d') return '30d';
+  return treatmentOutcome ? 'final' : 'unknown';
+}
+
+function formatTreatmentLabel(value: unknown, fallbackDisease?: string | null): string {
+  if (typeof value === 'string' && value.trim()) return value.trim();
+
+  const record = asRecord(value);
+  const pathway = readText(record.treatment_pathway);
+  const actualIntervention = asRecord(record.actual_intervention);
+  const candidate = asRecord(record.candidate_snapshot);
+  const collectedIntervention = collectInterventionStrings(actualIntervention).slice(0, 2).join(' + ');
+  const actualLabel =
+    readText(actualIntervention.name) ??
+    readText(actualIntervention.protocol) ??
+    readText(actualIntervention.drug) ??
+    readText(actualIntervention.procedure) ??
+    (collectedIntervention || null);
+  const candidateType = readText(candidate.treatment_type);
+  const disease = readText(fallbackDisease);
+  const parts = [disease, pathway, actualLabel, candidateType].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(' | ') : 'unknown_treatment';
+}
+
+function collectInterventionStrings(value: unknown): string[] {
+  if (typeof value === 'string') return value.trim() ? [value.trim()] : [];
+  if (Array.isArray(value)) return value.flatMap((entry) => collectInterventionStrings(entry));
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).flatMap((entry) => collectInterventionStrings(entry));
+  }
+  return [];
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function readText(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0).map((entry) => entry.trim())
+    : [];
 }
