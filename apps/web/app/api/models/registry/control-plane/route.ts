@@ -63,6 +63,7 @@ export async function GET(req: Request) {
             snapshot,
             request_id: requestId,
         });
+        response.headers.set('Cache-Control', 's-maxage=15, stale-while-revalidate=30');
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     } catch (error) {

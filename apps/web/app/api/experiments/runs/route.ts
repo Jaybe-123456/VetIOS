@@ -36,6 +36,7 @@ export async function GET(req: Request) {
         authenticated_user_id: actor?.userId ?? null,
         request_id: requestId,
     });
+    response.headers.set('Cache-Control', 's-maxage=20, stale-while-revalidate=40');
     withRequestHeaders(response.headers, requestId, startTime);
     return response;
 }
