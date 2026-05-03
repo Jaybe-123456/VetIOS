@@ -35,6 +35,7 @@ import type {
     DifferentialBasis,
     DifferentialEntry,
     DifferentialRelationship,
+    EvidenceWeight,
     EvidenceEntry,
     InferenceExplanation,
     InferenceRequest,
@@ -903,7 +904,7 @@ function applyAdjustments(states: Map<string, CandidateState>, adjustments: Scor
         } else {
             state.supporting.push({
                 finding: adjustment.finding,
-                weight: adjustment.weight,
+                weight: toEvidenceWeight(adjustment.weight),
             });
             if (adjustment.determination_basis) {
                 state.basis = adjustment.determination_basis;
@@ -913,6 +914,10 @@ function applyAdjustments(states: Map<string, CandidateState>, adjustments: Scor
             }
         }
     }
+}
+
+function toEvidenceWeight(weight: ScoreAdjustment['weight']): EvidenceWeight {
+    return weight === 'weakens' || weight === 'excludes' ? 'minor' : weight;
 }
 
 function applyFelineRespiratoryRouting(

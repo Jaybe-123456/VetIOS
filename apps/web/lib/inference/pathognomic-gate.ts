@@ -72,6 +72,229 @@ const PATHOGNOMIC_CONFIG: Record<string, PathognomonicConditionConfig> = {
             'Screen for tick-borne co-infections',
         ],
     },
+    imha_canine: {
+        condition_id: 'imha_canine',
+        exclusions: [
+            { condition: 'Babesiosis', reason: 'Positive Coombs/autoagglutination with negative tick screen excludes primary tick-borne haemolysis as the driver' },
+            { condition: 'Microangiopathic haemolytic anaemia', reason: 'Spherocytosis and positive Coombs confirm immune-mediated over mechanical RBC destruction' },
+            { condition: 'Haemangiosarcoma', reason: 'Pathognomonic immune markers shift primary haemolysis away from neoplastic fragmentation' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'evans_syndrome', probability: 0.18, relationship_type: 'co-morbidity' },
+            { condition_id: 'immune_mediated_thrombocytopenia', probability: 0.12, relationship_type: 'co-morbidity' },
+        ],
+        recommended_next_steps: [
+            'Assess PCV and transfusion threshold; consider if PCV < 15% or patient clinically decompensating',
+            'Initiate immunosuppressive therapy',
+            'Plan thromboembolism prophylaxis',
+            'Recheck PCV every 12 hours during crisis phase',
+        ],
+    },
+    imtp_canine: {
+        condition_id: 'imtp_canine',
+        exclusions: [
+            { condition: 'DIC', reason: 'Isolated immune platelet destruction differs mechanistically from consumptive coagulopathy' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'evans_syndrome', probability: 0.15, relationship_type: 'co-morbidity' },
+        ],
+        recommended_next_steps: [
+            'Confirm platelet count',
+            'Initiate immunosuppressive therapy',
+            'Monitor bleeding risk',
+        ],
+    },
+    feline_infectious_peritonitis: {
+        condition_id: 'feline_infectious_peritonitis',
+        exclusions: [
+            { condition: 'Lymphoma', reason: 'Positive FCoV antibody titre with effusion and Rivalta test shifts strongly away from neoplastic effusion as primary' },
+            { condition: 'Toxoplasmosis', reason: 'Effusion chemistry and titre profile are inconsistent with toxoplasmosis as primary' },
+        ],
+        secondary_diagnoses: [],
+        recommended_next_steps: [
+            'Confirm wet versus dry form',
+            'Plan antiviral therapy',
+            'Monitor effusion and neurologic involvement',
+        ],
+    },
+    addisons_canine: {
+        condition_id: 'addisons_canine',
+        exclusions: [
+            { condition: 'Acute kidney injury', reason: 'Na:K ratio < 27 with appropriate clinical context distinguishes adrenal insufficiency from primary renal failure' },
+            { condition: 'Protein-losing enteropathy', reason: 'ACTH-confirmed adrenal insufficiency supersedes GI protein loss as the primary driver' },
+        ],
+        secondary_diagnoses: [],
+        recommended_next_steps: [
+            'Confirm with ACTH stimulation once stable',
+            'Stabilise electrolytes',
+            'Start immediate mineralocorticoid and glucocorticoid replacement planning',
+        ],
+    },
+    hypothyroidism_canine: {
+        condition_id: 'hypothyroidism_canine',
+        exclusions: [
+            { condition: 'Obesity', reason: 'Confirmed low T4 with clinical signs shifts weight gain away from dietary cause' },
+            { condition: 'Sebaceous adenitis', reason: 'Thyroid function confirmation redirects dermatologic presentation' },
+        ],
+        secondary_diagnoses: [],
+        recommended_next_steps: [
+            'Confirm with free T4 and TSH',
+            'Plan levothyroxine titration',
+        ],
+    },
+    diabetes_mellitus_feline: {
+        condition_id: 'diabetes_mellitus_feline',
+        exclusions: [
+            { condition: 'Renal disease', reason: 'Hyperglycaemia plus glucosuria with appropriate clinical signs confirms diabetic rather than renal glycosuria' },
+            { condition: 'Pancreatitis as primary', reason: 'Confirmed DM shifts glucose dysregulation away from acute pancreatitis as the sole driver' },
+        ],
+        secondary_diagnoses: [],
+        recommended_next_steps: [
+            'Assess ketones',
+            'Plan insulin type and regime',
+            'Start dietary management',
+            'Schedule glucose curve',
+        ],
+    },
+    leptospirosis_canine: {
+        condition_id: 'leptospirosis_canine',
+        exclusions: [
+            { condition: 'Acute pancreatitis', reason: 'Positive MAT or PCR with renal and hepatic involvement redirects away from primary pancreatic disease' },
+            { condition: 'Toxin-induced renal failure', reason: 'Confirmed Leptospira serology shifts nephrotoxic cause to infectious' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'uveitis_leptospira', probability: 0.08, relationship_type: 'complication' },
+        ],
+        recommended_next_steps: [
+            'Confirm serovar via MAT',
+            'Initiate appropriate antimicrobial class',
+            'Isolate patient because of zoonotic risk',
+            'Monitor renal and hepatic values',
+        ],
+    },
+    toxoplasmosis_canine_feline: {
+        condition_id: 'toxoplasmosis_canine_feline',
+        exclusions: [
+            { condition: 'Encephalitis of other aetiology', reason: 'Positive IgM titre with compatible clinical signs shifts away from alternate CNS inflammatory disease' },
+            { condition: 'Lymphoma', reason: 'Positive IgM titre with compatible clinical signs shifts away from neoplastic CNS disease' },
+        ],
+        secondary_diagnoses: [],
+        recommended_next_steps: [
+            'Confirm IgM:IgG ratio',
+            'Review appropriate antimicrobial class',
+            'Perform ophthalmic assessment if uveitis is present',
+        ],
+    },
+    canine_distemper: {
+        condition_id: 'canine_distemper',
+        exclusions: [
+            { condition: 'Rabies', reason: 'Positive distemper antigen or compatible inclusion bodies are inconsistent with rabies as primary' },
+            { condition: 'Granulomatous meningoencephalitis', reason: 'Distemper confirmation redirects from inflammatory non-infectious cause' },
+        ],
+        secondary_diagnoses: [],
+        recommended_next_steps: [
+            'Provide supportive care',
+            'Manage seizures if indicated',
+            'Give prognosis guidance because there is no curative therapy',
+        ],
+    },
+    feline_hyperthyroidism: {
+        condition_id: 'feline_hyperthyroidism',
+        exclusions: [
+            { condition: 'Hypertensive disease', reason: 'Confirmed T4 elevation shifts hypertension from primary to secondary' },
+            { condition: 'Chronic kidney disease', reason: 'Hyperthyroidism can mask azotaemia; treat thyroid first and reassess renal function before committing to CKD management' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'secondary_hypertension', probability: 0.35, relationship_type: 'secondary' },
+            { condition_id: 'hypertrophic_cardiomyopathy_secondary', probability: 0.25, relationship_type: 'complication' },
+        ],
+        recommended_next_steps: [
+            'Confirm with total T4',
+            'Initiate antithyroid therapy planning',
+            'Monitor blood pressure',
+            'Re-evaluate renal function 4 weeks after stabilisation',
+        ],
+    },
+    gdv_canine: {
+        condition_id: 'gdv_canine',
+        exclusions: [
+            { condition: 'Acute pancreatitis', reason: 'Radiographic evidence of gastric volvulus supersedes pancreatic inflammation as the primary emergency' },
+            { condition: 'Splenic torsion', reason: 'Confirmed GDV anatomy redirects from isolated splenic volvulus' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'gastric_necrosis', probability: 0.25, relationship_type: 'complication' },
+            { condition_id: 'cardiac_arrhythmia_perioperative', probability: 0.40, relationship_type: 'complication' },
+        ],
+        recommended_next_steps: [
+            'Immediate gastric decompression',
+            'IV access and shock stabilisation',
+            'Surgical planning',
+            'ECG monitoring',
+        ],
+    },
+    acute_pancreatitis_canine: {
+        condition_id: 'acute_pancreatitis_canine',
+        exclusions: [
+            { condition: 'GDV', reason: 'Positive pancreatic lipase with abdominal imaging supporting pancreatic involvement redirects from gastric volvulus' },
+            { condition: 'Intestinal obstruction', reason: 'Lipase elevation and pancreatic imaging findings are inconsistent with primary mechanical obstruction' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'diabetes_mellitus_secondary', probability: 0.10, relationship_type: 'complication' },
+            { condition_id: 'exocrine_pancreatic_insufficiency', probability: 0.08, relationship_type: 'secondary' },
+        ],
+        recommended_next_steps: [
+            'IV fluid therapy',
+            'Pain management',
+            'Nutritional support planning',
+            'Serial lipase and abdominal assessment',
+        ],
+    },
+    pyometra_canine_feline: {
+        condition_id: 'pyometra_canine_feline',
+        exclusions: [
+            { condition: 'Diabetes mellitus', reason: 'Confirmed uterine infection supersedes PU/PD as a primary diabetic presentation when the patient is an intact female with vaginal discharge' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'sepsis', probability: 0.20, relationship_type: 'complication' },
+            { condition_id: 'acute_kidney_injury_secondary', probability: 0.15, relationship_type: 'complication' },
+        ],
+        recommended_next_steps: [
+            'Stabilise before surgery',
+            'Plan ovariohysterectomy',
+            'Review antimicrobial class',
+            'Monitor for uterine rupture',
+        ],
+    },
+    septic_peritonitis: {
+        condition_id: 'septic_peritonitis',
+        exclusions: [
+            { condition: 'Acute pancreatitis', reason: 'Free abdominal fluid with septic cytology or leakage evidence supersedes pancreatic inflammation as primary' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'septic_shock', probability: 0.35, relationship_type: 'complication' },
+        ],
+        recommended_next_steps: [
+            'Plan source control surgery',
+            'Review broad antimicrobial class',
+            'Begin sepsis resuscitation',
+            'Assess peritoneal drainage',
+        ],
+    },
+    upper_urinary_tract_obstruction_feline: {
+        condition_id: 'upper_urinary_tract_obstruction_feline',
+        exclusions: [
+            { condition: 'Acute kidney injury from other causes', reason: 'Confirmed obstructive uropathy changes the management pathway entirely; deobstruction takes priority over medical AKI management' },
+        ],
+        secondary_diagnoses: [
+            { condition_id: 'acute_kidney_injury_post_obstructive', probability: 0.85, relationship_type: 'secondary' },
+        ],
+        recommended_next_steps: [
+            'Immediate deobstruction',
+            'Monitor post-obstruction diuresis',
+            'Analyse urethral plug or stone',
+            'Plan dietary and recurrence prevention',
+        ],
+    },
     ehrlichiosis_canine: {
         condition_id: 'ehrlichiosis_canine',
         exclusions: [],
@@ -298,8 +521,32 @@ export function evaluatePathognomicTests(
 }
 
 export function applyPathognomicGate(request: InferenceRequest): PathognomonicResult | null {
+    const candidateIds = [
+        'dirofilariosis_canine',
+        'babesiosis_canine',
+        'ehrlichiosis_canine',
+        'anaplasmosis_canine',
+        'leishmaniosis_canine',
+        'parvoviral_enteritis',
+        'diabetes_mellitus_canine',
+        'imha_canine',
+        'imtp_canine',
+        'feline_infectious_peritonitis',
+        'addisons_canine',
+        'hypothyroidism_canine',
+        'diabetes_mellitus_feline',
+        'leptospirosis_canine',
+        'toxoplasmosis_canine_feline',
+        'canine_distemper',
+        'feline_hyperthyroidism',
+        'gdv_canine',
+        'acute_pancreatitis_canine',
+        'pyometra_canine_feline',
+        'septic_peritonitis',
+        'upper_urinary_tract_obstruction_feline',
+    ];
     const result = evaluatePathognomicTests(
-        request.species ? [getConditionById('dirofilariosis_canine'), getConditionById('babesiosis_canine'), getConditionById('ehrlichiosis_canine'), getConditionById('anaplasmosis_canine'), getConditionById('leishmaniosis_canine'), getConditionById('parvoviral_enteritis'), getConditionById('diabetes_mellitus_canine')].filter((entry): entry is VeterinaryCondition => entry != null) : [],
+        request.species ? candidateIds.map((id) => getConditionById(id)).filter((entry): entry is VeterinaryCondition => entry != null) : [],
         request,
     );
     return result.pathognomicConditionFound ? result : null;

@@ -10,6 +10,10 @@ import type {
     SelectedTreatmentPlan,
     VeterinaryCondition,
 } from '../inference/types';
+import { getDrugInteractionEngine } from '../drugInteraction/drugInteractionEngine';
+import { HEPATIC_DOSE_ADJUSTMENTS } from '../drugInteraction/data/hepaticDoseAdjustments';
+import { RENAL_DOSE_ADJUSTMENTS } from '../drugInteraction/data/renalDoseAdjustments';
+import { BREED_DRUG_RISKS } from '../drugInteraction/data/breedDrugRisks';
 import { selectTreatmentProtocol, type TreatmentContext } from '../treatment/treatment-engine';
 import type {
     TreatmentCandidateRecord,
@@ -130,6 +134,32 @@ interface HypocalcemiaPatientContext {
     hasTetanyPattern: boolean;
 }
 
+interface ImhaPatientContext {
+    species: string | null;
+    breed: string | null;
+    ageYears: number | null;
+    sex: string | null;
+    weightKg: number | null;
+    region: string | null;
+    observations: Set<string>;
+    rawNarrative: string;
+    packedCellVolumePercent: number | null;
+    spherocytesPresent: boolean;
+    coombsPositive: boolean;
+    autoagglutinationPositive: boolean;
+    salineAgglutinationPositive: boolean;
+    regenerativeAnaemia: boolean;
+    thrombocytopenia: boolean;
+    paleMucousMembranes: boolean;
+    tachycardia: boolean;
+    weakness: boolean;
+    collapse: boolean;
+    tickPanelNegative: boolean;
+    eastAfricaContext: boolean;
+    breedElevated: boolean;
+    signalmentElevated: boolean;
+}
+
 const CLINICIAN_NOTICE = 'This is a clinical decision-support system. Final decisions require licensed clinician judgment.';
 
 const CONTRAINDICATION_LABELS: Record<ContraindicationFlag, string> = {
@@ -146,7 +176,18 @@ const CONTRAINDICATION_LABELS: Record<ContraindicationFlag, string> = {
 };
 
 const LOW_RESOURCE_JURISDICTIONS = new Set(['ke', 'kenya', 'ng', 'nigeria', 'ug', 'uganda', 'tz', 'tanzania']);
-const HYPOCALCEMIA_MODULE_DISEASE_IDS = new Set([
+const CONDITION_MODULE_DISEASE_IDS = new Set([
+    'puerperal-hypocalcemia-eclampsia',
+    'acute-electrolyte-derangement',
+    'acute-pancreatitis',
+    'chronic-kidney-disease',
+    'acute-kidney-injury',
+    'imha',
+    'imha_canine',
+    'immune-mediated-haemolytic-anaemia',
+    'immune_mediated_hemolytic_anemia',
+]);
+const HYPOCALCEMIA_CONDITION_MODULE_IDS = new Set([
     'puerperal-hypocalcemia-eclampsia',
     'acute-electrolyte-derangement',
     'acute-pancreatitis',
@@ -242,11 +283,13 @@ function buildRegistryBackedTreatmentBundle(input: BuildBundleInput): TreatmentR
 
     const contradictionFlags = extractContradictionFlags(input.outputPayload);
     const supportingSignals = extractRegistrySupportingSignals(input.outputPayload, condition);
+    const rankedDifferentials = extractRankedDifferentials(input.outputPayload, condition.canonical_name);
     const managementMode: TreatmentRecommendationBundle['management_mode'] =
         input.diagnosisConfidence != null && input.diagnosisConfidence >= 0.85
             ? 'definitive'
             : 'diagnostic_management';
     const regulatoryNotes = buildRegulatoryNotes(input.context.regulatory_region);
+    const contextFlags = deriveRegistryContextFlags(input, inferredRequest);
     const options = buildRegistryCandidateOptions({
         condition,
         plan,
@@ -254,6 +297,15 @@ function buildRegistryBackedTreatmentBundle(input: BuildBundleInput): TreatmentR
         contradictionFlags,
         regulatoryNotes,
         managementMode,
+        input,
+        contextFlags,
+    });
+    const conditionModule = buildRegistryConditionModule({
+        condition,
+        input,
+        observations: extractOntologyObservations(input.inputSignature),
+        rankedDifferentials,
+        supportingSignals,
     });
 
     return {
@@ -265,7 +317,7 @@ function buildRegistryBackedTreatmentBundle(input: BuildBundleInput): TreatmentR
         severity_score: input.severityScore,
         evidence_basis: {
             matched_signals: supportingSignals,
-            alternative_diagnoses: extractRankedDifferentials(input.outputPayload, condition.canonical_name)
+            alternative_diagnoses: rankedDifferentials
                 .map((entry) => entry.name)
                 .filter((name) => name !== condition.canonical_name)
                 .slice(0, 3),
@@ -283,8 +335,43 @@ function buildRegistryBackedTreatmentBundle(input: BuildBundleInput): TreatmentR
         diagnostic_management_summary: managementMode === 'diagnostic_management'
             ? 'Use stabilization and confirmatory staging before escalating to definitive disease-directed treatment.'
             : null,
-        condition_module: undefined,
+        condition_module: conditionModule ?? undefined,
     };
+}
+
+function buildRegistryConditionModule(input: {
+    condition: VeterinaryCondition;
+    input: BuildBundleInput;
+    observations: string[];
+    rankedDifferentials: RankedDifferential[];
+    supportingSignals: string[];
+}): TreatmentConditionModuleReport | null {
+    if (!isImhaConditionId(input.condition.id)) return null;
+    const moduleInput: ConditionModuleBuildInput = {
+        disease: {
+            id: input.condition.id,
+            name: input.condition.canonical_name,
+            aliases: input.condition.aliases,
+            category: 'Endocrine',
+            subcategory: 'Immune-mediated haemolysis',
+            condition_class: 'Autoimmune / Immune-Mediated',
+            key_clinical_features: [],
+            supporting_features: [],
+            exclusion_features: [],
+            lab_signatures: [],
+            progression_pattern: ['acute'],
+            species_relevance: ['dog'],
+            zoonotic: false,
+        },
+        input: input.input,
+        observations: input.observations,
+        rankedDifferentials: input.rankedDifferentials,
+        supportingSignals: input.supportingSignals,
+    };
+    const patient = extractImhaPatientContext(moduleInput);
+    return shouldBuildImhaModule(moduleInput.disease, patient, input.rankedDifferentials, input.supportingSignals)
+        ? buildImhaConditionModule(moduleInput, patient)
+        : null;
 }
 
 function coerceInferenceRequest(inputSignature: Record<string, unknown>): InferenceRequest {
@@ -377,6 +464,8 @@ function buildRegistryCandidateOptions(input: {
     contradictionFlags: string[];
     regulatoryNotes: string[];
     managementMode: TreatmentRecommendationBundle['management_mode'];
+    input: BuildBundleInput;
+    contextFlags: Set<ContraindicationFlag>;
 }): TreatmentCandidateRecord[] {
     const gold = createRegistryOption({
         condition: input.condition,
@@ -386,6 +475,8 @@ function buildRegistryCandidateOptions(input: {
         contradictionFlags: input.contradictionFlags,
         regulatoryNotes: input.regulatoryNotes,
         managementMode: input.managementMode,
+        input: input.input,
+        contextFlags: input.contextFlags,
         includePhases: input.plan.treatment_phases.map((phase) => phase.phase),
         preferredSetting: 'advanced',
         evidenceLevel: 'high',
@@ -399,6 +490,8 @@ function buildRegistryCandidateOptions(input: {
         contradictionFlags: input.contradictionFlags,
         regulatoryNotes: input.regulatoryNotes,
         managementMode: input.managementMode,
+        input: input.input,
+        contextFlags: input.contextFlags,
         includePhases: input.plan.treatment_phases
             .filter((phase) => phase.phase !== 'palliative')
             .map((phase) => phase.phase),
@@ -414,6 +507,8 @@ function buildRegistryCandidateOptions(input: {
         contradictionFlags: input.contradictionFlags,
         regulatoryNotes: input.regulatoryNotes,
         managementMode: 'diagnostic_management',
+        input: input.input,
+        contextFlags: input.contextFlags,
         includePhases: input.plan.treatment_phases
             .filter((phase) => ['acute_stabilisation', 'pre_treatment_preparation', 'adjunctive', 'long_term_management', 'secondary_prevention'].includes(phase.phase))
             .map((phase) => phase.phase),
@@ -432,6 +527,8 @@ function createRegistryOption(input: {
     contradictionFlags: string[];
     regulatoryNotes: string[];
     managementMode: TreatmentRecommendationBundle['management_mode'];
+    input: BuildBundleInput;
+    contextFlags: Set<ContraindicationFlag>;
     includePhases: string[];
     preferredSetting: TreatmentEnvironmentConstraints['preferred_setting'];
     evidenceLevel: TreatmentEvidenceLevel;
@@ -458,6 +555,16 @@ function createRegistryOption(input: {
         : input.pathway === 'resource_constrained'
             ? `Resource-aware pathway for ${input.condition.canonical_name} that preserves essential disease-directed care while accounting for availability constraints.`
             : `Supportive and preparation pathway for ${input.condition.canonical_name} when definitive treatment must be delayed pending staging, stabilization, or sourcing.`;
+    const detectedContraindications = [
+        ...input.plan.contraindicated_treatments.map((entry) => `${entry.treatment}: ${entry.reason}`),
+        ...buildDrugLevelContraindications({
+            proposedDrugClasses: interventionDetails.drug_classes,
+            species: input.input.species,
+            breed: normalizeText(input.input.inputSignature.breed),
+            conditions: [input.condition.canonical_name],
+            contextFlags: input.contextFlags,
+        }),
+    ];
 
     return {
         id: '',
@@ -475,7 +582,7 @@ function createRegistryOption(input: {
             ...(input.plan.severity_class ? [`Severity class: ${input.plan.severity_class}`] : []),
         ],
         contraindications: input.plan.contraindicated_treatments.map((entry) => `${entry.treatment}: ${entry.reason}`),
-        detected_contraindications: input.plan.contraindicated_treatments.map((entry) => `${entry.treatment}: ${entry.reason}`),
+        detected_contraindications: Array.from(new Set(detectedContraindications)),
         risk_level: input.plan.severity_class === 'IV' ? 'critical' : input.plan.severity_class === 'III' ? 'high' : 'moderate',
         urgency_level: input.plan.severity_class === 'IV' ? 'emergent' : 'urgent',
         evidence_level: input.evidenceLevel,
@@ -559,6 +666,17 @@ function materializeOption(
         }
     }
 
+    const drugLevelContraindications = buildDrugLevelContraindications({
+        proposedDrugClasses: template.intervention_details.drug_classes,
+        species: input.species,
+        breed: normalizeText(input.inputSignature.breed),
+        conditions: [disease.name, ...alternatives.slice(0, 2)],
+        contextFlags,
+    });
+    for (const contraindication of drugLevelContraindications) {
+        detectedContraindications.add(contraindication);
+    }
+
     const uncertainty = buildUncertaintyEnvelope(
         input.diagnosisConfidence,
         alternatives,
@@ -615,8 +733,47 @@ function resolveTreatmentPlaybook(disease: DiseaseOntologyEntry): TreatmentPlayb
             return buildRodenticidePlaybook(disease);
         case 'diabetes-mellitus':
             return buildDiabetesPlaybook(disease);
+        case 'imha':
+        case 'immune-mediated-haemolytic-anaemia':
+            return buildImhaPlaybook(disease);
+        case 'imtp':
+        case 'immune-mediated-thrombocytopenia':
+            return buildImtpPlaybook(disease);
+        case 'addisons':
         case 'hypoadrenocorticism':
-            return buildHypoadrenoPlaybook(disease);
+            return buildAddisonsPlaybook(disease);
+        case 'hypothyroidism':
+            return buildHypothyroidismPlaybook(disease);
+        case 'hyperthyroidism-feline':
+        case 'feline-hyperthyroidism':
+            return buildFelineHyperthyroidismPlaybook(disease);
+        case 'diabetic-ketoacidosis':
+        case 'dka':
+            return buildDkaPlaybook(disease);
+        case 'acute-pancreatitis':
+            return buildAcutePancreatitisPlaybook(disease);
+        case 'leptospirosis':
+            return buildLeptospirosisPlaybook(disease);
+        case 'fip':
+        case 'feline-infectious-peritonitis':
+            return buildFipPlaybook(disease);
+        case 'acute-kidney-injury':
+        case 'aki':
+            return buildAkiPlaybook(disease);
+        case 'hepatic-encephalopathy':
+        case 'liver-failure':
+            return buildHepaticEncephalopathyPlaybook(disease);
+        case 'haemangiosarcoma':
+            return buildHaemangiosarcomaPlaybook(disease);
+        case 'degenerative-joint-disease':
+        case 'osteoarthritis':
+            return buildOsteoarthritisPlaybook(disease);
+        case 'urinary-tract-infection':
+        case 'uti':
+            return buildUtiPlaybook(disease);
+        case 'upper-urinary-tract-obstruction':
+        case 'feline-urethral-obstruction':
+            return buildFelineUrethralObstructionPlaybook(disease);
         case 'ivdd':
             return buildIvddPlaybook(disease);
         case 'congestive-heart-failure':
@@ -1024,6 +1181,487 @@ function buildHypoadrenoPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybo
         rationale: 'This pathway prioritizes crisis stabilization and hormone replacement under clinician supervision.',
         risks: ['Shock', 'Electrolyte collapse'],
         urgent: 'emergent',
+    });
+}
+
+function buildImhaPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return createThreePathwayPlaybook({
+        gold: buildOption({
+            pathway: 'gold_standard',
+            treatmentType: 'medical',
+            drugClasses: [
+                'Glucocorticoid class at immunosuppressive dose',
+                'Thromboembolism prophylaxis class after species, renal status, and bleeding-risk review',
+                'Blood product support class if PCV meets transfusion threshold',
+                'Second-line immunosuppressant class consideration if no response by day 14',
+            ],
+            procedures: [
+                'Packed cell volume assessment and transfusion-threshold evaluation',
+                'Cross-matching and blood type confirmation before any transfusion',
+                'Splenectomy evaluation if refractory to medical management at the appropriate interval',
+            ],
+            supportiveMeasures: [
+                'Avoid stress and unnecessary physical activity during haemolytic crisis',
+                'Nutritional support with oral route preferred where clinically possible',
+                'Monitor autoagglutination trend as a treatment response marker',
+                'Monitor for pulmonary thromboembolism signs as a leading mortality risk',
+            ],
+            monitoring: [
+                'Packed cell volume every 12 hours during crisis phase',
+                'Reticulocyte count every 48 hours to assess bone marrow response',
+                'Platelet count to screen for concurrent Evans syndrome',
+                'Coagulation markers when thromboembolism risk is elevated',
+                'Liver panel every 2 weeks during immunosuppressive therapy',
+            ],
+            indicationCriteria: ['IMHA is confirmed or strongly supported by immune-haemolysis markers and clinical instability risk.'],
+            contraindications: ['Clinician must resolve hepatic, renal, bleeding, and shock flags before selecting exact agents or transfusion plan.'],
+            contraChecks: ['hepatic_compromise', 'renal_compromise', 'bleeding_risk', 'shock_or_instability'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'high',
+            setting: 'advanced',
+            expectedOutcome: {
+                survival_probability_band: 'guarded to fair',
+                recovery_expectation: 'Prognosis depends on diagnostic speed, anaemia severity, and early immunosuppression; severe cases have substantial mortality without rapid intervention.',
+            },
+            rationale: `${disease.name} requires rapid immune-haemolysis control, thrombosis planning, and transfusion readiness without autonomous prescribing.`,
+            risks: ['Progressive haemolysis', 'Pulmonary thromboembolism', 'Transfusion reaction', 'Immunosuppression complications'],
+            regulatoryNotes: [],
+        }),
+        resource: buildOption({
+            pathway: 'resource_constrained',
+            treatmentType: 'medical',
+            drugClasses: [
+                'Glucocorticoid class at immunosuppressive dose',
+                'Thromboembolism prophylaxis class where available',
+                'Blood product support class if critically low PCV and product access allow',
+            ],
+            procedures: [
+                'Serial PCV monitoring at least twice daily during crisis',
+                'Referral assessment if PCV continues to fall below 15% or patient decompensates',
+            ],
+            supportiveMeasures: ['Strict rest', 'Minimal stress', 'Oral nutritional support', 'Warm environment to reduce metabolic demand'],
+            monitoring: ['PCV trend', 'Mucous membrane colour', 'Mentation and perfusion', 'Bleeding or thrombosis signs'],
+            indicationCriteria: ['IMHA is likely but referral-level resources are constrained.'],
+            contraindications: ['Lower-resource care still needs urgent clinician review before drug selection.'],
+            contraChecks: ['hepatic_compromise', 'bleeding_risk', 'shock_or_instability'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'moderate',
+            setting: 'low_resource',
+            expectedOutcome: {
+                survival_probability_band: 'guarded',
+                recovery_expectation: 'This can bridge selected cases but falling PCV or decompensation should trigger escalation.',
+            },
+            rationale: 'General-practice IMHA support emphasizes accessible immunosuppression and explicit escalation triggers.',
+            risks: ['Delayed transfusion', 'Uncontrolled haemolysis', 'Thromboembolic deterioration'],
+            regulatoryNotes: [],
+        }),
+        supportive: buildOption({
+            pathway: 'supportive_only',
+            treatmentType: 'supportive care',
+            drugClasses: [],
+            procedures: ['Immediate PCV assessment', 'Referral activation if care cannot be escalated within 24 hours'],
+            supportiveMeasures: [
+                'Oxygen supplementation if respiratory distress or severe anaemia is present',
+                'Strict rest',
+                'IV fluid support only if dehydration is present and over-hydration risk is reviewed',
+            ],
+            monitoring: ['Respiratory effort', 'Mentation', 'PCV trend', 'Perfusion'],
+            indicationCriteria: ['Only a brief bridge while definitive IMHA therapy or referral is being arranged.'],
+            contraindications: ['Definitive immunosuppression should not be delayed beyond this bridge in IMHA.'],
+            contraChecks: ['shock_or_instability', 'bleeding_risk'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'low',
+            setting: 'any',
+            expectedOutcome: {
+                survival_probability_band: 'poor if prolonged',
+                recovery_expectation: 'Supportive-only care is not acceptable as definitive IMHA management.',
+            },
+            rationale: 'This pathway exists only to support immediate stabilization while definitive clinician-led care is activated.',
+            risks: [
+                'Progressive haemolysis without immunosuppression is the primary mortality risk',
+                'Transfusion without cross-matching carries alloimmunisation risk',
+            ],
+            regulatoryNotes: [],
+        }),
+    });
+}
+
+function buildImtpPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Immunosuppressive class review', 'Bleeding-risk supportive class review', 'Blood product support class if clinically indicated'],
+        procedures: ['Platelet count confirmation', 'Coagulation assessment', 'Bleeding-source assessment'],
+        supportiveMeasures: ['Strict rest', 'Avoid invasive procedures when possible', 'Bleeding surveillance'],
+        diseaseRisk: 'critical',
+        goldOutcome: { survival_probability_band: 'guarded to fair', recovery_expectation: 'Outcome depends on bleeding burden and response to clinician-directed immunosuppression.' },
+        rationale: 'IMTP management requires platelet confirmation, bleeding-risk triage, and clinician-directed immune therapy.',
+        risks: ['Life-threatening bleeding', 'Evans syndrome overlap'],
+        urgent: 'emergent',
+    });
+}
+
+function buildAddisonsPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return createThreePathwayPlaybook({
+        gold: buildOption({
+            pathway: 'gold_standard',
+            treatmentType: 'medical',
+            drugClasses: ['Mineralocorticoid replacement class', 'Glucocorticoid replacement class', 'Emergency IV glucocorticoid class for crisis', 'Electrolyte and fluid replacement classes'],
+            procedures: ['ACTH stimulation confirmation once stable'],
+            supportiveMeasures: ['Shock stabilization', 'Electrolyte correction', 'Hypoglycaemia screening'],
+            monitoring: ['Electrolytes every 2-4 hours during crisis, then daily', 'Renal values', 'Blood pressure'],
+            indicationCriteria: ['Addisonian crisis or confirmed hypoadrenocorticism pattern is present.'],
+            contraindications: ['Do not delay crisis hormone replacement while awaiting full confirmation in an unstable patient.'],
+            contraChecks: ['shock_or_instability', 'renal_compromise', 'dehydration'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'high',
+            setting: 'advanced',
+            expectedOutcome: { survival_probability_band: 'fair to good with rapid stabilization', recovery_expectation: 'Many patients stabilize well when crisis therapy and maintenance planning are timely.' },
+            rationale: `${disease.name} is a hormone-replacement emergency when unstable, with electrolyte and perfusion monitoring at the center.`,
+            risks: ['Electrolyte collapse', 'Shock', 'Arrhythmia'],
+            regulatoryNotes: [],
+        }),
+        resource: buildOption({
+            pathway: 'resource_constrained',
+            treatmentType: 'medical',
+            drugClasses: ['IV glucocorticoid class for acute crisis', 'Isotonic fluid resuscitation class', 'Oral maintenance replacement class planning once stable'],
+            procedures: ['Electrolyte assessment', 'Referral for ACTH confirmation'],
+            supportiveMeasures: ['Perfusion support', 'Glucose monitoring where available'],
+            monitoring: ['Electrolytes', 'Perfusion', 'Mentation'],
+            indicationCriteria: ['Hypoadrenocorticism is likely and advanced diagnostics are delayed.'],
+            contraindications: ['Bridge care must not postpone definitive replacement planning.'],
+            contraChecks: ['shock_or_instability', 'dehydration'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'moderate',
+            setting: 'low_resource',
+            expectedOutcome: { survival_probability_band: 'guarded to fair', recovery_expectation: 'Resource-limited care can stabilize temporarily if hormone replacement and referral remain active.' },
+            rationale: 'Lower-resource Addisonian care prioritizes crisis stabilization and confirmation access.',
+            risks: ['Recurrent crisis', 'Incomplete endocrine confirmation'],
+            regulatoryNotes: [],
+        }),
+        supportive: buildOption({
+            pathway: 'supportive_only',
+            treatmentType: 'supportive care',
+            drugClasses: [],
+            procedures: ['Immediate escalation planning'],
+            supportiveMeasures: ['Perfusion and warmth support only as a 2-4 hour bridge'],
+            monitoring: ['Shock progression', 'Electrolyte deterioration'],
+            indicationCriteria: ['Only a very short bridge while hormone replacement is being accessed.'],
+            contraindications: ['Addisonian crisis is rapidly fatal without hormone replacement.'],
+            contraChecks: ['shock_or_instability', 'dehydration'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'low',
+            setting: 'any',
+            expectedOutcome: { survival_probability_band: 'poor if prolonged', recovery_expectation: 'Supportive-only care must not extend beyond immediate bridge stabilization.' },
+            rationale: 'This pathway prevents false reassurance when hormone replacement is the definitive need.',
+            risks: ['Fatal electrolyte and perfusion collapse'],
+            regulatoryNotes: [],
+        }),
+    });
+}
+
+function buildHypothyroidismPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Thyroid hormone replacement class'],
+        procedures: ['Free T4 and TSH confirmation', 'Concurrent illness screen'],
+        supportiveMeasures: ['Weight and dermatologic management', 'Owner monitoring plan'],
+        diseaseRisk: 'moderate',
+        goldOutcome: { survival_probability_band: 'good', recovery_expectation: 'Clinical response is usually good with confirmed diagnosis and clinician-directed titration.' },
+        rationale: 'Hypothyroidism care is confirmation-led and titration-dependent.',
+        risks: ['Over-replacement', 'Treating euthyroid sick syndrome as primary thyroid disease'],
+    });
+}
+
+function buildFelineHyperthyroidismPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Antithyroid therapy class', 'Blood-pressure management class if indicated'],
+        procedures: ['Total T4 confirmation', 'Blood pressure assessment', 'Renal reassessment after stabilization'],
+        supportiveMeasures: ['Nutrition support', 'Cardiac screening when indicated'],
+        diseaseRisk: 'high',
+        goldOutcome: { survival_probability_band: 'good with monitoring', recovery_expectation: 'Outcome is often good when thyroid control, blood pressure, and renal effects are co-managed.' },
+        rationale: 'Feline hyperthyroidism requires thyroid control plus explicit renal and hypertensive monitoring.',
+        risks: ['Unmasked renal disease', 'Hypertension', 'Cardiac complications'],
+        urgent: 'urgent',
+    });
+}
+
+function buildDkaPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return createThreePathwayPlaybook({
+        gold: buildOption({
+            pathway: 'gold_standard',
+            treatmentType: 'medical',
+            drugClasses: ['IV fluid therapy class tailored to glucose and electrolytes', 'Insulin class using low-dose continuous protocol', 'Potassium supplementation class', 'Phosphorus supplementation class if indicated'],
+            procedures: ['Blood glucose monitoring every 1-2 hours during crisis', 'Electrolyte monitoring every 4 hours', 'Urine ketone monitoring', 'Acid-base assessment'],
+            supportiveMeasures: ['Urine output support', 'Nausea and nutrition support once safe'],
+            monitoring: ['Glucose', 'Potassium', 'Phosphorus', 'Sodium', 'Bicarbonate', 'Ketones', 'Urine output'],
+            indicationCriteria: ['DKA or diabetic ketoacidotic crisis is suspected or confirmed.'],
+            contraindications: ['Insulin class should not be initiated without potassium review and clinician monitoring capacity.'],
+            contraChecks: ['dehydration', 'renal_compromise', 'shock_or_instability'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'high',
+            setting: 'advanced',
+            expectedOutcome: { survival_probability_band: 'guarded to fair', recovery_expectation: 'Outcome depends on correction of dehydration, ketones, electrolytes, and concurrent disease.' },
+            rationale: `${disease.name} management is monitoring-intensive and cannot be safely reduced to a static dose plan.`,
+            risks: ['Hypokalaemia', 'Hypoglycaemia', 'Cerebral osmotic complications', 'Concurrent disease relapse'],
+            regulatoryNotes: [],
+        }),
+        resource: buildOption({
+            pathway: 'resource_constrained',
+            treatmentType: 'medical',
+            drugClasses: ['IV fluid resuscitation class', 'Insulin class only where monitoring permits', 'Electrolyte supplementation class guided by available testing'],
+            procedures: ['Serial glucose monitoring', 'Referral evaluation'],
+            supportiveMeasures: ['Hydration correction', 'Temperature and mentation monitoring'],
+            monitoring: ['Glucose trend', 'Hydration', 'Mentation', 'Available electrolytes'],
+            indicationCriteria: ['DKA is likely but ICU resources are limited.'],
+            contraindications: ['Do not attempt monitoring-dependent insulin pathways without adequate recheck capacity.'],
+            contraChecks: ['dehydration', 'shock_or_instability'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'moderate',
+            setting: 'low_resource',
+            expectedOutcome: { survival_probability_band: 'guarded', recovery_expectation: 'Resource-limited care is a bridge unless monitoring capacity is sufficient.' },
+            rationale: 'Lower-resource DKA care emphasizes fluids, monitoring feasibility, and early referral decisions.',
+            risks: ['Unrecognized hypokalaemia', 'Hypoglycaemia', 'Delayed ICU escalation'],
+            regulatoryNotes: [],
+        }),
+        supportive: buildOption({
+            pathway: 'supportive_only',
+            treatmentType: 'supportive care',
+            drugClasses: [],
+            procedures: ['Immediate referral activation'],
+            supportiveMeasures: ['Warmth and hydration support while definitive monitoring is arranged'],
+            monitoring: ['Mentation', 'Perfusion', 'Respiratory pattern'],
+            indicationCriteria: ['Brief bridge only while monitored DKA care is being accessed.'],
+            contraindications: ['Supportive-only care is not definitive DKA treatment.'],
+            contraChecks: ['shock_or_instability', 'dehydration'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'low',
+            setting: 'any',
+            expectedOutcome: { survival_probability_band: 'poor if prolonged', recovery_expectation: 'DKA requires monitored fluid, insulin-class, and electrolyte therapy.' },
+            rationale: 'This option prevents a monitoring-heavy endocrine emergency from being framed as passive care.',
+            risks: ['Progressive acidosis', 'Electrolyte collapse'],
+            regulatoryNotes: [],
+        }),
+    });
+}
+
+function buildAcutePancreatitisPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['IV fluid therapy class', 'Analgesic class', 'Antiemetic class', 'Nutritional support class'],
+        procedures: ['Serial pancreatic lipase and abdominal reassessment', 'Abdominal imaging review'],
+        supportiveMeasures: ['Early enteral nutrition planning', 'Hydration and pain scoring'],
+        diseaseRisk: 'high',
+        goldOutcome: { survival_probability_band: 'fair to guarded', recovery_expectation: 'Most mild cases improve with supportive care, while severe cases depend on early complication recognition.' },
+        rationale: 'Pancreatitis care is supportive but intensive, with pain, perfusion, and nutrition as core decisions.',
+        risks: ['Shock', 'Diabetes mellitus secondary to pancreatic injury', 'Systemic inflammation'],
+        urgent: 'urgent',
+    });
+}
+
+function buildLeptospirosisPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Appropriate antimicrobial class', 'Renal and hepatic supportive care classes'],
+        procedures: ['MAT serovar confirmation', 'Zoonotic isolation workflow', 'Renal and hepatic staging'],
+        supportiveMeasures: ['Barrier nursing', 'Fluid and urine-output support', 'Owner zoonosis counselling'],
+        diseaseRisk: 'critical',
+        goldOutcome: { survival_probability_band: 'guarded to fair', recovery_expectation: 'Recovery depends on renal/hepatic injury burden and early antimicrobial plus supportive care.' },
+        rationale: 'Leptospirosis requires antimicrobial review, organ support, and zoonotic precautions.',
+        risks: ['Acute kidney injury', 'Hepatic injury', 'Zoonotic exposure'],
+        urgent: 'emergent',
+    });
+}
+
+function buildFipPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Antiviral therapy class where lawful and available', 'Anti-inflammatory supportive class review'],
+        procedures: ['Wet versus dry form confirmation', 'Effusion and neurologic/ocular staging'],
+        supportiveMeasures: ['Nutrition support', 'Effusion monitoring', 'Owner prognosis counselling'],
+        diseaseRisk: 'high',
+        goldOutcome: { survival_probability_band: 'variable to fair where validated antiviral access exists', recovery_expectation: 'Outcome depends on form, neurologic involvement, legal access, and monitoring.' },
+        rationale: 'FIP support must surface antiviral planning and monitoring without implying jurisdiction-free prescribing.',
+        risks: ['Neurologic progression', 'Effusion recurrence', 'Regulatory constraints'],
+        urgent: 'urgent',
+    });
+}
+
+function buildAkiPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Fluid therapy class matched to volume status', 'Electrolyte correction class', 'Renal-protective supportive classes'],
+        procedures: ['Urine output monitoring', 'Renal imaging if obstruction is possible', 'Toxin or infectious trigger review'],
+        supportiveMeasures: ['Avoid nephrotoxic exposures', 'Nutrition and nausea support'],
+        diseaseRisk: 'critical',
+        goldOutcome: { survival_probability_band: 'guarded', recovery_expectation: 'Outcome depends on cause, urine output, and speed of renal support.' },
+        rationale: 'AKI treatment is cause-directed and monitoring-heavy, especially around fluids and urine output.',
+        risks: ['Oliguria or anuria', 'Fluid overload', 'Electrolyte derangement'],
+        urgent: 'emergent',
+    });
+}
+
+function buildHepaticEncephalopathyPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Ammonia-lowering gut-modifying class', 'Appropriate antimicrobial class if indicated', 'Anticonvulsant class review if seizures occur'],
+        procedures: ['Bile acids or hepatic function staging', 'Glucose and electrolyte assessment', 'Portosystemic shunt evaluation when compatible'],
+        supportiveMeasures: ['Protein-source review', 'Mentation-safe nursing', 'Avoid hepatotoxic exposures'],
+        diseaseRisk: 'critical',
+        goldOutcome: { survival_probability_band: 'guarded to fair', recovery_expectation: 'Neurologic recovery depends on hepatic cause, toxin control, and comorbidity burden.' },
+        rationale: 'Hepatic encephalopathy pathways must prioritize neurologic safety and hepatic dose review.',
+        risks: ['Seizures', 'Aspiration', 'Medication accumulation'],
+        urgent: 'emergent',
+    });
+}
+
+function buildHaemangiosarcomaPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return createThreePathwayPlaybook({
+        gold: buildOption({
+            pathway: 'gold_standard',
+            treatmentType: 'surgical',
+            drugClasses: ['Perioperative analgesia class', 'Blood product support class if indicated', 'Oncology adjunct class review after staging'],
+            procedures: ['Surgical staging', 'Mass-source control where clinically appropriate', 'Thoracic and abdominal metastatic assessment'],
+            supportiveMeasures: ['Shock stabilization', 'Arrhythmia monitoring', 'Owner prognosis counselling'],
+            monitoring: ['PCV/total solids trend', 'Perfusion', 'Arrhythmia', 'Evidence of rebleeding'],
+            indicationCriteria: ['Haemangiosarcoma is leading or confirmed and procedural source control is under consideration.'],
+            contraindications: ['Unstable bleeding and metastatic burden must be reviewed before definitive surgery.'],
+            contraChecks: ['shock_or_instability', 'bleeding_risk'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'moderate',
+            setting: 'advanced',
+            expectedOutcome: { survival_probability_band: 'guarded', recovery_expectation: 'Outcome depends on tumour site, rupture status, metastatic spread, and clinician-selected oncology plan.' },
+            rationale: 'Haemangiosarcoma support is staging and source-control oriented, not a medication plan.',
+            risks: ['Hemorrhagic shock', 'Metastasis', 'Perioperative arrhythmia'],
+            regulatoryNotes: [],
+        }),
+        resource: buildOption({
+            pathway: 'resource_constrained',
+            treatmentType: 'supportive care',
+            drugClasses: ['Analgesic class', 'Blood product support class if available'],
+            procedures: ['Focused ultrasound or radiograph triage', 'Referral activation'],
+            supportiveMeasures: ['Shock support', 'Activity restriction'],
+            monitoring: ['PCV trend', 'Perfusion'],
+            indicationCriteria: ['Suspected haemangiosarcoma with limited staging or surgical resources.'],
+            contraindications: ['Supportive care cannot replace staging and clinician prognosis review.'],
+            contraChecks: ['shock_or_instability', 'bleeding_risk'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'low',
+            setting: 'low_resource',
+            expectedOutcome: { survival_probability_band: 'guarded to poor', recovery_expectation: 'Bridge care may stabilize hemorrhage temporarily but definitive decisions require staging.' },
+            rationale: 'Lower-resource care keeps stabilization and referral explicit.',
+            risks: ['Rebleeding', 'Delayed source control'],
+            regulatoryNotes: [],
+        }),
+        supportive: buildOption({
+            pathway: 'supportive_only',
+            treatmentType: 'supportive care',
+            drugClasses: [],
+            procedures: ['Quality-of-life and escalation discussion'],
+            supportiveMeasures: ['Comfort support', 'Low-stress handling'],
+            monitoring: ['Collapse, pain, bleeding'],
+            indicationCriteria: ['Palliative bridge or staging declined.'],
+            contraindications: ['Do not present supportive care as curative.'],
+            contraChecks: ['shock_or_instability', 'bleeding_risk'],
+            riskLevel: 'critical',
+            urgencyLevel: 'urgent',
+            evidenceLevel: 'low',
+            setting: 'any',
+            expectedOutcome: { survival_probability_band: 'poor to guarded', recovery_expectation: 'Comfort and safety are the goals when definitive staging or surgery is not pursued.' },
+            rationale: 'Supportive-only haemangiosarcoma care is palliative or temporary.',
+            risks: ['Sudden hemorrhage', 'Pain'],
+            regulatoryNotes: [],
+        }),
+    });
+}
+
+function buildOsteoarthritisPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Multimodal analgesic class review', 'Joint-supportive anti-inflammatory class review where safe'],
+        procedures: ['Orthopedic pain scoring', 'Weight and mobility assessment', 'Rehabilitation plan'],
+        supportiveMeasures: ['Weight management', 'Environmental modification', 'Physical rehabilitation'],
+        diseaseRisk: 'moderate',
+        goldOutcome: { survival_probability_band: 'good for comfort goals', recovery_expectation: 'Long-term comfort usually improves with multimodal management and monitoring.' },
+        rationale: 'Osteoarthritis care is chronic, multimodal, and contraindication-sensitive.',
+        risks: ['Renal or hepatic contraindications', 'Under-treated chronic pain'],
+    });
+}
+
+function buildUtiPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return buildMedicalPlaybook(disease, {
+        goldDrugClasses: ['Culture-guided antimicrobial class'],
+        procedures: ['Urinalysis and sediment review', 'Urine culture and susceptibility', 'Recheck testing if recurrent'],
+        supportiveMeasures: ['Hydration support', 'Pain and voiding comfort review'],
+        diseaseRisk: 'moderate',
+        goldOutcome: { survival_probability_band: 'good', recovery_expectation: 'Outcome is usually good when antimicrobial selection is evidence-guided and recurrence triggers are investigated.' },
+        rationale: 'UTI treatment should be culture-aware and stewardship-friendly.',
+        risks: ['Antimicrobial resistance', 'Missed upper urinary disease'],
+        urgent: 'urgent',
+    });
+}
+
+function buildFelineUrethralObstructionPlaybook(disease: DiseaseOntologyEntry): TreatmentPlaybook {
+    return createThreePathwayPlaybook({
+        gold: buildOption({
+            pathway: 'gold_standard',
+            treatmentType: 'surgical',
+            drugClasses: ['Smooth muscle relaxant class', 'Analgesic class', 'Electrolyte correction class'],
+            procedures: ['Urethral catheterisation and deobstruction', 'Post-obstruction diuresis monitoring', 'Perineal urethrostomy planning for recurrent cases'],
+            supportiveMeasures: ['Hyperkalaemia risk management', 'Stress reduction', 'Recurrence prevention planning'],
+            monitoring: ['ECG during deobstruction', 'Urine output', 'BUN and creatinine reassessment 24-48 hours post-deobstruction'],
+            indicationCriteria: ['Feline obstruction pattern with stranguria, anuria, or obstructive azotemia.'],
+            contraindications: ['Hyperkalaemia and shock should be stabilized during deobstruction planning.'],
+            contraChecks: ['renal_compromise', 'shock_or_instability'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'high',
+            setting: 'advanced',
+            expectedOutcome: { survival_probability_band: 'fair to good if promptly deobstructed', recovery_expectation: 'Recovery depends on rapid deobstruction, electrolyte correction, and recurrence prevention.' },
+            rationale: `${disease.name} is a procedural emergency; deobstruction and hyperkalaemia monitoring are central.`,
+            risks: ['Fatal hyperkalaemia-related arrhythmia', 'Post-obstructive diuresis', 'Re-obstruction'],
+            regulatoryNotes: [],
+        }),
+        resource: buildOption({
+            pathway: 'resource_constrained',
+            treatmentType: 'surgical',
+            drugClasses: ['Analgesic class', 'Electrolyte correction class where available'],
+            procedures: ['Emergency deobstruction if clinician-capable', 'Referral activation if catheterisation or monitoring is unavailable'],
+            supportiveMeasures: ['Warmth and stress reduction', 'Fluid and electrolyte triage'],
+            monitoring: ['Heart rhythm if equipment is available', 'Urine output', 'Mentation'],
+            indicationCriteria: ['Obstruction likely in a setting with limited equipment.'],
+            contraindications: ['Do not delay referral if deobstruction cannot be performed immediately.'],
+            contraChecks: ['renal_compromise', 'shock_or_instability'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'moderate',
+            setting: 'low_resource',
+            expectedOutcome: { survival_probability_band: 'guarded', recovery_expectation: 'Bridge care depends on fast deobstruction or transfer.' },
+            rationale: 'Lower-resource obstruction care prioritizes immediate deobstruction capacity and transfer decisions.',
+            risks: ['Arrhythmia', 'Delayed catheterisation'],
+            regulatoryNotes: [],
+        }),
+        supportive: buildOption({
+            pathway: 'supportive_only',
+            treatmentType: 'supportive care',
+            drugClasses: [],
+            procedures: ['Immediate referral activation'],
+            supportiveMeasures: ['Low-stress handling', 'Warmth support'],
+            monitoring: ['Collapse, heart rhythm concern, urine output absence'],
+            indicationCriteria: ['Only a bridge while deobstruction is being accessed.'],
+            contraindications: ['Supportive-only care is not definitive for obstruction.'],
+            contraChecks: ['shock_or_instability', 'renal_compromise'],
+            riskLevel: 'critical',
+            urgencyLevel: 'emergent',
+            evidenceLevel: 'low',
+            setting: 'any',
+            expectedOutcome: { survival_probability_band: 'poor if prolonged', recovery_expectation: 'Definitive procedural deobstruction is time-critical.' },
+            rationale: 'This option keeps passive care from being mistaken as adequate for a urinary obstruction emergency.',
+            risks: ['Fatal hyperkalaemia', 'Bladder rupture', 'Renal injury'],
+            regulatoryNotes: [],
+        }),
     });
 }
 
@@ -1589,6 +2227,11 @@ function buildUncertaintySummary(
 }
 
 function buildConditionModule(input: ConditionModuleBuildInput): TreatmentConditionModuleReport | null {
+    const imhaPatient = extractImhaPatientContext(input);
+    if (shouldBuildImhaModule(input.disease, imhaPatient, input.rankedDifferentials, input.supportingSignals)) {
+        return buildImhaConditionModule(input, imhaPatient);
+    }
+
     const patient = extractHypocalcemiaPatientContext(input);
     if (!shouldBuildHypocalcemiaModule(input.disease, patient, input.rankedDifferentials, input.supportingSignals)) {
         return null;
@@ -1616,13 +2259,377 @@ function buildConditionModule(input: ConditionModuleBuildInput): TreatmentCondit
     };
 }
 
+function isImhaConditionId(value: string): boolean {
+    return ['imha', 'imha_canine', 'immune-mediated-haemolytic-anaemia', 'immune_mediated_hemolytic_anemia'].includes(value);
+}
+
+function shouldBuildImhaModule(
+    disease: DiseaseOntologyEntry,
+    patient: ImhaPatientContext,
+    rankedDifferentials: RankedDifferential[],
+    supportingSignals: string[],
+) {
+    const diseaseMatch =
+        CONDITION_MODULE_DISEASE_IDS.has(disease.id)
+        || /immune.*h[ae]emolytic|imha/i.test(disease.name)
+        || isImhaConditionId(disease.id);
+    const differentialMatch = rankedDifferentials.some((entry) => /immune.*h[ae]emolytic|imha/i.test(entry.name));
+    const signalMatch =
+        patient.spherocytesPresent
+        || patient.coombsPositive
+        || patient.autoagglutinationPositive
+        || patient.salineAgglutinationPositive
+        || supportingSignals.some((signal) => /spherocyte|coombs|autoagglutination|haemolysis|hemolysis/i.test(signal));
+    const clinicalMatch =
+        patient.paleMucousMembranes
+        || patient.weakness
+        || patient.collapse
+        || patient.regenerativeAnaemia
+        || (patient.packedCellVolumePercent != null && patient.packedCellVolumePercent < 25);
+    const canineMatch = normalizeSpecies(patient.species) === 'dog';
+
+    return canineMatch && (diseaseMatch || differentialMatch) && signalMatch && clinicalMatch;
+}
+
+function extractImhaPatientContext(input: ConditionModuleBuildInput): ImhaPatientContext {
+    const signature = input.input.inputSignature;
+    const metadata = asRecord(signature.metadata);
+    const history = asRecord(signature.history);
+    const diagnosticTests = asRecord(signature.diagnostic_tests);
+    const cbc = asRecord(diagnosticTests.cbc);
+    const serology = asRecord(diagnosticTests.serology);
+    const physicalExam = asRecord(signature.physical_exam);
+    const scalarEntries = collectScalarEntries(signature);
+    const rawNarrative = collectStringsFromUnknown(signature).join(' | ').toLowerCase();
+    const observations = new Set([
+        ...input.observations,
+        ...readStringArray(signature.presenting_signs).map(normalizeImhaToken),
+        ...readStringArray(signature.symptoms).map(normalizeImhaToken),
+    ]);
+    const species = normalizeText(signature.species) ?? normalizeText(metadata.species);
+    const breed = normalizeText(signature.breed) ?? normalizeText(metadata.breed);
+    const ageYears = readMeasurementNumber(signature.age_years) ?? readMeasurementNumber(metadata.age_years);
+    const weightKg = readMeasurementNumber(signature.weight_kg) ?? readMeasurementNumber(metadata.weight_kg);
+    const sex = normalizeText(signature.sex) ?? normalizeText(metadata.sex);
+    const region =
+        normalizeText(signature.region)
+        ?? normalizeText(history.geographic_region)
+        ?? normalizeText(metadata.region)
+        ?? normalizeText(input.input.context.regulatory_region);
+    const packedCellVolumePercent =
+        readMeasurementNumber(cbc.packed_cell_volume_percent)
+        ?? readScalarEntryNumber(scalarEntries, /(packed_?cell_?volume|pcv|haematocrit|hematocrit)/i);
+    const spherocytesPresent = normalizeText(cbc.spherocytes) === 'present' || normalizeText(cbc.spherocytosis) === 'present' || /spherocyte/.test(rawNarrative);
+    const coombsPositive = normalizeText(serology.coombs_test) === 'positive' || /coombs.*positive|positive.*coombs/.test(rawNarrative);
+    const autoagglutinationPositive = normalizeText(cbc.autoagglutination) === 'positive' || /autoagglutination.*positive|positive.*autoagglutination/.test(rawNarrative);
+    const salineAgglutinationPositive = normalizeText(serology.saline_agglutination) === 'positive' || /saline.*agglutination.*positive|positive.*saline.*agglutination/.test(rawNarrative);
+    const regenerativeAnaemia =
+        normalizeText(cbc.anemia_type) === 'regenerative'
+        || normalizeText(cbc.reticulocytosis) === 'elevated'
+        || /regenerative an[ae]mia|reticulocytosis/.test(rawNarrative);
+    const thrombocytopenia =
+        normalizeText(cbc.thrombocytopenia) != null
+        && normalizeText(cbc.thrombocytopenia) !== 'absent';
+    const paleMucousMembranes =
+        normalizeText(physicalExam.mucous_membrane_color) === 'pale'
+        || observations.has('pale_mucous_membranes')
+        || /pale (mucous membranes|gums)/.test(rawNarrative);
+    const tachycardia =
+        observations.has('tachycardia')
+        || (readMeasurementNumber(physicalExam.heart_rate) ?? 0) >= 140
+        || /tachycard/.test(rawNarrative);
+    const weakness = observations.has('weakness') || /weakness|weak\b/.test(rawNarrative);
+    const collapse = observations.has('collapse') || /collapse|collapsed/.test(rawNarrative);
+    const tickPanelNegative = normalizeText(serology.tick_borne_disease_panel) === 'negative';
+    const eastAfricaContext = region != null && /(nairobi|kenya|east[_ -]?africa|ke\b)/i.test(region);
+    const normalizedBreed = breed?.toLowerCase().replace(/[^a-z0-9]+/g, '_') ?? '';
+    const breedElevated = ['cocker_spaniel', 'english_springer_spaniel', 'old_english_sheepdog'].some((candidate) => normalizedBreed.includes(candidate));
+    const sexLower = (sex ?? '').toLowerCase();
+    const signalmentElevated =
+        normalizeSpecies(species) === 'dog'
+        && (ageYears ?? 0) >= 2
+        && (ageYears ?? 99) <= 8
+        && sexLower.includes('female')
+        && (sexLower.includes('spay') || sexLower.includes('spayed'));
+
+    return {
+        species,
+        breed,
+        ageYears,
+        sex,
+        weightKg,
+        region,
+        observations,
+        rawNarrative,
+        packedCellVolumePercent,
+        spherocytesPresent,
+        coombsPositive,
+        autoagglutinationPositive,
+        salineAgglutinationPositive,
+        regenerativeAnaemia,
+        thrombocytopenia,
+        paleMucousMembranes,
+        tachycardia,
+        weakness,
+        collapse,
+        tickPanelNegative,
+        eastAfricaContext,
+        breedElevated,
+        signalmentElevated,
+    };
+}
+
+function buildImhaConditionModule(
+    input: ConditionModuleBuildInput,
+    patient: ImhaPatientContext,
+): TreatmentConditionModuleReport {
+    const signalTriage = buildImhaSignalTriage(patient, input);
+    const differentials = buildImhaDifferentials(patient);
+    const confidenceSummary = buildImhaConfidenceSummary(patient, differentials);
+
+    return {
+        module_key: 'imha_canine',
+        title: 'IMHA MODULE (Canine)',
+        step_1_signal_triage: signalTriage,
+        step_2_species_signalment_prior: buildImhaSignalmentPrior(patient),
+        step_3_aetiology_differential_ranking: differentials,
+        step_4_diagnostic_recommendations: buildImhaDiagnostics(patient),
+        step_5_treatment_pathway: buildImhaTreatmentPathway(patient, signalTriage.urgency_classification),
+        step_6_monitoring_protocol: buildImhaMonitoring(patient),
+        step_7_confidence_summary: confidenceSummary,
+        actionable_now: confidenceSummary.recommended_action,
+    };
+}
+
+function buildImhaSignalTriage(
+    patient: ImhaPatientContext,
+    input: ConditionModuleBuildInput,
+): TreatmentConditionModuleReport['step_1_signal_triage'] {
+    const emergency =
+        (patient.packedCellVolumePercent != null && patient.packedCellVolumePercent < 15)
+        || (patient.autoagglutinationPositive && patient.collapse)
+        || (patient.tachycardia && patient.paleMucousMembranes && patient.weakness)
+        || input.input.emergencyLevel?.toUpperCase() === 'CRITICAL';
+    const urgent = emergency || patient.spherocytesPresent || patient.coombsPositive || patient.collapse || patient.paleMucousMembranes;
+    const urgencyClassification = emergency ? 'EMERGENCY' : urgent ? 'URGENT' : 'STABLE';
+
+    return {
+        urgency_classification: urgencyClassification,
+        summary: urgencyClassification === 'EMERGENCY'
+            ? 'Immune-haemolysis evidence is paired with physiologic instability; crisis stabilization and PCV triage are immediate priorities.'
+            : urgencyClassification === 'URGENT'
+                ? 'Immune-haemolysis evidence is present and should be worked up urgently before immunosuppression decisions.'
+                : 'IMHA signal is present but current instability markers are limited; confirmatory staging remains necessary.',
+        bullets: dedupeStrings([
+            patient.packedCellVolumePercent != null ? `PCV provided: ${patient.packedCellVolumePercent.toFixed(1)}%.` : 'PCV is missing; immediate packed cell volume assessment is still needed.',
+            patient.autoagglutinationPositive ? 'Autoagglutination is positive and supports antibody-mediated erythrocyte clumping.' : null,
+            patient.spherocytesPresent ? 'Spherocytes are present and strongly support canine IMHA.' : null,
+            patient.coombsPositive ? 'Coombs test is positive.' : null,
+            patient.tachycardia && patient.paleMucousMembranes && patient.weakness ? 'Tachycardia, pale mucous membranes, and weakness form an instability cluster.' : null,
+        ]),
+    };
+}
+
+function buildImhaSignalmentPrior(patient: ImhaPatientContext): TreatmentConditionModuleReport['step_2_species_signalment_prior'] {
+    return {
+        summary: 'Canine signalment and breed priors are used only after immune-haemolysis evidence is present.',
+        bullets: dedupeStrings([
+            patient.signalmentElevated ? 'Spayed female dog aged 2-8 years elevates the IMHA prior.' : null,
+            patient.breedElevated ? `${patient.breed ?? 'Breed'} is an IMHA-predisposed breed group.` : null,
+            patient.breed ? `Breed recorded: ${patient.breed}.` : 'Breed was not supplied, so breed prior could not be applied.',
+            patient.ageYears != null ? `Age recorded: ${patient.ageYears.toFixed(1)} years.` : null,
+            patient.sex ? `Sex/reproductive status recorded: ${patient.sex}.` : null,
+        ]),
+    };
+}
+
+function buildImhaDifferentials(patient: ImhaPatientContext): TreatmentConditionModuleReport['step_3_aetiology_differential_ranking'] {
+    const candidates = [
+        {
+            condition: 'Primary IMHA',
+            score: 30 + (patient.spherocytesPresent ? 24 : 0) + (patient.coombsPositive ? 22 : 0) + (patient.autoagglutinationPositive ? 22 : 0) + (patient.regenerativeAnaemia ? 8 : 0) + (patient.breedElevated ? 6 : 0),
+            mechanism: 'Autoantibody-mediated erythrocyte destruction drives haemolysis, anaemia, and thromboembolic risk.',
+            supporting: dedupeStrings([
+                patient.spherocytesPresent ? 'Spherocytosis supports extravascular immune erythrocyte destruction.' : null,
+                patient.coombsPositive ? 'Coombs positivity confirms antibody involvement.' : null,
+                patient.autoagglutinationPositive ? 'Autoagglutination supports immune RBC clumping.' : null,
+                patient.tickPanelNegative ? 'Negative tick-borne panel reduces infectious haemolysis as the primary driver.' : null,
+            ]),
+            confirms_if: ['Spherocytes, positive Coombs or agglutination, and compatible haemolytic anaemia remain concordant.', 'Tick-borne mimics are excluded or treated as co-infections.'],
+            excludes_if: ['Babesia or other haemoparasite is directly identified as the primary cause.', 'Anaemia is non-regenerative without evidence of immune destruction.'],
+        },
+        {
+            condition: 'Evans syndrome (IMHA + IMTP)',
+            score: 18 + (patient.thrombocytopenia ? 24 : 0) + (patient.coombsPositive || patient.autoagglutinationPositive ? 12 : 0),
+            mechanism: 'Concurrent immune-mediated erythrocyte and platelet destruction raises bleeding and thrombotic complexity.',
+            supporting: dedupeStrings([
+                patient.thrombocytopenia ? 'Thrombocytopenia is present and raises Evans syndrome concern.' : null,
+                patient.autoagglutinationPositive ? 'Autoagglutination supports the IMHA component.' : null,
+            ]),
+            confirms_if: ['Platelet count confirms clinically relevant thrombocytopenia alongside IMHA.', 'Bleeding signs or petechiae are documented.'],
+            excludes_if: ['Platelet count is normal and no platelet immune marker is present.'],
+        },
+        {
+            condition: 'Secondary IMHA',
+            score: 16 + (patient.tickPanelNegative ? -4 : 8) + (patient.eastAfricaContext ? 6 : 0),
+            mechanism: 'Drug, vaccine, infectious, or neoplastic triggers can drive immune haemolysis and must be searched for before long-term labeling.',
+            supporting: dedupeStrings([
+                patient.eastAfricaContext ? 'East African tick-borne co-infection prevalence keeps secondary/infectious triggers in the workup.' : null,
+                !patient.tickPanelNegative ? 'Tick-borne exclusion is incomplete.' : null,
+            ]),
+            confirms_if: ['Trigger exposure, infection, or neoplasia is identified alongside immune haemolysis.'],
+            excludes_if: ['Trigger workup is unrevealing and primary IMHA pattern remains dominant.'],
+        },
+        {
+            condition: 'Haemangiosarcoma-associated haemolysis',
+            score: 10 + (patient.packedCellVolumePercent != null && patient.packedCellVolumePercent < 20 ? 5 : 0),
+            mechanism: 'Occult splenic or hepatic neoplasia can contribute to anaemia and haemolysis-like presentations.',
+            supporting: ['Anaemia severity warrants neoplasia screening if signalment or imaging supports it.'],
+            confirms_if: ['Thoracic imaging or abdominal ultrasound identifies compatible mass or metastatic pattern.'],
+            excludes_if: ['Imaging and staging do not support neoplasia and immune markers dominate.'],
+        },
+    ].sort((left, right) => right.score - left.score);
+    const totalScore = candidates.reduce((sum, candidate) => sum + Math.max(candidate.score, 1), 0) || 1;
+    return candidates.map((candidate, index) => ({
+        rank: index + 1,
+        condition: candidate.condition,
+        confidence_percent: clamp(Math.round((Math.max(candidate.score, 1) / totalScore) * 100), 8, 92),
+        mechanism: candidate.mechanism,
+        supporting: candidate.supporting,
+        confirms_if: candidate.confirms_if,
+        excludes_if: candidate.excludes_if,
+    }));
+}
+
+function buildImhaDiagnostics(patient: ImhaPatientContext): TreatmentConditionModuleReport['step_4_diagnostic_recommendations'] {
+    return [
+        { priority: 'urgent', test_name: 'PCV plus blood smear for spherocytes', rules_in_or_out: 'Confirms anaemia severity and immune haemolysis morphology.', expected_if_hypothesis_correct: 'Low PCV with spherocytes and compatible haemolysis pattern.' },
+        { priority: 'urgent', test_name: 'Saline agglutination test', rules_in_or_out: 'Rapidly supports immune-mediated RBC agglutination.', expected_if_hypothesis_correct: 'Persistent agglutination after saline dilution.' },
+        { priority: 'essential', test_name: 'Coombs test', rules_in_or_out: 'Confirms antibody-mediated erythrocyte destruction when positive in context.', expected_if_hypothesis_correct: patient.coombsPositive ? 'Already positive in submitted data.' : 'Positive or supportive immune marker.' },
+        { priority: 'essential', test_name: 'Complete CBC with reticulocyte count and platelet count', rules_in_or_out: 'Separates regenerative IMHA, Evans syndrome, and marrow-limited mimics.', expected_if_hypothesis_correct: 'Regenerative anaemia with platelet status clarified.' },
+        { priority: 'essential', test_name: 'Biochemistry panel including ALT, bilirubin, and creatinine', rules_in_or_out: 'Frames hepatic, haemolytic, renal, and medication-safety constraints.', expected_if_hypothesis_correct: 'Bilirubin may be elevated; organ compromise may alter treatment safety.' },
+        { priority: 'essential', test_name: 'Tick-borne disease screening', rules_in_or_out: 'Excludes infectious mimics before immunosuppression decisions.', expected_if_hypothesis_correct: patient.eastAfricaContext ? 'Negative or co-infection clarified despite elevated regional prior.' : 'Negative or clinically reconciled with immune markers.' },
+        { priority: 'optional', test_name: 'Thoracic radiographs', rules_in_or_out: 'Screens for neoplastic or cardiopulmonary comorbidity.', expected_if_hypothesis_correct: 'No competing primary neoplastic thoracic pattern, unless secondary IMHA trigger exists.' },
+        { priority: 'optional', test_name: 'Abdominal ultrasound', rules_in_or_out: 'Screens splenic and hepatic triggers including haemangiosarcoma.', expected_if_hypothesis_correct: 'No primary mass driver, or trigger identified for secondary IMHA.' },
+        { priority: 'advanced', test_name: 'Bone marrow aspirate if non-regenerative anaemia persists', rules_in_or_out: 'Assesses marrow disease when regeneration is absent or delayed.', expected_if_hypothesis_correct: 'Used only if expected regenerative response remains absent.' },
+    ];
+}
+
+function buildImhaTreatmentPathway(
+    patient: ImhaPatientContext,
+    urgencyClassification: 'EMERGENCY' | 'URGENT' | 'STABLE',
+): TreatmentConditionModuleReport['step_5_treatment_pathway'] {
+    return [
+        {
+            tier: 'tier_1_emergency_stabilisation',
+            title: 'TIER 1 - EMERGENCY STABILISATION',
+            items: dedupeStrings([
+                urgencyClassification === 'EMERGENCY' ? 'Emergency IMHA trigger is active; PCV and perfusion stabilization should not wait.' : 'Keep emergency stabilization ready if PCV falls or perfusion worsens.',
+                'Blood product support threshold evaluation; compatibility and cross-match are clinician-determined.',
+                'Oxygen support if severe anaemia or respiratory distress is present.',
+                patient.packedCellVolumePercent != null ? `Current PCV input: ${patient.packedCellVolumePercent.toFixed(1)}%.` : 'Immediate PCV measurement remains a first action.',
+            ]),
+        },
+        {
+            tier: 'tier_2_short_term_stabilisation',
+            title: 'TIER 2 - SHORT-TERM STABILISATION',
+            items: [
+                'Primary immunosuppression initiation after clinician review of infectious mimics and contraindications.',
+                'Thromboembolism prophylaxis decision after bleeding-risk and platelet assessment.',
+                'Reassess PCV, reticulocyte response, bilirubin, and perfusion trend frequently during the crisis window.',
+            ],
+        },
+        {
+            tier: 'tier_3_long_term_maintenance',
+            title: 'TIER 3 - LONG-TERM / MAINTENANCE',
+            items: [
+                'Steroid taper protocol must be clinician-directed and response-based.',
+                'Second-line agent timing if response is inadequate by the expected interval.',
+                'Splenectomy evaluation criteria if refractory disease persists despite appropriate medical management.',
+            ],
+        },
+    ];
+}
+
+function buildImhaMonitoring(patient: ImhaPatientContext): TreatmentConditionModuleReport['step_6_monitoring_protocol'] {
+    return {
+        summary: 'IMHA monitoring must track anaemia response, thrombosis risk, Evans syndrome overlap, and immunosuppression safety.',
+        bullets: dedupeStrings([
+            'PCV every 12 hours during crisis phase.',
+            'Reticulocyte count every 48 hours to assess bone marrow response.',
+            'Platelet count to screen for Evans syndrome.',
+            'Daily clinical assessment for thromboembolism signs.',
+            'Liver panel every 2 weeks during immunosuppressive therapy.',
+            'Autoagglutination trend as a treatment response marker.',
+            patient.tickPanelNegative ? 'Tick-borne screen is negative in current data.' : 'Tick-borne screening remains important before immunosuppression is finalized.',
+        ]),
+    };
+}
+
+function buildImhaConfidenceSummary(
+    patient: ImhaPatientContext,
+    differentials: TreatmentConditionModuleReport['step_3_aetiology_differential_ranking'],
+): TreatmentConditionModuleReport['step_7_confidence_summary'] {
+    const dataGaps = [
+        patient.packedCellVolumePercent == null ? 'PCV is missing.' : null,
+        !patient.coombsPositive ? 'Coombs confirmation is missing or not positive.' : null,
+        !patient.tickPanelNegative ? 'Tick-borne exclusion is incomplete.' : null,
+        !patient.regenerativeAnaemia ? 'Reticulocyte/regeneration status is incomplete.' : null,
+        !patient.thrombocytopenia ? 'Platelet status should be confirmed to screen for Evans syndrome.' : null,
+    ].filter((value): value is string => value != null);
+    const score =
+        42
+        + (patient.spherocytesPresent ? 15 : 0)
+        + (patient.coombsPositive ? 14 : 0)
+        + (patient.autoagglutinationPositive ? 12 : 0)
+        + (patient.paleMucousMembranes ? 6 : 0)
+        + (patient.breedElevated ? 4 : 0)
+        - Math.min(24, dataGaps.length * 4);
+    const systemConfidenceScore = clamp(Math.round(score), 30, 96);
+    const certaintyBand: TreatmentConditionModuleReport['step_7_confidence_summary']['certainty_band'] =
+        systemConfidenceScore >= 85 ? 'Very High'
+            : systemConfidenceScore >= 70 ? 'High'
+                : systemConfidenceScore >= 55 ? 'Moderate'
+                    : 'Low';
+    const evidenceStrength: TreatmentConditionModuleReport['step_7_confidence_summary']['evidence_strength'] =
+        patient.spherocytesPresent && (patient.coombsPositive || patient.autoagglutinationPositive)
+            ? 'Strong'
+            : patient.spherocytesPresent || patient.coombsPositive
+                ? 'Moderate'
+                : 'Weak';
+    const calibration = patient.eastAfricaContext
+        ? 'Applied - Nairobi/East African calibration keeps tick-borne disease co-infection prevalence elevated; IMHA and tick-borne haemolysis must be distinguished by testing before immunosuppression.'
+        : 'Not materially applied - no Nairobi/East African region cue was supplied, but tick-borne mimics still require exclusion before immunosuppression.';
+
+    return {
+        system_confidence_score: systemConfidenceScore,
+        certainty_band: certaintyBand,
+        primary_diagnosis: differentials[0]?.condition ?? 'Primary IMHA',
+        evidence_strength: evidenceStrength,
+        data_gaps: dataGaps.length > 0 ? dataGaps : ['Major immediate data gaps are limited; clinician confirmation is still required before definitive therapy.'],
+        nairobi_prevalence_calibration: calibration,
+        recommended_action: patient.packedCellVolumePercent != null && patient.packedCellVolumePercent < 15
+            ? 'Activate emergency IMHA stabilization, transfusion-threshold evaluation, cross-match workflow, and tick-borne exclusion immediately.'
+            : 'Confirm PCV, smear, Coombs/agglutination status, platelet count, and tick-borne screen before finalizing immunosuppression and thromboprophylaxis.',
+    };
+}
+
+function normalizeImhaToken(value: string): string {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function readStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((entry): entry is string => typeof entry === 'string');
+}
+
 function shouldBuildHypocalcemiaModule(
     disease: DiseaseOntologyEntry,
     patient: HypocalcemiaPatientContext,
     rankedDifferentials: RankedDifferential[],
     supportingSignals: string[],
 ) {
-    const diseaseMatch = HYPOCALCEMIA_MODULE_DISEASE_IDS.has(disease.id);
+    const diseaseMatch = HYPOCALCEMIA_CONDITION_MODULE_IDS.has(disease.id);
     const differentialMatch = rankedDifferentials.some((entry) =>
         entry.name === 'Puerperal Hypocalcemia (Eclampsia)'
         || entry.name === 'Acute Electrolyte Derangement',
@@ -2212,6 +3219,179 @@ function deriveContextFlags(input: {
         }
     }
     return flags;
+}
+
+function deriveRegistryContextFlags(input: BuildBundleInput, request: InferenceRequest): Set<ContraindicationFlag> {
+    const flags = new Set<ContraindicationFlag>();
+    const observations = new Set([
+        ...extractOntologyObservations(input.inputSignature),
+        ...input.context.comorbidities.map((entry) => entry.toLowerCase().replace(/[\s-]+/g, '_')),
+        ...input.context.lab_flags.map((entry) => entry.toLowerCase().replace(/[\s-]+/g, '_')),
+    ]);
+    const rawNarrative = collectStringsFromUnknown(input.inputSignature).join(' ').toLowerCase();
+    const diagnosticTests = asRecord(input.inputSignature.diagnostic_tests);
+    const biochemistry = asRecord(diagnosticTests.biochemistry);
+
+    if (hasAny(observations, ['azotemia', 'oliguria', 'anuria']) || normalizeText(biochemistry.bun_creatinine) === 'azotemia' || /renal|kidney|azotem/.test(rawNarrative)) {
+        flags.add('renal_compromise');
+    }
+    if (hasAny(observations, ['icterus', 'head_pressing', 'mentation_change']) || /hepatic|liver|icter/.test(rawNarrative)) {
+        flags.add('hepatic_compromise');
+    }
+    if (hasAny(observations, ['bleeding', 'coagulopathy', 'petechiae', 'ecchymosis', 'melena', 'hematemesis']) || /bleed|coagul/.test(rawNarrative)) {
+        flags.add('bleeding_risk');
+    }
+    if (hasAny(observations, ['pregnant']) || /pregnan|gestat/.test(rawNarrative)) {
+        flags.add('pregnancy');
+    }
+    if (hasAny(observations, ['collapse', 'pale_mucous_membranes', 'tachycardia']) || /shock|collapse|unstable/.test(rawNarrative)) {
+        flags.add('shock_or_instability');
+    }
+    if (hasAny(observations, ['seizures', 'tremors', 'ataxia', 'paralysis'])) {
+        flags.add('neurologic_instability');
+    }
+    if (hasAny(observations, ['dyspnea', 'respiratory_distress', 'open_mouth_breathing', 'cyanosis'])) {
+        flags.add('respiratory_compromise');
+    }
+    if (hasAny(observations, ['dehydration', 'vomiting', 'diarrhea']) || /dehydrat/.test(rawNarrative)) {
+        flags.add('dehydration');
+    }
+    if (input.context.regulatory_region && LOW_RESOURCE_JURISDICTIONS.has(input.context.regulatory_region.trim().toLowerCase())) {
+        flags.add('jurisdiction_review_required');
+    }
+    if (request.species && normalizeText(request.species) == null) {
+        flags.add('species_mismatch');
+    }
+    return flags;
+}
+
+function buildDrugLevelContraindications(input: {
+    proposedDrugClasses: string[];
+    species: string | null;
+    breed: string | null;
+    conditions: string[];
+    contextFlags: Set<ContraindicationFlag>;
+}): string[] {
+    const drugLevelContraindications: string[] = [];
+    try {
+        const die = getDrugInteractionEngine();
+        const proposedDrugClasses = input.proposedDrugClasses;
+        const species = normalizeDrugInteractionSpecies(input.species);
+        const conditions = input.conditions;
+        const resolvedDrugKeys = resolveDrugKeysForClasses(proposedDrugClasses);
+
+        if (resolvedDrugKeys.length > 1) {
+            const interactions = die.check({ drugs: resolvedDrugKeys, species, conditions });
+            drugLevelContraindications.push(
+                ...interactions.interactions
+                    .filter((interaction) => interaction.severity === 'major' || interaction.severity === 'contraindicated')
+                    .map((interaction) => `${interaction.drug1} x ${interaction.drug2}: ${interaction.clinicalEffect}`),
+            );
+        }
+
+        if (input.contextFlags.has('hepatic_compromise')) {
+            drugLevelContraindications.push(...getHepaticContraindicationsForClasses(proposedDrugClasses, species));
+        }
+
+        if (input.contextFlags.has('renal_compromise')) {
+            drugLevelContraindications.push(...getRenalContraindicationsForClasses(proposedDrugClasses, species));
+        }
+
+        drugLevelContraindications.push(...getBreedDrugRisks(proposedDrugClasses, species, input.breed ?? ''));
+    } catch { /* non-critical */ }
+    return Array.from(new Set(drugLevelContraindications));
+}
+
+function getHepaticContraindicationsForClasses(proposedDrugClasses: string[], _species: string): string[] {
+    return resolveDrugKeysForClasses(proposedDrugClasses)
+        .flatMap((drugKey) => {
+            const rule = HEPATIC_DOSE_ADJUSTMENTS[drugKey];
+            if (!rule) return [];
+            if (rule.severe.avoid) {
+                return [`${formatDrugKey(drugKey)} class review: avoid or replace in severe hepatic compromise. ${rule.severe.notes}`];
+            }
+            if (rule.moderate.reduction > 0 || rule.severe.reduction > 0) {
+                return [`${formatDrugKey(drugKey)} class review: hepatic dose adjustment required. ${rule.moderate.notes}`];
+            }
+            return [];
+        });
+}
+
+function getRenalContraindicationsForClasses(proposedDrugClasses: string[], _species: string): string[] {
+    return resolveDrugKeysForClasses(proposedDrugClasses)
+        .flatMap((drugKey) => {
+            const rule = RENAL_DOSE_ADJUSTMENTS[drugKey];
+            if (!rule) return [];
+            if (rule.avoid_stage != null && rule.avoid_stage <= 3) {
+                return [`${formatDrugKey(drugKey)} class review: avoid or replace in advanced renal compromise. ${rule.stage3.notes ?? rule.stage4.notes ?? 'Renal adjustment required.'}`];
+            }
+            if (rule.stage3.reduction > 0 || rule.stage4.reduction > 0) {
+                return [`${formatDrugKey(drugKey)} class review: renal dose adjustment required. ${rule.stage3.notes ?? rule.stage4.notes ?? 'Renal adjustment required.'}`];
+            }
+            return [];
+        });
+}
+
+function getBreedDrugRisks(proposedDrugClasses: string[], species: string, breed: string): string[] {
+    const normalizedBreed = breed.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (!normalizedBreed) return [];
+    const breedRisk = BREED_DRUG_RISKS[normalizedBreed];
+    if (!breedRisk || breedRisk.species !== species) return [];
+    const drugKeys = resolveDrugKeysForClasses(proposedDrugClasses);
+    const warnings: string[] = [];
+    for (const drugKey of drugKeys) {
+        if (breedRisk.avoid.includes(drugKey)) {
+            warnings.push(`${formatDrugKey(drugKey)} class review: avoid in ${breed}. ${breedRisk.notes}`);
+        }
+        if (breedRisk.useWithCaution.includes(drugKey)) {
+            warnings.push(`${formatDrugKey(drugKey)} class review: use with caution in ${breed}. ${breedRisk.notes}`);
+        }
+        const elevated = breedRisk.elevatedRisk.find((risk) => risk.drug.toLowerCase().replace(/[^a-z0-9]+/g, '_') === drugKey);
+        if (elevated) {
+            warnings.push(`${formatDrugKey(drugKey)} class review: ${elevated.risk}`);
+        }
+    }
+    return warnings;
+}
+
+function resolveDrugKeysForClasses(proposedDrugClasses: string[]): string[] {
+    const keys = new Set<string>();
+    for (const label of proposedDrugClasses) {
+        const normalized = label.toLowerCase().replace(/[^a-z0-9]+/g, '_');
+        for (const key of [
+            ...Object.keys(HEPATIC_DOSE_ADJUSTMENTS),
+            ...Object.keys(RENAL_DOSE_ADJUSTMENTS),
+            'meloxicam',
+            'prednisolone',
+            'enrofloxacin',
+            'furosemide',
+            'benazepril',
+        ]) {
+            if (normalized.includes(key)) keys.add(key);
+        }
+        if (/glucocorticoid|corticosteroid|immunosuppress/.test(normalized)) keys.add('prednisolone');
+        if (/anti_inflammatory|nsaid|analgesic|pain/.test(normalized)) keys.add('meloxicam');
+        if (/antimicrobial|antibiotic|infectious/.test(normalized)) {
+            keys.add('enrofloxacin');
+            keys.add('metronidazole');
+            keys.add('doxycycline');
+        }
+        if (/diuretic|fluid_overload|congestion/.test(normalized)) keys.add('furosemide');
+        if (/ace|vasoactive|cardiac/.test(normalized)) keys.add('benazepril');
+        if (/anticonvulsant|seizure/.test(normalized)) keys.add('phenobarbital');
+    }
+    return Array.from(keys);
+}
+
+function normalizeDrugInteractionSpecies(value: string | null): string {
+    const normalized = normalizeText(value)?.toLowerCase() ?? '';
+    if (normalized === 'dog' || normalized === 'canine' || normalized === 'puppy') return 'canine';
+    if (normalized === 'cat' || normalized === 'feline' || normalized === 'kitten') return 'feline';
+    return normalized || 'canine';
+}
+
+function formatDrugKey(value: string): string {
+    return value.replace(/_/g, ' ');
 }
 
 function extractAlternativeDiagnoses(outputPayload: Record<string, unknown>, primaryDiagnosis: string) {

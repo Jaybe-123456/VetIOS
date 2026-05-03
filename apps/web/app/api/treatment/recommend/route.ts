@@ -43,10 +43,36 @@ export async function POST(req: Request) {
             },
         });
 
+        if (recommendation.bundle.contraindication_flags.length > 0) {
+            void getSupabaseServer()
+                .from('ai_inference_events')
+                .update({
+                    compute_profile: {
+                        treatment_contraindication_feedback: {
+                            flags: recommendation.bundle.contraindication_flags,
+                            management_mode: recommendation.bundle.management_mode,
+                            flagged_at: new Date().toISOString(),
+                        },
+                    },
+                })
+                .eq('id', result.data.inference_event_id)
+                .then(({ error }) => {
+                    if (error) {
+                        console.error(`[${requestId}] Treatment->inference feedback failed:`, error);
+                    }
+                });
+        }
+
         const response = NextResponse.json({
             request_id: requestId,
             case_id: recommendation.caseId,
             episode_id: recommendation.episodeId,
+            treatment_inference_tension: recommendation.bundle.contraindication_flags.length > 0
+                ? {
+                    flags: recommendation.bundle.contraindication_flags,
+                    management_mode: recommendation.bundle.management_mode,
+                }
+                : null,
             ...recommendation.bundle,
         });
         withRequestHeaders(response.headers, requestId, startTime);

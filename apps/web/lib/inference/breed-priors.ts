@@ -80,6 +80,53 @@ export const BREED_PRIOR_RULES: BreedPriorRule[] = [
         multiplier: 1,
         evidence_level: 'moderate',
     },
+    { breeds: ['cocker_spaniel', 'english_cocker_spaniel', 'american_cocker_spaniel'],
+        condition_id: 'imha_canine', multiplier: 3.8, evidence_level: 'strong' },
+    { breeds: ['old_english_sheepdog', 'english_springer_spaniel', 'irish_setter'],
+        condition_id: 'imha_canine', multiplier: 2.5, evidence_level: 'moderate' },
+    { breeds: ['miniature_poodle', 'bichon_frise', 'maltese'],
+        condition_id: 'imha_canine', multiplier: 2.0, evidence_level: 'moderate' },
+    { breeds: ['golden_retriever', 'dobermann', 'irish_setter', 'boxer', 'cocker_spaniel',
+        'airedale_terrier', 'miniature_schnauzer', 'great_dane', 'old_english_sheepdog'],
+        condition_id: 'hypothyroidism_canine', multiplier: 3.0, evidence_level: 'strong' },
+    { breeds: ['standard_poodle', 'portuguese_water_dog', 'bearded_collie',
+        'great_pyrenees', 'rottweiler', 'west_highland_white_terrier',
+        'wheaten_terrier', 'nova_scotia_duck_tolling_retriever'],
+        condition_id: 'addisons_canine', multiplier: 4.5, evidence_level: 'strong' },
+    { breeds: ['samoyed', 'australian_terrier', 'miniature_schnauzer', 'spitz',
+        'bichon_frise', 'keeshond', 'tibetan_terrier', 'cairn_terrier'],
+        condition_id: 'diabetes_mellitus_canine', multiplier: 3.0, evidence_level: 'strong' },
+    { breeds: ['yorkshire_terrier', 'maltese', 'miniature_schnauzer', 'pug',
+        'shih_tzu', 'bichon_frise', 'havanese'],
+        condition_id: 'portosystemic_shunt', multiplier: 6.0, evidence_level: 'strong' },
+    { breeds: ['irish_wolfhound', 'golden_retriever', 'labrador_retriever',
+        'great_dane', 'old_english_sheepdog'],
+        condition_id: 'portosystemic_shunt', multiplier: 3.5, evidence_level: 'moderate' },
+    { breeds: ['golden_retriever', 'german_shepherd', 'labrador_retriever',
+        'flat_coated_retriever', 'skye_terrier'],
+        condition_id: 'haemangiosarcoma', multiplier: 5.0, evidence_level: 'strong' },
+    { breeds: ['german_shepherd', 'pembroke_welsh_corgi', 'boxer', 'chesapeake_bay_retriever',
+        'rhodesian_ridgeback', 'bernese_mountain_dog'],
+        condition_id: 'degenerative_myelopathy', multiplier: 4.0, evidence_level: 'strong' },
+    { breeds: ['maine_coon', 'ragdoll', 'british_shorthair', 'sphynx',
+        'persian', 'american_shorthair'],
+        condition_id: 'hypertrophic_cardiomyopathy_feline', multiplier: 5.0, evidence_level: 'strong' },
+    { breeds: ['abyssinian', 'bengal', 'birman', 'himalayan', 'ragdoll',
+        'british_shorthair', 'devon_rex'],
+        condition_id: 'feline_infectious_peritonitis', multiplier: 2.5, evidence_level: 'moderate' },
+    { breeds: ['french_bulldog', 'english_bulldog', 'pug', 'boston_terrier',
+        'shih_tzu', 'cavalier_king_charles_spaniel', 'pekinese',
+        'boxer', 'shar_pei'],
+        condition_id: 'brachycephalic_obstructive_airway_syndrome', multiplier: 8.0, evidence_level: 'strong' },
+    { breeds: ['bedlington_terrier', 'west_highland_white_terrier',
+        'labrador_retriever', 'dalmatian', 'dobermann', 'skye_terrier'],
+        condition_id: 'copper_associated_hepatopathy', multiplier: 5.0, evidence_level: 'strong' },
+    { breeds: ['golden_retriever', 'labrador_retriever', 'german_shepherd',
+        'weimaraner', 'cavalier_king_charles_spaniel'],
+        condition_id: 'masticatory_muscle_myositis', multiplier: 3.0, evidence_level: 'moderate' },
+    { breeds: ['labrador_retriever', 'golden_retriever', 'german_shepherd',
+        'working_type_breeds'],
+        condition_id: 'leptospirosis_canine', multiplier: 1.8, evidence_level: 'anecdotal' },
 ];
 
 const BREED_CATEGORY_MAP: Record<string, string[]> = {
@@ -151,4 +198,18 @@ export function applyBreedSpecificPriors(
     }
 
     return nextScores;
+}
+
+export function applyBreedPriors(
+    request: InferenceRequest,
+): Array<{ condition_id: string; multiplier: number; evidence_level?: string }> {
+    if (!request.breed) return [];
+    const normalisedBreed = request.breed.toLowerCase().replace(/[\s-]+/g, '_');
+    return BREED_PRIOR_RULES
+        .filter((rule) => rule.breeds.some((breed) => normalisedBreed.includes(breed) || breed.includes(normalisedBreed)))
+        .map((rule) => ({
+            condition_id: rule.condition_id,
+            multiplier: rule.multiplier,
+            evidence_level: rule.evidence_level,
+        }));
 }

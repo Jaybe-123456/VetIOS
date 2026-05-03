@@ -50,6 +50,7 @@ export interface TreatmentPerformanceSummary {
     complication_rate: number | null;
     median_recovery_time_days: number | null;
     clinician_override_rate: number | null;
+    ai_accuracy_rate: number | null;
 }
 
 export interface TreatmentCandidateRecord {
@@ -123,7 +124,7 @@ export interface TreatmentConditionModuleConfidenceSummary {
 }
 
 export interface TreatmentConditionModuleReport {
-    module_key: 'hypocalcaemia_small_animals';
+    module_key: 'hypocalcaemia_small_animals' | 'imha_canine';
     title: string;
     step_1_signal_triage: TreatmentConditionModuleSection & {
         urgency_classification: 'EMERGENCY' | 'URGENT' | 'STABLE';

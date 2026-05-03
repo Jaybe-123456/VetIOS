@@ -204,6 +204,8 @@ export async function loadTreatmentPerformance(
     const eventColumns = [
         TREATMENT_EVENTS.COLUMNS.id,
         TREATMENT_EVENTS.COLUMNS.disease,
+        TREATMENT_EVENTS.COLUMNS.clinician_confirmed_diagnosis,
+        TREATMENT_EVENTS.COLUMNS.diagnosis_source,
         TREATMENT_EVENTS.COLUMNS.selected_treatment,
         TREATMENT_EVENTS.COLUMNS.clinician_override,
     ].join(', ');
@@ -238,7 +240,7 @@ export async function loadTreatmentPerformance(
     const groups = new Map<string, Array<{ event: JsonRecord; outcome: TreatmentOutcomeRow | null }>>();
 
     for (const event of filteredEvents) {
-        const disease = readText(event.disease);
+        const disease = readText(event.clinician_confirmed_diagnosis) ?? readText(event.disease);
         const pathway = readText(asRecord(event.selected_treatment).treatment_pathway);
         if (!disease || !pathway) continue;
         const key = `${disease}::${pathway}`;
@@ -260,6 +262,10 @@ export async function loadTreatmentPerformance(
             .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
             .sort((a, b) => a - b);
         const overrideCount = rows.filter((row) => readBoolean(row.event.clinician_override) === true).length;
+        const clinicianConfirmedRows = rows.filter((row) => readText(row.event.clinician_confirmed_diagnosis) != null);
+        const aiMatchCount = clinicianConfirmedRows.filter((row) =>
+            normalizeDiagnosisLabel(readText(row.event.disease)) === normalizeDiagnosisLabel(readText(row.event.clinician_confirmed_diagnosis))
+        ).length;
 
         return {
             disease,
@@ -269,6 +275,7 @@ export async function loadTreatmentPerformance(
             complication_rate: completed.length > 0 ? complicated.length / completed.length : null,
             median_recovery_time_days: median(recoveryTimes),
             clinician_override_rate: rows.length > 0 ? overrideCount / rows.length : null,
+            ai_accuracy_rate: clinicianConfirmedRows.length > 0 ? aiMatchCount / clinicianConfirmedRows.length : null,
         } satisfies TreatmentPerformanceSummary;
     });
 }
@@ -354,6 +361,7 @@ async function upsertTreatmentCandidates(
         [C.case_id]: input.caseId,
         [C.episode_id]: input.episodeId,
         [C.disease]: option.disease,
+        [C.diagnosis_source]: 'ai_inference',
         [C.diagnosis_confidence]: input.diagnosisConfidence,
         [C.species_applicability]: option.species_applicability,
         [C.treatment_pathway]: option.treatment_pathway,
@@ -433,6 +441,13 @@ async function createTreatmentEvent(
     },
 ) {
     const C = TREATMENT_EVENTS.COLUMNS;
+    const actualIntervention = input.selectedTreatment.actual_intervention;
+    const clinicianConfirmedDiagnosis = input.clinicianOverride
+        ? readText(actualIntervention)
+            ?? readText(asRecord(actualIntervention).diagnosis)
+            ?? readText(asRecord(actualIntervention).diagnosis_label)
+            ?? readText(asRecord(actualIntervention).condition)
+        : null;
     const { data, error } = await client
         .from(TREATMENT_EVENTS.TABLE)
         .insert({
@@ -442,6 +457,8 @@ async function createTreatmentEvent(
             [C.episode_id]: input.episodeId,
             [C.treatment_candidate_id]: input.treatmentCandidateId,
             [C.disease]: input.disease,
+            [C.clinician_confirmed_diagnosis]: clinicianConfirmedDiagnosis,
+            [C.diagnosis_source]: input.clinicianOverride ? 'clinician_override' : 'ai_inference',
             [C.selected_treatment]: input.selectedTreatment,
             [C.clinician_override]: input.clinicianOverride,
             [C.clinician_validation_status]: input.clinicianValidationStatus,
@@ -584,6 +601,10 @@ function median(values: number[]) {
     return values.length % 2 === 0
         ? (values[middle - 1] + values[middle]) / 2
         : values[middle];
+}
+
+function normalizeDiagnosisLabel(value: string | null) {
+    return value?.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim() ?? null;
 }
 
 function readText(value: unknown) {

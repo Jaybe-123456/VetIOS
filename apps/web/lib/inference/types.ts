@@ -8,8 +8,8 @@ export type VaccinationStatus = 'current' | 'unknown' | 'overdue';
 export type DewormingStatus = 'recent' | 'none' | 'unknown';
 export type EosinophiliaSeverity = 'mild' | 'moderate' | 'severe' | 'absent';
 export type PresentAbsent = 'present' | 'absent';
-export type AnemiaType = 'regenerative' | 'non_regenerative' | 'absent';
-export type ThrombocytopeniaSeverity = 'mild' | 'severe' | 'absent';
+export type AnemiaType = 'regenerative' | 'non_regenerative' | 'not_assessed' | 'absent';
+export type ThrombocytopeniaSeverity = 'mild' | 'moderate' | 'severe' | 'absent';
 export type AltAstStatus = 'normal' | 'mildly_elevated' | 'markedly_elevated';
 export type AlbuminStatus = 'normal' | 'hypoalbuminemia';
 export type BunCreatinineStatus = 'normal' | 'azotemia';
@@ -283,16 +283,30 @@ export interface PreventiveHistory {
 
 export interface SerologyPanel {
     dirofilaria_immitis_antigen?: DiagnosticResult;
+    heartworm_antigen?: 'not_performed' | 'negative' | 'positive';
     anaplasma_antibody?: DiagnosticResult;
     ehrlichia_antibody?: DiagnosticResult;
     borrelia_antibody?: DiagnosticResult;
     leishmania_antibody?: DiagnosticResult;
+    leishmania_serology?: 'not_performed' | 'negative' | 'positive';
     toxoplasma_antibody?: DiagnosticResult;
     neospora_antibody?: DiagnosticResult;
     parvovirus_antigen?: DiagnosticResult;
     coronavirus_antigen?: DiagnosticResult;
     brucella_titer?: DiagnosticResult;
     t4_total?: LowHighDiagnosticResult;
+    coombs_test?: 'not_performed' | 'negative' | 'positive';
+    saline_agglutination?: 'not_performed' | 'negative' | 'positive';
+    tick_borne_disease_panel?: 'not_performed' | 'negative' | 'positive';
+    fcov_antibody_titre?: 'not_performed' | 'negative' | 'high_positive';
+    mat_leptospira?: 'not_performed' | 'negative' | 'positive';
+    distemper_antigen?: 'not_performed' | 'negative' | 'positive';
+    total_t4?: 'not_assessed' | 'low' | 'normal' | 'elevated';
+    total_t4_feline?: 'not_assessed' | 'low' | 'normal' | 'elevated';
+    pancreatic_lipase?: 'not_assessed' | 'normal' | 'elevated' | 'markedly_elevated';
+    acth_stimulation?: 'not_performed' | 'flat_response' | 'normal_response';
+    sodium_potassium_ratio?: 'not_assessed' | 'low' | 'normal';
+    antiplatelet_antibody?: 'not_performed' | 'negative' | 'positive';
     free_t4?: LowHighDiagnosticResult;
     fungal_titers?: Record<string, DiagnosticResult>;
     [key: string]: unknown;
@@ -302,10 +316,20 @@ export interface CbcPanel {
     eosinophilia?: EosinophiliaSeverity;
     basophilia?: PresentAbsent;
     neutrophilia?: PresentAbsent;
+    leukocytosis?: PresentAbsent;
     lymphopenia?: PresentAbsent;
     anemia_type?: AnemiaType;
+    reticulocytosis?: 'normal' | 'elevated' | 'not_assessed';
     thrombocytopenia?: ThrombocytopeniaSeverity;
+    platelet_count?: 'severe_thrombocytopenia' | 'normal' | 'mild_thrombocytopenia' | 'moderate_thrombocytopenia';
     microfilaremia?: PresentAbsent;
+    spherocytes?: PresentAbsent;
+    spherocytosis?: PresentAbsent;
+    autoagglutination?: 'negative' | 'positive';
+    pancytopenia?: PresentAbsent;
+    hyperproteinaemia?: PresentAbsent;
+    hyperglobulinaemia?: PresentAbsent;
+    packed_cell_volume_percent?: number;
     hemoparasites_seen?: string[];
 }
 
@@ -315,6 +339,7 @@ export interface BiochemistryPanel {
     bun_creatinine?: BunCreatinineStatus;
     globulins?: GlobulinStatus;
     glucose?: GlucoseStatus;
+    sodium_potassium_ratio?: 'not_assessed' | 'low' | 'normal';
     total_protein?: TotalProteinStatus;
     bilirubin?: BilirubinStatus;
     calcium?: CalciumStatus;
@@ -323,6 +348,9 @@ export interface BiochemistryPanel {
 export interface UrinalysisPanel {
     proteinuria?: PresentAbsent;
     glucose_in_urine?: PresentAbsent;
+    hemoglobinuria?: PresentAbsent;
+    bilirubinuria?: PresentAbsent | 'mild';
+    obstructive_pattern?: PresentAbsent;
     casts?: PresentAbsent;
     specific_gravity?: number;
     sediment?: string[];
@@ -333,6 +361,7 @@ export interface ThoracicRadiographPanel {
     pulmonary_artery_enlargement?: PresentAbsent;
     cardiomegaly?: CardiomegalyPattern;
     pleural_effusion?: PresentAbsent;
+    gastric_volvulus?: PresentAbsent;
     mass_lesion?: PresentAbsent;
     tracheal_deviation?: PresentAbsent;
     tracheal_collapse_seen?: PresentAbsent;
@@ -342,6 +371,7 @@ export interface AbdominalUltrasoundPanel {
     hepatomegaly?: PresentAbsent;
     splenomegaly?: PresentAbsent;
     ascites?: PresentAbsent;
+    uterine_distension?: PresentAbsent;
     lymphadenopathy?: PresentAbsent;
     mass_lesion?: PresentAbsent;
     hyperechoic_liver?: PresentAbsent;
@@ -361,6 +391,13 @@ export interface CytologyPanel {
     lymph_node_fnab?: string;
     mass_fnab?: string;
     bone_marrow?: string;
+    abdominal_fluid_bacteria?: PresentAbsent;
+    effusion_rivalta?: 'negative' | 'positive';
+}
+
+export interface ImagingPanel {
+    abdominal_ultrasound?: string;
+    thoracic_radiograph?: string;
 }
 
 export interface ParasitologyPanel {
@@ -379,6 +416,7 @@ export interface DiagnosticTests {
     urinalysis?: UrinalysisPanel;
     thoracic_radiograph?: ThoracicRadiographPanel;
     abdominal_ultrasound?: AbdominalUltrasoundPanel;
+    imaging?: ImagingPanel;
     echocardiography?: EchocardiographyPanel;
     cytology?: CytologyPanel;
     pcr?: Record<string, 'positive' | 'negative' | 'not_done'>;
@@ -603,16 +641,30 @@ export const StructuredInferenceRequestSchema = z.strictObject({
     diagnostic_tests: z.object({
         serology: z.object({
             dirofilaria_immitis_antigen: DiagnosticResultSchema.optional(),
+            heartworm_antigen: z.enum(['not_performed', 'negative', 'positive']).optional(),
             anaplasma_antibody: DiagnosticResultSchema.optional(),
             ehrlichia_antibody: DiagnosticResultSchema.optional(),
             borrelia_antibody: DiagnosticResultSchema.optional(),
             leishmania_antibody: DiagnosticResultSchema.optional(),
+            leishmania_serology: z.enum(['not_performed', 'negative', 'positive']).optional(),
             toxoplasma_antibody: DiagnosticResultSchema.optional(),
             neospora_antibody: DiagnosticResultSchema.optional(),
             parvovirus_antigen: DiagnosticResultSchema.optional(),
             coronavirus_antigen: DiagnosticResultSchema.optional(),
             brucella_titer: DiagnosticResultSchema.optional(),
             t4_total: LowHighDiagnosticResultSchema.optional(),
+            coombs_test: z.enum(['not_performed', 'negative', 'positive']).optional(),
+            saline_agglutination: z.enum(['not_performed', 'negative', 'positive']).optional(),
+            tick_borne_disease_panel: z.enum(['not_performed', 'negative', 'positive']).optional(),
+            fcov_antibody_titre: z.enum(['not_performed', 'negative', 'high_positive']).optional(),
+            mat_leptospira: z.enum(['not_performed', 'negative', 'positive']).optional(),
+            distemper_antigen: z.enum(['not_performed', 'negative', 'positive']).optional(),
+            total_t4: z.enum(['not_assessed', 'low', 'normal', 'elevated']).optional(),
+            total_t4_feline: z.enum(['not_assessed', 'low', 'normal', 'elevated']).optional(),
+            pancreatic_lipase: z.enum(['not_assessed', 'normal', 'elevated', 'markedly_elevated']).optional(),
+            acth_stimulation: z.enum(['not_performed', 'flat_response', 'normal_response']).optional(),
+            sodium_potassium_ratio: z.enum(['not_assessed', 'low', 'normal']).optional(),
+            antiplatelet_antibody: z.enum(['not_performed', 'negative', 'positive']).optional(),
             free_t4: LowHighDiagnosticResultSchema.optional(),
             fungal_titers: z.record(z.string(), DiagnosticResultSchema).optional(),
         }).catchall(z.unknown()).optional(),
@@ -620,10 +672,20 @@ export const StructuredInferenceRequestSchema = z.strictObject({
             eosinophilia: z.enum(['mild', 'moderate', 'severe', 'absent']).optional(),
             basophilia: z.enum(['present', 'absent']).optional(),
             neutrophilia: z.enum(['present', 'absent']).optional(),
+            leukocytosis: z.enum(['present', 'absent']).optional(),
             lymphopenia: z.enum(['present', 'absent']).optional(),
-            anemia_type: z.enum(['regenerative', 'non_regenerative', 'absent']).optional(),
-            thrombocytopenia: z.enum(['mild', 'severe', 'absent']).optional(),
+            anemia_type: z.enum(['regenerative', 'non_regenerative', 'not_assessed', 'absent']).optional(),
+            reticulocytosis: z.enum(['normal', 'elevated', 'not_assessed']).optional(),
+            thrombocytopenia: z.enum(['mild', 'moderate', 'severe', 'absent']).optional(),
+            platelet_count: z.enum(['severe_thrombocytopenia', 'normal', 'mild_thrombocytopenia', 'moderate_thrombocytopenia']).optional(),
             microfilaremia: z.enum(['present', 'absent']).optional(),
+            spherocytes: z.enum(['present', 'absent']).optional(),
+            spherocytosis: z.enum(['present', 'absent']).optional(),
+            autoagglutination: z.enum(['negative', 'positive']).optional(),
+            pancytopenia: z.enum(['present', 'absent']).optional(),
+            hyperproteinaemia: z.enum(['present', 'absent']).optional(),
+            hyperglobulinaemia: z.enum(['present', 'absent']).optional(),
+            packed_cell_volume_percent: z.number().optional(),
             hemoparasites_seen: z.array(z.string()).optional(),
         }).optional(),
         biochemistry: z.object({
@@ -632,6 +694,7 @@ export const StructuredInferenceRequestSchema = z.strictObject({
             bun_creatinine: z.enum(['normal', 'azotemia']).optional(),
             globulins: z.enum(['normal', 'hyperglobulinemia']).optional(),
             glucose: z.enum(['normal', 'hyperglycemia', 'hypoglycemia']).optional(),
+            sodium_potassium_ratio: z.enum(['not_assessed', 'low', 'normal']).optional(),
             total_protein: z.enum(['normal', 'elevated', 'decreased']).optional(),
             bilirubin: z.enum(['normal', 'elevated']).optional(),
             calcium: z.enum(['normal', 'hypercalcemia', 'hypocalcemia']).optional(),
@@ -639,6 +702,9 @@ export const StructuredInferenceRequestSchema = z.strictObject({
         urinalysis: z.object({
             proteinuria: z.enum(['present', 'absent']).optional(),
             glucose_in_urine: z.enum(['present', 'absent']).optional(),
+            hemoglobinuria: z.enum(['present', 'absent']).optional(),
+            bilirubinuria: z.enum(['present', 'absent', 'mild']).optional(),
+            obstructive_pattern: z.enum(['present', 'absent']).optional(),
             casts: z.enum(['present', 'absent']).optional(),
             specific_gravity: z.number().optional(),
             sediment: z.array(z.string()).optional(),
@@ -648,6 +714,7 @@ export const StructuredInferenceRequestSchema = z.strictObject({
             pulmonary_artery_enlargement: z.enum(['present', 'absent']).optional(),
             cardiomegaly: z.enum(['right_sided', 'left_sided', 'generalised', 'absent']).optional(),
             pleural_effusion: z.enum(['present', 'absent']).optional(),
+            gastric_volvulus: z.enum(['present', 'absent']).optional(),
             mass_lesion: z.enum(['present', 'absent']).optional(),
             tracheal_deviation: z.enum(['present', 'absent']).optional(),
             tracheal_collapse_seen: z.enum(['present', 'absent']).optional(),
@@ -656,9 +723,14 @@ export const StructuredInferenceRequestSchema = z.strictObject({
             hepatomegaly: z.enum(['present', 'absent']).optional(),
             splenomegaly: z.enum(['present', 'absent']).optional(),
             ascites: z.enum(['present', 'absent']).optional(),
+            uterine_distension: z.enum(['present', 'absent']).optional(),
             lymphadenopathy: z.enum(['present', 'absent']).optional(),
             mass_lesion: z.enum(['present', 'absent']).optional(),
             hyperechoic_liver: z.enum(['present', 'absent']).optional(),
+        }).optional(),
+        imaging: z.object({
+            abdominal_ultrasound: z.string().optional(),
+            thoracic_radiograph: z.string().optional(),
         }).optional(),
         echocardiography: z.object({
             worms_visualised: z.enum(['present', 'absent']).optional(),
@@ -673,6 +745,8 @@ export const StructuredInferenceRequestSchema = z.strictObject({
             lymph_node_fnab: z.string().optional(),
             mass_fnab: z.string().optional(),
             bone_marrow: z.string().optional(),
+            abdominal_fluid_bacteria: z.enum(['present', 'absent']).optional(),
+            effusion_rivalta: z.enum(['negative', 'positive']).optional(),
         }).optional(),
         pcr: z.record(z.string(), z.enum(['positive', 'negative', 'not_done'])).optional(),
         parasitology: z.object({

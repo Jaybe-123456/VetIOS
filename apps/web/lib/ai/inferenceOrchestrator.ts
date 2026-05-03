@@ -21,6 +21,21 @@ import { embedClinicalCase, embedQuery } from '@/lib/embeddings/vetEmbeddingEngi
 import { getCausalEngine } from '@/lib/causal/causalEngine';
 import { getCounterfactualSimulator } from '@/lib/causal/counterfactualSimulator';
 import { getLivingCaseMemory } from '@/lib/causal/livingCaseMemory';
+import {
+    applyPathognomicGate,
+    buildPathognomonicDifferentials,
+} from '@/lib/inference/pathognomic-gate';
+import {
+    applyEtiologicalPlausibilityGate,
+} from '@/lib/inference/plausibility-gate';
+import {
+    applyHaematologicalPriors,
+    type ScoreAdjustment,
+} from '@/lib/inference/haematological-priors';
+import {
+    applyBreedPriors,
+} from '@/lib/inference/breed-priors';
+import type { DifferentialEntry, InferenceRequest } from '@/lib/inference/types';
 
 export interface OrchestratorParams {
     model: string;
@@ -156,6 +171,81 @@ export async function runInferencePipeline({ model, rawInput, inputMode, tenantI
     payload.diagnosis = safetyLayer.diagnosis;
     payload.inference_explanation = safetyLayer.inference_explanation ?? null;
     payload.differentials = (safetyLayer.diagnosis.top_differentials as unknown[]) ?? [];
+
+    // POST-INFERENCE MODULE PIPELINE
+    const inferenceRequest = coerceToInferenceRequest(normalizedSig);
+
+    // Step 1: Haematological priors - adjust raw probabilities from CBC findings
+    const haemAdjustments: ScoreAdjustment[] = [];
+    try {
+        if (inferenceRequest.diagnostic_tests?.cbc) {
+            haemAdjustments.push(...applyHaematologicalPriors(inferenceRequest));
+            if (haemAdjustments.length > 0 && Array.isArray(payload.differentials)) {
+                payload.differentials = applyScoreAdjustmentsToDifferentials(
+                    payload.differentials as Array<Record<string, unknown>>,
+                    haemAdjustments,
+                );
+            }
+        }
+    } catch { /* non-critical */ }
+    pipelineTrace.push({
+        stage: 'haematological_priors',
+        status: 'completed',
+        detail: haemAdjustments.length > 0 ? `${haemAdjustments.length} adjustments applied` : 'no CBC data',
+    });
+
+    // Step 2: Breed priors - apply species/breed-specific multipliers
+    try {
+        const breedAdjustments = applyBreedPriors(inferenceRequest);
+        if (breedAdjustments.length > 0 && Array.isArray(payload.differentials)) {
+            payload.differentials = applyBreedMultipliersToDifferentials(
+                payload.differentials as Array<Record<string, unknown>>,
+                breedAdjustments,
+            );
+        }
+    } catch { /* non-critical */ }
+    pipelineTrace.push({ stage: 'breed_priors', status: 'completed' });
+
+    // Step 3: Pathognomonic gate - override differentials when confirmatory test is positive
+    let pathognomicFired = false;
+    try {
+        const pathognomicResult = applyPathognomicGate(inferenceRequest);
+        if (pathognomicResult) {
+            const pathDifferentials = buildPathognomonicDifferentials(pathognomicResult);
+            if (pathDifferentials.length > 0) {
+                payload.differentials = mergePathognomicDifferentials(
+                    payload.differentials as Array<Record<string, unknown>>,
+                    pathDifferentials as unknown as Array<Record<string, unknown>>,
+                );
+                payload.pathognomonic_gate = {
+                    fired: true,
+                    primary_condition: pathognomicResult.primaryCondition?.canonical_name ?? null,
+                    key_finding: pathognomicResult.keyFinding,
+                    excluded_conditions: pathognomicResult.excludedConditions,
+                    secondary_diagnoses: pathognomicResult.secondaryDiagnoses.map((secondary) => secondary.condition.canonical_name),
+                };
+                pathognomicFired = true;
+            }
+        }
+    } catch { /* non-critical */ }
+    pipelineTrace.push({
+        stage: 'pathognomonic_gate',
+        status: 'completed',
+        detail: pathognomicFired ? 'gate fired - differentials overridden' : 'no pathognomonic confirmation',
+    });
+
+    // Step 4: Plausibility gate - remove or penalise implausible differentials
+    try {
+        const plausibilityResult = applyEtiologicalPlausibilityGate(
+            payload.differentials as unknown as DifferentialEntry[],
+            inferenceRequest,
+        );
+        payload.differentials = plausibilityResult.differentials;
+        if (plausibilityResult.excluded_conditions.length > 0) {
+            payload.plausibility_exclusions = plausibilityResult.excluded_conditions;
+        }
+    } catch { /* non-critical */ }
+    pipelineTrace.push({ stage: 'plausibility_gate', status: 'completed' });
 
     // ── VKG Differential Re-ranking ───────────────────────────────────────────
     // Pipeline: Symptoms → VKG traversal → Graph scoring → Blend with LLM → Re-ranked
@@ -545,6 +635,105 @@ function elevateEmergencyLevel(currentRaw: string, target: string): string {
     const levels = ['LOW', 'MODERATE', 'HIGH', 'CRITICAL'];
     const current = currentRaw.toUpperCase();
     return levels.indexOf(target) > levels.indexOf(current) ? target : current;
+}
+
+function coerceToInferenceRequest(sig: Record<string, unknown>): InferenceRequest {
+    const metadata = asRecord(sig.metadata);
+    const diagnosticTests = asRecord(sig.diagnostic_tests);
+    const physicalExam = asRecord(sig.physical_exam);
+    const history = asRecord(sig.history);
+    const preventiveHistory = asRecord(sig.preventive_history);
+
+    return {
+        species: readText(sig.species) ?? readText(metadata.species) ?? 'canine',
+        breed: readText(sig.breed) ?? readText(metadata.breed) ?? undefined,
+        age_years: readNumber(sig.age_years) ?? readNumber(metadata.age_years) ?? undefined,
+        weight_kg: readNumber(sig.weight_kg) ?? readNumber(metadata.weight_kg) ?? undefined,
+        sex: readText(sig.sex) ?? readText(metadata.sex) ?? undefined,
+        region: readText(sig.region) ?? readText(history.geographic_region) ?? readText(metadata.region) ?? undefined,
+        presenting_signs: Array.isArray(sig.presenting_signs)
+            ? (sig.presenting_signs as unknown[]).filter((s): s is string => typeof s === 'string')
+            : Array.isArray(sig.symptoms)
+                ? (sig.symptoms as unknown[]).filter((s): s is string => typeof s === 'string')
+                : [],
+        history: Object.keys(history).length > 0 ? history as InferenceRequest['history'] : undefined,
+        preventive_history: Object.keys(preventiveHistory).length > 0
+            ? preventiveHistory as InferenceRequest['preventive_history']
+            : undefined,
+        diagnostic_tests: Object.keys(diagnosticTests).length > 0
+            ? diagnosticTests as InferenceRequest['diagnostic_tests']
+            : undefined,
+        physical_exam: Object.keys(physicalExam).length > 0
+            ? physicalExam as InferenceRequest['physical_exam']
+            : undefined,
+    };
+}
+
+function applyScoreAdjustmentsToDifferentials(
+    differentials: Array<Record<string, unknown>>,
+    adjustments: ScoreAdjustment[],
+): Array<Record<string, unknown>> {
+    return differentials.map((diff) => {
+        const conditionId = readText(diff.condition_id) ?? '';
+        const conditionName = (readText(diff.name) ?? readText(diff.condition) ?? '').toLowerCase();
+        const relevant = adjustments.filter((adj) =>
+            conditionId === adj.condition_id ||
+            conditionName.includes(adj.condition_id.replace(/_/g, ' '))
+        );
+        if (relevant.length === 0) return diff;
+        const currentProb = typeof diff.probability === 'number' ? diff.probability : 0.1;
+        const totalDelta = relevant.reduce((sum, adj) => sum + adj.delta, 0);
+        return {
+            ...diff,
+            probability: Math.max(0.01, Math.min(0.99, currentProb + totalDelta)),
+            haematological_adjustments: relevant.map((adj) => ({
+                finding: adj.finding,
+                delta: adj.delta,
+                weight: adj.weight,
+            })),
+        };
+    }).sort((a, b) =>
+        (typeof b.probability === 'number' ? b.probability : 0) -
+        (typeof a.probability === 'number' ? a.probability : 0)
+    );
+}
+
+function applyBreedMultipliersToDifferentials(
+    differentials: Array<Record<string, unknown>>,
+    adjustments: Array<{ condition_id: string; multiplier: number; evidence_level?: string }>,
+): Array<Record<string, unknown>> {
+    return differentials.map((diff) => {
+        const conditionId = readText(diff.condition_id) ?? '';
+        const relevant = adjustments.find((adj) => conditionId === adj.condition_id);
+        if (!relevant) return diff;
+        const currentProb = typeof diff.probability === 'number' ? diff.probability : 0.1;
+        const adjusted = Math.max(0.01, Math.min(0.99, currentProb * relevant.multiplier));
+        return { ...diff, probability: adjusted, breed_prior_multiplier: relevant.multiplier };
+    }).sort((a, b) =>
+        (typeof b.probability === 'number' ? b.probability : 0) -
+        (typeof a.probability === 'number' ? a.probability : 0)
+    );
+}
+
+function mergePathognomicDifferentials(
+    existing: Array<Record<string, unknown>>,
+    pathognomicDifferentials: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+    const pathConditionIds = new Set(
+        pathognomicDifferentials.map((d) => readText(d.condition_id) ?? '').filter(Boolean)
+    );
+    const filtered = existing.filter((d) => {
+        const id = readText(d.condition_id) ?? '';
+        return !pathConditionIds.has(id);
+    }).map((d) => ({
+        ...d,
+        probability: (typeof d.probability === 'number' ? d.probability : 0.1) * 0.4,
+    }));
+    return [...pathognomicDifferentials, ...filtered]
+        .sort((a, b) =>
+            (typeof b.probability === 'number' ? b.probability : 0) -
+            (typeof a.probability === 'number' ? a.probability : 0)
+        );
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
