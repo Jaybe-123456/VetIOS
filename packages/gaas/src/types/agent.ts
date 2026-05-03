@@ -31,7 +31,9 @@ export type ToolName =
   | "write_ehr"
   | "send_alert"
   | "schedule_followup"
-  | "fetch_patient_history";
+  | "fetch_patient_history"
+  | "query_vkg_differentials"
+  | "query_vkg_path";
 
 // ─── Agent Goal ──────────────────────────────────────────────
 export interface AgentGoal {

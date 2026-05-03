@@ -294,5 +294,79 @@ export function buildDefaultTools(baseUrl: string, authToken: string): ToolDefin
         };
       },
     },
+    {
+      name: "query_vkg_differentials",
+      description: "Traverse the Veterinary Knowledge Graph to generate ranked differential diagnoses. Performs 5-hop inference: symptom matching, pathogen chaining, breed predisposition boosting, biomarker confirmation, and differential chaining. Returns ranked diseases with matched symptoms, expected labs, and contraindications.",
+      input_schema: {
+        symptoms: { type: "array", description: "List of presenting symptoms", required: true },
+        species: { type: "string", description: "Patient species (canine, feline, equine, bovine, avian)", required: true },
+        breed: { type: "string", description: "Patient breed for predisposition boosting" },
+        biomarkers: { type: "object", description: "Lab findings as key-value pairs e.g. { ALT: 120, creatinine: 3.2 }" },
+      },
+      executor: async (input) => {
+        try {
+          const res = await fetch(`${baseUrl}/api/vkg/differentials`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              symptoms: input.symptoms,
+              species: input.species,
+              breed: input.breed ?? null,
+              biomarkers: input.biomarkers ?? null,
+            }),
+          });
+          if (!res.ok) throw new Error(`VKG API error: ${res.status}`);
+          const json = await res.json() as Record<string, unknown>;
+          return {
+            ...(json.data as Record<string, unknown> ?? json),
+            source: 'vetios-vkg-v1',
+            queried_at: new Date().toISOString(),
+          };
+        } catch (err) {
+          return {
+            differentials: [],
+            error: String(err),
+            source: 'vetios-vkg-v1',
+            queried_at: new Date().toISOString(),
+          };
+        }
+      },
+    },
+    {
+      name: "query_vkg_path",
+      description: "Find the shortest relationship path between two nodes in the Veterinary Knowledge Graph. Use this to explain clinical reasoning: why a diagnosis is likely given a symptom, or how a drug connects to a contraindication.",
+      input_schema: {
+        from_id: { type: "string", description: "Source node ID e.g. 'symptom:vomiting' or 'disease:canine_parvovirus'", required: true },
+        to_id: { type: "string", description: "Target node ID e.g. 'drug:metronidazole' or 'lab:elevated_lipase'", required: true },
+        max_depth: { type: "number", description: "Maximum hops to traverse (default 4, max 6)" },
+      },
+      executor: async (input) => {
+        try {
+          const res = await fetch(`${baseUrl}/api/vkg/path`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              from_id: input.from_id,
+              to_id: input.to_id,
+              max_depth: input.max_depth ?? 4,
+            }),
+          });
+          if (!res.ok) throw new Error(`VKG path API error: ${res.status}`);
+          const json = await res.json() as Record<string, unknown>;
+          return {
+            ...(json.data as Record<string, unknown> ?? json),
+            source: 'vetios-vkg-v1',
+            queried_at: new Date().toISOString(),
+          };
+        } catch (err) {
+          return {
+            found: false,
+            error: String(err),
+            source: 'vetios-vkg-v1',
+            queried_at: new Date().toISOString(),
+          };
+        }
+      },
+    },
   ];
 }
