@@ -132,6 +132,7 @@ export async function GET(req: Request) {
                 snapshot,
                 request_id: requestId,
             });
+            response.headers.set('Cache-Control', 's-maxage=20, stale-while-revalidate=40');
         } else {
             const snapshot = await getControlPlaneSnapshot({
                 client: adminClient,

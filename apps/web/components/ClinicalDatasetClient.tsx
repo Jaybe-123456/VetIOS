@@ -56,7 +56,7 @@ export function ClinicalDatasetClient({
             if (document.visibilityState === 'visible') {
                 refreshDataset();
             }
-        }, 10_000);
+        }, 30_000);
 
         window.addEventListener('focus', refreshDataset);
         document.addEventListener('visibilitychange', handleVisibilityChange);

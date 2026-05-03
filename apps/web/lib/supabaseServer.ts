@@ -18,7 +18,7 @@ import { getEmailVerificationState } from '@/lib/auth/emailVerification';
 
 let _client: SupabaseClient | null = null;
 let _publicClient: SupabaseClient | null = null;
-const SLOW_QUERY_WARNING_MS = 100;
+const SLOW_QUERY_WARNING_MS = 500;
 
 function resolveEnv(primary: string, fallback: string, label: string): string {
     const value = process.env[primary] || process.env[fallback];
