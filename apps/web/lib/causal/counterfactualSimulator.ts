@@ -133,7 +133,7 @@ export class CounterfactualSimulator {
     };
 
     // Persist non-blocking
-    this.supabase.from('counterfactual_records').insert({
+    void (async () => { try { await this.supabase.from('counterfactual_records').insert({
       tenant_id: query.tenantId,
       inference_event_id: query.inferenceEventId,
       species: query.species,
@@ -149,7 +149,7 @@ export class CounterfactualSimulator {
       causal_path: result.causalPath,
       computed_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
-    }).then(() => {}).catch(() => {});
+    }); } catch { /* non-fatal */ } })();
 
     return result;
   }
