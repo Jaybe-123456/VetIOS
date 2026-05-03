@@ -19,31 +19,12 @@ import { getDrugInteractionEngine } from '@/lib/drugInteraction/drugInteractionE
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import { embedClinicalCase, embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
 import { getCausalEngine } from '@/lib/causal/causalEngine';
-import { getCounterfactualSimulator } from '@/lib/causal/counterfactualSimulator';
 import { getLivingCaseMemory } from '@/lib/causal/livingCaseMemory';
-import {
-    applyPathognomicGate,
-    buildPathognomonicDifferentials,
-} from '@/lib/inference/pathognomic-gate';
-import {
-    applyEtiologicalPlausibilityGate,
-} from '@/lib/inference/plausibility-gate';
-import {
-    applyHaematologicalPriors,
-    type ScoreAdjustment,
-} from '@/lib/inference/haematological-priors';
-import {
-    applyBreedPriors,
-} from '@/lib/inference/breed-priors';
-import type { DifferentialEntry, InferenceRequest } from '@/lib/inference/types';
 
 export interface OrchestratorParams {
     model: string;
     rawInput: string | Record<string, unknown>;
     inputMode: InputMode;
-    tenantId?: string | null;
-    patientId?: string | null;
-    inferenceEventId?: string | null;
 }
 
 interface InferencePipelineDiagnosis {
@@ -69,7 +50,7 @@ interface InferencePipelineRisk {
     [key: string]: unknown;
 }
 
-export async function runInferencePipeline({ model, rawInput, inputMode, tenantId, patientId, inferenceEventId }: OrchestratorParams) {
+export async function runInferencePipeline({ model, rawInput, inputMode }: OrchestratorParams) {
     const pipelineTrace: Array<{ stage: string; status: 'completed'; detail?: string }> = [];
     let normalizedSig: Record<string, unknown>;
 
@@ -86,11 +67,6 @@ export async function runInferencePipeline({ model, rawInput, inputMode, tenantI
     pipelineTrace.push({ stage: 'clinical_signal_enrichment', status: 'completed' });
     normalizedSig = attachSignalWeightProfile(normalizedSig);
     pipelineTrace.push({ stage: 'signal_weighting', status: 'completed' });
-    const runtimeContext = resolveRuntimeContext(normalizedSig, {
-        tenantId,
-        patientId,
-        inferenceEventId,
-    });
 
     // Phase 2: RAG Retrieval
     let ragContext = '';
@@ -106,6 +82,47 @@ export async function runInferencePipeline({ model, rawInput, inputMode, tenantI
         }
     } catch { /* RAG non-critical */ }
     pipelineTrace.push({ stage: 'rag_retrieval', status: 'completed', detail: ragContext || 'no similar cases' });
+
+    // Phase 2b: Causal Clinical Memory — enrich with causal context
+    try {
+        const _species = typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine';
+        const _diagnosis = typeof normalizedSig.top_diagnosis === 'string'
+            ? normalizedSig.top_diagnosis
+            : typeof normalizedSig.predicted_diagnosis === 'string'
+            ? normalizedSig.predicted_diagnosis
+            : null;
+        const _patientId = typeof normalizedSig.patient_id === 'string'
+            ? normalizedSig.patient_id
+            : null;
+
+        if (_diagnosis) {
+            const causalCtx = await getCausalEngine().getCausalContext(_diagnosis, _species);
+            if (causalCtx.observationCount > 0) {
+                normalizedSig = {
+                    ...normalizedSig,
+                    causal_insights: causalCtx.insights.map(i => i.statement),
+                    causal_recovery_factors: causalCtx.recoveryFactors,
+                    causal_risk_factors: causalCtx.deteriorationRiskFactors,
+                    causal_observation_count: causalCtx.observationCount,
+                };
+                pipelineTrace.push({ stage: 'causal_context', status: 'completed', detail: `${causalCtx.observationCount} causal observations` });
+            }
+        }
+
+        if (_patientId && _diagnosis) {
+            const tenantId = typeof normalizedSig.tenant_id === 'string' ? normalizedSig.tenant_id : '';
+            const livingInsight = await getLivingCaseMemory().getInsight(
+                tenantId, _patientId, _species, _diagnosis ? [_diagnosis] : []
+            );
+            normalizedSig = {
+                ...normalizedSig,
+                living_case_deterioration_risk: livingInsight.deteriorationRisk,
+                living_case_similar_count: livingInsight.similarPatients.length,
+                living_case_narrative: livingInsight.narrativeSummary,
+            };
+            pipelineTrace.push({ stage: 'living_case_memory', status: 'completed', detail: `${livingInsight.similarPatients.length} similar live patients` });
+        }
+    } catch { /* causal non-critical */ }
 
     const inferenceResult = await runInference({
         model,
@@ -171,81 +188,6 @@ export async function runInferencePipeline({ model, rawInput, inputMode, tenantI
     payload.diagnosis = safetyLayer.diagnosis;
     payload.inference_explanation = safetyLayer.inference_explanation ?? null;
     payload.differentials = (safetyLayer.diagnosis.top_differentials as unknown[]) ?? [];
-
-    // POST-INFERENCE MODULE PIPELINE
-    const inferenceRequest = coerceToInferenceRequest(normalizedSig);
-
-    // Step 1: Haematological priors - adjust raw probabilities from CBC findings
-    const haemAdjustments: ScoreAdjustment[] = [];
-    try {
-        if (inferenceRequest.diagnostic_tests?.cbc) {
-            haemAdjustments.push(...applyHaematologicalPriors(inferenceRequest));
-            if (haemAdjustments.length > 0 && Array.isArray(payload.differentials)) {
-                payload.differentials = applyScoreAdjustmentsToDifferentials(
-                    payload.differentials as Array<Record<string, unknown>>,
-                    haemAdjustments,
-                );
-            }
-        }
-    } catch { /* non-critical */ }
-    pipelineTrace.push({
-        stage: 'haematological_priors',
-        status: 'completed',
-        detail: haemAdjustments.length > 0 ? `${haemAdjustments.length} adjustments applied` : 'no CBC data',
-    });
-
-    // Step 2: Breed priors - apply species/breed-specific multipliers
-    try {
-        const breedAdjustments = applyBreedPriors(inferenceRequest);
-        if (breedAdjustments.length > 0 && Array.isArray(payload.differentials)) {
-            payload.differentials = applyBreedMultipliersToDifferentials(
-                payload.differentials as Array<Record<string, unknown>>,
-                breedAdjustments,
-            );
-        }
-    } catch { /* non-critical */ }
-    pipelineTrace.push({ stage: 'breed_priors', status: 'completed' });
-
-    // Step 3: Pathognomonic gate - override differentials when confirmatory test is positive
-    let pathognomicFired = false;
-    try {
-        const pathognomicResult = applyPathognomicGate(inferenceRequest);
-        if (pathognomicResult) {
-            const pathDifferentials = buildPathognomonicDifferentials(pathognomicResult);
-            if (pathDifferentials.length > 0) {
-                payload.differentials = mergePathognomicDifferentials(
-                    payload.differentials as Array<Record<string, unknown>>,
-                    pathDifferentials as unknown as Array<Record<string, unknown>>,
-                );
-                payload.pathognomonic_gate = {
-                    fired: true,
-                    primary_condition: pathognomicResult.primaryCondition?.canonical_name ?? null,
-                    key_finding: pathognomicResult.keyFinding,
-                    excluded_conditions: pathognomicResult.excludedConditions,
-                    secondary_diagnoses: pathognomicResult.secondaryDiagnoses.map((secondary) => secondary.condition.canonical_name),
-                };
-                pathognomicFired = true;
-            }
-        }
-    } catch { /* non-critical */ }
-    pipelineTrace.push({
-        stage: 'pathognomonic_gate',
-        status: 'completed',
-        detail: pathognomicFired ? 'gate fired - differentials overridden' : 'no pathognomonic confirmation',
-    });
-
-    // Step 4: Plausibility gate - remove or penalise implausible differentials
-    try {
-        const plausibilityResult = applyEtiologicalPlausibilityGate(
-            payload.differentials as unknown as DifferentialEntry[],
-            inferenceRequest,
-        );
-        payload.differentials = plausibilityResult.differentials;
-        if (plausibilityResult.excluded_conditions.length > 0) {
-            payload.plausibility_exclusions = plausibilityResult.excluded_conditions;
-        }
-    } catch { /* non-critical */ }
-    pipelineTrace.push({ stage: 'plausibility_gate', status: 'completed' });
 
     // ── VKG Differential Re-ranking ───────────────────────────────────────────
     // Pipeline: Symptoms → VKG traversal → Graph scoring → Blend with LLM → Re-ranked
@@ -438,91 +380,13 @@ export async function runInferencePipeline({ model, rawInput, inputMode, tenantI
     } catch { /* Constitutional AI non-critical */ }
     pipelineTrace.push({ stage: 'constitutional_ai_gate', status: 'completed' });
 
-    try {
-        const primaryDiagnosis = resolvePrimaryDiagnosisFromPayload(payload);
-        const activeDiagnoses = extractActiveDiagnoses(payload, primaryDiagnosis);
-        const treatmentLabels = extractTreatmentLabels(payload);
-        const selectedTreatment = treatmentLabels[0] ?? null;
-
-        if (primaryDiagnosis) {
-            payload.causal_context = await getCausalEngine().getCausalContext(
-                primaryDiagnosis,
-                species,
-                selectedTreatment,
-            );
-
-            if (runtimeContext.tenantId && treatmentLabels.length > 1) {
-                const counterfactuals = [];
-                for (const alternative of treatmentLabels.slice(1, 3)) {
-                    counterfactuals.push(await getCounterfactualSimulator().simulate({
-                        tenantId: runtimeContext.tenantId,
-                        inferenceEventId: runtimeContext.inferenceEventId,
-                        species,
-                        breed: readText(normalizedSig.breed),
-                        ageYears: readNumber(normalizedSig.age_years),
-                        confirmedDiagnosis: primaryDiagnosis,
-                        treatmentActual: selectedTreatment ?? treatmentLabels[0],
-                        treatmentCounterfactual: alternative,
-                        symptomVector: extractSymptomVector(normalizedSig),
-                        biomarkers: extractBiomarkerSnapshot(normalizedSig),
-                    }));
-                }
-                payload.causal_counterfactuals = counterfactuals;
-            } else {
-                payload.causal_counterfactuals = [];
-            }
-
-            if (runtimeContext.tenantId && runtimeContext.patientId) {
-                const livingMemory = getLivingCaseMemory();
-                await livingMemory.upsertNode({
-                    tenantId: runtimeContext.tenantId,
-                    patientId: runtimeContext.patientId,
-                    inferenceEventId: runtimeContext.inferenceEventId,
-                    species,
-                    breed: readText(normalizedSig.breed),
-                    activeDiagnoses,
-                    lastSymptoms: extractSymptomVector(normalizedSig),
-                    lastBiomarkers: extractBiomarkerSnapshot(normalizedSig),
-                    lastTreatment: selectedTreatment,
-                    lastOutcome: null,
-                });
-                payload.living_case_context = await livingMemory.getInsight({
-                    tenantId: runtimeContext.tenantId,
-                    patientId: runtimeContext.patientId,
-                    species,
-                    activeDiagnoses,
-                    treatment: selectedTreatment,
-                });
-            } else {
-                payload.living_case_context = null;
-            }
-        } else {
-            payload.causal_context = null;
-            payload.causal_counterfactuals = [];
-            payload.living_case_context = null;
-        }
-        pipelineTrace.push({ stage: 'causal_clinical_memory', status: 'completed', detail: primaryDiagnosis ?? 'no primary diagnosis' });
-    } catch (error) {
-        payload.causal_context = {
-            available: false,
-            error: error instanceof Error ? error.message : 'Causal context unavailable',
-        };
-        payload.causal_counterfactuals = [];
-        payload.living_case_context = null;
-        pipelineTrace.push({ stage: 'causal_clinical_memory', status: 'completed', detail: 'unavailable' });
-    }
-
     // ── Phase 1: Vector Store Upsert (async, non-blocking) ───────────────────
-    const tenantIdForVector = runtimeContext.tenantId ?? (
-        typeof (normalizedSig as Record<string, unknown>).tenant_id === 'string'
-            ? (normalizedSig as Record<string, unknown>).tenant_id as string
-            : 'platform'
-    );
-    const inferenceEventIdForVector = runtimeContext.inferenceEventId ?? (
-        typeof (normalizedSig as Record<string, unknown>).inference_event_id === 'string'
-            ? (normalizedSig as Record<string, unknown>).inference_event_id as string
-            : ''
-    );
+    const tenantIdForVector = typeof (normalizedSig as Record<string, unknown>).tenant_id === 'string'
+        ? (normalizedSig as Record<string, unknown>).tenant_id as string
+        : 'platform';
+    const inferenceEventIdForVector = typeof (normalizedSig as Record<string, unknown>).inference_event_id === 'string'
+        ? (normalizedSig as Record<string, unknown>).inference_event_id as string
+        : '';
     if (inferenceEventIdForVector) {
         const clinicalCaseForEmbed = {
             species: typeof normalizedSig.species === 'string' ? normalizedSig.species : 'canine',
@@ -635,248 +499,6 @@ function elevateEmergencyLevel(currentRaw: string, target: string): string {
     const levels = ['LOW', 'MODERATE', 'HIGH', 'CRITICAL'];
     const current = currentRaw.toUpperCase();
     return levels.indexOf(target) > levels.indexOf(current) ? target : current;
-}
-
-function coerceToInferenceRequest(sig: Record<string, unknown>): InferenceRequest {
-    const metadata = asRecord(sig.metadata);
-    const diagnosticTests = asRecord(sig.diagnostic_tests);
-    const physicalExam = asRecord(sig.physical_exam);
-    const history = asRecord(sig.history);
-    const preventiveHistory = asRecord(sig.preventive_history);
-
-    return {
-        species: readText(sig.species) ?? readText(metadata.species) ?? 'canine',
-        breed: readText(sig.breed) ?? readText(metadata.breed) ?? undefined,
-        age_years: readNumber(sig.age_years) ?? readNumber(metadata.age_years) ?? undefined,
-        weight_kg: readNumber(sig.weight_kg) ?? readNumber(metadata.weight_kg) ?? undefined,
-        sex: readText(sig.sex) ?? readText(metadata.sex) ?? undefined,
-        region: readText(sig.region) ?? readText(history.geographic_region) ?? readText(metadata.region) ?? undefined,
-        presenting_signs: Array.isArray(sig.presenting_signs)
-            ? (sig.presenting_signs as unknown[]).filter((s): s is string => typeof s === 'string')
-            : Array.isArray(sig.symptoms)
-                ? (sig.symptoms as unknown[]).filter((s): s is string => typeof s === 'string')
-                : [],
-        history: Object.keys(history).length > 0 ? history as InferenceRequest['history'] : undefined,
-        preventive_history: Object.keys(preventiveHistory).length > 0
-            ? preventiveHistory as InferenceRequest['preventive_history']
-            : undefined,
-        diagnostic_tests: Object.keys(diagnosticTests).length > 0
-            ? diagnosticTests as InferenceRequest['diagnostic_tests']
-            : undefined,
-        physical_exam: Object.keys(physicalExam).length > 0
-            ? physicalExam as InferenceRequest['physical_exam']
-            : undefined,
-    };
-}
-
-function applyScoreAdjustmentsToDifferentials(
-    differentials: Array<Record<string, unknown>>,
-    adjustments: ScoreAdjustment[],
-): Array<Record<string, unknown>> {
-    return differentials.map((diff) => {
-        const conditionId = readText(diff.condition_id) ?? '';
-        const conditionName = (readText(diff.name) ?? readText(diff.condition) ?? '').toLowerCase();
-        const relevant = adjustments.filter((adj) =>
-            conditionId === adj.condition_id ||
-            conditionName.includes(adj.condition_id.replace(/_/g, ' '))
-        );
-        if (relevant.length === 0) return diff;
-        const currentProb = typeof diff.probability === 'number' ? diff.probability : 0.1;
-        const totalDelta = relevant.reduce((sum, adj) => sum + adj.delta, 0);
-        return {
-            ...diff,
-            probability: Math.max(0.01, Math.min(0.99, currentProb + totalDelta)),
-            haematological_adjustments: relevant.map((adj) => ({
-                finding: adj.finding,
-                delta: adj.delta,
-                weight: adj.weight,
-            })),
-        };
-    }).sort((a, b) =>
-        (typeof b.probability === 'number' ? b.probability : 0) -
-        (typeof a.probability === 'number' ? a.probability : 0)
-    );
-}
-
-function applyBreedMultipliersToDifferentials(
-    differentials: Array<Record<string, unknown>>,
-    adjustments: Array<{ condition_id: string; multiplier: number; evidence_level?: string }>,
-): Array<Record<string, unknown>> {
-    return differentials.map((diff) => {
-        const conditionId = readText(diff.condition_id) ?? '';
-        const relevant = adjustments.find((adj) => conditionId === adj.condition_id);
-        if (!relevant) return diff;
-        const currentProb = typeof diff.probability === 'number' ? diff.probability : 0.1;
-        const adjusted = Math.max(0.01, Math.min(0.99, currentProb * relevant.multiplier));
-        return { ...diff, probability: adjusted, breed_prior_multiplier: relevant.multiplier };
-    }).sort((a, b) =>
-        (typeof b.probability === 'number' ? b.probability : 0) -
-        (typeof a.probability === 'number' ? a.probability : 0)
-    );
-}
-
-function mergePathognomicDifferentials(
-    existing: Array<Record<string, unknown>>,
-    pathognomicDifferentials: Array<Record<string, unknown>>,
-): Array<Record<string, unknown>> {
-    const pathConditionIds = new Set(
-        pathognomicDifferentials.map((d) => readText(d.condition_id) ?? '').filter(Boolean)
-    );
-    const filtered = existing.filter((d) => {
-        const id = readText(d.condition_id) ?? '';
-        return !pathConditionIds.has(id);
-    }).map((d) => ({
-        ...d,
-        probability: (typeof d.probability === 'number' ? d.probability : 0.1) * 0.4,
-    }));
-    return [...pathognomicDifferentials, ...filtered]
-        .sort((a, b) =>
-            (typeof b.probability === 'number' ? b.probability : 0) -
-            (typeof a.probability === 'number' ? a.probability : 0)
-        );
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-    return typeof value === 'object' && value !== null && !Array.isArray(value)
-        ? value as Record<string, unknown>
-        : {};
-}
-
-function resolveRuntimeContext(
-    normalizedSig: Record<string, unknown>,
-    explicit: {
-        tenantId?: string | null;
-        patientId?: string | null;
-        inferenceEventId?: string | null;
-    },
-): { tenantId: string | null; patientId: string | null; inferenceEventId: string | null } {
-    const metadata = asRecord(normalizedSig.metadata);
-    return {
-        tenantId:
-            explicit.tenantId ??
-            readText(normalizedSig.tenant_id) ??
-            readText(metadata.tenant_id) ??
-            null,
-        patientId:
-            explicit.patientId ??
-            readText(normalizedSig.patient_id) ??
-            readText(normalizedSig.patientId) ??
-            readText(normalizedSig.pet_id) ??
-            readText(metadata.patient_id) ??
-            readText(metadata.patientId) ??
-            readText(metadata.pet_id) ??
-            null,
-        inferenceEventId:
-            explicit.inferenceEventId ??
-            readText(normalizedSig.inference_event_id) ??
-            readText(metadata.inference_event_id) ??
-            null,
-    };
-}
-
-function resolvePrimaryDiagnosisFromPayload(payload: Record<string, unknown>): string | null {
-    const diagnosis = asRecord(payload.diagnosis) as InferencePipelineDiagnosis;
-    return extractTopDiagnosis(diagnosis);
-}
-
-function extractActiveDiagnoses(payload: Record<string, unknown>, primary: string | null): string[] {
-    const values: string[] = [];
-    if (primary) values.push(primary);
-    const diagnosis = asRecord(payload.diagnosis);
-    const topDifferentials = Array.isArray(diagnosis.top_differentials)
-        ? diagnosis.top_differentials
-        : Array.isArray(payload.differentials)
-            ? payload.differentials
-            : [];
-    for (const entry of topDifferentials.slice(0, 3)) {
-        if (typeof entry === 'string') values.push(entry);
-        if (entry && typeof entry === 'object') {
-            const record = entry as Record<string, unknown>;
-            const label = readText(record.name) ?? readText(record.condition) ?? readText(record.diagnosis);
-            if (label) values.push(label);
-        }
-    }
-    return Array.from(new Set(values));
-}
-
-function extractTreatmentLabels(payload: Record<string, unknown>): string[] {
-    const treatmentPlans = asRecord(payload.treatment_plans);
-    const labels: string[] = [];
-    for (const [key, value] of Object.entries(treatmentPlans)) {
-        labels.push(...collectTreatmentLabels(value, key));
-    }
-    return Array.from(new Set(labels.map((label) => label.trim()).filter(Boolean))).slice(0, 5);
-}
-
-function collectTreatmentLabels(value: unknown, fallbackKey?: string): string[] {
-    if (!value || typeof value !== 'object') return [];
-    if (Array.isArray(value)) {
-        return value.flatMap((entry) => collectTreatmentLabels(entry, fallbackKey));
-    }
-
-    const record = value as Record<string, unknown>;
-    const direct =
-        readText(record.treatment_pathway) ??
-        readText(record.protocol) ??
-        readText(record.name) ??
-        readText(record.treatment) ??
-        readText(record.plan);
-    const drugLabels = Array.isArray(record.drugs)
-        ? record.drugs.filter((entry): entry is string => typeof entry === 'string')
-        : [];
-    const procedureLabels = Array.isArray(record.procedures)
-        ? record.procedures.filter((entry): entry is string => typeof entry === 'string')
-        : [];
-    const base = direct ?? drugLabels[0] ?? procedureLabels[0] ?? null;
-    const disease = readText(record.disease) ?? fallbackKey ?? null;
-    const current = base ? [`${disease ? `${disease} | ` : ''}${base}`] : [];
-    const nested = Object.values(record)
-        .filter((entry) => entry && typeof entry === 'object')
-        .flatMap((entry) => collectTreatmentLabels(entry, fallbackKey));
-    return [...current, ...nested];
-}
-
-function extractSymptomVector(normalizedSig: Record<string, unknown>): string[] {
-    const candidates = [
-        normalizedSig.presenting_signs,
-        normalizedSig.symptoms,
-        normalizedSig.symptom_vector,
-    ];
-    for (const candidate of candidates) {
-        if (Array.isArray(candidate)) {
-            return candidate
-                .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-                .map((entry) => entry.trim());
-        }
-    }
-    return [];
-}
-
-function extractBiomarkerSnapshot(normalizedSig: Record<string, unknown>): Record<string, number | string | null> | null {
-    for (const key of ['biomarkers', 'lab_values', 'labs']) {
-        const record = asRecord(normalizedSig[key]);
-        if (Object.keys(record).length > 0) {
-            return Object.fromEntries(
-                Object.entries(record)
-                    .filter(([, value]) => typeof value === 'number' || typeof value === 'string' || value === null)
-                    .slice(0, 40),
-            ) as Record<string, number | string | null>;
-        }
-    }
-    return null;
-}
-
-function readText(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-function readNumber(value: unknown): number | null {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'string') {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
 }
 
 function resolveConditionClass(diagnosis: InferencePipelineDiagnosis): string {
