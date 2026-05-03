@@ -12,6 +12,7 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 import { requirePlatformRequestContext } from '@/lib/platform/route';
 import { MultiAgentOrchestrator } from '@/lib/multiAgent/multiAgentOrchestrator';
 import { getRAGPipeline } from '@/lib/rag/ragPipeline';
+import { hydrateVKGFromDatabase } from '@/lib/vkg/veterinaryKnowledgeGraph';
 import { getLiveCalibrationEngine } from '@/lib/calibration/liveCalibrationEngine';
 import { getActiveLearningService } from '@/lib/activeLearning/activeLearningService';
 import type { MultiAgentCaseInput } from '@/lib/multiAgent/multiAgentOrchestrator';
@@ -53,6 +54,7 @@ export async function POST(req: Request) {
     // ── Build RAG context before agents run ──
     let ragContext = '';
     try {
+      hydrateVKGFromDatabase(supabase).catch(() => {/* non-fatal */});
       const ragPipeline = getRAGPipeline();
       const ragResult = await ragPipeline.buildContext({
         species: body.species,

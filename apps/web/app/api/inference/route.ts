@@ -58,6 +58,7 @@ import {
     planModelRoute,
 } from '@/lib/routingEngine/service';
 import { getRAGPipeline } from '@/lib/rag/ragPipeline';
+import { hydrateVKGFromDatabase } from '@/lib/vkg/veterinaryKnowledgeGraph';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import { embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
 import type { RAGContext } from '@/lib/rag/ragPipeline';
@@ -242,6 +243,7 @@ export async function POST(req: Request) {
     let ragCtx: RAGContext | null = null;
     try {
         const sig = body.input.input_signature;
+        hydrateVKGFromDatabase(supabase).catch(() => {/* non-fatal */});
         ragCtx = await Promise.race([
             getRAGPipeline().buildContext({
                 species: typeof sig.species === 'string' ? sig.species : 'unknown',

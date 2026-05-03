@@ -139,7 +139,9 @@ export class RAGPipeline {
   private buildVKGDifferentials(clinicalCase: VetClinicalCase): VKGDifferential[] {
     const diseaseCandidates = this.vkg.getDiseasesForSymptoms(
       clinicalCase.symptoms,
-      clinicalCase.species
+      clinicalCase.species,
+      clinicalCase.breed,
+      clinicalCase.biomarkers
     );
 
     return diseaseCandidates.slice(0, 5).map(({ disease, matchedSymptoms, score }) => {
@@ -243,6 +245,9 @@ export class RAGPipeline {
         }
         if (diff.associatedLabs.length > 0) {
           lines.push(`    Expected labs: ${diff.associatedLabs.join(', ')}`);
+        }
+        if (diff.contraindications.length > 0) {
+          lines.push(`    ⚠ Contraindications: ${diff.contraindications.join(' | ')}`);
         }
       }
       lines.push('');
