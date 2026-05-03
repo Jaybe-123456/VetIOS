@@ -68,6 +68,7 @@ export async function GET(req: Request) {
             snapshot: enrichedSnapshot,
             request_id: requestId,
         });
+        response.headers.set('Cache-Control', 's-maxage=30, stale-while-revalidate=60');
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     } catch (error) {

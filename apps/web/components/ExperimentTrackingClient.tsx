@@ -46,7 +46,7 @@ export function ExperimentTrackingClient({
             });
         };
 
-        const interval = window.setInterval(refresh, 15_000);
+        const interval = window.setInterval(refresh, 30_000);
         window.addEventListener('focus', refresh);
         document.addEventListener('visibilitychange', refresh);
         return () => {
