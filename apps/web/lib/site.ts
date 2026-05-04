@@ -1,6 +1,6 @@
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/auth/callback'];
-const PUBLIC_MARKETING_PATHS = ['/', '/platform'];
+const PUBLIC_MARKETING_PATHS = ['/', '/platform', '/privacy', '/terms', '/docs', '/support', '/contact'];
 const PUBLIC_METADATA_PATHS = ['/robots.txt', '/sitemap.xml', '/manifest.webmanifest', '/icon.svg'];
 
 function normalizeConfiguredOrigin(value: string | null | undefined): string | null {
@@ -66,7 +66,12 @@ export function isShelllessPublicPath(pathname: string): boolean {
     return isPublicAuthPath(pathname)
         || pathname === '/'
         || pathname === '/platform'
-        || pathname.startsWith('/platform/');
+        || pathname.startsWith('/platform/')
+        || pathname === '/privacy'
+        || pathname === '/terms'
+        || pathname === '/docs'
+        || pathname === '/support'
+        || pathname === '/contact';
 }
 
 export function shouldRedirectPreviewAuthHost(hostname: string, pathname: string): boolean {

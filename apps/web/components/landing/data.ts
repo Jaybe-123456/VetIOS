@@ -11,7 +11,7 @@ export const navigationItems = [
     { label: 'Architecture', href: '#architecture' },
     { label: 'Modules', href: '#modules' },
     { label: 'System', href: '#system' },
-    { label: 'Docs', href: '/platform' },
+    { label: 'Docs', href: '/docs' },
     { label: 'Contact', href: 'mailto:johnbruce12g@gmail.com' },
 ] as const;
 
@@ -190,8 +190,8 @@ export const footerLinks = [
     { label: 'Docs', href: '/platform' },
     { label: 'Privacy Policy', href: '/privacy' },
     { label: 'Terms of Service', href: '/terms' },
-    { label: 'Support', href: 'mailto:johnbruce12g@gmail.com' },
-    { label: 'Contact', href: 'mailto:platform@vetios.tech' },
+    { label: 'Support', href: '/support' },
+    { label: 'Contact', href: '/contact' },
 ] as const;
 
 export const networkPoints = [
