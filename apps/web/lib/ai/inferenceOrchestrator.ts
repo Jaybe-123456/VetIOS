@@ -25,6 +25,9 @@ export interface OrchestratorParams {
     model: string;
     rawInput: string | Record<string, unknown>;
     inputMode: InputMode;
+    tenantId?: string;
+    patientId?: string | null;
+    inferenceEventId?: string | null;
 }
 
 interface InferencePipelineDiagnosis {
