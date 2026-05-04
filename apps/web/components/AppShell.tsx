@@ -116,7 +116,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 </header>
 
                 {/* ── Main content ── */}
-                <main className="flex-1 overflow-auto bg-background safe-bottom">
+                <main className="flex-1 overflow-hidden bg-background safe-bottom">
                     {children}
                 </main>
             </div>

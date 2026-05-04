@@ -18,7 +18,7 @@ export const viewport = {
   maximumScale: 5,
   themeColor: '#0a0a0a',
   colorScheme: 'dark',
-  interactiveWidget: 'resizes-content',
+  interactiveWidget: 'resizes-visual',
 };
 
 export const metadata: Metadata = {

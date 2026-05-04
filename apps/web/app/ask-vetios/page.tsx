@@ -278,7 +278,7 @@ return (
                     <ChatContainer onFollowUp={handleFollowUp} />
 
                     {/* Input */}
-                    <div className="shrink-0 border-t border-white/5 bg-[#080808]">
+                    <div className="shrink-0 border-t-2 border-accent/20 bg-[#060606] relative z-10">
                         <ChatInput onSend={sendMessage} disabled={isLoading} />
                     </div>
                 </div>
