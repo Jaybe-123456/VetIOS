@@ -10,6 +10,7 @@
  */
 
 import type { AgentRole } from '@vetios/gaas';
+import { runCounterfactualChallengerAgent } from '@/lib/counterfactual/counterfactualDiagnosticAgent';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -19,6 +20,7 @@ export type AgentSpecialty =
   | 'treatment'
   | 'lab_interpretation'
   | 'imaging'
+  | 'counterfactual_challenger'
   | 'synthesis'
   | 'outcome_followup'
   | 'learning';
@@ -81,6 +83,10 @@ export interface SynthesisOutput {
   clinicalNarrative: string;
   safetyFlags: string[];
   outcomeFollowupSchedule: Array<{ timepoint: string; action: string }>;
+  diagnosticStabilityVerdict: 'stable' | 'fragile' | 'unstable' | 'indeterminate' | null;
+  diagnosticStabilityScore: number | null;
+  topLoadBearingFinding: string | null;
+  counterfactualSummary: string | null;
 }
 
 // ─── Individual Agent Runners ─────────────────────────────────
@@ -342,6 +348,9 @@ function synthesiseOutputs(
   if (treatment?.summary) narrativeParts.push(`Treatment: ${treatment.summary}`);
   if (safetyFlags.length > 0) narrativeParts.push(`Safety flags: ${safetyFlags.join('; ')}`);
 
+  const challenger = completed.find((t) => t.specialty === 'counterfactual_challenger')?.output;
+  const cfFindings = challenger?.findings as Record<string, unknown> | undefined;
+
   return {
     primaryDiagnosis,
     calibratedConfidence,
@@ -353,6 +362,10 @@ function synthesiseOutputs(
     clinicalNarrative: narrativeParts.join('. ') || 'Multi-agent assessment complete.',
     safetyFlags,
     outcomeFollowupSchedule,
+    diagnosticStabilityVerdict: (cfFindings?.stabilityVerdict as 'stable' | 'fragile' | 'unstable' | 'indeterminate') ?? null,
+    diagnosticStabilityScore: typeof cfFindings?.stabilityScore === 'number' ? cfFindings.stabilityScore : null,
+    topLoadBearingFinding: typeof cfFindings?.topLoadBearingFinding === 'string' ? cfFindings.topLoadBearingFinding : null,
+    counterfactualSummary: typeof challenger?.summary === 'string' ? challenger.summary : null,
   };
 }
 
@@ -419,6 +432,18 @@ export class MultiAgentOrchestrator {
 
     tasks.push(...parallelTasks);
     trace.push(`parallel_agents:completed (${parallelTasks.filter((t) => t.status === 'completed').length}/${parallelTasks.length})`);
+
+    // ── Phase 2.5: Counterfactual Challenger (Tier 4) ──
+    trace.push('counterfactual_challenger:start');
+    const diagnosticTask = parallelTasks.find((t) => t.specialty === 'diagnostic');
+    const diagnosticPrimary = (diagnosticTask?.output?.findings as Record<string, unknown>)
+      ?.primary_condition_class as string | null ?? null;
+    const challengerTask = await this.runTask(
+      'counterfactual_challenger',
+      () => runCounterfactualChallengerAgent(input, diagnosticPrimary, sessionId, input.tenantId)
+    );
+    tasks.push(challengerTask);
+    trace.push(`counterfactual_challenger:${challengerTask.status}`);
 
     // ── Phase 3: Synthesis ──
     trace.push('synthesis:start');
