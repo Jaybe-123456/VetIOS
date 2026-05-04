@@ -188,6 +188,8 @@ export const endpointCards = [
 
 export const footerLinks = [
     { label: 'Docs', href: '/platform' },
+    { label: 'Privacy Policy', href: '/privacy' },
+    { label: 'Terms of Service', href: '/terms' },
     { label: 'Support', href: 'mailto:johnbruce12g@gmail.com' },
     { label: 'Contact', href: 'mailto:platform@vetios.tech' },
 ] as const;
