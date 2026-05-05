@@ -278,7 +278,7 @@ export default function DeveloperPlatformOperationsClient({
                             <DataRow label="Company" value={latestRequest.company_name} />
                             <DataRow label="Contact" value={latestRequest.contact_name} />
                             <DataRow label="Email" value={latestRequest.contact_email} />
-                            <DataRow label="Status" value={latestRequest.status.toUpperCase()} tone={latestRequest.status === 'pending' ? 'warning' : 'accent'} />
+                            <DataRow label="Status" value={latestRequest.status.toUpperCase()} tone={latestRequest.status === 'requested' || latestRequest.status === 'reviewing' ? 'warning' : 'accent'} />
                             <DataRow label="Products" value={latestRequest.requested_products.join(', ') || 'NO DATA'} />
                             <DataRow label="Scopes" value={latestRequest.requested_scopes.join(', ') || 'NO DATA'} tone="accent" />
                         </>
