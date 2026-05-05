@@ -327,7 +327,7 @@ function InstallationRow({ installation }: { installation: PassiveConnectorInsta
 }
 
 function AttemptRow({ attempt }: { attempt: PassiveSignalOperationsSnapshot['recent_delivery_attempts'][number] }) {
-    const isOk = attempt.status === 'success' || attempt.status === 'delivered';
+    const isOk = attempt.status === 'succeeded';
     return (
         <div className={`border p-4 rounded-sm ${isOk ? 'border-accent/20 bg-accent/[0.03]' : 'border-warning/20 bg-warning/[0.03]'}`}>
             <div className="flex items-center gap-2 mb-2">
