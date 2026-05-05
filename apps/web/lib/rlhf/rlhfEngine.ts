@@ -441,7 +441,7 @@ export class RLHFEngine {
         inferenceEventId: input.inferenceEventId,
         species: input.species,
         breed: input.breed ?? null,
-        region: (input.extractedFeatures?.region as string) ?? null,
+        region: typeof input.extractedFeatures?.region === 'string' ? input.extractedFeatures.region : null,
         confirmedDiagnosis: input.actualDiagnosis!,
       });
       return true;
