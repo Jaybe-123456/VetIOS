@@ -1,7 +1,7 @@
 'use client';
 
 import type { CSSProperties, ReactNode, ChangeEvent } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, {
     Background,
     Controls,
@@ -66,6 +66,11 @@ export default function IntelligenceControlGraphClient() {
     const [simulationBusy, setSimulationBusy] = useState(false);
     const [simulationModeError, setSimulationModeError] = useState<string | null>(null);
     const [pageVisible, setPageVisible] = useState(true);
+    const snapshotRef = useRef<TopologySnapshot | null>(null);
+
+    useEffect(() => {
+        snapshotRef.current = snapshot;
+    }, [snapshot]);
 
     useEffect(() => {
         const handleVisibilityChange = () => {
@@ -119,14 +124,26 @@ export default function IntelligenceControlGraphClient() {
 
         setStreamStatus('connecting');
         setStreamError(null);
+        let fallbackRequested = false;
+        const requestSnapshotFallback = () => {
+            if (fallbackRequested || snapshotRef.current) return;
+            fallbackRequested = true;
+            void loadHistoricalSnapshot('24h');
+        };
         const source = new EventSource('/intelligence/stream?window=24h');
 
         source.onmessage = (event: MessageEvent) => {
-            const payload = JSON.parse(event.data) as TopologyStreamPayload;
-            setSnapshot(payload.snapshot);
-            setReplayMarkers(payload.snapshot.playback.event_timeline);
-            setStreamStatus('live');
-            setStreamError(null);
+            try {
+                const payload = JSON.parse(event.data) as TopologyStreamPayload;
+                setSnapshot(payload.snapshot);
+                setReplayMarkers(payload.snapshot.playback.event_timeline);
+                setStreamStatus('live');
+                setStreamError(null);
+            } catch {
+                setStreamStatus('disconnected');
+                setStreamError('Malformed topology stream payload');
+                requestSnapshotFallback();
+            }
         };
 
         source.addEventListener('stream-error', (event) => {
@@ -138,11 +155,13 @@ export default function IntelligenceControlGraphClient() {
                 setStreamError('Topology stream failure');
             }
             setStreamStatus('disconnected');
+            requestSnapshotFallback();
         });
 
         source.onerror = () => {
             setStreamStatus('disconnected');
             setStreamError('STREAM DISCONNECTED');
+            requestSnapshotFallback();
         };
 
         return () => {
@@ -200,10 +219,20 @@ export default function IntelligenceControlGraphClient() {
         return () => clearInterval(interval);
     }, [mode, replayPlaying, replayMarkers]);
 
+    useEffect(() => {
+        if (!snapshot) return;
+        if (selectedNodeId && !snapshot.nodes.some((node) => node.id === selectedNodeId)) {
+            setSelectedNodeId(null);
+        }
+        if (selectedEdgeId && !snapshot.edges.some((edge) => edge.id === selectedEdgeId)) {
+            setSelectedEdgeId(null);
+        }
+    }, [snapshot, selectedNodeId, selectedEdgeId]);
+
     const selectedNode = snapshot?.nodes.find((node) => node.id === selectedNodeId) ?? null;
     const selectedEdge = snapshot?.edges.find((edge) => edge.id === selectedEdgeId) ?? null;
     const selectedSimulationTargetNode = snapshot?.nodes.find((node) => node.id === simulationTarget) ?? null;
-    const graphNodes = (snapshot?.nodes ?? []).map<Node>((node) => ({
+    const graphNodes = useMemo(() => (snapshot?.nodes ?? []).map<Node>((node) => ({
         id: node.id,
         type: 'topologyNode',
         position: node.position,
@@ -213,29 +242,40 @@ export default function IntelligenceControlGraphClient() {
         },
         draggable: false,
         selectable: true,
-    }));
-    const graphEdges = (snapshot?.edges ?? []).map<Edge>((edge) => ({
-        id: edge.id,
-        source: edge.source,
-        target: edge.target,
-        label: edge.requests_per_min != null ? `${edge.requests_per_min.toFixed(1)}/min` : 'NO DATA',
-        animated: edge.animated,
-        selectable: true,
-        markerEnd: {
-            type: MarkerType.ArrowClosed,
-            color: edgeStrokeColor(edge),
-        },
-        style: {
-            stroke: edgeStrokeColor(edge),
-            strokeWidth: edgeStrokeWidth(edge),
-            opacity: edge.propagated_risk ? 1 : 0.9,
-        },
-        labelStyle: {
-            fill: '#9ca3af',
-            fontSize: 10,
-            fontFamily: 'monospace',
-        },
-    }));
+    })), [snapshot, selectedNodeId]);
+    const graphEdges = useMemo(() => (snapshot?.edges ?? []).map<Edge>((edge) => {
+        const selected = edge.id === selectedEdgeId;
+
+        return {
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            label: edge.requests_per_min != null ? `${edge.requests_per_min.toFixed(1)}/min` : 'NO DATA',
+            animated: edge.animated,
+            selectable: true,
+            interactionWidth: 24,
+            markerEnd: {
+                type: MarkerType.ArrowClosed,
+                color: edgeStrokeColor(edge),
+            },
+            style: {
+                stroke: edgeStrokeColor(edge),
+                strokeWidth: selected ? Math.max(4, edgeStrokeWidth(edge) + 1) : edgeStrokeWidth(edge),
+                opacity: selected || edge.propagated_risk ? 1 : 0.9,
+            },
+            labelStyle: {
+                fill: selected ? '#e5e7eb' : '#9ca3af',
+                fontSize: 10,
+                fontFamily: 'monospace',
+            },
+            labelShowBg: true,
+            labelBgStyle: {
+                fill: '#050505',
+                fillOpacity: selected ? 0.95 : 0.72,
+            },
+            labelBgPadding: [4, 2],
+        };
+    }), [snapshot, selectedEdgeId]);
 
     return (
         <Container className="max-w-[1500px]">
@@ -323,7 +363,7 @@ export default function IntelligenceControlGraphClient() {
 
             {(streamError || historicalLoading) && (
                 <div className={`mb-4 sm:mb-6 p-3 border font-mono text-xs ${streamError ? 'border-danger bg-danger/5 text-danger' : 'border-grid text-muted'}`}>
-                    {streamError ?? 'Loading historical topology snapshot...'}
+                    {streamError ?? 'Loading topology snapshot...'}
                 </div>
             )}
 
@@ -350,8 +390,22 @@ export default function IntelligenceControlGraphClient() {
                                 setSelectedEdgeId(edge.id);
                                 setSelectedNodeId(null);
                             }}
+                            onSelectionChange={({ nodes, edges }) => {
+                                const node = nodes[0];
+                                const edge = edges[0];
+                                if (node) {
+                                    setSelectedNodeId(node.id);
+                                    setSelectedEdgeId(null);
+                                    return;
+                                }
+                                if (edge) {
+                                    setSelectedEdgeId(edge.id);
+                                    setSelectedNodeId(null);
+                                }
+                            }}
                             nodesDraggable={false}
                             nodesConnectable={false}
+                            elementsSelectable
                             className="bg-background"
                         >
                             <Background color="#111827" gap={22} size={1} />

@@ -170,6 +170,8 @@ const MIN_SIMULATION_EVENTS_FOR_ERROR_RATE = 3;
 const MAX_TOPOLOGY_TELEMETRY_EVENTS = 400;
 const MAX_TOPOLOGY_FALLBACK_TELEMETRY_EVENTS = 200;
 const MAX_TOPOLOGY_WORKLOAD_EVENTS = 160;
+const MAX_TOPOLOGY_OPERATIONAL_INFERENCE_EVENTS = 240;
+const MAX_TOPOLOGY_OPERATIONAL_OUTCOME_EVENTS = 240;
 const MAX_TOPOLOGY_CLINICAL_CASES = 600;
 const MAX_TOPOLOGY_EVALUATION_EVENTS = 400;
 
@@ -245,8 +247,9 @@ export async function getTopologySnapshot(
     const experimentStore = createSupabaseExperimentTrackingStore(client);
     const learningStore = createSupabaseLearningEngineStore(client);
 
-    const [telemetryRows, caseRows, controlPlane, simulations, evaluationLoad, latestSourceTimestamps] = await Promise.all([
+    const [telemetryRows, operationalTelemetryRows, caseRows, controlPlane, simulations, evaluationLoad, latestSourceTimestamps] = await Promise.all([
         loadTelemetryEvents(client, tenantId, from, until),
+        loadOperationalTelemetryRows(client, tenantId, from, until),
         loadClinicalCases(client, tenantId, from, until),
         getModelRegistryControlPlaneSnapshot(experimentStore, tenantId),
         loadSimulationEvents(learningStore, {
@@ -262,7 +265,7 @@ export async function getTopologySnapshot(
         loadLatestSourceTimestamps(client, tenantId),
     ]);
 
-    const telemetryEvents = telemetryRows.map(mapTelemetryEvent);
+    const telemetryEvents = mergeTelemetryRows(telemetryRows, operationalTelemetryRows).map(mapTelemetryEvent);
     const evaluations = evaluationLoad.events;
     const diagnostics = buildDiagnosticsState({
         until,
@@ -442,13 +445,18 @@ function buildNodes(input: {
         },
     });
 
+    const latestCaseUpdate = findLatestTimestamp(input.caseRows.map((row) => row.updated_at));
+    const caseStatusTimestamp = input.caseRows.length > 0 && latestCaseUpdate && isStale(latestCaseUpdate, input.until)
+        ? input.until.toISOString()
+        : latestCaseUpdate;
+
     const clinicNode = createNode({
         id: 'clinic_network',
         kind: 'clinic',
         state: applyOverride({
             status: resolveNodeStatus({
                 hasData: input.caseRows.length > 0,
-                lastUpdated: findLatestTimestamp(input.caseRows.map((row) => row.updated_at)),
+                lastUpdated: caseStatusTimestamp,
                 latency: percentile(globalLatencyValues, 95),
                 errorRate: ratio(invalidCaseCount, input.caseRows.length),
                 drift: globalDrift,
@@ -462,7 +470,7 @@ function buildNodes(input: {
             error_rate: ratio(invalidCaseCount, input.caseRows.length),
             drift_score: globalDrift,
             confidence_avg: mean(caseConfidence),
-            last_updated: findLatestTimestamp(input.caseRows.map((row) => row.updated_at)),
+            last_updated: latestCaseUpdate,
         }, input.nodeOverrides.get('clinic_network'), input.until),
         governance: null,
         metadata: {
@@ -478,7 +486,7 @@ function buildNodes(input: {
         state: applyOverride({
             status: resolveNodeStatus({
                 hasData: input.caseRows.length > 0,
-                lastUpdated: findLatestTimestamp(input.caseRows.map((row) => row.updated_at)),
+                lastUpdated: caseStatusTimestamp,
                 latency: datasetLatencyEstimate(globalLatencyValues, invalidCaseCount, input.caseRows.length),
                 errorRate: ratio(invalidCaseCount, input.caseRows.length),
                 drift: globalDrift,
@@ -492,7 +500,7 @@ function buildNodes(input: {
             error_rate: ratio(invalidCaseCount, input.caseRows.length),
             drift_score: globalDrift,
             confidence_avg: mean(caseConfidence),
-            last_updated: findLatestTimestamp(input.caseRows.map((row) => row.updated_at)),
+            last_updated: latestCaseUpdate,
         }, input.nodeOverrides.get('dataset_hub'), input.until),
         governance: null,
         metadata: {
@@ -505,38 +513,49 @@ function buildNodes(input: {
         const nodeId = FAMILY_TO_NODE[familyContext.family];
         const governance = buildGovernanceState(familyContext.group);
         const hasActiveRoute = familyContext.group.active_model != null;
-        const recentInferenceEvents = familyContext.inference_events.filter((event) => !isStale(event.timestamp, input.until));
+        const windowInferenceEvents = familyContext.inference_events;
+        const recentInferenceEvents = windowInferenceEvents.filter((event) => !isStale(event.timestamp, input.until));
+        const metricInferenceEvents = recentInferenceEvents.length > 0 ? recentInferenceEvents : windowInferenceEvents;
         const liveInferenceCount = recentInferenceEvents.length;
+        const windowInferenceCount = windowInferenceEvents.length;
         const observabilityState = liveInferenceCount > 0
             ? 'LIVE'
-            : hasActiveRoute
-                ? 'NO_DATA'
-                : 'UNROUTED';
-        const latencyValues = recentInferenceEvents
+            : windowInferenceCount > 0
+                ? 'STALE'
+                : hasActiveRoute
+                    ? 'NO_DATA'
+                    : 'UNROUTED';
+        const latencyValues = metricInferenceEvents
             .map((event) => event.metrics.latency_ms)
             .filter((value): value is number => value != null && value <= 5_000);
-        const confidenceValues = recentInferenceEvents
+        const confidenceValues = metricInferenceEvents
             .map((event) => event.metrics.confidence)
             .filter((value): value is number => value != null);
         const recentEvaluations = familyContext.evaluations.filter((evaluation) => !isStale(evaluation.created_at, input.until));
-        const errorRate = calculateInferenceErrorRate(recentInferenceEvents, recentEvaluations);
+        const metricEvaluations = recentEvaluations.length > 0 ? recentEvaluations : familyContext.evaluations;
+        const errorRate = calculateInferenceErrorRate(metricInferenceEvents, metricEvaluations);
         const drift = familyContext.evaluation_drift;
-        const lastInferenceUpdate = findLatestTimestamp(familyContext.inference_events.map((event) => event.timestamp));
+        const lastInferenceUpdate = findLatestTimestamp(windowInferenceEvents.map((event) => event.timestamp));
         const lastLiveInferenceUpdate = findLatestTimestamp(recentInferenceEvents.map((event) => event.timestamp));
         const lastUpdated = lastLiveInferenceUpdate
             ?? lastInferenceUpdate
             ?? familyContext.group.active_model?.updated_at
             ?? familyContext.group.entries[0]?.registry.updated_at
             ?? null;
+        const statusTimestamp = liveInferenceCount > 0
+            ? lastLiveInferenceUpdate
+            : windowInferenceCount > 0
+                ? input.until.toISOString()
+                : lastUpdated;
 
         return createNode({
             id: nodeId,
             kind: 'model',
             state: applyOverride({
-                status: liveInferenceCount > 0
+                status: windowInferenceCount > 0
                     ? resolveNodeStatus({
                         hasData: true,
-                        lastUpdated,
+                        lastUpdated: statusTimestamp,
                         latency: percentile(latencyValues, 95),
                         errorRate,
                         drift,
@@ -552,7 +571,7 @@ function buildNodes(input: {
                         telemetryStreamConnected: input.diagnostics.telemetry_stream_connected,
                     }),
                 latency: percentile(latencyValues, 95),
-                throughput: roundNumber(recentInferenceEvents.length / windowMinutes, 2),
+                throughput: roundNumber(windowInferenceEvents.length / windowMinutes, 2),
                 error_rate: errorRate,
                 drift_score: drift,
                 confidence_avg: mean(confidenceValues),
@@ -606,33 +625,42 @@ function buildNodes(input: {
         id: 'outcome_feedback',
         kind: 'outcome',
         state: applyOverride((() => {
-            const recentOutcomeEvents = totalOutcomeEvents.filter((event) => !isStale(event.timestamp, input.until));
+            const windowOutcomeEvents = totalOutcomeEvents;
+            const recentOutcomeEvents = windowOutcomeEvents.filter((event) => !isStale(event.timestamp, input.until));
             const recentEvaluationEvents = totalEvaluationEvents.filter((event) => !isStale(event.created_at, input.until));
-            const recentAccuracy = recentEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_ERROR_RATE
-                ? ratio(recentEvaluationEvents.filter((event) => event.prediction_correct === true).length, recentEvaluationEvents.length)
+            const metricOutcomeEvents = recentOutcomeEvents.length > 0 ? recentOutcomeEvents : windowOutcomeEvents;
+            const metricEvaluationEvents = recentEvaluationEvents.length > 0 ? recentEvaluationEvents : totalEvaluationEvents;
+            const recentAccuracy = metricEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_ERROR_RATE
+                ? ratio(metricEvaluationEvents.filter((event) => event.prediction_correct === true).length, metricEvaluationEvents.length)
                 : null;
-            const lastOutcomeUpdate = findLatestTimestamp(totalOutcomeEvents.map((event) => event.timestamp));
+            const lastOutcomeUpdate = findLatestTimestamp(windowOutcomeEvents.map((event) => event.timestamp));
             const lastRecentOutcomeUpdate = findLatestTimestamp(recentOutcomeEvents.map((event) => event.timestamp));
+            const outcomeLatency = outcomeLoopLatency(totalInferenceEvents, metricOutcomeEvents);
+            const statusTimestamp = recentOutcomeEvents.length > 0
+                ? lastRecentOutcomeUpdate
+                : windowOutcomeEvents.length > 0
+                    ? input.until.toISOString()
+                    : lastOutcomeUpdate;
             return {
-                status: recentOutcomeEvents.length > 0
-                ? resolveNodeStatus({
-                    hasData: true,
-                    lastUpdated: lastRecentOutcomeUpdate,
-                    latency: outcomeLoopLatency(totalInferenceEvents.filter((event) => !isStale(event.timestamp, input.until)), recentOutcomeEvents),
-                    errorRate: recentAccuracy != null ? 1 - recentAccuracy : null,
-                    drift: globalDrift,
-                    confidence: recentAccuracy,
-                    governanceFailure: false,
-                    governancePending: false,
-                    now: input.until,
-                })
-                : input.diagnostics.telemetry_stream_connected
-                    ? 'healthy'
-                    : 'degraded',
-                latency: outcomeLoopLatency(totalInferenceEvents.filter((event) => !isStale(event.timestamp, input.until)), recentOutcomeEvents),
-                throughput: roundNumber(recentOutcomeEvents.length / windowMinutes, 2),
+                status: windowOutcomeEvents.length > 0
+                    ? resolveNodeStatus({
+                        hasData: true,
+                        lastUpdated: statusTimestamp,
+                        latency: outcomeLatency,
+                        errorRate: recentAccuracy != null ? 1 - recentAccuracy : null,
+                        drift: globalDrift,
+                        confidence: recentAccuracy,
+                        governanceFailure: false,
+                        governancePending: false,
+                        now: input.until,
+                    })
+                    : input.diagnostics.telemetry_stream_connected
+                        ? 'healthy'
+                        : 'degraded',
+                latency: outcomeLatency,
+                throughput: roundNumber(windowOutcomeEvents.length / windowMinutes, 2),
                 error_rate: recentAccuracy != null ? 1 - recentAccuracy : null,
-                drift_score: recentEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? globalDrift : null,
+                drift_score: metricEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? globalDrift : null,
                 confidence_avg: recentAccuracy,
                 last_updated: lastRecentOutcomeUpdate ?? lastOutcomeUpdate,
             };
@@ -642,7 +670,11 @@ function buildNodes(input: {
             linked_outcomes: totalEvaluationEvents.length,
             raw_outcomes: totalOutcomeEvents.length,
             drift_state: totalEvaluationEvents.length >= MIN_EVALUATION_EVENTS_FOR_DRIFT ? 'READY' : 'INSUFFICIENT_DATA',
-            observability_state: totalOutcomeEvents.some((event) => !isStale(event.timestamp, input.until)) ? 'LIVE' : 'NO_DATA',
+            observability_state: totalOutcomeEvents.some((event) => !isStale(event.timestamp, input.until))
+                ? 'LIVE'
+                : totalOutcomeEvents.length > 0
+                    ? 'STALE'
+                    : 'NO_DATA',
         },
     });
 
@@ -650,35 +682,45 @@ function buildNodes(input: {
         id: 'simulation_cluster',
         kind: 'simulation',
         state: applyOverride((() => {
-            const recentSimulations = input.simulations.filter((event) => !isStale(event.created_at, input.until));
-            const recentSimulationTelemetry = simulationTelemetry.filter((event) => !isStale(event.timestamp, input.until));
+            const windowSimulations = input.simulations;
+            const windowSimulationTelemetry = simulationTelemetry;
+            const recentSimulations = windowSimulations.filter((event) => !isStale(event.created_at, input.until));
+            const recentSimulationTelemetry = windowSimulationTelemetry.filter((event) => !isStale(event.timestamp, input.until));
+            const metricSimulations = recentSimulations.length > 0 ? recentSimulations : windowSimulations;
+            const metricSimulationTelemetry = recentSimulationTelemetry.length > 0 ? recentSimulationTelemetry : windowSimulationTelemetry;
             const lastSimulationUpdate = findLatestTimestamp([
-                ...input.simulations.map((event) => event.created_at),
-                ...simulationTelemetry.map((event) => event.timestamp),
+                ...windowSimulations.map((event) => event.created_at),
+                ...windowSimulationTelemetry.map((event) => event.timestamp),
             ]);
             const lastRecentSimulationUpdate = findLatestTimestamp([
                 ...recentSimulations.map((event) => event.created_at),
                 ...recentSimulationTelemetry.map((event) => event.timestamp),
             ]);
             const simulationLatency = percentile(
-                recentSimulationTelemetry
+                metricSimulationTelemetry
                     .map((event) => event.metrics.latency_ms)
                     .filter((value): value is number => value != null && value <= 5_000),
                 95,
             );
             const simulationConfidence = mean(
-                recentSimulationTelemetry
+                metricSimulationTelemetry
                     .map((event) => event.metrics.confidence)
                     .filter((value): value is number => value != null),
             );
-            const simulationErrorRate = calculateSimulationErrorRate(recentSimulations);
+            const simulationErrorRate = calculateSimulationErrorRate(metricSimulations);
             const hasRecentSimulationSignal = recentSimulations.length > 0 || recentSimulationTelemetry.length > 0;
+            const hasWindowSimulationSignal = windowSimulations.length > 0 || windowSimulationTelemetry.length > 0;
+            const statusTimestamp = hasRecentSimulationSignal
+                ? lastRecentSimulationUpdate
+                : hasWindowSimulationSignal
+                    ? input.until.toISOString()
+                    : lastSimulationUpdate;
 
             return {
-                status: hasRecentSimulationSignal
+                status: hasWindowSimulationSignal
                     ? resolveNodeStatus({
                         hasData: true,
-                        lastUpdated: lastRecentSimulationUpdate,
+                        lastUpdated: statusTimestamp,
                         latency: simulationLatency,
                         errorRate: simulationErrorRate,
                         drift: maxValue(familyNodes.map((node) => node.state.drift_score)),
@@ -691,9 +733,9 @@ function buildNodes(input: {
                         ? 'healthy'
                         : 'degraded',
                 latency: simulationLatency,
-                throughput: roundNumber(recentSimulations.length / windowMinutes, 2),
+                throughput: roundNumber(windowSimulations.length / windowMinutes, 2),
                 error_rate: simulationErrorRate,
-                drift_score: hasRecentSimulationSignal ? maxValue(familyNodes.map((node) => node.state.drift_score)) : null,
+                drift_score: hasWindowSimulationSignal ? maxValue(familyNodes.map((node) => node.state.drift_score)) : null,
                 confidence_avg: simulationConfidence,
                 last_updated: lastRecentSimulationUpdate ?? lastSimulationUpdate,
             };
@@ -707,7 +749,9 @@ function buildNodes(input: {
             observability_state: input.simulations.some((event) => !isStale(event.created_at, input.until))
                 || simulationTelemetry.some((event) => !isStale(event.timestamp, input.until))
                 ? 'LIVE'
-                : 'NO_DATA',
+                : input.simulations.length > 0 || simulationTelemetry.length > 0
+                    ? 'STALE'
+                    : 'NO_DATA',
         },
     });
 
@@ -917,6 +961,9 @@ function finalizeNodes(
         if (node.kind === 'model' && observabilityState === 'NO_DATA') {
             recommendations.push('No routed traffic in the active window; displaying registry readiness until live telemetry arrives.');
         }
+        if (node.kind === 'model' && observabilityState === 'STALE') {
+            recommendations.push('Using active-window telemetry; no new routed traffic has arrived inside the heartbeat window.');
+        }
         if (node.kind === 'model' && observabilityState === 'UNROUTED') {
             recommendations.push('No active governed route is configured for this model family yet.');
         }
@@ -930,6 +977,7 @@ function finalizeNodes(
             recommendations.push(`Router shifted ${routingShiftCount} case(s) away from the requested/default path.`);
         }
         const routingErrors = [
+            ...(node.kind === 'model' && observabilityState === 'STALE' ? ['No fresh inference heartbeat for this family; panel values are from the active topology window.'] : []),
             ...(node.kind === 'model' && observabilityState === 'NO_DATA' ? ['No live inference telemetry observed in the active window.'] : []),
             ...(node.kind === 'model' && observabilityState === 'UNROUTED' ? ['No active governed route is configured, so this family is excluded from live routing.'] : []),
             ...(fallbackCount > 0 ? [`Routing fallback engaged ${fallbackCount} time(s) in this window.`] : []),
@@ -1365,7 +1413,7 @@ function buildFamilyContexts(
 
     return families.map((family) => {
         const versions = allVersionFamilies.get(family.model_family) ?? new Set<string>();
-        const familyInference = inferenceEvents.filter((event) => resolveEventFamily(event.model_version, allVersionFamilies, families) === family.model_family);
+        const familyInference = inferenceEvents.filter((event) => resolveEventFamily(event, allVersionFamilies, families) === family.model_family);
         const modelVersions = Array.from(versions);
         const familyEvaluations = evaluations.filter((evaluation) =>
             evaluation.trigger_type !== 'simulation'
@@ -1776,10 +1824,19 @@ function isSyntheticTelemetryEvent(event: ControlGraphTelemetryEvent) {
 }
 
 function resolveEventFamily(
-    modelVersion: string,
+    event: ControlGraphTelemetryEvent,
     versionLookup: Map<ModelFamily, Set<string>>,
     families: Awaited<ReturnType<typeof getModelRegistryControlPlaneSnapshot>>['families'],
 ): ModelFamily {
+    const explicitFamily = readModelFamily(event.metadata.routing_model_family)
+        ?? readModelFamily(event.metadata.model_family)
+        ?? readModelFamily(event.metadata.family);
+    if (explicitFamily) return explicitFamily;
+
+    const modelVersion = readString(event.metadata.routing_selected_model_version)
+        ?? readString(event.metadata.selected_model_version)
+        ?? event.model_version;
+
     for (const [familyKey, versions] of versionLookup.entries()) {
         if (versions.has(modelVersion)) {
             const exactFamily = families.find((family) => family.model_family === familyKey);
@@ -1791,6 +1848,11 @@ function resolveEventFamily(
     if (normalized.includes('vision')) return 'vision';
     if (normalized.includes('therapeut')) return 'therapeutics';
     return 'diagnostics';
+}
+
+function readModelFamily(value: unknown): ModelFamily | null {
+    if (value === 'diagnostics' || value === 'vision' || value === 'therapeutics') return value;
+    return null;
 }
 
 async function loadTelemetryEvents(
@@ -1879,6 +1941,331 @@ async function loadTelemetryEvents(
             const rightTimestamp = readString(right[C.timestamp]) ?? '';
             return leftTimestamp.localeCompare(rightTimestamp);
         });
+}
+
+async function loadOperationalTelemetryRows(
+    client: SupabaseClient,
+    tenantId: string,
+    from: Date,
+    until: Date,
+) {
+    const [inferenceRows, outcomeRows] = await Promise.all([
+        loadOperationalInferenceRows(client, tenantId, from, until),
+        loadOperationalOutcomeRows(client, tenantId, from, until),
+    ]);
+
+    return buildOperationalTelemetryRows(inferenceRows, outcomeRows);
+}
+
+async function loadOperationalInferenceRows(
+    client: SupabaseClient,
+    tenantId: string,
+    from: Date,
+    until: Date,
+): Promise<Record<string, unknown>[]> {
+    const C = AI_INFERENCE_EVENTS.COLUMNS;
+    const { data, error } = await client
+        .from(AI_INFERENCE_EVENTS.TABLE)
+        .select([
+            C.id,
+            C.tenant_id,
+            C.clinic_id,
+            C.case_id,
+            C.source_module,
+            C.model_name,
+            C.model_version,
+            C.output_payload,
+            C.confidence_score,
+            C.uncertainty_metrics,
+            C.inference_latency_ms,
+            C.compute_profile,
+            C.blocked,
+            C.flagged,
+            C.flag_reason,
+            C.blocked_reason,
+            C.created_at,
+        ].join(','))
+        .eq(C.tenant_id, tenantId)
+        .gte(C.created_at, from.toISOString())
+        .lte(C.created_at, until.toISOString())
+        .order(C.created_at, { ascending: false })
+        .limit(MAX_TOPOLOGY_OPERATIONAL_INFERENCE_EVENTS);
+
+    if (error) {
+        if (isMissingRelationError(error.message) || isTransientTopologyLoadError(error.message)) {
+            return [];
+        }
+        console.error('[topology] operational inference fallback unavailable', error.message);
+        return [];
+    }
+
+    return (data ?? [])
+        .map((row) => asRecord(row))
+        .filter((row) => readString(row[C.source_module]) !== 'adversarial_simulation');
+}
+
+async function loadOperationalOutcomeRows(
+    client: SupabaseClient,
+    tenantId: string,
+    from: Date,
+    until: Date,
+): Promise<Record<string, unknown>[]> {
+    const C = CLINICAL_OUTCOME_EVENTS.COLUMNS;
+    const { data, error } = await client
+        .from(CLINICAL_OUTCOME_EVENTS.TABLE)
+        .select([
+            C.id,
+            C.tenant_id,
+            C.clinic_id,
+            C.case_id,
+            C.source_module,
+            C.inference_event_id,
+            C.outcome_type,
+            C.outcome_payload,
+            C.outcome_timestamp,
+            C.label_type,
+            C.created_at,
+        ].join(','))
+        .eq(C.tenant_id, tenantId)
+        .gte(C.outcome_timestamp, from.toISOString())
+        .lte(C.outcome_timestamp, until.toISOString())
+        .order(C.outcome_timestamp, { ascending: false })
+        .limit(MAX_TOPOLOGY_OPERATIONAL_OUTCOME_EVENTS);
+
+    if (error) {
+        if (isMissingRelationError(error.message) || isTransientTopologyLoadError(error.message)) {
+            return [];
+        }
+        console.error('[topology] operational outcome fallback unavailable', error.message);
+        return [];
+    }
+
+    return (data ?? [])
+        .map((row) => asRecord(row))
+        .filter((row) => readString(row[C.source_module]) !== 'adversarial_simulation');
+}
+
+function buildOperationalTelemetryRows(
+    inferenceRows: Record<string, unknown>[],
+    outcomeRows: Record<string, unknown>[],
+) {
+    const I = AI_INFERENCE_EVENTS.COLUMNS;
+    const inferenceById = new Map<string, Record<string, unknown>>();
+    for (const row of inferenceRows) {
+        const id = readString(row[I.id]);
+        if (id) inferenceById.set(id, row);
+    }
+
+    return [
+        ...inferenceRows.map(mapOperationalInferenceRowToTelemetryRow),
+        ...outcomeRows.map((row) => mapOperationalOutcomeRowToTelemetryRow(row, inferenceById)),
+    ].sort((left, right) => {
+        const T = TELEMETRY_EVENTS.COLUMNS;
+        const leftTimestamp = readString(left[T.timestamp]) ?? '';
+        const rightTimestamp = readString(right[T.timestamp]) ?? '';
+        return leftTimestamp.localeCompare(rightTimestamp);
+    });
+}
+
+export function buildOperationalTelemetryRowsForTest(input: {
+    inferenceRows: Record<string, unknown>[];
+    outcomeRows: Record<string, unknown>[];
+}) {
+    return buildOperationalTelemetryRows(input.inferenceRows, input.outcomeRows);
+}
+
+function mapOperationalInferenceRowToTelemetryRow(row: Record<string, unknown>): Record<string, unknown> {
+    const I = AI_INFERENCE_EVENTS.COLUMNS;
+    const T = TELEMETRY_EVENTS.COLUMNS;
+    const id = readString(row[I.id]) ?? sourceRowKey('inference', row[I.created_at]);
+    const outputPayload = asRecord(row[I.output_payload]);
+    const telemetry = asRecord(outputPayload.telemetry);
+    const computeProfile = asRecord(row[I.compute_profile]);
+    const uncertainty = asRecord(row[I.uncertainty_metrics]);
+    const modelVersion = readString(row[I.model_version])
+        ?? readString(telemetry.model_version)
+        ?? 'unknown';
+    const timestamp = readString(row[I.created_at]) ?? new Date().toISOString();
+
+    return {
+        [T.event_id]: topologyInferenceTelemetryEventId(id),
+        [T.tenant_id]: readString(row[I.tenant_id]) ?? '',
+        [T.linked_event_id]: null,
+        [T.source_id]: id,
+        [T.source_table]: AI_INFERENCE_EVENTS.TABLE,
+        [T.event_type]: 'inference',
+        [T.timestamp]: timestamp,
+        [T.model_version]: modelVersion,
+        [T.run_id]: readString(telemetry.run_id) ?? modelVersion,
+        [T.metrics]: {
+            latency_ms: readNumber(row[I.inference_latency_ms]) ?? readNumber(telemetry.latency_ms),
+            confidence: readNumber(row[I.confidence_score]) ?? readNumber(telemetry.confidence),
+            prediction: extractTopologyPredictionLabel(outputPayload),
+            ground_truth: null,
+            correct: null,
+        },
+        [T.system]: {
+            cpu: readNumber(computeProfile.cpu) ?? readNumber(computeProfile.cpu_utilization) ?? readNumber(telemetry.cpu),
+            gpu: readNumber(computeProfile.gpu) ?? readNumber(computeProfile.gpu_utilization) ?? readNumber(telemetry.gpu),
+            memory: readNumber(computeProfile.memory) ?? readNumber(computeProfile.memory_utilization) ?? readNumber(telemetry.memory),
+        },
+        [T.metadata]: compactMetadata({
+            ...routingMetadataFromTelemetry(telemetry),
+            source_module: readString(row[I.source_module]) ?? 'ai_inference_events',
+            telemetry_bridge: AI_INFERENCE_EVENTS.TABLE,
+            inference_event_id: id,
+            clinic_id: readString(row[I.clinic_id]),
+            case_id: readString(row[I.case_id]),
+            blocked: readBoolean(row[I.blocked]) ?? false,
+            flagged: readBoolean(row[I.flagged]) ?? false,
+            flag_reason: readString(row[I.flag_reason]),
+            blocked_reason: readString(row[I.blocked_reason]),
+            uncertainty_state: readString(uncertainty.state),
+        }),
+    };
+}
+
+function mapOperationalOutcomeRowToTelemetryRow(
+    row: Record<string, unknown>,
+    inferenceById: Map<string, Record<string, unknown>>,
+): Record<string, unknown> {
+    const O = CLINICAL_OUTCOME_EVENTS.COLUMNS;
+    const I = AI_INFERENCE_EVENTS.COLUMNS;
+    const T = TELEMETRY_EVENTS.COLUMNS;
+    const id = readString(row[O.id]) ?? sourceRowKey('outcome', row[O.created_at]);
+    const inferenceId = readString(row[O.inference_event_id]);
+    const inferenceRow = inferenceId ? inferenceById.get(inferenceId) ?? null : null;
+    const inferenceOutput = asRecord(inferenceRow?.[I.output_payload]);
+    const telemetry = asRecord(inferenceOutput.telemetry);
+    const outcomePayload = asRecord(row[O.outcome_payload]);
+    const modelVersion = readString(inferenceRow?.[I.model_version])
+        ?? readString(telemetry.model_version)
+        ?? readString(outcomePayload.model_version)
+        ?? 'unknown';
+    const prediction = extractTopologyPredictionLabel(inferenceOutput);
+    const groundTruth = extractTopologyOutcomeGroundTruth(outcomePayload);
+    const explicitCorrect = readBoolean(outcomePayload.correct) ?? readBoolean(outcomePayload.prediction_correct);
+    const timestamp = readString(row[O.outcome_timestamp])
+        ?? readString(row[O.created_at])
+        ?? new Date().toISOString();
+    const labelType = readString(row[O.label_type]);
+
+    return {
+        [T.event_id]: topologyOutcomeTelemetryEventId(id),
+        [T.tenant_id]: readString(row[O.tenant_id]) ?? '',
+        [T.linked_event_id]: inferenceId ? topologyInferenceTelemetryEventId(inferenceId) : null,
+        [T.source_id]: id,
+        [T.source_table]: CLINICAL_OUTCOME_EVENTS.TABLE,
+        [T.event_type]: 'outcome',
+        [T.timestamp]: timestamp,
+        [T.model_version]: modelVersion,
+        [T.run_id]: readString(telemetry.run_id) ?? modelVersion,
+        [T.metrics]: {
+            latency_ms: null,
+            confidence: null,
+            prediction,
+            ground_truth: groundTruth,
+            correct: explicitCorrect ?? (prediction && groundTruth ? topologyLabelsEqual(prediction, groundTruth) : null),
+        },
+        [T.system]: {
+            cpu: null,
+            gpu: null,
+            memory: null,
+        },
+        [T.metadata]: compactMetadata({
+            ...routingMetadataFromTelemetry(telemetry),
+            source_module: readString(row[O.source_module]) ?? 'clinical_outcome_events',
+            telemetry_bridge: CLINICAL_OUTCOME_EVENTS.TABLE,
+            inference_event_id: inferenceId,
+            outcome_event_id: id,
+            outcome_type: readString(row[O.outcome_type]),
+            clinic_id: readString(row[O.clinic_id]),
+            case_id: readString(row[O.case_id]),
+            label_type: labelType,
+            synthetic: labelType === 'synthetic',
+        }),
+    };
+}
+
+function mergeTelemetryRows(
+    telemetryRows: Record<string, unknown>[],
+    fallbackRows: Record<string, unknown>[],
+) {
+    const C = TELEMETRY_EVENTS.COLUMNS;
+    const mergedRows = new Map<string, Record<string, unknown>>();
+    for (const row of [...telemetryRows, ...fallbackRows]) {
+        const eventId = readString(row[C.event_id]);
+        if (!eventId || mergedRows.has(eventId)) continue;
+        mergedRows.set(eventId, row);
+    }
+
+    return Array.from(mergedRows.values())
+        .sort((left, right) => {
+            const leftTimestamp = readString(left[C.timestamp]) ?? '';
+            const rightTimestamp = readString(right[C.timestamp]) ?? '';
+            return leftTimestamp.localeCompare(rightTimestamp);
+        });
+}
+
+function routingMetadataFromTelemetry(telemetry: Record<string, unknown>) {
+    const metadata: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(telemetry)) {
+        if (key.startsWith('routing_') || key === 'model_family' || key === 'family') {
+            metadata[key] = value;
+        }
+    }
+    return metadata;
+}
+
+function extractTopologyPredictionLabel(outputPayload: Record<string, unknown>) {
+    const diagnosis = asRecord(outputPayload.diagnosis);
+    const topDifferentials = Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials
+        : Array.isArray(outputPayload.top_differentials)
+            ? outputPayload.top_differentials
+            : [];
+    const topDiagnosis = asRecord(topDifferentials[0]);
+
+    return readString(topDiagnosis.name)
+        ?? readString(diagnosis.primary_condition_class)
+        ?? readString(diagnosis.condition_class)
+        ?? readString(outputPayload.top_diagnosis)
+        ?? readString(outputPayload.predicted_diagnosis)
+        ?? readString(outputPayload.prediction)
+        ?? readString(outputPayload.primary_condition_class);
+}
+
+function extractTopologyOutcomeGroundTruth(outcomePayload: Record<string, unknown>) {
+    const diagnosis = asRecord(outcomePayload.diagnosis);
+    return readString(outcomePayload.ground_truth)
+        ?? readString(outcomePayload.actual_diagnosis)
+        ?? readString(outcomePayload.confirmed_diagnosis)
+        ?? readString(outcomePayload.diagnosis)
+        ?? readString(diagnosis.name)
+        ?? readString(diagnosis.primary_condition_class)
+        ?? readString(outcomePayload.primary_condition_class)
+        ?? readString(outcomePayload.condition_class);
+}
+
+function topologyLabelsEqual(left: string, right: string) {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
+}
+
+function topologyInferenceTelemetryEventId(id: string) {
+    return `evt_inference_${id}`;
+}
+
+function topologyOutcomeTelemetryEventId(id: string) {
+    return `evt_outcome_${id}`;
+}
+
+function sourceRowKey(prefix: string, timestamp: unknown) {
+    const suffix = readString(timestamp)?.replace(/\W+/g, '_') ?? 'unknown';
+    return `${prefix}_${suffix}`;
+}
+
+function compactMetadata(input: Record<string, unknown>) {
+    return Object.fromEntries(Object.entries(input).filter(([, value]) => value != null));
 }
 
 async function loadClinicalCases(

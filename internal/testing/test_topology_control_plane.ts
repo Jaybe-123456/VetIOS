@@ -8,6 +8,7 @@ import {
     classifyTopologyControlPlaneState,
     computeTopologyDriftSignal,
     computeTopologyNetworkHealth,
+    buildOperationalTelemetryRowsForTest,
 } from '../../apps/web/lib/intelligence/topologyService.ts';
 import type { TopologyNodeSnapshot } from '../../apps/web/lib/intelligence/types.ts';
 import {
@@ -31,11 +32,16 @@ class InMemorySupabaseClient {
 class InMemoryMutationBuilder {
     private pendingRow: Record<string, unknown> | null = null;
     private selectedColumns: string | null = null;
+    private readonly tables: Map<string, Record<string, unknown>[]>;
+    private readonly table: string;
 
     constructor(
-        private readonly tables: Map<string, Record<string, unknown>[]>,
-        private readonly table: string,
-    ) {}
+        tables: Map<string, Record<string, unknown>[]>,
+        table: string,
+    ) {
+        this.tables = tables;
+        this.table = table;
+    }
 
     insert(row: Record<string, unknown>) {
         const record = { ...row };
@@ -337,6 +343,58 @@ async function main() {
     assert.equal(telemetryRows[4]?.event_type, 'system');
     assert.equal(telemetryRows[4]?.metadata?.action, 'heartbeat');
     assert.equal(telemetryRows[5]?.event_type, 'system');
+
+    const directOperationalRows = buildOperationalTelemetryRowsForTest({
+        inferenceRows: [{
+            id: 'inf_direct_bridge',
+            tenant_id: tenantId,
+            clinic_id: 'clinic-a',
+            case_id: 'case-a',
+            source_module: 'inference_console',
+            model_name: 'VetIOS Vision',
+            model_version: 'vision-v3',
+            output_payload: {
+                diagnosis: {
+                    top_differentials: [{ name: 'Retinal disease' }],
+                },
+                telemetry: {
+                    run_id: 'vision-run-3',
+                    routing_model_family: 'vision',
+                    routing_selected_model_id: 'vision-primary',
+                },
+            },
+            confidence_score: 0.91,
+            inference_latency_ms: 321,
+            compute_profile: {
+                cpu: 0.42,
+                memory: 0.55,
+            },
+            blocked: false,
+            flagged: false,
+            created_at: new Date().toISOString(),
+        }],
+        outcomeRows: [{
+            id: 'out_direct_bridge',
+            tenant_id: tenantId,
+            clinic_id: 'clinic-a',
+            case_id: 'case-a',
+            source_module: 'outcome_learning',
+            inference_event_id: 'inf_direct_bridge',
+            outcome_type: 'diagnosis_confirmed',
+            outcome_payload: {
+                ground_truth: 'Retinal disease',
+            },
+            outcome_timestamp: new Date().toISOString(),
+            label_type: 'confirmed',
+            created_at: new Date().toISOString(),
+        }],
+    });
+    const bridgedInference = directOperationalRows.find((row) => row['event_id'] === 'evt_inference_inf_direct_bridge');
+    const bridgedOutcome = directOperationalRows.find((row) => row['event_id'] === 'evt_outcome_out_direct_bridge');
+    assert.equal((bridgedInference?.['metadata'] as Record<string, unknown>).routing_model_family, 'vision');
+    assert.equal((bridgedInference?.['metrics'] as Record<string, unknown>).latency_ms, 321);
+    assert.equal(bridgedOutcome?.['linked_event_id'], 'evt_inference_inf_direct_bridge');
+    assert.equal((bridgedOutcome?.['metrics'] as Record<string, unknown>).correct, true);
 
     const driftReady = computeTopologyDriftSignal([
         { prediction: 'Parvovirus', ground_truth: 'Parvovirus' },
