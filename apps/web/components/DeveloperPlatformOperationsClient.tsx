@@ -358,7 +358,7 @@ function SelectField({
 }
 
 function OnboardingRequestRow({ request }: { request: PartnerOnboardingRequestRecord }) {
-    const isPending = request.status === 'pending';
+    const isPending = request.status === 'requested' || request.status === 'reviewing';
     return (
         <div className={`border p-4 rounded-sm ${isPending ? 'border-warning/25 bg-warning/[0.03]' : 'border-accent/20 bg-accent/[0.03]'}`}>
             <div className="flex items-center gap-2 mb-2">
