@@ -171,14 +171,14 @@ interface PassiveSignalActionResponse {
                         <Field label="Interval Hours"><TerminalInput value={installDraft.interval_hours} onChange={(event: ChangeEvent<HTMLInputElement>) => setInstallDraft((current) => ({ ...current, interval_hours: event.target.value }))} /></Field>
                     </div>
                     {selectedTemplate ? (
-                        <div className="mt-4 border border-grid p-4">
-                            <div className="font-mono text-sm text-foreground">{selectedTemplate.label}</div>
-                            <div className="mt-2 font-mono text-xs text-muted">{selectedTemplate.summary}</div>
-                            <div className="mt-3 grid gap-2 md:grid-cols-2">
-                                <DataRow label="Vendor" value={selectedTemplate.vendor_name} />
+                        <div className="mt-4 border border-accent/30 bg-accent/5 p-4 rounded-sm">
+                            <div className="font-mono text-sm text-white font-medium">{selectedTemplate.label}</div>
+                            <div className="mt-1.5 font-mono text-xs text-white/60 leading-5">{selectedTemplate.summary}</div>
+                            <div className="mt-3 grid gap-0 md:grid-cols-2">
+                                <DataRow label="Vendor" value={selectedTemplate.vendor_name} tone="accent" />
                                 <DataRow label="Sync mode" value={selectedTemplate.sync_mode} />
                                 <DataRow label="Auth" value={selectedTemplate.auth_strategy} />
-                                <DataRow label="Schedule" value={selectedTemplate.sample_schedule ?? 'MANUAL'} />
+                                <DataRow label="Schedule" value={selectedTemplate.sample_schedule ?? 'MANUAL'} tone="accent" />
                             </div>
                         </div>
                     ) : null}
@@ -286,12 +286,12 @@ interface PassiveSignalActionResponse {
 
 function SummaryCard({ icon, label, value, tone = 'neutral' }: { icon: ReactNode; label: string; value: number; tone?: 'neutral' | 'warning' }) {
     return (
-        <ConsoleCard className={tone === 'warning' ? 'border-warning/30 text-warning' : undefined}>
+        <ConsoleCard className={tone === 'warning' ? 'border-warning/30' : 'border-accent/20'}>
             <div className="flex items-center justify-between">
-                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{label}</div>
-                <div>{icon}</div>
+                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/50">{label}</div>
+                <div className={tone === 'warning' ? 'text-warning' : 'text-accent'}>{icon}</div>
             </div>
-            <div className="font-mono text-3xl">{value}</div>
+            <div className={`font-mono text-3xl font-bold ${tone === 'warning' && value > 0 ? 'text-warning' : 'text-white'}`}>{value}</div>
         </ConsoleCard>
     );
 }
@@ -306,10 +306,15 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 
 function InstallationRow({ installation }: { installation: PassiveConnectorInstallationSnapshot }) {
     return (
-        <div className="border border-grid p-4">
-            <div className="font-mono text-sm text-foreground">{installation.installation_name}</div>
-            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
-                {installation.vendor_name ?? 'NO VENDOR'} / {installation.sync_mode} / {installation.status}
+        <div className="border border-accent/20 bg-accent/[0.03] p-4 rounded-sm">
+            <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                <div className="font-mono text-sm text-white font-medium">{installation.installation_name}</div>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-accent/80 border border-accent/20 bg-accent/10 px-2 py-0.5 rounded-full">{installation.vendor_name ?? 'NO VENDOR'}</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/60 border border-white/10 px-2 py-0.5 rounded-full">{installation.sync_mode}</span>
+                <span className={`font-mono text-[10px] uppercase tracking-[0.18em] border px-2 py-0.5 rounded-full ${installation.status === 'active' ? 'text-accent border-accent/30 bg-accent/10' : 'text-white/40 border-white/10'}`}>{installation.status}</span>
             </div>
             <div className="mt-3 grid gap-2 md:grid-cols-2">
                 <DataRow label="Marketplace" value={installation.marketplace_template?.label ?? 'CUSTOM'} />
@@ -322,11 +327,16 @@ function InstallationRow({ installation }: { installation: PassiveConnectorInsta
 }
 
 function AttemptRow({ attempt }: { attempt: PassiveSignalOperationsSnapshot['recent_delivery_attempts'][number] }) {
+    const isOk = attempt.status === 'success' || attempt.status === 'delivered';
     return (
-        <div className="border border-grid p-4">
-            <div className="font-mono text-sm text-foreground">{attempt.connector_installation_id ?? 'NO INSTALLATION'}</div>
-            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
-                {attempt.status} / attempt {attempt.attempt_no}
+        <div className={`border p-4 rounded-sm ${isOk ? 'border-accent/20 bg-accent/[0.03]' : 'border-warning/20 bg-warning/[0.03]'}`}>
+            <div className="flex items-center gap-2 mb-2">
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isOk ? 'bg-accent' : 'bg-warning'}`} />
+                <div className="font-mono text-sm text-white font-medium truncate">{attempt.connector_installation_id ?? 'NO INSTALLATION'}</div>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+                <span className={`font-mono text-[10px] uppercase tracking-[0.18em] border px-2 py-0.5 rounded-full ${isOk ? 'text-accent border-accent/30 bg-accent/10' : 'text-warning border-warning/30 bg-warning/10'}`}>{attempt.status}</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/50 border border-white/10 px-2 py-0.5 rounded-full">attempt {attempt.attempt_no}</span>
             </div>
             <div className="mt-3 grid gap-x-6 gap-y-1 grid-cols-1 md:grid-cols-2 min-w-0">
                 <DataRow label="Started" value={formatTimestamp(attempt.started_at)} />
