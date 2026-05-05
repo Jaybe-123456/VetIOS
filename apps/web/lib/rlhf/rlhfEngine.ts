@@ -19,6 +19,7 @@ import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import { getLongitudinalService } from '@/lib/longitudinal/longitudinalPatientService';
 import { getPopulationSignalService } from '@/lib/populationSignal/populationSignalService';
 import { getCausalEngine } from '@/lib/causal/causalEngine';
+import { getZoonoticBridgeEngine } from '@/lib/oneHealth/zoonoticBridgeEngine';
 import { getLivingCaseMemory } from '@/lib/causal/livingCaseMemory';
 
 // ─── Types ───────────────────────────────────────────────────
@@ -65,6 +66,7 @@ export interface RLHFResult {
   activeLearningFlagged: boolean;
   causalObservationRecorded: boolean;
   livingNodeUpdated: boolean;
+  zoonoticSignalIngested: boolean;
   impactDelta: number;
   summary: string;
 }
@@ -93,6 +95,7 @@ export class RLHFEngine {
   private longitudinalService = getLongitudinalService();
   private populationSignal = getPopulationSignalService();
   private causalEngine = getCausalEngine();
+  private zoonoticEngine = getZoonoticBridgeEngine();
   private livingCaseMemory = getLivingCaseMemory();
 
   /**
@@ -111,6 +114,7 @@ export class RLHFEngine {
     let activeLearningFlagged = false;
     let causalObservationRecorded = false;
     let livingNodeUpdated = false;
+    let zoonoticSignalIngested = false;
 
     // ── 1. Persist raw feedback record ──
     await this.persistFeedback(feedbackId, input, impactDelta);
@@ -161,6 +165,11 @@ export class RLHFEngine {
       livingNodeUpdated = await this.updateLivingNode(input);
     }
 
+    // ── 10. Zoonotic bridge check (Tier 2: One Health) ──
+    if (isOutcomeFeedback && input.actualDiagnosis) {
+      zoonoticSignalIngested = await this.checkZoonoticBridge(input);
+    }
+
     const summary = this.buildSummary(input, {
       reinforcementApplied,
       calibrationUpdated,
@@ -170,6 +179,7 @@ export class RLHFEngine {
       activeLearningFlagged,
       causalObservationRecorded,
       livingNodeUpdated,
+      zoonoticSignalIngested,
       impactDelta,
     });
 
@@ -184,6 +194,7 @@ export class RLHFEngine {
       activeLearningFlagged,
       causalObservationRecorded,
       livingNodeUpdated,
+      zoonoticSignalIngested,
       impactDelta,
       summary,
     };
@@ -423,6 +434,20 @@ export class RLHFEngine {
     } catch { return false; }
   }
 
+  private async checkZoonoticBridge(input: VetFeedbackInput): Promise<boolean> {
+    try {
+      await this.zoonoticEngine.assess({
+        tenantId: input.tenantId,
+        inferenceEventId: input.inferenceEventId,
+        species: input.species,
+        breed: input.breed ?? null,
+        region: (input.extractedFeatures?.region as string) ?? null,
+        confirmedDiagnosis: input.actualDiagnosis!,
+      });
+      return true;
+    } catch { return false; }
+  }
+
   private buildSummary(
     input: VetFeedbackInput,
     results: {
@@ -434,6 +459,7 @@ export class RLHFEngine {
       activeLearningFlagged: boolean;
       causalObservationRecorded: boolean;
       livingNodeUpdated: boolean;
+      zoonoticSignalIngested: boolean;
       impactDelta: number;
     }
   ): string {
@@ -448,6 +474,7 @@ export class RLHFEngine {
     if (results.populationSignalIngested) applied.push('population signal ingested');
     if (results.activeLearningFlagged) applied.push('flagged for active learning');
     if (results.causalObservationRecorded) applied.push('causal observation recorded');
+    if (results.zoonoticSignalIngested) applied.push('zoonotic bridge checked');
     if (results.livingNodeUpdated) applied.push('living patient node updated');
 
     if (applied.length > 0) parts.push(`Systems updated: ${applied.join(', ')}.`);
