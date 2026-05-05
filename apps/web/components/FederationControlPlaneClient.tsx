@@ -137,7 +137,7 @@ interface FederationActionResponse {
                     </div>
 
                     <div className="space-y-3">
-                        <div className="font-mono text-xs text-muted">
+                        <div className="font-mono text-xs text-white/55 leading-5 border-l-2 border-accent/30 pl-3">
                             Coordinator policy now governs who may participate, whether allow-listed clinics auto-enroll, and when the next federation round can run.
                         </div>
                         <div className="flex flex-wrap gap-2">
@@ -249,18 +249,18 @@ interface FederationActionResponse {
                 </ConsoleCard>
 
                 <ConsoleCard title="Governance Status">
-                    <DataRow label="Enrollment mode" value={governanceState.policy.enrollment_mode} />
-                    <DataRow label="Auto enroll" value={governanceState.policy.auto_enroll_enabled ? 'ON' : 'OFF'} />
+                    <DataRow label="Enrollment mode" value={governanceState.policy.enrollment_mode} tone="accent" />
+                    <DataRow label="Auto enroll" value={governanceState.policy.auto_enroll_enabled ? 'ON' : 'OFF'} tone={governanceState.policy.auto_enroll_enabled ? 'accent' : 'muted'} />
                     <DataRow label="Approved tenants" value={String(governanceState.policy.approved_tenant_ids.length)} />
-                    <DataRow label="Missing approved" value={String(missingApprovedTenants.length)} />
-                    <DataRow label="Auto rounds" value={governanceState.policy.auto_run_rounds ? 'ON' : 'OFF'} />
+                    <DataRow label="Missing approved" value={String(missingApprovedTenants.length)} tone={missingApprovedTenants.length > 0 ? 'warning' : undefined} />
+                    <DataRow label="Auto rounds" value={governanceState.policy.auto_run_rounds ? 'ON' : 'OFF'} tone={governanceState.policy.auto_run_rounds ? 'accent' : 'muted'} />
                     <DataRow label="Round interval" value={`${governanceState.policy.round_interval_hours}h`} />
                     <DataRow label="Next round due" value={formatTimestamp(governanceState.automation.next_round_due_at)} />
                     <DataRow label="Last automation" value={formatTimestamp(governanceState.automation.last_automation_run_at)} />
                     <DataRow label="Minimum participants" value={String(governanceState.policy.minimum_participants)} />
-                    <DataRow label="Benchmark gate" value={formatPercentThreshold(governanceState.policy.minimum_benchmark_pass_rate)} />
-                    <DataRow label="Calibration gate" value={formatPercentThreshold(governanceState.policy.maximum_calibration_avg_ece)} />
-                    <DataRow label="Shadow participants" value={governanceState.policy.allow_shadow_participants ? 'ALLOWED' : 'BLOCKED'} />
+                    <DataRow label="Benchmark gate" value={formatPercentThreshold(governanceState.policy.minimum_benchmark_pass_rate)} tone={governanceState.policy.minimum_benchmark_pass_rate == null ? 'muted' : 'accent'} />
+                    <DataRow label="Calibration gate" value={formatPercentThreshold(governanceState.policy.maximum_calibration_avg_ece)} tone={governanceState.policy.maximum_calibration_avg_ece == null ? 'muted' : 'accent'} />
+                    <DataRow label="Shadow participants" value={governanceState.policy.allow_shadow_participants ? 'ALLOWED' : 'BLOCKED'} tone={governanceState.policy.allow_shadow_participants ? 'accent' : 'muted'} />
                     {governanceState.automation.last_automation_error ? (
                         <div className="mt-4 border border-danger/30 bg-danger/10 px-4 py-3 font-mono text-xs text-danger">
                             {governanceState.automation.last_automation_error}
@@ -294,12 +294,12 @@ interface FederationActionResponse {
 
 function SummaryCard({ icon, label, value, tone = 'neutral' }: { icon: ReactNode; label: string; value: number; tone?: 'neutral' | 'warning' }) {
     return (
-        <ConsoleCard className={tone === 'warning' ? 'border-warning/30 text-warning' : undefined}>
+        <ConsoleCard className={tone === 'warning' ? 'border-warning/30' : 'border-accent/20'}>
             <div className="flex items-center justify-between">
-                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{label}</div>
-                <div>{icon}</div>
+                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/50">{label}</div>
+                <div className={tone === 'warning' ? 'text-warning' : 'text-accent'}>{icon}</div>
             </div>
-            <div className="font-mono text-3xl">{value}</div>
+            <div className={`font-mono text-3xl font-bold ${tone === 'warning' && value > 0 ? 'text-warning' : 'text-white'}`}>{value}</div>
         </ConsoleCard>
     );
 }
@@ -313,17 +313,24 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 }
 
 function EmptyState({ text }: { text: string }) {
-    return <div className="font-mono text-xs text-muted">{text}</div>;
+    return <div className="font-mono text-xs text-white/40 italic py-2">{text}</div>;
 }
 
 function MembershipRow({ membership }: { membership: FederationMembershipRecord }) {
     return (
-        <div className="border border-grid p-4">
-            <div className="font-mono text-sm text-foreground">{membership.federation_key}</div>
-            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{membership.status} / {membership.participation_mode} / weight {membership.weight}</div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
-                <DataRow label="Tenant" value={membership.tenant_id} />
-                <DataRow label="Coordinator" value={membership.coordinator_tenant_id} />
+        <div className="border border-accent/20 bg-accent/[0.03] p-4 rounded-sm">
+            <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                <div className="font-mono text-sm text-white font-medium">{membership.federation_key}</div>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+                <span className={`font-mono text-[10px] uppercase tracking-[0.18em] border px-2 py-0.5 rounded-full ${membership.status === 'active' ? 'text-accent border-accent/30 bg-accent/10' : 'text-white/40 border-white/10'}`}>{membership.status}</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/60 border border-white/10 px-2 py-0.5 rounded-full">{membership.participation_mode}</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/50 border border-white/10 px-2 py-0.5 rounded-full">weight {membership.weight}</span>
+            </div>
+            <div className="grid gap-0">
+                <DataRow label="Tenant" value={<span className="font-mono text-[11px] break-all">{membership.tenant_id}</span>} />
+                <DataRow label="Coordinator" value={<span className="font-mono text-[11px] break-all">{membership.coordinator_tenant_id}</span>} />
                 <DataRow label="Last Snapshot" value={formatTimestamp(membership.last_snapshot_at)} />
                 <DataRow label="Updated" value={formatTimestamp(membership.updated_at)} />
             </div>
@@ -333,10 +340,13 @@ function MembershipRow({ membership }: { membership: FederationMembershipRecord 
 
 function SnapshotRow({ snapshot }: { snapshot: FederationControlPlaneSnapshot['recent_site_snapshots'][number] }) {
     return (
-        <div className="border border-grid p-4">
-            <div className="font-mono text-sm text-foreground">{snapshot.federation_key}</div>
-            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{snapshot.tenant_id} / dataset {snapshot.dataset_version ?? 'NO DATA'}</div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <div className="border border-accent/20 bg-accent/[0.03] p-4 rounded-sm">
+            <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                <div className="font-mono text-sm text-white font-medium">{snapshot.federation_key}</div>
+            </div>
+            <div className="font-mono text-[10px] text-white/45 mb-3 break-all">{snapshot.tenant_id} · dataset {snapshot.dataset_version ?? 'NO DATA'}</div>
+            <div className="grid gap-0 md:grid-cols-2">
                 <DataRow label="Rows" value={snapshot.total_dataset_rows.toLocaleString('en-US')} />
                 <DataRow label="Benchmarks" value={String(snapshot.benchmark_reports)} />
                 <DataRow label="Calibrations" value={String(snapshot.calibration_reports)} />
@@ -347,27 +357,37 @@ function SnapshotRow({ snapshot }: { snapshot: FederationControlPlaneSnapshot['r
 }
 
 function RoundRow({ round }: { round: FederationRoundRecord }) {
+    const isDone = round.status === 'completed';
     return (
-        <div className="border border-grid p-4">
-            <div className="font-mono text-sm text-foreground">{round.round_key}</div>
-            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{round.federation_key} / {round.status}</div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <div className={`border p-4 rounded-sm ${isDone ? 'border-accent/20 bg-accent/[0.03]' : 'border-white/10 bg-white/[0.02]'}`}>
+            <div className="flex items-center gap-2 mb-2">
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isDone ? 'bg-accent' : 'bg-white/30'}`} />
+                <div className="font-mono text-sm text-white font-medium">{round.round_key}</div>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/50 border border-white/10 px-2 py-0.5 rounded-full">{round.federation_key}</span>
+                <span className={`font-mono text-[10px] uppercase tracking-[0.18em] border px-2 py-0.5 rounded-full ${isDone ? 'text-accent border-accent/30 bg-accent/10' : 'text-white/40 border-white/10'}`}>{round.status}</span>
+            </div>
+            <div className="grid gap-0 md:grid-cols-2">
                 <DataRow label="Participants" value={String(round.participant_count)} />
                 <DataRow label="Aggregate Rows" value={String(round.aggregate_payload.aggregate_dataset_rows ?? 0)} />
                 <DataRow label="Completed" value={formatTimestamp(round.completed_at)} />
                 <DataRow label="Benchmark Pass Rate" value={formatPercent(round.aggregate_payload.benchmark_pass_rate)} />
             </div>
-            {round.notes ? <div className="mt-3 font-mono text-xs text-muted">{round.notes}</div> : null}
+            {round.notes ? <div className="mt-3 font-mono text-xs text-white/45">{round.notes}</div> : null}
         </div>
     );
 }
 
 function ArtifactRow({ artifact }: { artifact: ModelDeltaArtifactRecord }) {
     return (
-        <div className="border border-grid p-4">
-            <div className="font-mono text-sm text-foreground">{artifact.task_type} / {artifact.artifact_role}</div>
-            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{artifact.model_version ?? 'NO MODEL VERSION'}</div>
-            <div className="mt-3 grid gap-2 md:grid-cols-2">
+        <div className="border border-accent/20 bg-accent/[0.03] p-4 rounded-sm">
+            <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                <div className="font-mono text-sm text-white font-medium">{artifact.task_type} / {artifact.artifact_role}</div>
+            </div>
+            <div className="font-mono text-[10px] text-white/45 mb-3">{artifact.model_version ?? 'NO MODEL VERSION'}</div>
+            <div className="grid gap-0 md:grid-cols-2">
                 <DataRow label="Round" value={artifact.federation_round_id} />
                 <DataRow label="Tenant" value={artifact.tenant_id ?? 'aggregate'} />
                 <DataRow label="Dataset" value={artifact.dataset_version ?? 'NO DATA'} />
