@@ -2,7 +2,7 @@
 
 import { PlatformShell } from '@/components/platform/PlatformShell';
 import Link from 'next/link';
-import { ArrowLeft, Shield, Lock, Eye, FileText } from 'lucide-react';
+import { ArrowLeft, Shield, Lock, Eye, FileText, Chrome } from 'lucide-react';
 
 export default function PrivacyPage() {
     return (
@@ -78,6 +78,95 @@ export default function PrivacyPage() {
                     </div>
                 </section>
 
+                <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-8 md:p-10">
+                    <div className="flex items-start gap-4">
+                        <div className="mt-1 rounded-xl border border-blue-500/30 bg-blue-500/10 p-2.5 text-blue-400">
+                            <Chrome className="h-5 w-5" />
+                        </div>
+                        <div className="w-full">
+                            <h2 className="text-xl font-semibold text-white">Google API Services — User Data Policy</h2>
+                            <p className="mt-4 text-sm leading-7 text-slate-300">
+                                VetIOS uses Google OAuth 2.0 exclusively for user authentication. Our use of information received from Google APIs adheres to the{' '}
+                                
+                                    href="https://developers.google.com/terms/api-services-user-data-policy"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-blue-400 underline underline-offset-2 hover:text-blue-300"
+                                >
+                                    Google API Services User Data Policy
+                                </a>
+                                , including the Limited Use requirements.
+                            </p>
+
+                            <div className="mt-8 space-y-6">
+                                <div className="rounded-2xl border border-white/5 bg-white/5 p-6">
+                                    <h4 className="text-sm font-semibold uppercase tracking-wider text-white">Data Accessed</h4>
+                                    <p className="mt-3 text-sm leading-6 text-slate-400">
+                                        When you choose to sign in with Google, VetIOS requests the following scopes via Supabase Auth:
+                                    </p>
+                                    <ul className="mt-4 space-y-3">
+                                        <li className="flex gap-3 text-sm text-slate-400">
+                                            <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                                            <div><strong className="text-slate-200">Email address</strong> — your primary Google account email, used as your unique account identifier within VetIOS.</div>
+                                        </li>
+                                        <li className="flex gap-3 text-sm text-slate-400">
+                                            <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                                            <div><strong className="text-slate-200">Basic profile</strong> — your display name and profile picture URL, used to personalise your VetIOS console.</div>
+                                        </li>
+                                        <li className="flex gap-3 text-sm text-slate-400">
+                                            <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                                            <div><strong className="text-slate-200">OpenID sub-claim</strong> — a stable, Google-issued identifier used to link your Google identity to your VetIOS account record in Supabase.</div>
+                                        </li>
+                                    </ul>
+                                    <p className="mt-4 text-xs text-slate-500">
+                                        No other Google services (Drive, Calendar, Gmail, Workspace APIs, etc.) are accessed. VetIOS requests the minimum scopes necessary.
+                                    </p>
+                                </div>
+
+                                <div className="rounded-2xl border border-white/5 bg-white/5 p-6">
+                                    <h4 className="text-sm font-semibold uppercase tracking-wider text-white">Data Usage</h4>
+                                    <ul className="mt-4 space-y-3">
+                                        <li className="flex gap-3 text-sm text-slate-400">
+                                            <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                                            <div>Google user data is used <strong className="text-slate-200">solely to authenticate you</strong> and maintain your secure session on the VetIOS platform.</div>
+                                        </li>
+                                        <li className="flex gap-3 text-sm text-slate-400">
+                                            <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                                            <div>Your email and profile information are <strong className="text-slate-200">never used to train or improve VetIOS AI/ML models</strong>, and are not included in any inference, simulation, or outcome datasets.</div>
+                                        </li>
+                                        <li className="flex gap-3 text-sm text-slate-400">
+                                            <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                                            <div>Google user data is <strong className="text-slate-200">never sold, rented, or shared</strong> with third parties for advertising or any purpose outside authentication.</div>
+                                        </li>
+                                        <li className="flex gap-3 text-sm text-slate-400">
+                                            <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-400" />
+                                            <div>Access tokens issued by Google are handled entirely by Supabase Auth and are <strong className="text-slate-200">not stored in VetIOS application databases</strong> beyond the encrypted Supabase session layer.</div>
+                                        </li>
+                                    </ul>
+                                </div>
+
+                                <div className="rounded-2xl border border-white/5 bg-white/5 p-6">
+                                    <h4 className="text-sm font-semibold uppercase tracking-wider text-white">Revoking Access</h4>
+                                    <p className="mt-3 text-sm leading-6 text-slate-400">
+                                        You may revoke VetIOS's access to your Google account at any time by visiting{' '}
+                                        
+                                            href="https://myaccount.google.com/permissions"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-blue-400 underline underline-offset-2 hover:text-blue-300"
+                                        >
+                                            Google Account Permissions
+                                        </a>
+                                        . You may also contact{' '}
+                                        <span className="font-mono text-accent">privacy@vetios.tech</span>{' '}
+                                        to request deletion of your account and associated Google-sourced profile data from VetIOS systems.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                 <section className="rounded-[28px] border border-white/10 bg-white/[0.04] p-8">
                     <div className="flex items-start gap-4">
                         <div className="mt-1 rounded-xl border border-amber-400/20 bg-amber-400/10 p-2.5 text-amber-300">
@@ -100,7 +189,7 @@ export default function PrivacyPage() {
                 </section>
                 
                 <footer className="text-center text-[11px] font-mono uppercase tracking-[0.2em] text-white/30">
-                    Last Updated: May 2026 // Version 1.0
+                    Last Updated: May 2026 // Version 1.1 — Google API User Data Disclosure Added
                 </footer>
             </div>
         </PlatformShell>
