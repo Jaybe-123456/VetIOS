@@ -135,7 +135,7 @@ export default function DeveloperPlatformOperationsClient({
                         <RefreshCw className="mr-2 h-3 w-3" />
                         {refreshing ? 'Refreshing...' : 'Refresh Snapshot'}
                     </TerminalButton>
-                    <div className="font-mono text-xs text-muted">Tenant: {tenantId}</div>
+                    <div className="font-mono text-xs text-white/50 border border-white/10 px-2 py-1 rounded">Tenant: <span className="text-accent/80">{tenantId}</span></div>
                 </div>
                 <ActionStatePanel state={actionState} />
                 {generatedKey ? (
@@ -268,7 +268,7 @@ export default function DeveloperPlatformOperationsClient({
                             <OnboardingRequestRow key={request.id} request={request} />
                         ))}
                         {snapshot.onboarding_requests.length === 0 && (
-                            <div className="font-mono text-xs text-muted">No onboarding requests yet.</div>
+                            <div className="font-mono text-xs text-white/40 italic py-2">No onboarding requests yet.</div>
                         )}
                     </div>
                 </ConsoleCard>
@@ -278,12 +278,12 @@ export default function DeveloperPlatformOperationsClient({
                             <DataRow label="Company" value={latestRequest.company_name} />
                             <DataRow label="Contact" value={latestRequest.contact_name} />
                             <DataRow label="Email" value={latestRequest.contact_email} />
-                            <DataRow label="Status" value={latestRequest.status.toUpperCase()} />
+                            <DataRow label="Status" value={latestRequest.status.toUpperCase()} tone={latestRequest.status === 'pending' ? 'warning' : 'accent'} />
                             <DataRow label="Products" value={latestRequest.requested_products.join(', ') || 'NO DATA'} />
-                            <DataRow label="Scopes" value={latestRequest.requested_scopes.join(', ') || 'NO DATA'} />
+                            <DataRow label="Scopes" value={latestRequest.requested_scopes.join(', ') || 'NO DATA'} tone="accent" />
                         </>
                     ) : (
-                        <div className="font-mono text-xs text-muted">No request selected yet.</div>
+                        <div className="font-mono text-xs text-white/40 italic py-2">No request selected yet.</div>
                     )}
                 </ConsoleCard>
             </div>
@@ -303,12 +303,12 @@ function SummaryCard({
     tone?: 'neutral' | 'warning';
 }) {
     return (
-        <ConsoleCard className={tone === 'warning' ? 'border-warning/30 text-warning' : undefined}>
+        <ConsoleCard className={tone === 'warning' ? 'border-warning/30' : 'border-accent/20'}>
             <div className="flex items-center justify-between">
-                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{label}</div>
-                <div>{icon}</div>
+                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-white/50">{label}</div>
+                <div className={tone === 'warning' ? 'text-warning' : 'text-accent'}>{icon}</div>
             </div>
-            <div className="font-mono text-3xl">{value}</div>
+            <div className={`font-mono text-3xl font-bold ${tone === 'warning' && value > 0 ? 'text-warning' : 'text-white'}`}>{value}</div>
         </ConsoleCard>
     );
 }
@@ -358,13 +358,18 @@ function SelectField({
 }
 
 function OnboardingRequestRow({ request }: { request: PartnerOnboardingRequestRecord }) {
+    const isPending = request.status === 'pending';
     return (
-        <div className="border border-grid p-4">
-            <div className="font-mono text-sm text-foreground">{request.company_name}</div>
-            <div className="mt-1 font-mono text-[11px] uppercase tracking-[0.18em] text-muted">
-                {request.status} | {request.contact_email}
+        <div className={`border p-4 rounded-sm ${isPending ? 'border-warning/25 bg-warning/[0.03]' : 'border-accent/20 bg-accent/[0.03]'}`}>
+            <div className="flex items-center gap-2 mb-2">
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isPending ? 'bg-warning' : 'bg-accent'}`} />
+                <div className="font-mono text-sm text-white font-medium">{request.company_name}</div>
             </div>
-            <div className="mt-2 text-sm text-muted">{request.use_case}</div>
+            <div className="flex flex-wrap gap-2 mb-2">
+                <span className={`font-mono text-[10px] uppercase tracking-[0.18em] border px-2 py-0.5 rounded-full ${isPending ? 'text-warning border-warning/30 bg-warning/10' : 'text-accent border-accent/30 bg-accent/10'}`}>{request.status}</span>
+                <span className="font-mono text-[10px] text-white/50 border border-white/10 px-2 py-0.5 rounded-full">{request.contact_email}</span>
+            </div>
+            {request.use_case ? <div className="font-mono text-xs text-white/45 leading-5">{request.use_case}</div> : null}
         </div>
     );
 }
