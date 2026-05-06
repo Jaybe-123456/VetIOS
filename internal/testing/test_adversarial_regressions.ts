@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { extractClinicalSignals } from '../../apps/web/lib/ai/clinicalSignals.ts';
 import { detectContradictions } from '../../apps/web/lib/ai/contradictionEngine.ts';
 import { runInferencePipeline } from '../../apps/web/lib/ai/inferenceOrchestrator.ts';
+import { __moatTest } from '../../apps/web/lib/moat/service.ts';
 
 type PipelineResult = Awaited<ReturnType<typeof runInferencePipeline>>;
 
@@ -244,6 +245,20 @@ async function main() {
     assert.ok(getSpread(unknownMixed) < 0.12, 'Unknown mixed case should keep a wide differential');
     assert.equal(unknownMixed.output_payload.abstain_recommendation, true, 'Unknown mixed case should allow abstention under broad uncertainty');
     assert.ok(getEmergencyLevel(unknownMixed) === 'LOW' || getEmergencyLevel(unknownMixed) === 'MODERATE', 'Unknown mixed case should preserve severity independence');
+
+    const reptileTelemetryHigh = __moatTest.classifyTelemetryAnomaly('temperature_c', 42, 'reptile');
+    assert.equal(reptileTelemetryHigh?.type, 'high', 'Telemetry anomaly detection should flag species-scoped high temperature signals');
+    assert.equal(reptileTelemetryHigh?.severity, 'moderate', 'Telemetry high temperature should remain graded, not binary');
+
+    const teleconsultExtracted = await __moatTest.extractSymptomCodes('Owner reports vomiting, pale mucous membranes, and collapse.', 'canine');
+    assert.ok(teleconsultExtracted.includes('vomiting'), 'Teleconsult extraction should map owner text to typed vomiting code');
+    assert.ok(teleconsultExtracted.includes('pale_mucous_membranes'), 'Teleconsult extraction should map phrase to typed mucous membrane code');
+
+    const groupedPopulationSignals = __moatTest.groupPopulationSignals([
+        { region_code: 'US-CA', species: 'bovine', symptom_vector: ['fever', 'cough', 'dyspnea'], outcome_label: 'respiratory_cluster', confidence_delta: 0.3 },
+        { region_code: 'US-CA', species: 'bovine', symptom_vector: ['dyspnea', 'fever', 'cough'], outcome_label: 'respiratory_cluster', confidence_delta: 0.2 },
+    ]);
+    assert.equal(groupedPopulationSignals.size, 1, 'Outbreak grouping should canonicalize symptom signatures independent of order');
 
     console.log('Adversarial regression suite passed.');
 }

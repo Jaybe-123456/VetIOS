@@ -25,6 +25,9 @@ tags:
   - name: Models
   - name: PetPass
   - name: Usage
+  - name: Moat
+  - name: Audit
+  - name: Pharma
 paths:
   /inference/differential:
     post:
@@ -283,12 +286,293 @@ paths:
         '403': { $ref: '#/components/responses/ScopeError' }
         '429': { $ref: '#/components/responses/RateLimitError' }
         '500': { $ref: '#/components/responses/InternalError' }
+  /api/intake:
+    post:
+      tags: [Moat]
+      summary: Structured intake session with immediate differential inference
+      x-scope: inference:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IntakeSessionRequest'
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/population/contribute:
+    post:
+      tags: [Moat]
+      summary: Contribute an anonymized population learning signal from a closed case
+      x-scope: outcome:write
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/cron/population-calibration:
+    post:
+      tags: [Moat]
+      summary: Vercel cron endpoint for population confidence calibration
+      security:
+        - CronSecret: []
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/labs/recommend:
+    post:
+      tags: [Moat]
+      summary: Generate autonomous lab recommendations for an inference event
+      x-scope: inference:write
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/labs/result:
+    post:
+      tags: [Moat]
+      summary: Append a structured lab result against a recommendation
+      x-scope: outcome:write
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LabResultRequest'
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/labs/recommendations/{inference_event_id}:
+    get:
+      tags: [Moat]
+      summary: Read lab recommendations for an inference event
+      x-scope: inference:write
+      parameters:
+        - in: path
+          name: inference_event_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/adverse-event:
+    post:
+      tags: [Pharma]
+      summary: Append an adverse event signal from an outcome payload
+      x-scope: outcome:write
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/imaging/ingest:
+    post:
+      tags: [Moat]
+      summary: Passive connector ingestion for DICOM and imaging studies
+      security:
+        - PassiveConnectorKey: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [metadata]
+              properties:
+                metadata:
+                  type: string
+                  description: JSON metadata including tenant_id, patient_id, study_id, species, modality, and body_region.
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/telemetry/ingest:
+    post:
+      tags: [Moat]
+      summary: Passive connector ingestion for wearable telemetry batches
+      security:
+        - PassiveConnectorKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelemetryIngestRequest'
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/teleconsult/session:
+    post:
+      tags: [Moat]
+      summary: Create a telemedicine intake session
+      x-scope: inference:write
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/teleconsult/extract:
+    post:
+      tags: [Moat]
+      summary: Extract typed symptom codes from optional owner text for vet confirmation
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+  /api/teleconsult/stream/{session_id}:
+    get:
+      tags: [Moat]
+      summary: Server-sent inference updates for a telemedicine session
+      parameters:
+        - in: path
+          name: session_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: text/event-stream payload
+  /api/cron/outbreak-scan:
+    post:
+      tags: [Moat]
+      summary: Vercel cron endpoint for regional outbreak cluster scanning
+      security:
+        - CronSecret: []
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/outbreak/clusters:
+    get:
+      tags: [Moat]
+      summary: List active elevated or alert symptom clusters
+      security:
+        - InternalToken: []
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/outbreak/subscribe:
+    post:
+      tags: [Moat]
+      summary: Register a public health webhook subscription for outbreak alerts
+      security:
+        - InternalToken: []
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/pharma/signals:
+    get:
+      tags: [Pharma]
+      summary: Query anonymized adverse drug reaction signals
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: species
+          schema: { type: string }
+        - in: query
+          name: drug_class
+          schema: { type: string }
+        - in: query
+          name: severity
+          schema: { type: string, enum: [mild, moderate, severe, fatal] }
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+        '403': { $ref: '#/components/responses/ScopeError' }
+  /api/pharma/webhook-subscribe:
+    post:
+      tags: [Pharma]
+      summary: Register an ADR signal webhook subscription
+      responses:
+        '201': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/audit/case/{case_id}:
+    get:
+      tags: [Audit]
+      summary: Return the append-only event chain for a clinical case
+      security:
+        - InternalToken: []
+      parameters:
+        - in: path
+          name: case_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/audit/verify:
+    post:
+      tags: [Audit]
+      summary: Recompute and verify an audit chain for a clinical case
+      security:
+        - InternalToken: []
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/audit/report/{case_id}:
+    post:
+      tags: [Audit]
+      summary: Generate a signed audit report PDF for a clinical case
+      security:
+        - InternalToken: []
+      parameters:
+        - in: path
+          name: case_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: PDF audit report
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        '401': { $ref: '#/components/responses/AuthError' }
+  /api/telemetry/patient/{patient_id}/live:
+    get:
+      tags: [Moat]
+      summary: Server-sent telemetry snapshot stream for a patient
+      parameters:
+        - in: path
+          name: patient_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: text/event-stream payload
+  /api/telemetry/patient/{patient_id}/history:
+    get:
+      tags: [Moat]
+      summary: Paginated telemetry history with anomaly overlays
+      parameters:
+        - in: path
+          name: patient_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/StructuredSuccess' }
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
       description: API key issued from developer.vetios.tech. Format: vios_k1_...
+    CronSecret:
+      type: apiKey
+      in: header
+      name: authorization
+      description: Bearer token matching CRON_SECRET.
+    PassiveConnectorKey:
+      type: apiKey
+      in: header
+      name: x-vetios-ingest-key
+      description: Shared passive connector ingestion key.
+    InternalToken:
+      type: http
+      scheme: bearer
+      description: Internal operator token matching VETIOS_INTERNAL_API_TOKEN.
   headers:
     APIVersion:
       schema: { type: string, example: 1.0.0 }
@@ -337,7 +621,85 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
+    StructuredSuccess:
+      description: Structured VetIOS success envelope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StructuredEnvelope'
   schemas:
+    StructuredEnvelope:
+      type: object
+      properties:
+        data:
+          type: object
+          nullable: true
+          additionalProperties: true
+        error:
+          type: object
+          nullable: true
+          additionalProperties: true
+        request_id: { type: string }
+    IntakeSessionRequest:
+      type: object
+      required: [patient_id, species, presenting_symptoms]
+      properties:
+        patient_id: { type: string, format: uuid }
+        species:
+          type: string
+          enum: [canine, feline, equine, bovine, ovine, caprine, porcine, avian, reptile, rabbit, ferret, other]
+        weight_kg: { type: number, nullable: true }
+        age_years: { type: number, nullable: true }
+        presenting_symptoms:
+          type: array
+          items: { type: string }
+        vitals:
+          type: object
+          additionalProperties: true
+        medications_current:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        imaging_study_ids:
+          type: array
+          items: { type: string, format: uuid }
+    LabResultRequest:
+      type: object
+      required: [lab_recommendation_id, panel_code, result_value, unit, result_interpretation]
+      properties:
+        lab_recommendation_id: { type: string, format: uuid }
+        panel_code: { type: string }
+        result_value: { type: number }
+        unit: { type: string }
+        reference_range_low: { type: number, nullable: true }
+        reference_range_high: { type: number, nullable: true }
+        result_interpretation:
+          type: string
+          enum: [normal, low, high, critical_low, critical_high]
+    TelemetryIngestRequest:
+      type: object
+      required: [tenant_id, patient_id, device_id, device_type, readings]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        patient_id: { type: string, format: uuid }
+        device_id: { type: string }
+        device_type:
+          type: string
+          enum: [collar, implant, patch, external_monitor]
+        species: { type: string }
+        readings:
+          type: array
+          items:
+            type: object
+            required: [metric_type, value, recorded_at]
+            properties:
+              metric_type:
+                type: string
+                enum: [heart_rate_bpm, temperature_c, respiratory_rate_bpm, activity_score, spo2_pct, glucose_mmol]
+              value: { type: number }
+              recorded_at: { type: string, format: date-time }
+              quality_score: { type: number, minimum: 0, maximum: 1 }
     ErrorResponse:
       type: object
       properties:

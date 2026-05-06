@@ -7,3 +7,12 @@
  */
 
 export { StatusBadge } from './status-badge';
+export {
+    ImagingPanel,
+    IntakePanel,
+    LabAgentPanel,
+    NetworkIntelligencePanel,
+    OutbreakMonitor,
+    TeleconsultPanel,
+    TelemetryDashboard,
+} from './moat-panels';

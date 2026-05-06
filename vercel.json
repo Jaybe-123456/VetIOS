@@ -57,6 +57,14 @@
       "schedule": "0 */4 * * *"
     },
     {
+      "path": "/api/cron/population-calibration",
+      "schedule": "0 */6 * * *"
+    },
+    {
+      "path": "/api/cron/outbreak-scan",
+      "schedule": "0 */4 * * *"
+    },
+    {
       "path": "/api/cron/active-learning-sweep",
       "schedule": "0 8 * * *"
     },

@@ -67,7 +67,7 @@ export default function TermsPage() {
                         </div>
                         <h3 className="text-lg font-semibold text-white">Service Availability</h3>
                         <p className="mt-3 text-sm leading-6 text-slate-400">
-                            While we strive for high uptime (99.9% target), VetIOS is provided "as is." We do not guarantee uninterrupted access during maintenance windows or upstream model provider outages.
+                            While we strive for high uptime (99.9% target), VetIOS is provided &quot;as is.&quot; We do not guarantee uninterrupted access during maintenance windows or upstream model provider outages.
                         </p>
                     </div>
                 </section>

@@ -403,6 +403,10 @@ export default function DashboardControlPlaneClient() {
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.7)]"><Cpu className="w-6 h-6" /></div>
                             <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">Edge Ops</div>
                         </Link>
+                        <Link href="/developer" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
+                            <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.7)]"><Bot className="w-6 h-6" /></div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">Moat Ops</div>
+                        </Link>
                     </div>
 
                     <div className="flex flex-wrap items-center justify-between font-mono text-[10px] sm:text-[11px] text-[hsl(0_0%_82%)] tracking-[0.14em] uppercase border-t border-[hsl(0_0%_20%)] pt-3">

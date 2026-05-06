@@ -64,6 +64,7 @@ import {
     buildClinicalReasoningEnforcementPlan,
     type ClinicalReasoningAlignmentSnapshot,
 } from '@/lib/intelligence/clinicalAlignment';
+import { runMoatPostOutcomeSideEffects } from '@/lib/moat/service';
 
 const NON_CRITICAL_EFFECT_TIMEOUT_MS = 1_500;
 
@@ -334,6 +335,18 @@ export async function POST(req: Request) {
             outcomeEventId,
         });
         revalidatePath('/dataset');
+        void settleNonCriticalEffect(
+            requestId,
+            'Moat post-outcome side effects',
+            runMoatPostOutcomeSideEffects(supabase, {
+                tenantId,
+                inferenceEventId: body.inference_event_id,
+                outcomeEventId,
+                outcomePayload: body.outcome.payload,
+                inputSignature: resolvedInferenceRecord.input_signature ?? {},
+            }),
+            { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+        );
         let pipelineResult: any = {};
         try {
             const { data: inferenceData } = await supabase

@@ -62,6 +62,10 @@ import { hydrateVKGFromDatabase } from '@/lib/vkg/veterinaryKnowledgeGraph';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import { embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
 import type { RAGContext } from '@/lib/rag/ragPipeline';
+import {
+    enrichInferenceInputForMoat,
+    runMoatPostInferenceSideEffects,
+} from '@/lib/moat/service';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -238,6 +242,15 @@ export async function POST(req: Request) {
     }
 
     const body = result.data;
+    const inputMetadata = asRecord(body.input.input_signature.metadata);
+    const sourceModule = readText(body.input.input_signature.source)
+        ?? readText(inputMetadata.source)
+        ?? 'inference_console';
+
+    await enrichInferenceInputForMoat(supabase, tenantId, body.input.input_signature)
+        .catch((error) => {
+            console.error(`[${requestId}] Moat inference enrichment failed (non-fatal):`, error);
+        });
 
     // ── RAG: build grounded evidence context (non-blocking, 750 ms hard cap) ──
     let ragCtx: RAGContext | null = null;
@@ -379,6 +392,19 @@ export async function POST(req: Request) {
         inferenceResult.output_payload.telemetry = telemetry;
 
         const signatureForLog = { ...inferenceResult.normalizedInput };
+        signatureForLog.source = sourceModule;
+        signatureForLog.patient_id = signatureForLog.patient_id ?? body.input.input_signature.patient_id ?? null;
+        signatureForLog.region_code = signatureForLog.region_code ?? body.input.input_signature.region_code ?? null;
+        signatureForLog.imaging_refs = signatureForLog.imaging_refs ?? body.input.input_signature.imaging_refs ?? [];
+        signatureForLog.imaging_findings = signatureForLog.imaging_findings ?? body.input.input_signature.imaging_findings ?? [];
+        signatureForLog.species_knowledge_graph_priors = signatureForLog.species_knowledge_graph_priors
+            ?? body.input.input_signature.species_knowledge_graph_priors
+            ?? [];
+        signatureForLog.metadata = {
+            ...asRecord(signatureForLog.metadata),
+            ...inputMetadata,
+            source: sourceModule,
+        };
         if (Array.isArray(signatureForLog.diagnostic_images)) {
             signatureForLog.diagnostic_images = signatureForLog.diagnostic_images.map((img: any) => ({
                 file_name: img.file_name,
@@ -402,7 +428,7 @@ export async function POST(req: Request) {
             userId,
             clinicId: body.clinic_id ?? null,
             requestedCaseId: body.case_id ?? null,
-            sourceModule: 'inference_console',
+            sourceModule,
             inputSignature: signatureForLog,
             observedAt,
         });
@@ -428,7 +454,7 @@ export async function POST(req: Request) {
             user_id: userId,
             clinic_id: body.clinic_id ?? null,
             case_id: canonicalClinicalCase.id,
-            source_module: 'inference_console',
+            source_module: sourceModule,
             model_name: routedModel.model_name,
             model_version: routedModel.model_version,
             input_signature: signatureForLog,
@@ -445,6 +471,8 @@ export async function POST(req: Request) {
             orphaned: false,
             orphaned_at: null,
             species: typeof inferenceResult.normalizedInput?.species === 'string' ? inferenceResult.normalizedInput.species : null,
+            parent_inference_event_id: readText(body.input.input_signature.parent_inference_event_id)
+                ?? readText(inputMetadata.parent_inference_event_id),
             top_diagnosis: (() => { try { const d = inferenceResult.output_payload?.diagnosis as Record<string,unknown>; const diffs = Array.isArray(d?.top_differentials) ? d.top_differentials as Array<Record<string,unknown>> : []; return String(diffs[0]?.name ?? diffs[0]?.condition ?? d?.top_diagnosis ?? ''); } catch { return null; } })(),
             contradiction_score: typeof inferenceResult.uncertainty_metrics?.contradiction_score === 'number' ? inferenceResult.uncertainty_metrics.contradiction_score as number : null,
             outcome_confirmed: false,
@@ -501,7 +529,7 @@ export async function POST(req: Request) {
             {
                 observedAt,
                 userId,
-                sourceModule: 'inference_console',
+                sourceModule,
                 outputPayload: inferenceResult.output_payload,
                 confidenceScore: inferenceResult.confidence_score,
                 modelVersion: routedModel.model_version,
@@ -509,7 +537,7 @@ export async function POST(req: Request) {
                     latest_inference_confidence: inferenceResult.confidence_score,
                     latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
                     latest_inference_model_version: routedModel.model_version,
-                    latest_inference_source: 'inference_console',
+                    latest_inference_source: sourceModule,
                 },
             },
         );
@@ -654,7 +682,7 @@ export async function POST(req: Request) {
                         },
                         system: extractSystemTelemetry(telemetry, executionMetrics.system),
                         metadata: {
-                            source_module: 'inference_console',
+                            source_module: sourceModule,
                             request_id: requestId,
                             inference_event_id: persistedInferenceEventId,
                             clinic_id: body.clinic_id ?? null,
@@ -698,7 +726,7 @@ export async function POST(req: Request) {
                                 : routingExecution.route_mode === 'ensemble'
                                     ? 'routing_ensemble'
                                     : 'routing_decision',
-                            source_module: 'inference_console',
+                            source_module: sourceModule,
                             request_id: requestId,
                             inference_event_id: persistedInferenceEventId,
                             case_id: canonicalClinicalCase.id,
@@ -734,6 +762,17 @@ export async function POST(req: Request) {
                         typeof contradictionAnalysis.contradiction_score === 'number'
                             ? contradictionAnalysis.contradiction_score
                             : null,
+                }),
+                { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
+            ),
+            settleNonCriticalEffect(
+                requestId,
+                'Moat post-inference side effects',
+                runMoatPostInferenceSideEffects(supabase, {
+                    tenantId,
+                    inferenceEventId: persistedInferenceEventId,
+                    confidenceScore: inferenceResult.confidence_score,
+                    outputPayload: inferenceResult.output_payload,
                 }),
                 { timeoutMs: NON_CRITICAL_EFFECT_TIMEOUT_MS },
             ),

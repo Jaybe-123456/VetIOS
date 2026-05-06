@@ -37,6 +37,7 @@ export interface InferenceLogInput {
     contradiction_score?: number | null;
     outcome_confirmed?: boolean;
     region?: string | null;
+    parent_inference_event_id?: string | null;
 }
 
 export async function logInference(
@@ -68,6 +69,7 @@ export async function logInference(
             ...(input.contradiction_score !== undefined ? { contradiction_score: input.contradiction_score } : {}),
             ...(input.outcome_confirmed !== undefined ? { outcome_confirmed: input.outcome_confirmed } : {}),
             ...(input.region !== undefined ? { region: input.region } : {}),
+            ...(input.parent_inference_event_id !== undefined ? { parent_inference_event_id: input.parent_inference_event_id } : {}),
             [C.flagged]: input.flagged ?? false,
             [C.flag_reason]: input.flag_reason ?? null,
             [C.blocked_reason]: input.blocked_reason ?? null,
