@@ -38,7 +38,7 @@
         "@vetios/gaas": "workspace:*",
         "@vetios/inference-schema": "workspace:*",
         "@vetios/pharmacos": "workspace:*",
-        "autoprefixer": "^10.4.24",
+        "autoprefixer": "^10.5.0",
         "chart.js": "^4.5.1",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
