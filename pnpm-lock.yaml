@@ -54,6 +54,9 @@ importers:
       '@tanstack/react-table':
         specifier: ^8.21.3
         version: 8.21.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@vetios/ask-vetios':
+        specifier: workspace:*
+        version: link:../../packages/ask-vetios
       '@vetios/cire-engine':
         specifier: workspace:*
         version: link:../../packages/cire-engine
@@ -63,6 +66,9 @@ importers:
       '@vetios/inference-schema':
         specifier: workspace:*
         version: link:../../packages/inference-schema
+      '@vetios/pharmacos':
+        specifier: workspace:*
+        version: link:../../packages/pharmacos
       autoprefixer:
         specifier: ^10.4.24
         version: 10.4.24(postcss@8.5.6)
@@ -224,6 +230,18 @@ importers:
         specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
+  packages/ask-vetios:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.33
+      '@vetios/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: '>=5.7.0 <6.0.0'
+        version: 5.9.3
+
   packages/cire-engine:
     devDependencies:
       '@types/node':
@@ -281,6 +299,18 @@ importers:
         version: 5.9.3
 
   packages/logger:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.33
+      '@vetios/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: '>=5.7.0 <6.0.0'
+        version: 5.9.3
+
+  packages/pharmacos:
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
