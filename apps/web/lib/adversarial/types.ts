@@ -1,4 +1,5 @@
 import type { DifferentialEntry, InferenceRequest } from '../inference/types';
+import type { EncounterPayloadV2 } from '@vetios/inference-schema';
 
 export type PerturbationType =
     | 'symptom_noise'
@@ -88,4 +89,19 @@ export interface AdversarialStabilityReport {
     };
     clean_clinical_differential: DifferentialEntry[];
     integrity_verdict: 'stable' | 'metastable' | 'fragile' | 'collapsed';
+}
+
+export type MultisystemicScenarioClass =
+    | 'monosystemic_baseline'
+    | 'dual_system_conflict'
+    | 'triple_system_comorbidity'
+    | 'species_mismatch';
+
+export interface MultisystemicAdversarialScenario {
+    id: string;
+    label: string;
+    scenario_class: MultisystemicScenarioClass;
+    payload: EncounterPayloadV2;
+    expected_species_panel_violations: string[];
+    expected_reasoning_focus: string[];
 }

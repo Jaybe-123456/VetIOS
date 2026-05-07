@@ -10,7 +10,10 @@ import {
 import { TreatmentPathwaysPanel } from '@/components/TreatmentPathwaysPanel';
 import { InferenceForm } from '@/components/InferenceForm';
 import { NormalizedPreview } from '@/components/NormalizedPreview';
-import { normalizeInferenceInput, type InputMode, type NormalizedInput } from '@/lib/input/inputNormalizer';
+import { normalizeInferenceInput, type InputMode as BaseInputMode, type NormalizedInput } from '@/lib/input/inputNormalizer';
+import type { EncounterPayloadV2, MMColour, Sex, Species, SystemPanel, TestValue } from '@vetios/inference-schema';
+
+type InputMode = BaseInputMode | 'panels';
 import { extractUuidFromText } from '@/lib/utils/uuid';
 import { ShieldCheck, Activity, AlertTriangle, Brain, CheckCircle2, ChevronDown, ChevronUp, BarChart3, Binary, HeartPulse, Workflow } from 'lucide-react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel, TerminalInput, TerminalTextarea, TerminalButton, TerminalTabs } from '@/components/ui/terminal';
@@ -133,6 +136,8 @@ export default function InferenceConsole() {
     });
 
     const [inputMode, setInputMode] = useState<InputMode>('structured');
+    const [panelSpecies, setPanelSpecies] = useState<Species>('canine');
+    const [activePanels, setActivePanels] = useState<SystemPanel[]>([]);
     const [outcomeState, setOutcomeState] = useState<OutcomeState>({ status: 'idle' });
     const riskModelDefinition = state.riskModelOutput?.definition?.toLowerCase() ?? '';
     const hasAbdominalRiskCalibration = Boolean(state.riskModelOutput) && !riskModelDefinition.includes('non-abdominal');
@@ -278,6 +283,157 @@ export default function InferenceConsole() {
         return merged;
     }
 
+    function buildEncounterPayloadV2(formData: FormData): EncounterPayloadV2 {
+        const populatedPanels = activePanels.filter(panelHasPopulatedTests);
+        if (populatedPanels.length === 0) {
+            throw new Error('Add at least one populated diagnostic panel.');
+        }
+
+        const presentingComplaints = splitPanelList(readFormString(formData, 'panel_presenting_complaints'));
+        if (presentingComplaints.length === 0) {
+            throw new Error('Add at least one presenting complaint.');
+        }
+
+        const imaging: Record<string, TestValue> = {};
+        for (const panel of populatedPanels) {
+            if (panel.system !== 'imaging') continue;
+            for (const [key, value] of Object.entries(panel.tests)) {
+                if (isPopulatedPanelValue(value)) {
+                    imaging[`${panel.panel}.${key}`] = value;
+                }
+            }
+        }
+
+        return {
+            patient: {
+                species: panelSpecies,
+                breed: readFormString(formData, 'panel_breed'),
+                weight_kg: readFormNumber(formData, 'panel_weight_kg'),
+                age_years: readFormNumber(formData, 'panel_age_years'),
+                sex: readPanelSex(formData.get('panel_sex')),
+            },
+            encounter: {
+                presenting_complaints: presentingComplaints,
+                vitals: {
+                    temp_c: readFormNumber(formData, 'panel_temp_c'),
+                    heart_rate_bpm: readFormInteger(formData, 'panel_hr'),
+                    respiratory_rate_bpm: readFormInteger(formData, 'panel_rr'),
+                    mm_colour: readMMColour(formData.get('panel_mm_colour')),
+                    crt_seconds: readFormNumber(formData, 'panel_crt_seconds'),
+                },
+                history: {
+                    duration_days: readFormInteger(formData, 'panel_duration_days'),
+                    free_text: readFormString(formData, 'panel_history'),
+                    medications: splitPanelList(readFormString(formData, 'panel_medications')),
+                },
+            },
+            active_system_panels: populatedPanels,
+            imaging,
+            metadata: {
+                encounter_id: createClientId(),
+                timestamp: new Date().toISOString(),
+                clinician_id: null,
+                clinic_id: null,
+            },
+        };
+    }
+
+    function panelsToDiagnosticTests(panels: SystemPanel[]): Record<string, unknown> {
+        const diagnosticTests: Record<string, unknown> = {};
+        for (const panel of panels) {
+            const activeTests: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(panel.tests)) {
+                if (isPopulatedPanelValue(value)) {
+                    activeTests[key] = value;
+                }
+            }
+            if (Object.keys(activeTests).length > 0) {
+                diagnosticTests[`${panel.system}_${panel.panel}`] = activeTests;
+            }
+        }
+        return diagnosticTests;
+    }
+
+    function panelHasPopulatedTests(panel: SystemPanel): boolean {
+        return Object.values(panel.tests).some(isPopulatedPanelValue);
+    }
+
+    function isPopulatedPanelValue(value: unknown): value is TestValue {
+        if (value === 'not_done') return false;
+        if (typeof value === 'string') return value.trim().length > 0;
+        if (typeof value === 'number') return Number.isFinite(value);
+        return value != null;
+    }
+
+    function readFormString(formData: FormData, key: string): string {
+        const value = formData.get(key);
+        return typeof value === 'string' ? value.trim() : '';
+    }
+
+    function readFormNumber(formData: FormData, key: string): number | null {
+        const raw = readFormString(formData, key);
+        if (!raw) return null;
+        const value = Number(raw);
+        return Number.isFinite(value) ? value : null;
+    }
+
+    function readFormInteger(formData: FormData, key: string): number | null {
+        const value = readFormNumber(formData, key);
+        return value == null ? null : Math.round(value);
+    }
+
+    function splitPanelList(value: string): string[] {
+        return value
+            .split(/[,;\n]/)
+            .map((entry) => entry.trim())
+            .filter(Boolean);
+    }
+
+    function readPanelSex(value: FormDataEntryValue | null): Sex {
+        return value === 'male_intact'
+            || value === 'male_neutered'
+            || value === 'female_intact'
+            || value === 'female_spayed'
+            || value === 'unknown'
+            ? value
+            : 'unknown';
+    }
+
+    function readMMColour(value: FormDataEntryValue | null): MMColour | null {
+        return value === 'pink'
+            || value === 'pale'
+            || value === 'white'
+            || value === 'yellow'
+            || value === 'brick_red'
+            || value === 'cyanotic'
+            || value === 'muddy'
+            ? value
+            : null;
+    }
+
+    function createClientId(): string {
+        return typeof crypto !== 'undefined' && 'randomUUID' in crypto
+            ? crypto.randomUUID()
+            : `enc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    }
+
+    function readEncounterPayloadV2(value: unknown): EncounterPayloadV2 | null {
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const record = value as Record<string, unknown>;
+        if (
+            !record.patient
+            || typeof record.patient !== 'object'
+            || !record.encounter
+            || typeof record.encounter !== 'object'
+            || !Array.isArray(record.active_system_panels)
+            || !record.metadata
+            || typeof record.metadata !== 'object'
+        ) {
+            return null;
+        }
+        return value as EncounterPayloadV2;
+    }
+
     async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
         e.preventDefault();
 
@@ -286,6 +442,51 @@ export default function InferenceConsole() {
             let rawInput = '';
             let diagnosticImages: UploadedArtifact[] = [];
             let labResults: UploadedArtifact[] = [];
+
+            if (inputMode === 'panels') {
+                const encounterPayload = buildEncounterPayloadV2(formData);
+                const diagnosticTests = panelsToDiagnosticTests(encounterPayload.active_system_panels);
+                const normalizedWithPanels: NormalizedInput = {
+                    species: encounterPayload.patient.species,
+                    breed: encounterPayload.patient.breed || null,
+                    symptoms: encounterPayload.encounter.presenting_complaints,
+                    presenting_signs: encounterPayload.encounter.presenting_complaints,
+                    diagnostic_tests: diagnosticTests,
+                    history: {
+                        duration_days: encounterPayload.encounter.history.duration_days,
+                        free_text: encounterPayload.encounter.history.free_text,
+                        medications: encounterPayload.encounter.history.medications,
+                    },
+                    physical_exam: {
+                        temp_c: encounterPayload.encounter.vitals.temp_c,
+                        heart_rate_bpm: encounterPayload.encounter.vitals.heart_rate_bpm,
+                        respiratory_rate_bpm: encounterPayload.encounter.vitals.respiratory_rate_bpm,
+                        mm_colour: encounterPayload.encounter.vitals.mm_colour,
+                        crt_seconds: encounterPayload.encounter.vitals.crt_seconds,
+                    },
+                    region: null,
+                    age_years: encounterPayload.patient.age_years ?? undefined,
+                    weight_kg: encounterPayload.patient.weight_kg ?? undefined,
+                    metadata: {
+                        schema_version: 'v2',
+                        encounter_payload_v2: encounterPayload,
+                        diagnostic_tests: diagnosticTests,
+                    },
+                };
+
+                setState(prev => ({
+                    ...prev,
+                    status: 'previewing',
+                    normalizedInput: normalizedWithPanels,
+                    diagnosticImages: [],
+                    labResults: [],
+                    errorMessage: null,
+                    cire: null,
+                    cireMessage: null,
+                }));
+                setOutcomeState({ status: 'idle' });
+                return;
+            }
 
             if (inputMode === 'structured') {
                 // Build text from structured fields
@@ -317,7 +518,7 @@ export default function InferenceConsole() {
             }
 
             // Run normalizer
-            const normalized = normalizeInferenceInput(rawInput, inputMode);
+            const normalized = normalizeInferenceInput(rawInput, inputMode as BaseInputMode);
             const structuredDiagnosticTests = inputMode === 'structured'
                 ? buildDiagnosticTestsObject(formData)
                 : {};
@@ -383,12 +584,13 @@ export default function InferenceConsole() {
             pushLog('INPUT NORMALIZATION COMPLETE');
             pushLog('GENERATING ROUTING PLAN...');
             // ...
+            const v2Payload = readEncounterPayloadV2(finalInput.metadata?.encounter_payload_v2);
             const metadata = {
                 ...(finalInput.metadata ?? {}),
                 model_family: (finalInput.metadata as Record<string, unknown> | undefined)?.model_family ?? 'diagnostics',
                 route_hint: (finalInput.metadata as Record<string, unknown> | undefined)?.route_hint ?? 'clinical_diagnosis',
             };
-            const data = {
+            const v1RequestBody = {
                 model: {
                     name: "gpt-4o-mini",
                     version: "1.0.0"
@@ -411,6 +613,10 @@ export default function InferenceConsole() {
                     }
                 }
             };
+            const data = v2Payload ?? v1RequestBody;
+            const requestPayloadForState = v2Payload
+                ? v2Payload as unknown as Record<string, unknown>
+                : v1RequestBody.input.input_signature as Record<string, unknown>;
 
             const startTime = performance.now();
             const res = await fetch('/api/inference', {
@@ -491,7 +697,7 @@ export default function InferenceConsole() {
                 ...prev,
                 status: 'success',
                 eventId: inferenceEventId,
-                requestPayload: data.input.input_signature as Record<string, unknown>,
+                requestPayload: requestPayloadForState,
                 responsePayload: output ?? null,
                 probabilities: mappedProbabilities.length > 0 ? mappedProbabilities : [
                     { label: 'Unknown', value: 0 }
@@ -715,6 +921,10 @@ export default function InferenceConsole() {
                                 isComputing={state.status === 'computing'}
                                 inputMode={inputMode}
                                 onModeChange={setInputMode}
+                                species={panelSpecies}
+                                onSpeciesChange={setPanelSpecies}
+                                activePanels={activePanels}
+                                onActivePanelsChange={setActivePanels}
                             />
 
                             {state.status === 'previewing' && state.normalizedInput && (

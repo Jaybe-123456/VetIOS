@@ -11,11 +11,18 @@ import type {
     InferenceRequest,
     VeterinaryCondition,
 } from '../inference/types';
+import {
+    SPECIES_PANEL_MAP,
+    type EncounterPayloadV2,
+    type Species as EncounterSpecies,
+    type SystemPanel,
+} from '@vetios/inference-schema';
 import type {
     AdversarialStabilityReport,
     AdversarialStep,
     AdversarialSweepConfig,
     EvidenceThreshold,
+    MultisystemicAdversarialScenario,
 } from './types';
 
 interface FindingSimulation {
@@ -104,7 +111,97 @@ function cloneRequest<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
 }
 
-function coerceInferenceRequest(rawRequest: InferenceRequest | Record<string, unknown>): InferenceRequest {
+function isEncounterPayloadV2(value: unknown): value is EncounterPayloadV2 {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const record = value as Record<string, unknown>;
+    return (
+        record.patient != null
+        && typeof record.patient === 'object'
+        && record.encounter != null
+        && typeof record.encounter === 'object'
+        && Array.isArray(record.active_system_panels)
+        && record.metadata != null
+        && typeof record.metadata === 'object'
+    );
+}
+
+function panelValueIsPopulated(value: unknown): boolean {
+    if (value === 'not_done') return false;
+    if (typeof value === 'string') return value.trim().length > 0;
+    if (typeof value === 'number') return Number.isFinite(value);
+    return value != null;
+}
+
+function mergePanelTests(target: Record<string, unknown>, key: string, tests: Record<string, unknown>) {
+    const existing = target[key];
+    target[key] = {
+        ...(typeof existing === 'object' && existing != null && !Array.isArray(existing) ? existing as Record<string, unknown> : {}),
+        ...tests,
+    };
+}
+
+function diagnosticBucketForPanel(panel: SystemPanel): string {
+    if (panel.panel === 'CBC') return 'cbc';
+    if (panel.panel === 'thoracic_radiograph') return 'thoracic_radiograph';
+    if (panel.panel === 'abdominal_ultrasound') return 'abdominal_ultrasound';
+    if (panel.system === 'urinalysis') return 'urinalysis';
+    if (panel.system === 'serology') return 'serology';
+    if (panel.system === 'biochemistry' || panel.system === 'endocrine') return 'biochemistry';
+    if (panel.system === 'cytology') return 'cytology';
+    return panel.system;
+}
+
+function panelsToDiagnosticTests(panels: SystemPanel[]): Record<string, unknown> {
+    const diagnosticTests: Record<string, unknown> = {};
+    for (const panel of panels) {
+        const activeTests = Object.fromEntries(
+            Object.entries(panel.tests).filter(([, value]) => panelValueIsPopulated(value)),
+        );
+        if (Object.keys(activeTests).length === 0) continue;
+
+        mergePanelTests(diagnosticTests, diagnosticBucketForPanel(panel), activeTests);
+        diagnosticTests[`${panel.system}_${panel.panel}`] = activeTests;
+    }
+    return diagnosticTests;
+}
+
+function coerceEncounterPayloadV2(payload: EncounterPayloadV2): InferenceRequest {
+    const mmColour = payload.encounter.vitals.mm_colour;
+    const mucousMembraneColor = mmColour === 'yellow'
+        ? 'icteric'
+        : mmColour === 'brick_red' || mmColour === 'muddy'
+            ? 'injected'
+            : mmColour === 'white'
+                ? 'pale'
+                : mmColour ?? undefined;
+
+    return {
+        species: payload.patient.species,
+        breed: payload.patient.breed || undefined,
+        age_years: payload.patient.age_years ?? undefined,
+        weight_kg: payload.patient.weight_kg ?? undefined,
+        sex: payload.patient.sex,
+        presenting_signs: payload.encounter.presenting_complaints.map(normalizeKey),
+        history: {
+            ...(payload.encounter.history.duration_days != null ? { duration_days: payload.encounter.history.duration_days } : {}),
+            owner_observations: payload.encounter.history.free_text ? [payload.encounter.history.free_text] : [],
+        },
+        diagnostic_tests: panelsToDiagnosticTests(payload.active_system_panels) as InferenceRequest['diagnostic_tests'],
+        physical_exam: {
+            ...(payload.encounter.vitals.temp_c != null ? { temperature: payload.encounter.vitals.temp_c } : {}),
+            ...(payload.encounter.vitals.heart_rate_bpm != null ? { heart_rate: payload.encounter.vitals.heart_rate_bpm } : {}),
+            ...(payload.encounter.vitals.respiratory_rate_bpm != null ? { respiratory_rate: payload.encounter.vitals.respiratory_rate_bpm } : {}),
+            ...(mucousMembraneColor ? { mucous_membrane_color: mucousMembraneColor } : {}),
+            ...(payload.encounter.vitals.crt_seconds != null ? { capillary_refill_time_s: payload.encounter.vitals.crt_seconds } : {}),
+        } as InferenceRequest['physical_exam'],
+    };
+}
+
+function coerceInferenceRequest(rawRequest: InferenceRequest | EncounterPayloadV2 | Record<string, unknown>): InferenceRequest {
+    if (isEncounterPayloadV2(rawRequest)) {
+        return coerceEncounterPayloadV2(rawRequest);
+    }
+
     const candidate = rawRequest as Record<string, unknown>;
     const metadata = candidate.metadata && typeof candidate.metadata === 'object'
         ? candidate.metadata as Record<string, unknown>
@@ -520,8 +617,192 @@ function buildIntegrityVerdict(
     return 'stable';
 }
 
+function buildEncounterPayloadV2(input: {
+    id: string;
+    species: EncounterSpecies;
+    presentingComplaints: string[];
+    activePanels: SystemPanel[];
+    history: string;
+    breed?: string;
+}): EncounterPayloadV2 {
+    return {
+        patient: {
+            species: input.species,
+            breed: input.breed ?? '',
+            weight_kg: null,
+            age_years: null,
+            sex: 'unknown',
+        },
+        encounter: {
+            presenting_complaints: input.presentingComplaints,
+            vitals: {
+                temp_c: null,
+                heart_rate_bpm: null,
+                respiratory_rate_bpm: null,
+                mm_colour: null,
+                crt_seconds: null,
+            },
+            history: {
+                duration_days: null,
+                free_text: input.history,
+                medications: [],
+            },
+        },
+        active_system_panels: input.activePanels,
+        imaging: {},
+        metadata: {
+            encounter_id: input.id,
+            timestamp: '2026-05-07T00:00:00.000Z',
+            clinician_id: null,
+            clinic_id: null,
+        },
+    };
+}
+
+function findSpeciesPanelViolations(payload: EncounterPayloadV2): string[] {
+    const allowedPanels = SPECIES_PANEL_MAP[payload.patient.species] ?? [];
+    return payload.active_system_panels
+        .filter((panel) => !allowedPanels.some((entry) => entry.system === panel.system && entry.panel === panel.panel))
+        .map((panel) => `${payload.patient.species}:${panel.system}/${panel.panel}`);
+}
+
+export function generateMultisystemicAdversarialScenarios(): MultisystemicAdversarialScenario[] {
+    const scenarios: Array<Omit<MultisystemicAdversarialScenario, 'expected_species_panel_violations'>> = [
+        {
+            id: 'v2_monosystemic_equine_saa',
+            label: 'Monosystemic baseline - equine SAA inflammatory signal',
+            scenario_class: 'monosystemic_baseline',
+            payload: buildEncounterPayloadV2({
+                id: 'v2_monosystemic_equine_saa',
+                species: 'equine',
+                breed: 'Thoroughbred',
+                presentingComplaints: ['fever', 'lethargy'],
+                history: 'Equine patient with fever and elevated serum amyloid A.',
+                activePanels: [
+                    {
+                        system: 'biochemistry',
+                        panel: 'SAA',
+                        tests: {
+                            saa_level: 'elevated',
+                            saa_value: 640,
+                        },
+                    },
+                ],
+            }),
+            expected_reasoning_focus: ['equine-specific panel allowance', 'monosystemic inflammatory baseline'],
+        },
+        {
+            id: 'v2_dual_system_haemolysis_conflict',
+            label: 'Dual-system conflict - regenerative anaemia with haemoglobinuria',
+            scenario_class: 'dual_system_conflict',
+            payload: buildEncounterPayloadV2({
+                id: 'v2_dual_system_haemolysis_conflict',
+                species: 'feline',
+                breed: 'Domestic shorthair',
+                presentingComplaints: ['pale gums', 'lethargy', 'red urine'],
+                history: 'CBC suggests regenerative anaemia while urine pigment suggests intravascular haemolysis.',
+                activePanels: [
+                    {
+                        system: 'haematology',
+                        panel: 'CBC',
+                        tests: {
+                            anemia_type: 'regenerative',
+                            reticulocytosis: 'elevated',
+                            spherocytes: 'present',
+                        },
+                    },
+                    {
+                        system: 'urinalysis',
+                        panel: 'urinalysis',
+                        tests: {
+                            hemoglobinuria: 'present',
+                            proteinuria: 'present',
+                        },
+                    },
+                ],
+            }),
+            expected_reasoning_focus: ['extravascular versus intravascular haemolysis', 'cross-system contradiction resolution'],
+        },
+        {
+            id: 'v2_triple_system_imha_addison_pln',
+            label: 'Triple-system co-morbidity - IMHA, Addisonian pattern, PLN',
+            scenario_class: 'triple_system_comorbidity',
+            payload: buildEncounterPayloadV2({
+                id: 'v2_triple_system_imha_addison_pln',
+                species: 'canine',
+                breed: 'Mixed breed',
+                presentingComplaints: ['collapse', 'vomiting', 'pale gums', 'weight loss'],
+                history: 'Concurrent immune haemolysis, blunted adrenal response, and protein-losing nephropathy signals.',
+                activePanels: [
+                    {
+                        system: 'haematology',
+                        panel: 'CBC',
+                        tests: {
+                            spherocytes: 'present',
+                            autoagglutination: 'positive',
+                            anemia_type: 'regenerative',
+                        },
+                    },
+                    {
+                        system: 'endocrine',
+                        panel: 'adrenal',
+                        tests: {
+                            acth_stimulation: 'blunted',
+                            sodium_potassium_ratio: 18.2,
+                        },
+                    },
+                    {
+                        system: 'urinalysis',
+                        panel: 'urinalysis',
+                        tests: {
+                            proteinuria: 'present',
+                            upc: 4.2,
+                        },
+                    },
+                    {
+                        system: 'biochemistry',
+                        panel: 'renal',
+                        tests: {
+                            albumin: 'low',
+                            creatinine: 'elevated',
+                        },
+                    },
+                ],
+            }),
+            expected_reasoning_focus: ['multi-diagnosis co-morbidity', 'renal protein loss interaction', 'endocrine-electrolyte interaction'],
+        },
+        {
+            id: 'v2_species_mismatch_reptile_adrenal',
+            label: 'Species mismatch - reptile submitted with mammalian adrenal panel',
+            scenario_class: 'species_mismatch',
+            payload: buildEncounterPayloadV2({
+                id: 'v2_species_mismatch_reptile_adrenal',
+                species: 'reptile',
+                breed: 'Bearded dragon',
+                presentingComplaints: ['lethargy', 'anorexia'],
+                history: 'Wrong panel intentionally injected to verify species-panel gating.',
+                activePanels: [
+                    {
+                        system: 'endocrine',
+                        panel: 'adrenal',
+                        tests: {
+                            acth_stimulation: 'blunted',
+                        },
+                    },
+                ],
+            }),
+            expected_reasoning_focus: ['species-panel rejection', 'avian/reptile default panel gating'],
+        },
+    ];
+
+    return scenarios.map((scenario) => ({
+        ...scenario,
+        expected_species_panel_violations: findSpeciesPanelViolations(scenario.payload),
+    }));
+}
+
 export async function runAdversarialSweep(
-    rawRequest: InferenceRequest | Record<string, unknown>,
+    rawRequest: InferenceRequest | EncounterPayloadV2 | Record<string, unknown>,
     targetConditionId: string,
     sweepConfig: Partial<AdversarialSweepConfig> = {},
 ): Promise<AdversarialStabilityReport> {

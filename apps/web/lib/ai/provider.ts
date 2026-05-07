@@ -50,6 +50,15 @@ export async function runInference(
         ? `\n\nCRITICAL: The following contradictions were detected in the input data:\n${contradictionResult.contradiction_reasons.map((reason) => `- ${reason}`).join('\n')}\nYou MUST:\n1. Explicitly acknowledge the contradictions in uncertainty_notes\n2. Lower diagnosis confidence rather than deleting core symptom evidence\n3. Preserve dangerous high-risk hypotheses when multiple high-value signals remain\n4. Widen the differential rather than collapsing into common low-risk explanations`
         : '';
 
+    const metadata = signatureOriginal.metadata && typeof signatureOriginal.metadata === 'object'
+        ? signatureOriginal.metadata as Record<string, unknown>
+        : {};
+    const crossPanelPromptBlock = typeof metadata.cross_panel_prompt === 'string' && metadata.cross_panel_prompt.trim().length > 0
+        ? metadata.cross_panel_prompt.trim()
+        : typeof signatureOriginal.cross_panel_prompt === 'string' && signatureOriginal.cross_panel_prompt.trim().length > 0
+            ? signatureOriginal.cross_panel_prompt.trim()
+            : null;
+
     const systemPrompt = `You are VetIOS — a veterinary clinical intelligence system built on the combined knowledge of:
 - Merck/MSD Veterinary Manual (current edition)
 - Radostits et al., Veterinary Medicine (10th-11th ed.)
@@ -309,7 +318,13 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
           `This is real clinical data from the VetIOS network, not hypothetical examples.\n` +
           `━━━ END RETRIEVED EVIDENCE ━━━`
         : '';
-    const enrichedSystemPrompt = ragBlock ? systemPrompt + ragBlock : systemPrompt;
+    const enrichedSystemPrompt = [
+        systemPrompt,
+        crossPanelPromptBlock
+            ? `\n\n--- STRUCTURED PANEL REASONING OVERRIDE ---\n${crossPanelPromptBlock}\n--- END STRUCTURED PANEL REASONING OVERRIDE ---`
+            : '',
+        ragBlock,
+    ].filter((block) => block.trim().length > 0).join('\n\n');
     const isVisionCapable = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision-preview'].some((prefix) => primaryModel.startsWith(prefix));
     const userMessageContent: any[] = [{ type: 'text', text: userPromptText }];
 

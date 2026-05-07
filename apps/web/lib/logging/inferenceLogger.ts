@@ -38,6 +38,8 @@ export interface InferenceLogInput {
     outcome_confirmed?: boolean;
     region?: string | null;
     parent_inference_event_id?: string | null;
+    structured_input_text?: string | null;
+    active_systems?: string[] | null;
 }
 
 export async function logInference(
@@ -70,6 +72,8 @@ export async function logInference(
             ...(input.outcome_confirmed !== undefined ? { outcome_confirmed: input.outcome_confirmed } : {}),
             ...(input.region !== undefined ? { region: input.region } : {}),
             ...(input.parent_inference_event_id !== undefined ? { parent_inference_event_id: input.parent_inference_event_id } : {}),
+            ...(input.structured_input_text !== undefined ? { structured_input_text: input.structured_input_text } : {}),
+            ...(input.active_systems !== undefined ? { active_systems: input.active_systems } : {}),
             [C.flagged]: input.flagged ?? false,
             [C.flag_reason]: input.flag_reason ?? null,
             [C.blocked_reason]: input.blocked_reason ?? null,

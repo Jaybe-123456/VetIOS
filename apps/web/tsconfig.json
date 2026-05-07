@@ -29,6 +29,9 @@
       ],
       "@vetios/cire-engine": [
         "../../packages/cire-engine/src/index.ts"
+      ],
+      "@vetios/inference-schema": [
+        "../../packages/inference-schema/src/index.ts"
       ]
     },
     "allowArbitraryExtensions": true

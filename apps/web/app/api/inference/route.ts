@@ -66,6 +66,7 @@ import {
     enrichInferenceInputForMoat,
     runMoatPostInferenceSideEffects,
 } from '@/lib/moat/service';
+import { POST as postInferenceV2 } from './v2/route';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -209,6 +210,15 @@ export async function POST(req: Request) {
     }
 
     const rawBody = parsed.data as Record<string, unknown>;
+    if (isEncounterPayloadV2Like(rawBody)) {
+        const v2Request = new Request(req.url, {
+            method: 'POST',
+            headers: req.headers,
+            body: JSON.stringify(rawBody),
+        });
+        return postInferenceV2(v2Request);
+    }
+
     if (rawBody.input && typeof rawBody.input === 'object') {
         const inp = rawBody.input as Record<string, unknown>;
         if (typeof inp.input_signature === 'string') {
@@ -1065,6 +1075,18 @@ function asNullableRecord(value: unknown): Record<string, unknown> | null {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : null;
+}
+
+function isEncounterPayloadV2Like(value: Record<string, unknown>): boolean {
+    return (
+        value.patient != null
+        && typeof value.patient === 'object'
+        && value.encounter != null
+        && typeof value.encounter === 'object'
+        && Array.isArray(value.active_system_panels)
+        && value.metadata != null
+        && typeof value.metadata === 'object'
+    );
 }
 
 function estimateTokenCount(value: unknown) {
