@@ -123,7 +123,7 @@ function summarizeChange(
 ) {
     if (!previous) return `${updateType}: created ${next.drug_name} formulary version ${next.formulary_version}.`;
     const changed = Object.keys(next).filter((key) =>
-        JSON.stringify((previous as Record<string, unknown>)[key]) !== JSON.stringify((next as Record<string, unknown>)[key]),
+        JSON.stringify((previous as unknown as Record<string, any>)[key]) !== JSON.stringify((next as unknown as Record<string, any>)[key]),
     );
     return `${updateType}: updated ${next.drug_name} to formulary version ${next.formulary_version}; changed ${changed.join(', ') || 'metadata'}.`;
 }
