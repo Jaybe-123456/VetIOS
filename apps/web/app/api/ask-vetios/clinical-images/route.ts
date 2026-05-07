@@ -1,6 +1,14 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import {
+    buildPrecisionGuidelines,
+    inferDiseaseCategory,
+    isSourceRelevant,
+    resolvePMCFigures,
+    searchPrecisionPubMed,
+} from '@vetios/ask-vetios';
 import { compactSearchTerms, detectSpeciesFromTexts, type DetectedVetiosSpecies } from '@/lib/askVetios/context';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -35,7 +43,34 @@ interface ReferenceImage {
     attribution?: string;
 }
 
-type ImageProvider = 'bing' | 'google_cse' | 'wikimedia';
+type ImageProvider = 'curated_library' | 'pmc_oa' | 'wikimedia' | 'tertiary_web_search';
+
+interface FindingConfidenceDisplay {
+    finding_type: string;
+    images_available: number;
+    images_source: 'curated' | 'pmc_oa' | 'none';
+    literature_papers: number;
+    specialist_guideline_available: boolean;
+    evidence_strength: 'strong' | 'moderate' | 'limited' | 'case_report_only';
+    evidence_strength_rationale: string;
+}
+
+interface ReferenceDescription {
+    finding_type: string;
+    visual_descriptors: {
+        color: string;
+        texture: string;
+        distribution: string;
+        size_range: string;
+        key_distinguishing_features: string[];
+        differential_appearance: string;
+    };
+    search_guidance: {
+        recommended_atlases: string[];
+        doi_links: string[];
+        wikimedia_commons_categories: string[];
+    };
+}
 
 interface ResearchSource {
     title: string;
@@ -501,14 +536,79 @@ async function searchGoogleCseImages(query: string): Promise<ReferenceImage[]> {
 }
 
 function resolveImageProvider(): ImageProvider {
-    if (process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_ID) return 'google_cse';
-    if (process.env.BING_IMAGE_SEARCH_API_KEY) return 'bing';
+    if (process.env.VETIOS_CLINICAL_IMAGES_PRIMARY_SOURCE === 'curated_library') return 'curated_library';
+    if (process.env.VETIOS_CLINICAL_IMAGES_PMC_FALLBACK !== 'false') return 'pmc_oa';
+    if (process.env.VETIOS_CLINICAL_IMAGES_TERTIARY_WEB_SEARCH === 'true') return 'tertiary_web_search';
     return 'wikimedia';
 }
 
-async function searchConfiguredImages(finding: ImageFinding): Promise<ReferenceImage[]> {
-    // Try Google CSE if configured
-    if (process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_ID) {
+async function searchCuratedImages(
+    disease: string,
+    species: DetectedVetiosSpecies,
+    finding: ImageFinding,
+): Promise<ReferenceImage[]> {
+    try {
+        const supabase = getSupabaseServer();
+        const bucket = process.env.VETIOS_CLINICAL_IMAGES_CURATED_BUCKET ?? 'vetios-clinical-images';
+        const minQuality = Number(process.env.VETIOS_CLINICAL_IMAGES_MIN_QUALITY_SCORE ?? 0.7);
+        const { data, error } = await supabase
+            .from('clinical_image_library')
+            .select('storage_path, thumbnail_path, caption, attribution, license_type, license_url, image_category, quality_score')
+            .eq('species', species)
+            .eq('condition_code', conditionCode(disease))
+            .eq('finding_type', finding.id)
+            .eq('active', true)
+            .gte('quality_score', minQuality)
+            .order('quality_score', { ascending: false })
+            .limit(4);
+        if (error || !data?.length) return [];
+        return data.map((row) => {
+            const thumb = supabase.storage.from(bucket).getPublicUrl(String(row.thumbnail_path)).data.publicUrl;
+            const full = supabase.storage.from(bucket).getPublicUrl(String(row.storage_path)).data.publicUrl;
+            return {
+                title: String(row.caption ?? finding.label),
+                thumbnailUrl: thumb,
+                pageUrl: full,
+                source: `VetIOS curated // ${String(row.image_category ?? 'reference')}`,
+                license: String(row.license_type ?? ''),
+                attribution: String(row.attribution ?? row.license_url ?? ''),
+            };
+        });
+    } catch {
+        return [];
+    }
+}
+
+async function searchPmcFigureImages(query: string): Promise<ReferenceImage[]> {
+    const figures = await resolvePMCFigures(query, {
+        retmax: 3,
+        email: process.env.NCBI_TOOL_EMAIL,
+        eutilsBaseUrl: process.env.VETIOS_PMC_EUTILS_BASE_URL,
+    }).catch(() => []);
+    return figures.map((figure) => ({
+        title: figure.figure_caption || figure.article_title,
+        thumbnailUrl: figure.figure_url,
+        pageUrl: figure.pubmed_url || `https://www.ncbi.nlm.nih.gov/pmc/articles/${figure.pmcid}/`,
+        source: `PMC OA // ${figure.journal}`,
+        license: figure.license,
+        attribution: [figure.pmid ? `PMID ${figure.pmid}` : '', figure.doi ? `DOI ${figure.doi}` : ''].filter(Boolean).join(' // '),
+    }));
+}
+
+async function searchConfiguredImages(finding: ImageFinding, disease: string, species: DetectedVetiosSpecies): Promise<ReferenceImage[]> {
+    const curated = await searchCuratedImages(disease, species, finding);
+    if (curated.length > 0) return curated;
+
+    const wikimedia = await searchWikimediaImages(finding.wikimedia_query || finding.searchQuery).catch(() => []);
+    if (wikimedia.length > 0) return wikimedia;
+
+    if (process.env.VETIOS_CLINICAL_IMAGES_PMC_FALLBACK !== 'false') {
+        const pmc = await searchPmcFigureImages(finding.pubmed_image_query || finding.searchQuery);
+        if (pmc.length > 0) return pmc;
+    }
+
+    const allowTertiaryWebSearch = process.env.VETIOS_CLINICAL_IMAGES_TERTIARY_WEB_SEARCH === 'true';
+    if (allowTertiaryWebSearch && process.env.GOOGLE_CSE_API_KEY && process.env.GOOGLE_CSE_ID) {
         try {
             const results = await searchGoogleCseImages(finding.searchQuery);
             if (results.length > 0) return results;
@@ -517,8 +617,7 @@ async function searchConfiguredImages(finding: ImageFinding): Promise<ReferenceI
         }
     }
 
-    // Try Bing Image Search if configured
-    if (process.env.BING_IMAGE_SEARCH_API_KEY) {
+    if (allowTertiaryWebSearch && process.env.BING_IMAGE_SEARCH_API_KEY) {
         try {
             const results = await searchBingImages(finding.searchQuery);
             if (results.length > 0) return results;
@@ -532,6 +631,10 @@ async function searchConfiguredImages(finding: ImageFinding): Promise<ReferenceI
 
 function stripHtml(value: string) {
     return value.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function conditionCode(value: string) {
+    return value.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80) || 'condition';
 }
 
 function isLikelyClinicalImage(image: ReferenceImage | null): image is ReferenceImage {
@@ -987,7 +1090,8 @@ async function resolveResearchSources(disease: string, species: DetectedVetiosSp
         }),
     ]);
 
-    const pubmedSources = pubmed.length > 0 ? pubmed : [buildPubMedSearchSource(context)];
+    const pubmedSources = pubmed.length > 0 ? pubmed : [];
+    const diseaseCategory = inferDiseaseCategory(disease);
     const tier2Sources = TIER_2_SOURCES.map((source) => buildTier2Source(source, context));
     const tier2ByType = new Map(tier2Sources.map((source) => [source.sourceType, source]));
     const mandatoryTypes = buildMandatoryTier2Types(context);
@@ -1007,7 +1111,94 @@ async function resolveResearchSources(disease: string, species: DetectedVetiosSp
         ...mandatoryTier2,
         ...wikipedia,
         ...remainingTier2,
-    ]).slice(0, 15);
+    ])
+        .filter((source) => source.sourceType === 'pubmed' || source.sourceType === 'wikipedia' || sourcePassesPrecisionGate(source, species, diseaseCategory))
+        .slice(0, 15);
+}
+
+function sourcePassesPrecisionGate(source: ResearchSource, species: DetectedVetiosSpecies, diseaseCategory: string) {
+    if (species === 'unknown') return true;
+    return isSourceRelevant(source.source, species, diseaseCategory);
+}
+
+function buildEvidenceSignals(
+    findings: ImageFinding[],
+    imagesByFinding: Record<string, ReferenceImage[]>,
+    researchSources: ResearchSource[],
+    species: DetectedVetiosSpecies,
+    disease: string,
+): Record<string, FindingConfidenceDisplay> {
+    const pubmedCount = researchSources.filter((source) => source.sourceType === 'pubmed').length;
+    const guidelines = buildPrecisionGuidelines(species === 'unknown' ? 'unknown' : species, disease);
+    return Object.fromEntries(findings.map((finding) => {
+        const images = imagesByFinding[finding.id] ?? [];
+        const hasCurated = images.some((image) => image.source.toLowerCase().includes('vetios curated'));
+        const hasPmc = images.some((image) => image.source.toLowerCase().includes('pmc oa'));
+        const evidenceStrength = images.length >= 3 && pubmedCount >= 3 && guidelines.length > 0
+            ? 'strong'
+            : images.length >= 1 && pubmedCount >= 2
+                ? 'moderate'
+                : pubmedCount === 1
+                    ? 'case_report_only'
+                    : 'limited';
+        return [finding.id, {
+            finding_type: finding.label,
+            images_available: images.length,
+            images_source: hasCurated ? 'curated' : hasPmc ? 'pmc_oa' : 'none',
+            literature_papers: pubmedCount,
+            specialist_guideline_available: guidelines.length > 0,
+            evidence_strength: evidenceStrength,
+            evidence_strength_rationale: buildEvidenceRationale(evidenceStrength, images.length, pubmedCount, guidelines.length),
+        }];
+    }));
+}
+
+function buildEvidenceRationale(strength: FindingConfidenceDisplay['evidence_strength'], images: number, papers: number, guidelines: number) {
+    if (strength === 'strong') return `${images} inline images, ${papers} PubMed papers, and ${guidelines} specialist guideline source(s) were resolved.`;
+    if (strength === 'moderate') return `${images} inline image(s) and ${papers} PubMed papers were resolved, but guideline support is limited or indirect.`;
+    if (strength === 'case_report_only') return 'The literature signal is limited to one PubMed result; treat images and descriptions as reference context.';
+    return 'No inline image set or robust literature cluster was resolved; use the reference description and primary atlases.';
+}
+
+function buildReferenceDescriptions(
+    findings: ImageFinding[],
+    imagesByFinding: Record<string, ReferenceImage[]>,
+    disease: string,
+    species: DetectedVetiosSpecies,
+): Record<string, ReferenceDescription> {
+    return Object.fromEntries(findings
+        .filter((finding) => (imagesByFinding[finding.id] ?? []).length === 0)
+        .map((finding) => [finding.id, buildReferenceDescription(finding, disease, species)]));
+}
+
+function buildReferenceDescription(
+    finding: ImageFinding,
+    disease: string,
+    species: DetectedVetiosSpecies,
+): ReferenceDescription {
+    return {
+        finding_type: finding.label,
+        visual_descriptors: {
+            color: 'Record lesion color relative to normal tissue, hemorrhage, necrosis, exudate, or mineralization.',
+            texture: 'Describe firmness, friability, fluid content, mucosal/capsular change, and cut-surface architecture.',
+            distribution: 'State focal, multifocal, segmental, diffuse, bilateral, or organ-system distribution.',
+            size_range: 'Use measured gross dimensions or microscopy magnification when available; otherwise separate gross from microscopic scale.',
+            key_distinguishing_features: [
+                `${species === 'unknown' ? 'species-specific' : species} tissue tropism for ${disease}`,
+                'Lesion pattern that separates primary disease from secondary infection or autolysis',
+                'Ancillary stain, IHC, PCR, culture, or imaging sequence needed for confirmation',
+            ],
+            differential_appearance: 'A competing differential is favored when organ distribution, organism morphology, or tissue compartment does not match the expected disease mechanism.',
+        },
+        search_guidance: {
+            recommended_atlases: [
+                'Jubb, Kennedy & Palmer Pathology of Domestic Animals, latest edition',
+                'Zachary Pathologic Basis of Veterinary Disease, latest edition',
+            ],
+            doi_links: [],
+            wikimedia_commons_categories: [`${species} pathology`, `${disease} pathology`],
+        },
+    };
 }
 
 export async function POST(req: Request) {
@@ -1035,10 +1226,17 @@ export async function POST(req: Request) {
         const imagesByFinding: Record<string, ReferenceImage[]> = {};
         await Promise.all(
             findings.map(async (finding) => {
-                imagesByFinding[finding.id] = await searchConfiguredImages(finding);
+                imagesByFinding[finding.id] = await searchConfiguredImages(finding, disease, species);
             }),
         );
         const researchSources = await resolveResearchSources(disease, species, queryText);
+        const precisionPapers = await searchPrecisionPubMed(species === 'unknown' ? 'unknown' : species, disease, {
+            retmax: 5,
+            email: process.env.NCBI_TOOL_EMAIL,
+            eutilsBaseUrl: process.env.VETIOS_PMC_EUTILS_BASE_URL,
+        }).catch(() => []);
+        const evidenceSignals = buildEvidenceSignals(findings, imagesByFinding, researchSources, species, disease);
+        const referenceDescriptions = buildReferenceDescriptions(findings, imagesByFinding, disease, species);
 
         return NextResponse.json({
             disease,
@@ -1047,6 +1245,9 @@ export async function POST(req: Request) {
             imagesByFinding,
             imageProvider: resolveImageProvider(),
             researchSources,
+            precisionPapers,
+            evidenceSignals,
+            referenceDescriptions,
         });
     } catch (error) {
         return NextResponse.json(

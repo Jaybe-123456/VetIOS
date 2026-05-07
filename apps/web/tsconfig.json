@@ -30,8 +30,14 @@
       "@vetios/cire-engine": [
         "../../packages/cire-engine/src/index.ts"
       ],
+      "@vetios/ask-vetios": [
+        "../../packages/ask-vetios/src/index.ts"
+      ],
       "@vetios/inference-schema": [
         "../../packages/inference-schema/src/index.ts"
+      ],
+      "@vetios/pharmacos": [
+        "../../packages/pharmacos/src/index.ts"
       ]
     },
     "allowArbitraryExtensions": true

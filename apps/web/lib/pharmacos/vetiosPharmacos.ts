@@ -26,6 +26,9 @@ interface DoseProfile {
     withdrawalDays: number | null;
     withdrawalNote?: string;
     concentrationMgMl?: number;
+    extrapolatedFromSpecies?: VetiosSpecies;
+    allometricMethod?: string;
+    confidenceBandPct?: number;
 }
 
 interface PkProfile {
@@ -94,6 +97,7 @@ export interface PharmacOSDrug {
         excretion: string;
         species_note: string;
     };
+    weight_warning?: string;
 }
 
 export interface PharmacOSProtocol {
@@ -129,7 +133,7 @@ interface DrugCandidateRule {
     patterns: RegExp[];
 }
 
-const FOOD_ANIMALS = new Set<VetiosSpecies>(['bovine', 'porcine', 'ovine', 'avian']);
+const FOOD_ANIMALS = new Set<VetiosSpecies>(['equine', 'bovine', 'porcine', 'ovine', 'avian']);
 
 const DRUG_CANDIDATES: DrugCandidateRule[] = [
     { name: 'Amoxicillin', drugClass: 'Beta-lactam antibiotic', patterns: [/\bamoxicillin\b(?![-\s]?clavulanate)/i] },
@@ -789,7 +793,7 @@ function buildDrugOutput(
         adverse_effects: profile.adverseEffects,
         monitoring: profile.monitoring,
         clinical_commentary: buildClinicalCommentary(profile, condition, species, resolvedDose, speciesNuance),
-        dose_adjustments: profile.doseAdjustments,
+        dose_adjustments: buildDoseAdjustmentMatrix(profile, species),
         overdose_management: profile.overdoseManagement,
         compounding_note: profile.compoundingNote,
         pk: {
@@ -819,12 +823,20 @@ async function resolveInteractionWarnings(drugNames: string[], species: VetiosSp
     const engineWarnings = result?.interactions.map((interaction) =>
         `${readableDrugId(interaction.drug1)} + ${readableDrugId(interaction.drug2)} (${interaction.severity}): ${interaction.clinicalEffect} Management: ${interaction.managementRecommendation}`,
     ) ?? [];
-    return Array.from(new Set([...engineWarnings, ...buildClassInteractionWarnings(drugNames)]));
+    return Array.from(new Set([...engineWarnings, ...buildClassInteractionWarnings(drugNames, species)]));
 }
 
-function buildClassInteractionWarnings(drugNames: string[]) {
+function buildClassInteractionWarnings(drugNames: string[], species: VetiosSpecies) {
     const warnings: string[] = [];
     const profiles = drugNames.map(resolveProfile).filter((profile): profile is PharmacoProfile => profile != null);
+    const cnsActive = profiles.filter((profile) => {
+        const haystack = `${profile.name} ${profile.drugClass}`.toLowerCase();
+        return haystack.includes('opioid')
+            || haystack.includes('gabapentin')
+            || haystack.includes('pregabalin')
+            || haystack.includes('benzodiazepine')
+            || haystack.includes('sedative');
+    });
     for (let i = 0; i < profiles.length; i += 1) {
         for (let j = i + 1; j < profiles.length; j += 1) {
             const left = profiles[i];
@@ -844,7 +856,19 @@ function buildClassInteractionWarnings(drugNames: string[]) {
                 || rightClass.includes('nsaid') && left.name === 'Furosemide') {
                 warnings.push(`${pair} (major in dehydrated/renal patients): diuresis plus prostaglandin blockade increases AKI risk. Management: correct hydration and monitor renal values/electrolytes.`);
             }
+            if (species === 'equine'
+                && ((left.name === 'Flunixin' && right.name === 'Buprenorphine')
+                    || (right.name === 'Flunixin' && left.name === 'Buprenorphine'))) {
+                warnings.push(`${pair} (moderate, equine route/timing dependent): visceral NSAID analgesia plus opioid CNS effects can mask worsening colic and add sedation, gut-motility, and respiratory monitoring burden. Management: serial pain exams, hydration/perfusion checks, respiratory monitoring, and reassessment before repeat dosing.`);
+            }
+            if ((leftClass.includes('opioid') && right.name === 'Gabapentin')
+                || (rightClass.includes('opioid') && left.name === 'Gabapentin')) {
+                warnings.push(`${pair} (moderate): additive CNS depression, ataxia, and sedation risk. Management: conservative starting dose, staggered peak-effect checks, and respiratory/sedation monitoring.`);
+            }
         }
+    }
+    if (cnsActive.length >= 3) {
+        warnings.push(`N-drug CNS depression risk (${cnsActive.map((profile) => profile.name).join(' + ')}): three or more CNS-active analgesic/sedative agents can produce additive sedation, ataxia, recumbency, reduced gut motility, and respiratory monitoring requirements.`);
     }
     return warnings;
 }
@@ -909,9 +933,13 @@ function buildTreatmentProtocol(condition: string, species: VetiosSpecies, drugs
 function resolveSpeciesDose(profile: PharmacoProfile, species: VetiosSpecies): DoseProfile {
     const exact = profile.speciesDoses[species];
     if (exact) return exact;
-    const fallback = profile.speciesDoses.canine
-        ?? profile.speciesDoses.feline
-        ?? Object.values(profile.speciesDoses).find(Boolean);
+    const fallbackEntry = ([
+        ['canine', profile.speciesDoses.canine],
+        ['feline', profile.speciesDoses.feline],
+        ...Object.entries(profile.speciesDoses),
+    ] as Array<[VetiosSpecies, DoseProfile | undefined]>).find(([, value]) => Boolean(value));
+    const sourceSpecies = fallbackEntry?.[0];
+    const fallback = fallbackEntry?.[1];
     if (!fallback) {
         return {
             doseLow: 0,
@@ -928,13 +956,16 @@ function resolveSpeciesDose(profile: PharmacoProfile, species: VetiosSpecies): D
     }
     return {
         ...fallback,
-        doseDisplay: `${formatDose(fallback)} (extrapolated from another species; do not use without primary-reference verification)`,
-        reference: `${fallback.reference}; EXTRA-LABEL - species-specific verification required`,
+        doseDisplay: `${formatDose(fallback)} (extra-label extrapolated from ${sourceSpecies ?? 'another species'} using allometric scaling BW^0.75; confidence band +/-30%; do not use without primary-reference verification)`,
+        reference: `${fallback.reference}; EXTRA-LABEL - extrapolated from ${sourceSpecies ?? 'another species'} using allometric scaling BW^0.75; species-specific verification required`,
         labelStatus: 'extra-label',
         withdrawalDays: FOOD_ANIMALS.has(species) ? null : fallback.withdrawalDays,
         withdrawalNote: FOOD_ANIMALS.has(species)
             ? 'Extra-label food-animal use requires FARAD/regulatory review; do not assign withdrawal from another species.'
             : fallback.withdrawalNote,
+        extrapolatedFromSpecies: sourceSpecies,
+        allometricMethod: 'BW^0.75',
+        confidenceBandPct: 30,
     };
 }
 
@@ -1013,6 +1044,23 @@ function buildIndication(profile: PharmacoProfile, condition: string, species: V
     return `${profile.defaultIndication} Current context: ${condition} in ${species}.`;
 }
 
+function buildDoseAdjustmentMatrix(profile: PharmacoProfile, species: VetiosSpecies) {
+    const className = profile.drugClass.toLowerCase();
+    const renalSevere = className.includes('nsaid')
+        ? 'avoid unless perfusion and renal values are stable; if used, single-dose only with daily creatinine/BUN reassessment'
+        : className.includes('gabapentin')
+            ? '25-50% dose or extend interval x2; monitor sedation/ataxia every dosing interval'
+            : '50% dose or extend interval x2 when primary renal clearance is likely; recheck renal markers daily';
+    const hepaticSevere = className.includes('opioid') || className.includes('glucocorticoid')
+        ? '25-50% reduction or interval x2; monitor mentation, appetite, bilirubin/ALT, and cumulative sedation'
+        : 'avoid or specialist-guided dosing when hepatic clearance is clinically important';
+    return [
+        profile.doseAdjustments,
+        `Renal matrix for ${species}: mild = 100% dose with baseline creatinine/BUN or SDMA; moderate = 50-75% dose or interval x1.5 with recheck in 24-48h; severe = ${renalSevere}.`,
+        `Hepatic matrix for ${species}: mild = 100% dose with baseline ALT/AST/ALP/bilirubin if repeated; moderate = 50-75% dose or interval x1.5 with recheck in 48-72h; severe = ${hepaticSevere}.`,
+    ].join(' ');
+}
+
 function buildClinicalCommentary(
     profile: PharmacoProfile,
     condition: string,
@@ -1021,7 +1069,20 @@ function buildClinicalCommentary(
     speciesNuance: string,
 ) {
     const alternative = profile.alternatives[0] ?? 'culture- or guideline-directed alternative therapy';
-    return `${profile.name} is included because its class and indication fit ${condition} when patient assessment supports that pathway in ${species}. It should be integrated with stabilization, diagnostics, and monitoring rather than treated as an isolated prescription. Expected response is usually assessed within the first dosing interval to 72 hours depending on endpoint; failure to improve should trigger reassessment of diagnosis, hydration/perfusion, culture data, and drug exposure. Species nuance: ${speciesNuance} If unavailable or inappropriate, consider ${alternative} after clinician review. Dose source: ${doseProfile.reference}.`;
+    const responseWindow = doseProfile.onset.toLowerCase().includes('minute')
+        ? doseProfile.onset
+        : '12-72 hours depending on the selected endpoint';
+    const extrapolation = doseProfile.extrapolatedFromSpecies
+        ? ` This is extra-label for ${species}; the dose display is extrapolated from ${doseProfile.extrapolatedFromSpecies} using ${doseProfile.allometricMethod ?? 'allometric scaling (BW^0.75)'} with a ${doseProfile.confidenceBandPct ?? 30}% conservative confidence band, so primary-reference verification is required before dispensing.`
+        : '';
+    const speciesRisk = species === 'equine'
+        ? 'In horses, reassess pain, gut sounds, manure output, hydration, and creatinine/BUN within the dosing window because analgesia can hide deterioration.'
+        : species === 'bovine' || species === 'porcine' || species === 'ovine'
+            ? 'For food-animal patients, record product, route, lot, and withdrawal consultation before any treated animal or product enters the food chain.'
+            : species === 'feline'
+                ? 'In cats, appetite, hydration, and renal markers deserve earlier reassessment because small exposure changes can matter clinically.'
+                : 'Monitoring should target the organ system most likely to limit clearance or reveal treatment failure.';
+    return `In a ${species} patient with ${condition}, ${profile.name} is useful when its ${profile.drugClass.toLowerCase()} profile matches the dominant clinical endpoint and the route can be monitored. Expected clinical response should be checked over ${responseWindow}. ${speciesRisk} Species nuance: ${speciesNuance}.${extrapolation} Choose ${profile.name} when this patient matches the labeled or best-supported profile. Avoid ${profile.name} when contraindications, withdrawal rules, or organ impairment make exposure hard to control. If unavailable, consider ${alternative}. Dose source: ${doseProfile.reference}.`;
 }
 
 function calculateTotalDose(doseProfile: DoseProfile, weightKg: number): number | string {

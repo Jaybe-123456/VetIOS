@@ -1,10 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { Message } from '@/store/useChatStore';
 import { cn } from '@/lib/utils';
 import { motion } from 'framer-motion';
 import { useChatStore } from '@/store/useChatStore';
-import { TerminalSquare, User, GraduationCap } from 'lucide-react';
+import { TerminalSquare, User, GraduationCap, ThumbsUp, ThumbsDown } from 'lucide-react';
 import SmartActions from './SmartActions';
 
 interface ChatBubbleProps {
@@ -101,6 +102,9 @@ function inlineFormat(text: string): string {
 // ── Main component ─────────────────────────────────────────────────────────
 export default function ChatBubble({ message, conversationMessages, onFollowUp }: ChatBubbleProps) {
     const username = useChatStore((s) => s.username);
+    const [feedbackState, setFeedbackState] = useState<'idle' | 'helpful' | 'not_helpful' | 'sent'>('idle');
+    const [feedbackReason, setFeedbackReason] = useState<'images_missing' | 'drug_dose_wrong' | 'sources_irrelevant' | 'information_incomplete'>('information_incomplete');
+    const [feedbackNotes, setFeedbackNotes] = useState('');
     const isAssistant = message.role === 'assistant';
     const mode = message.metadata?.mode;
     const isEducational = mode === 'educational';
@@ -181,7 +185,79 @@ export default function ChatBubble({ message, conversationMessages, onFollowUp }
                         onFollowUp={onFollowUp}
                     />
                 )}
+
+                {isAssistant && message.metadata?.query_history_id && (
+                    <div className="space-y-2 border-t border-white/5 pt-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                            <button
+                                type="button"
+                                onClick={() => submitFeedback('helpful')}
+                                disabled={feedbackState === 'sent'}
+                                className="inline-flex items-center gap-1.5 border border-white/10 bg-white/[0.02] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-white/46 transition-colors hover:border-accent/25 hover:text-accent disabled:opacity-50"
+                            >
+                                <ThumbsUp className="h-3 w-3" />
+                                Helpful
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setFeedbackState('not_helpful')}
+                                disabled={feedbackState === 'sent'}
+                                className="inline-flex items-center gap-1.5 border border-white/10 bg-white/[0.02] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-white/46 transition-colors hover:border-amber-400/25 hover:text-amber-200 disabled:opacity-50"
+                            >
+                                <ThumbsDown className="h-3 w-3" />
+                                Not helpful
+                            </button>
+                            {feedbackState === 'sent' && (
+                                <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-accent/70">Feedback saved</span>
+                            )}
+                        </div>
+
+                        {feedbackState === 'not_helpful' && (
+                            <div className="grid gap-2 border border-white/8 bg-black/20 p-2">
+                                <select
+                                    value={feedbackReason}
+                                    onChange={(event) => setFeedbackReason(event.target.value as typeof feedbackReason)}
+                                    className="border border-white/10 bg-black/40 px-2 py-1.5 font-mono text-[11px] text-white/70 outline-none focus:border-accent/35"
+                                >
+                                    <option value="images_missing">Images were missing</option>
+                                    <option value="drug_dose_wrong">Drug dose was wrong</option>
+                                    <option value="sources_irrelevant">Sources were irrelevant</option>
+                                    <option value="information_incomplete">Information was incomplete</option>
+                                </select>
+                                <input
+                                    value={feedbackNotes}
+                                    onChange={(event) => setFeedbackNotes(event.target.value.slice(0, 200))}
+                                    placeholder="Optional note"
+                                    className="border border-white/10 bg-black/40 px-2 py-1.5 font-mono text-[11px] text-white/70 outline-none placeholder:text-white/25 focus:border-accent/35"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => submitFeedback('not_helpful')}
+                                    className="justify-self-start border border-amber-400/20 bg-amber-400/8 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-amber-100/80 transition-colors hover:bg-amber-400/12"
+                                >
+                                    Send feedback
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </motion.div>
     );
+
+    async function submitFeedback(kind: 'helpful' | 'not_helpful') {
+        const queryId = message.metadata?.query_history_id;
+        if (!queryId) return;
+        await fetch('/api/ask-vetios/feedback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query_id: queryId,
+                user_feedback: kind,
+                reason: kind === 'not_helpful' ? feedbackReason : undefined,
+                feedback_notes: kind === 'not_helpful' ? feedbackNotes : undefined,
+            }),
+        }).catch(() => null);
+        setFeedbackState('sent');
+    }
 }

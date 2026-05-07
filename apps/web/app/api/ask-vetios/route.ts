@@ -16,6 +16,8 @@ import { generateFingerprint, attachResponseFingerprint, hashContent } from '@/l
 import { writeAuditLog, buildAuditContext } from '@/lib/protection/auditLog';
 import { getPopulationSignalService } from '@/lib/populationSignal/populationSignalService';
 import { checkOrigin, buildCorsHeaders } from '@/lib/protection/originGuard';
+import { parseAskVetIOSQuery } from '@vetios/ask-vetios';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -67,9 +69,10 @@ export async function POST(req: Request) {
     // ── Heuristic fallback (dev / test) ──
     if (shouldUseAiHeuristicFallback()) {
         const heuristicBody = buildHeuristicResponse(message);
+        const queryHistoryId = await logAskVetiosQuery(message, heuristicBody, startTime).catch(() => null);
         const fp = generateFingerprint({ tenantId: 'vetios-platform', requestId, endpoint: auditCtx.endpoint, issuedAt: startTime });
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, fingerprint: fp, mode: heuristicBody.mode, metadata: { heuristic: true }, timestamp: new Date().toISOString() });
-        const res = NextResponse.json(attachResponseFingerprint(heuristicBody as Record<string, unknown>, fp), { status: 200 });
+        const res = NextResponse.json(attachResponseFingerprint({ ...heuristicBody, query_history_id: queryHistoryId } as Record<string, unknown>, fp), { status: 200 });
         res.headers.set('x-vetios-fingerprint', fp);
         return withAskVetiosHeaders(res, requestId, startTime);
     }
@@ -117,13 +120,15 @@ export async function POST(req: Request) {
             throw new Error(`AI generated invalid JSON: ${inferenceResult.raw_content}`);
         }
         const response = buildEnsembleResponse(output, inferenceResult.ensemble_metadata);
-        const res = NextResponse.json(response, { status: 200 });
+        const queryHistoryId = await logAskVetiosQuery(message, response, startTime).catch(() => null);
+        const responseWithHistory = queryHistoryId ? { ...response, query_history_id: queryHistoryId } : response;
+        const res = NextResponse.json(responseWithHistory, { status: 200 });
         withAskVetiosHeaders(res, requestId, startTime);
 
         // ── Passive population signal ingestion (fire-and-forget) ──
-        if (response.mode === 'clinical' && response.metadata?.diagnosis_ranked?.[0]?.name) {
-            const topDiagnosis = response.metadata.diagnosis_ranked[0].name as string;
-            const topConfidence = (response.metadata.diagnosis_ranked[0].confidence as number) ?? 0.5;
+        if (responseWithHistory.mode === 'clinical' && responseWithHistory.metadata?.diagnosis_ranked?.[0]?.name) {
+            const topDiagnosis = responseWithHistory.metadata.diagnosis_ranked[0].name as string;
+            const topConfidence = (responseWithHistory.metadata.diagnosis_ranked[0].confidence as number) ?? 0.5;
             const species = (output.species as string) ?? 'unknown';
             const region = (output.region as string) ?? 'unknown';
             void getPopulationSignalService().ingestSignal({
@@ -141,8 +146,9 @@ export async function POST(req: Request) {
     } catch (error) {
         // Surface fallback on AI failure — still better than a 500
         const fallback = buildHeuristicResponse(message);
+        const queryHistoryId = await logAskVetiosQuery(message, fallback, startTime).catch(() => null);
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, metadata: { fallback: true, error: error instanceof Error ? error.message : 'Unknown' }, timestamp: new Date().toISOString() });
-        const res = NextResponse.json({ ...fallback, _fallback: true }, { status: 200 });
+        const res = NextResponse.json({ ...fallback, query_history_id: queryHistoryId, _fallback: true }, { status: 200 });
         return withAskVetiosHeaders(res, requestId, startTime);
     }
 }
@@ -223,6 +229,48 @@ function extractTopic(data: Record<string, unknown>): string {
 }
 
 // ── Heuristic fallback (no AI key / dev mode) ─────────────────────────────
+
+async function logAskVetiosQuery(
+    message: string,
+    response: Record<string, unknown>,
+    startTime: number,
+): Promise<string | null> {
+    if (process.env.VETIOS_ASK_QUERY_HISTORY_ENABLED === 'false') return null;
+    try {
+        const parsed = parseAskVetIOSQuery(message);
+        const responseSections = inferResponseSections(response, parsed.query_type);
+        const { data, error } = await getSupabaseServer()
+            .from('ask_vetios_queries')
+            .insert({
+                tenant_id: null,
+                query_text: message,
+                parsed_query: parsed,
+                species: parsed.species === 'unknown' ? null : parsed.species,
+                condition: parsed.condition,
+                query_type: parsed.query_type,
+                response_sections: responseSections,
+                images_resolved: 0,
+                papers_returned: 0,
+                response_latency_ms: Date.now() - startTime,
+            })
+            .select('id')
+            .single();
+        if (error || !data?.id) return null;
+        return String(data.id);
+    } catch {
+        return null;
+    }
+}
+
+function inferResponseSections(response: Record<string, unknown>, queryType: string) {
+    const sections = new Set<string>();
+    if (queryType === 'disease_overview' || response.mode === 'educational') sections.add('disease_overview');
+    if (queryType === 'clinical_images') sections.add('clinical_images');
+    if (queryType === 'drug_dose') sections.add('drug_panel');
+    if (queryType === 'research') sections.add('research_sources');
+    if (response.mode === 'clinical') sections.add('diagnosis_support');
+    return Array.from(sections);
+}
 
 function buildHeuristicResponse(message: string) {
     const lower = message.toLowerCase();

@@ -62,7 +62,7 @@ export default function AskVetIOSPage() {
             });
 
             const data = await response.json() as {
-                mode?: string; content?: string; topic?: string; metadata?: unknown; error?: string;
+                mode?: string; content?: string; topic?: string; metadata?: unknown; error?: string; query_history_id?: string | null;
             };
 
             if (data.error) throw new Error(data.error);
@@ -73,6 +73,7 @@ export default function AskVetIOSPage() {
                 metadata: {
                     mode: (data.mode as 'educational' | 'clinical' | 'general') ?? 'general',
                     topic: data.topic,
+                    query_history_id: data.query_history_id,
                     ...(data.metadata as object ?? {}),
                 },
             });

@@ -6,6 +6,7 @@ export type MessageMode = 'educational' | 'clinical' | 'general' | 'operational'
 export interface MessageMetadata {
     mode: MessageMode;
     topic?: string;
+    query_history_id?: string | null;
     diagnosis_ranked?: { name: string; confidence: number; reasoning: string }[];
     urgency_level?: 'low' | 'moderate' | 'high' | 'critical' | 'emergency';
     recommended_tests?: string[];

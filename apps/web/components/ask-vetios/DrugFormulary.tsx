@@ -47,6 +47,7 @@ interface PharmacOSDrug {
     dose_adjustments: string;
     overdose_management: string;
     compounding_note: string;
+    weight_warning?: string;
     pk: {
         bioavailability: string;
         half_life_hours: number;
@@ -76,6 +77,14 @@ interface PharmacOSPayload {
     total_drugs: number;
     protocol_source: string;
     summary?: string;
+    blocked?: boolean;
+    validation_error?: {
+        code: string;
+        severity: 'impossible' | 'extreme_outlier';
+        message: string;
+        bounds: { min: number; max: number };
+        correction_prompt: string;
+    };
 }
 
 const SPECIES_ORDER: Species[] = [...VETIOS_SPECIES];
@@ -158,11 +167,10 @@ export default function DrugFormulary({ messageContent, topic, queryText, messag
                     }),
                 });
 
-                if (!response.ok) {
+                const data = (await response.json()) as PharmacOSPayload;
+                if (!response.ok && !data.validation_error) {
                     throw new Error(`Request failed with ${response.status}`);
                 }
-
-                const data = (await response.json()) as PharmacOSPayload;
                 if (!cancelled) {
                     setPayload({
                         ...fallback,
@@ -289,6 +297,16 @@ export default function DrugFormulary({ messageContent, topic, queryText, messag
                 </div>
             )}
 
+            {payload.validation_error && (
+                <div className="border border-red-500/30 bg-red-500/8 px-4 py-3 font-mono text-[11px] leading-relaxed text-red-100/90">
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-red-300">
+                        {payload.validation_error.severity === 'impossible' ? 'Dose calculation blocked' : 'Weight outlier warning'}
+                    </div>
+                    <div className="mt-2">{payload.validation_error.message}</div>
+                    <div className="mt-1 text-red-100/70">{payload.validation_error.correction_prompt}</div>
+                </div>
+            )}
+
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.8fr)]">
                 <div className="space-y-3">
                     <div className="flex flex-wrap gap-2">
@@ -346,6 +364,12 @@ export default function DrugFormulary({ messageContent, topic, queryText, messag
                                 <p className="font-mono text-[11px] leading-relaxed text-white/58">
                                     {drug.mechanism}
                                 </p>
+
+                                {drug.weight_warning && (
+                                    <div className="border border-red-500/25 bg-red-500/8 px-3 py-2 font-mono text-[11px] leading-relaxed text-red-100/88">
+                                        {drug.weight_warning}
+                                    </div>
+                                )}
 
                                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                                     <Metric label="Dose" value={formatValue(drug.dose_mg_per_kg, ' mg/kg')} />

@@ -15,13 +15,53 @@ interface ImageFinding {
     id: string;
     label: string;
     description: string;
-    confidence: number;
+    confidence?: number;
     sourceType: string;
     searchQuery: string;
     wikimedia_query?: string;
     pubmed_image_query?: string;
     idexx_relevant?: boolean;
     clinical_note?: string;
+}
+
+interface FindingConfidenceDisplay {
+    finding_type: string;
+    images_available: number;
+    images_source: 'curated' | 'pmc_oa' | 'none';
+    literature_papers: number;
+    specialist_guideline_available: boolean;
+    evidence_strength: 'strong' | 'moderate' | 'limited' | 'case_report_only';
+    evidence_strength_rationale: string;
+}
+
+interface ReferenceDescription {
+    finding_type: string;
+    visual_descriptors: {
+        color: string;
+        texture: string;
+        distribution: string;
+        size_range: string;
+        key_distinguishing_features: string[];
+        differential_appearance: string;
+    };
+    search_guidance: {
+        recommended_atlases: string[];
+        doi_links: string[];
+        wikimedia_commons_categories: string[];
+    };
+}
+
+interface PrecisionPaper {
+    pmid: string;
+    doi: string;
+    title: string;
+    authors: string[];
+    journal: string;
+    year: number;
+    abstract_url: string;
+    full_text_url?: string;
+    is_open_access: boolean;
+    evidence_type: string;
 }
 
 interface ReferenceImage {
@@ -52,6 +92,9 @@ interface DiseaseImagePayload {
     imagesByFinding: Record<string, ReferenceImage[]>;
     imageProvider?: string;
     researchSources?: ResearchSource[];
+    precisionPapers?: PrecisionPaper[];
+    evidenceSignals?: Record<string, FindingConfidenceDisplay>;
+    referenceDescriptions?: Record<string, ReferenceDescription>;
 }
 
 function localDisease(topic: string | undefined, messageContent: string, queryText?: string) {
@@ -153,7 +196,23 @@ function localFindings(topic: string | undefined, messageContent: string, queryT
         },
     ];
 
-    return { disease, species, findings, imagesByFinding: {}, researchSources: [] };
+    return {
+        disease,
+        species,
+        findings,
+        imagesByFinding: {},
+        researchSources: [],
+        evidenceSignals: Object.fromEntries(findings.map((finding) => [finding.id, {
+            finding_type: finding.label,
+            images_available: 0,
+            images_source: 'none',
+            literature_papers: 0,
+            specialist_guideline_available: false,
+            evidence_strength: 'limited',
+            evidence_strength_rationale: 'Local reference description only; live image and literature resolution has not completed.',
+        }])),
+        referenceDescriptions: {},
+    };
 }
 
 export default function DiseaseImagePanel({ messageContent, topic, queryText, messageId }: DiseaseImagePanelProps) {
@@ -188,6 +247,9 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
                         imagesByFinding: data.imagesByFinding ?? {},
                         imageProvider: data.imageProvider,
                         researchSources: Array.isArray(data.researchSources) ? data.researchSources : [],
+                        precisionPapers: Array.isArray(data.precisionPapers) ? data.precisionPapers : [],
+                        evidenceSignals: data.evidenceSignals ?? localPayload.evidenceSignals,
+                        referenceDescriptions: data.referenceDescriptions ?? {},
                     });
                     setStatus('ready');
                 }
@@ -242,19 +304,21 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
 
             {status === 'loading' && (
                 <div className="border border-white/10 bg-white/[0.02] px-4 py-3 font-mono text-[11px] text-white/54">
-                    Fetching structured disease image descriptors and reference searches...
+                    Fetching structured disease descriptors, curated images, PMC figures, and precision sources...
                 </div>
             )}
 
             {status === 'error' && (
                 <div className="border border-amber-500/20 bg-amber-500/6 px-4 py-3 font-mono text-[11px] leading-relaxed text-amber-200/80">
-                    Live clinical image enrichment could not be reached. Local visual descriptors and search queries are still provided for review.
+                    Live clinical image enrichment could not be reached. Local visual descriptors are still provided for review.
                 </div>
             )}
 
             <div className="grid gap-3">
                 {payload.findings.map((finding) => {
                     const images = payload.imagesByFinding[finding.id] ?? [];
+                    const signal = payload.evidenceSignals?.[finding.id];
+                    const referenceDescription = payload.referenceDescriptions?.[finding.id];
 
                     return (
                         <div key={finding.id} className="space-y-3 border border-white/10 bg-white/[0.02] p-3">
@@ -267,14 +331,18 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
                                         <span className="border border-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-white/56">
                                             {finding.sourceType}
                                         </span>
-                                        <span className="border border-[#00ff88]/20 bg-[#00ff88]/8 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-[#00ff88]">
-                                            {Math.round(finding.confidence * 100)}% confidence
-                                        </span>
+                                        {signal && (
+                                            <span className="border border-[#00ff88]/20 bg-[#00ff88]/8 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-[#00ff88]">
+                                                Evidence: {signal.evidence_strength}
+                                            </span>
+                                        )}
                                     </div>
                                 </div>
 
                                 <div className="border border-white/10 bg-black/30 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.18em] text-white/42">
-                                    Inline references
+                                    {signal
+                                        ? `${signal.images_available} images // ${signal.literature_papers} papers`
+                                        : 'Inline references'}
                                 </div>
                             </div>
 
@@ -288,20 +356,11 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
                                 </div>
                             )}
 
-                            <div className="grid gap-2 md:grid-cols-2">
-                                <div className="rounded border border-white/8 bg-black/30 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-white/48">
-                                    Search: {finding.searchQuery}
+                            {signal && (
+                                <div className="border border-white/8 bg-black/30 px-3 py-2 font-mono text-[11px] leading-relaxed text-white/56">
+                                    {signal.images_available} {signal.images_source === 'curated' ? 'curated' : signal.images_source === 'pmc_oa' ? 'PMC OA' : 'inline'} image{signal.images_available === 1 ? '' : 's'} // {signal.literature_papers} PubMed paper{signal.literature_papers === 1 ? '' : 's'} // {signal.specialist_guideline_available ? 'specialist guideline available' : 'no matched specialist guideline'} // {signal.evidence_strength_rationale}
                                 </div>
-                                <div className="rounded border border-white/8 bg-black/30 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-white/48">
-                                    Wikimedia: {finding.wikimedia_query || finding.searchQuery}
-                                </div>
-                                <div className="rounded border border-white/8 bg-black/30 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-white/48">
-                                    PubMed figures: {finding.pubmed_image_query || finding.searchQuery}
-                                </div>
-                                <div className="rounded border border-white/8 bg-black/30 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.16em] text-white/48">
-                                    IDEXX/Antech: {finding.idexx_relevant ? 'relevant' : 'case dependent'}
-                                </div>
-                            </div>
+                            )}
 
                             {images.length > 0 ? (
                                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -334,9 +393,19 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
                                     ))}
                                 </div>
                             ) : (
-                                <div className="border border-dashed border-white/10 bg-black/20 px-3 py-4 font-mono text-[11px] text-white/44">
-                                    No inline reference images were resolved for this finding.
-                                </div>
+                                referenceDescription ? (
+                                    <div className="space-y-2 border border-dashed border-white/10 bg-black/20 px-3 py-4 font-mono text-[11px] leading-relaxed text-white/58">
+                                        <div className="text-[10px] uppercase tracking-[0.18em] text-white/34">Reference Description</div>
+                                        <p>Color: {referenceDescription.visual_descriptors.color}</p>
+                                        <p>Texture: {referenceDescription.visual_descriptors.texture}</p>
+                                        <p>Distribution: {referenceDescription.visual_descriptors.distribution}</p>
+                                        <p>Distinguishing features: {referenceDescription.visual_descriptors.key_distinguishing_features.join('; ')}</p>
+                                    </div>
+                                ) : (
+                                    <div className="border border-dashed border-white/10 bg-black/20 px-3 py-4 font-mono text-[11px] text-white/44">
+                                        No inline reference images were resolved for this finding.
+                                    </div>
+                                )
                             )}
                         </div>
                     );
@@ -346,6 +415,23 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
             <div className="border border-white/10 bg-white/[0.02] p-3">
                 <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/36">Research Sources</div>
                 <div className="mt-3 grid gap-2">
+                    {(payload.precisionPapers ?? []).map((paper) => (
+                        <a
+                            key={`precision-${paper.pmid}`}
+                            href={paper.abstract_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="border border-white/8 bg-black/25 px-3 py-2 transition-colors hover:border-white/18"
+                        >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="font-mono text-[11px] leading-relaxed text-white/76">{paper.title}</span>
+                                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#00ff88]">PMID {paper.pmid}</span>
+                            </div>
+                            <div className="mt-1 font-mono text-[11px] leading-relaxed text-white/48">
+                                {[paper.authors.length ? `${paper.authors[0]} et al.` : '', paper.year || '', paper.journal, paper.doi ? `DOI ${paper.doi}` : '', paper.is_open_access ? 'OA full text' : 'abstract'].filter(Boolean).join(' // ')}
+                            </div>
+                        </a>
+                    ))}
                     {(payload.researchSources ?? []).length > 0 ? payload.researchSources!.map((source) => (
                         <a
                             key={`${source.sourceType}-${source.url}`}
@@ -384,7 +470,7 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
                         </a>
                     )) : (
                         <p className="font-mono text-[11px] leading-relaxed text-white/46">
-                            No inline Wikipedia or PubMed sources were resolved for this query.
+                            No precision-matched sources were resolved for this query.
                         </p>
                     )}
                 </div>
