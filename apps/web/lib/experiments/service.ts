@@ -412,6 +412,12 @@ export async function recordExperimentFailure(
     await store.updateExperimentRun(runId, tenantId, {
         status: 'failed',
         status_reason: input.failureReason,
+        registry_context: {
+            ...run.registry_context,
+            deployment_eligibility: 'blocked',
+            deployment_decision: 'rejected',
+            deployment_block_reason: input.errorSummary ?? input.failureReason,
+        },
         ended_at: new Date().toISOString(),
         last_heartbeat_at: new Date().toISOString(),
     });
@@ -3042,7 +3048,7 @@ function getSafetyMetricRequirements(
     latestMetric: ExperimentMetricRecord | null,
     adversarialMetrics: AdversarialMetricRecord | null = null,
 ): Array<{ key: string; value: number | null }> {
-    const safetyEvidence = resolveSafetyEvaluationInputs(run, latestMetric, adversarialMetrics);
+    const safetyEvidence = resolveClinicalSafetyCoverageInputs(run, latestMetric);
     return [
         {
             key: getPrimarySafetyMetricKey(run),
@@ -3059,6 +3065,14 @@ function getSafetyMetricRequirements(
         {
             key: 'dangerous_false_reassurance_rate',
             value: safetyEvidence.dangerous_false_reassurance_rate,
+        },
+        {
+            key: 'abstain_accuracy',
+            value: safetyEvidence.abstain_accuracy,
+        },
+        {
+            key: 'contradiction_detection_rate',
+            value: safetyEvidence.contradiction_detection_rate,
         },
     ];
 }
@@ -3119,6 +3133,25 @@ function resolveSafetyEvaluationInputs(
         recall_critical: recallCritical,
         false_negative_critical_rate: falseNegativeCriticalRate,
         dangerous_false_reassurance_rate: dangerousFalseReassuranceRate,
+    };
+}
+
+function resolveClinicalSafetyCoverageInputs(
+    run: ExperimentRunRecord,
+    latestMetric: ExperimentMetricRecord | null,
+) {
+    return {
+        primary_safety_signal: getPrimarySafetySignal(run, latestMetric),
+        recall_critical: latestMetric?.recall_critical
+            ?? numberOrNull(run.safety_metrics.recall_critical),
+        false_negative_critical_rate: latestMetric?.false_negative_critical_rate
+            ?? numberOrNull(run.safety_metrics.false_negative_critical_rate),
+        dangerous_false_reassurance_rate: latestMetric?.dangerous_false_reassurance_rate
+            ?? numberOrNull(run.safety_metrics.dangerous_false_reassurance_rate),
+        abstain_accuracy: latestMetric?.abstain_accuracy
+            ?? numberOrNull(run.safety_metrics.abstain_accuracy),
+        contradiction_detection_rate: latestMetric?.contradiction_detection_rate
+            ?? numberOrNull(run.safety_metrics.contradiction_detection_rate),
     };
 }
 
