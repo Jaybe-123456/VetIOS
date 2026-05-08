@@ -149,8 +149,12 @@ async function applyLabelCalibration(
         .in('label', labels);
 
     if (error) {
-        console.warn('Label calibration lookup failed; continuing without calibration.', error);
-        return differentials;
+        if (!isMissingColumnError(error.message)) {
+            console.warn('Label calibration lookup failed; continuing without calibration.', error);
+            return differentials;
+        }
+
+        return applyOutcomePayloadCalibration(supabase, tenantId, differentials);
     }
 
     const calibrationMap = Object.fromEntries(
@@ -181,6 +185,21 @@ async function persistInferenceEvent(
         outputPayload: Record<string, unknown>;
     },
 ): Promise<string> {
+    const enrichedOutputPayload = {
+        ...input.outputPayload,
+        calibration: {
+            adjusted: true,
+            source: 'vetios_inference',
+        },
+    };
+    const uncertaintyMetrics = {
+        cps: input.cire.cps,
+        safety_state: input.cire.safety_state,
+        phi_hat: input.cire.phi_hat,
+        cire: input.cire,
+        differentials: input.differentials,
+    };
+
     const { data, error } = await supabase
         .from('ai_inference_events')
         .insert({
@@ -188,26 +207,42 @@ async function persistInferenceEvent(
             input_signature: input.inputSignature,
             model_name: input.model.name,
             model_version: input.model.version,
-            differentials: input.differentials,
             confidence_score: input.confidenceScore,
-            cire: input.cire,
-            latency_ms: input.latencyMs,
             inference_latency_ms: input.latencyMs,
-            output_payload: input.outputPayload,
-            uncertainty_metrics: {
-                cps: input.cire.cps,
-                safety_state: input.cire.safety_state,
-            },
-            outcome_resolved: false,
+            output_payload: enrichedOutputPayload,
+            uncertainty_metrics: uncertaintyMetrics,
         })
         .select('id')
         .single();
 
-    if (error || !data?.id) {
-        throw new Error(`Failed to persist inference event: ${error?.message ?? 'Unknown error'}`);
+    if (error && !isMissingColumnError(error.message)) {
+        throw new Error(`Failed to persist inference event: ${error.message}`);
     }
 
-    return String(data.id);
+    if (!error && data?.id) {
+        return String(data.id);
+    }
+
+    const fallbackInsert = await supabase
+        .from('ai_inference_events')
+        .insert({
+            tenant_id: input.tenantId,
+            input_signature: input.inputSignature,
+            model_name: input.model.name,
+            model_version: input.model.version,
+            confidence_score: input.confidenceScore,
+            inference_latency_ms: input.latencyMs,
+            output_payload: enrichedOutputPayload,
+            uncertainty_metrics: uncertaintyMetrics,
+        })
+        .select('id')
+        .single();
+
+    if (fallbackInsert.error || !fallbackInsert.data?.id) {
+        throw new Error(`Failed to persist inference event: ${fallbackInsert.error?.message ?? 'Unknown error'}`);
+    }
+
+    return String(fallbackInsert.data.id);
 }
 
 function buildOutputPayload(
@@ -229,6 +264,47 @@ function buildOutputPayload(
             })),
         },
     };
+}
+
+async function applyOutcomePayloadCalibration(
+    supabase: SupabaseClient,
+    tenantId: string,
+    differentials: Differential[],
+): Promise<Differential[]> {
+    const { data, error } = await supabase
+        .from('clinical_outcome_events')
+        .select('outcome_payload')
+        .eq('tenant_id', tenantId)
+        .limit(500);
+
+    if (error) {
+        console.warn('Outcome payload calibration lookup failed; continuing without calibration.', error);
+        return differentials;
+    }
+
+    const stats = new Map<string, { total: number; count: number }>();
+    for (const row of data ?? []) {
+        const payload = asRecord((row as Record<string, unknown>).outcome_payload);
+        const label = readText(payload.label);
+        const calibrationDelta = readNumber(payload.calibration_delta);
+        if (!label || calibrationDelta == null) continue;
+
+        const entry = stats.get(label) ?? { total: 0, count: 0 };
+        entry.total += calibrationDelta;
+        entry.count += 1;
+        stats.set(label, entry);
+    }
+
+    return differentials
+        .map((entry) => {
+            const stat = stats.get(entry.label);
+            const meanDelta = stat && stat.count > 0 ? stat.total / stat.count : 0;
+            return {
+                ...entry,
+                p: clampProbability(entry.p + meanDelta),
+            };
+        })
+        .sort((left, right) => right.p - left.p);
 }
 
 function normalizeDifferential(value: unknown): Differential | null {
@@ -285,4 +361,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isMissingColumnError(message: string): boolean {
+    return message.includes('schema cache')
+        || message.includes('column')
+        || message.includes('Could not find the');
 }

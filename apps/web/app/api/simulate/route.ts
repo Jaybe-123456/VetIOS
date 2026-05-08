@@ -112,31 +112,23 @@ export async function POST(req: Request) {
         .from('edge_simulation_events')
         .insert({
             tenant_id: tenantId,
-            base_case: body.base_case,
-            steps: body.steps,
-            mode: body.mode,
-            passes,
-            failures,
-            mean_confidence: stabilityReport.mean_confidence,
-            results_summary: resultsSummary,
             simulation_type: `stability_${body.mode}`,
             simulation_parameters: {
                 steps: body.steps,
                 mode: body.mode,
                 model,
+                base_case: body.base_case,
             },
-            scenario: {
+            case_id: clinicalCaseId,
+            triggered_inference_id: null,
+            stress_metrics: {
                 clinical_case_id: clinicalCaseId,
                 base_case: body.base_case,
                 variants,
-            },
-            triggered_inference_id: null,
-            inference_output: { results_summary: resultsSummary },
-            failure_mode: failures > 0 ? 'hold_state_detected' : null,
-            stress_metrics: {
                 stability_report: stabilityReport,
                 results_summary: resultsSummary,
             },
+            failure_mode: failures > 0 ? 'hold_state_detected' : null,
             is_real_world: false,
         })
         .select('id')

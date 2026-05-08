@@ -25,7 +25,7 @@ export async function GET(req: Request) {
     const tenantId = auth.actor.tenantId;
     const { data: inferenceRows, error: inferenceError } = await supabase
         .from('ai_inference_events')
-        .select('confidence_score, outcome_resolved, calibration_delta, cire, output_payload')
+        .select('confidence_score, output_payload, uncertainty_metrics')
         .eq('tenant_id', tenantId);
 
     if (inferenceError) {
@@ -35,9 +35,21 @@ export async function GET(req: Request) {
         );
     }
 
+    const { data: outcomeRows, error: outcomeError } = await supabase
+        .from('clinical_outcome_events')
+        .select('outcome_payload')
+        .eq('tenant_id', tenantId);
+
+    if (outcomeError) {
+        return NextResponse.json(
+            { error: 'outcome_query_failed', detail: outcomeError.message },
+            { status: 500 },
+        );
+    }
+
     const { data: simulationRows, error: simulationError } = await supabase
         .from('edge_simulation_events')
-        .select('passes, failures, steps, stress_metrics')
+        .select('simulation_parameters, stress_metrics')
         .eq('tenant_id', tenantId);
 
     if (simulationError) {
@@ -48,12 +60,13 @@ export async function GET(req: Request) {
     }
 
     const inferences = (inferenceRows ?? []).map((row) => row as Record<string, unknown>);
+    const outcomes = (outcomeRows ?? []).map((row) => row as Record<string, unknown>);
     const simulations = (simulationRows ?? []).map((row) => row as Record<string, unknown>);
     const confidenceScores = inferences
         .map((row) => readNumber(row.confidence_score))
         .filter((value): value is number => value != null);
-    const calibrationDeltas = inferences
-        .map((row) => readNumber(row.calibration_delta))
+    const calibrationDeltas = outcomes
+        .map((row) => readNumber(asRecord(row.outcome_payload).calibration_delta))
         .filter((value): value is number => value != null);
     const safetyDistribution = inferences.reduce<SafetyDistribution>(
         (acc, row) => {
@@ -65,9 +78,12 @@ export async function GET(req: Request) {
     );
     const passRates = simulations
         .map((row) => {
-            const passes = readNumber(row.passes);
-            const explicitSteps = readNumber(row.steps);
-            const failures = readNumber(row.failures);
+            const stressMetrics = asRecord(row.stress_metrics);
+            const stabilityReport = asRecord(stressMetrics.stability_report);
+            const simulationParameters = asRecord(row.simulation_parameters);
+            const passes = readNumber(stabilityReport.passes);
+            const explicitSteps = readNumber(simulationParameters.steps);
+            const failures = readNumber(stabilityReport.failures);
             const total = explicitSteps ?? ((passes ?? 0) + (failures ?? 0));
             return passes != null && total > 0 ? passes / total : null;
         })
@@ -79,7 +95,7 @@ export async function GET(req: Request) {
         inference: {
             total: inferences.length,
             mean_confidence: roundMetric(average(confidenceScores)),
-            outcomes_resolved: inferences.filter((row) => row.outcome_resolved === true).length,
+            outcomes_resolved: outcomes.length,
             mean_calibration_delta: calibrationDeltas.length > 0 ? roundMetric(average(calibrationDeltas)) : null,
         },
         safety_distribution: safetyDistribution,
@@ -122,10 +138,13 @@ export async function POST(req: Request) {
 }
 
 function readSafetyState(row: Record<string, unknown>): 'nominal' | 'review' | 'hold' {
-    const direct = asRecord(row.cire);
+    const direct = asRecord(row.uncertainty_metrics);
     const outputPayload = asRecord(row.output_payload);
     const fallback = asRecord(outputPayload.cire);
-    const value = readText(direct.safety_state) ?? readText(fallback.safety_state);
+    const directCire = asRecord(direct.cire);
+    const value = readText(direct.safety_state)
+        ?? readText(directCire.safety_state)
+        ?? readText(fallback.safety_state);
     return value === 'nominal' || value === 'review' || value === 'hold' ? value : 'hold';
 }
 

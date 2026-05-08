@@ -53,7 +53,7 @@ export async function POST(req: Request) {
 
     const { data: inferenceEvent, error: inferenceError } = await supabase
         .from('ai_inference_events')
-        .select('id, tenant_id, case_id, differentials, output_payload')
+        .select('id, tenant_id, case_id, output_payload')
         .eq('id', body.inference_event_id)
         .eq('tenant_id', tenantId)
         .maybeSingle();
@@ -76,6 +76,12 @@ export async function POST(req: Request) {
     const predictedP = differentials.find((entry) => entry.label === actualLabel)?.p ?? 0;
     const calibrationDelta = Number((body.outcome.payload.confidence - predictedP).toFixed(4));
 
+    const outcomePayload = {
+        ...body.outcome.payload,
+        calibration_delta: calibrationDelta,
+        predicted_probability: predictedP,
+    };
+
     const { data: outcomeEvent, error: insertError } = await supabase
         .from('clinical_outcome_events')
         .insert({
@@ -83,41 +89,96 @@ export async function POST(req: Request) {
             case_id: readText((inferenceEvent as Record<string, unknown>).case_id),
             inference_event_id: body.inference_event_id,
             outcome_type: body.outcome.type,
-            outcome_payload: body.outcome.payload,
+            outcome_payload: outcomePayload,
             outcome_timestamp: body.outcome.timestamp,
-            timestamp: body.outcome.timestamp,
-            actual_label: actualLabel,
-            actual_confidence: body.outcome.payload.confidence,
-            calibration_delta: calibrationDelta,
         })
         .select('id')
         .single();
 
-    if (insertError || !outcomeEvent?.id) {
+    let persistedOutcomeId = outcomeEvent?.id ? String(outcomeEvent.id) : null;
+    if (insertError && isMissingColumnError(insertError.message)) {
+        const fallbackInsert = await supabase
+            .from('clinical_outcome_events')
+            .insert({
+                tenant_id: tenantId,
+                case_id: readText((inferenceEvent as Record<string, unknown>).case_id),
+                inference_event_id: body.inference_event_id,
+                outcome_type: body.outcome.type,
+                outcome_payload: outcomePayload,
+                outcome_timestamp: body.outcome.timestamp,
+            })
+            .select('id')
+            .single();
+
+        if (fallbackInsert.error || !fallbackInsert.data?.id) {
+            return NextResponse.json(
+                { error: 'outcome_insert_failed', detail: fallbackInsert.error?.message ?? 'Unknown insert error' },
+                { status: 500 },
+            );
+        }
+        persistedOutcomeId = String(fallbackInsert.data.id);
+    } else if (insertError || !outcomeEvent?.id) {
         return NextResponse.json(
             { error: 'outcome_insert_failed', detail: insertError?.message ?? 'Unknown insert error' },
             { status: 500 },
         );
     }
 
-    const { error: updateError } = await supabase
+    const outputPayload = asRecord((inferenceEvent as Record<string, unknown>).output_payload);
+    const inferenceUpdate = await supabase
         .from('ai_inference_events')
         .update({
-            calibration_delta: calibrationDelta,
-            outcome_resolved: true,
+            output_payload: {
+                ...outputPayload,
+                outcome_resolution: {
+                    resolved: true,
+                    calibration_delta: calibrationDelta,
+                    actual_label: actualLabel,
+                    actual_confidence: body.outcome.payload.confidence,
+                    outcome_event_id: persistedOutcomeId,
+                    timestamp: body.outcome.timestamp,
+                },
+            },
         })
         .eq('id', body.inference_event_id)
         .eq('tenant_id', tenantId);
 
-    if (updateError) {
+    if (inferenceUpdate.error && !isMissingColumnError(inferenceUpdate.error.message)) {
         return NextResponse.json(
-            { error: 'inference_update_failed', detail: updateError.message },
+            { error: 'inference_update_failed', detail: inferenceUpdate.error.message },
             { status: 500 },
         );
     }
 
+    if (inferenceUpdate.error && isMissingColumnError(inferenceUpdate.error.message)) {
+        const fallbackUpdate = await supabase
+            .from('ai_inference_events')
+            .update({
+                output_payload: {
+                    ...outputPayload,
+                    outcome_resolution: {
+                        resolved: true,
+                        calibration_delta: calibrationDelta,
+                        actual_label: actualLabel,
+                        actual_confidence: body.outcome.payload.confidence,
+                        outcome_event_id: persistedOutcomeId,
+                        timestamp: body.outcome.timestamp,
+                    },
+                },
+            })
+            .eq('id', body.inference_event_id)
+            .eq('tenant_id', tenantId);
+
+        if (fallbackUpdate.error) {
+            return NextResponse.json(
+                { error: 'inference_update_failed', detail: fallbackUpdate.error.message },
+                { status: 500 },
+            );
+        }
+    }
+
     return NextResponse.json({
-        outcome_event_id: String(outcomeEvent.id),
+        outcome_event_id: persistedOutcomeId,
         clinical_case_id: body.inference_event_id,
         linked_inference_event_id: body.inference_event_id,
         calibration_delta: calibrationDelta,
@@ -177,4 +238,10 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function isMissingColumnError(message: string): boolean {
+    return message.includes('schema cache')
+        || message.includes('column')
+        || message.includes('Could not find the');
 }

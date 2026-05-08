@@ -17,7 +17,7 @@ export async function GET(req: Request) {
 
     const { data, error } = await supabase
         .from('ai_inference_events')
-        .select('id, created_at, differentials, confidence_score, cire, output_payload')
+        .select('id, created_at, confidence_score, output_payload, uncertainty_metrics')
         .eq('tenant_id', auth.actor.tenantId)
         .order('created_at', { ascending: false })
         .limit(10);
