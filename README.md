@@ -1,209 +1,436 @@
-# VetIOS — AI-Native Veterinary Intelligence Infrastructure
+# VetIOS
 
-> A simulation-first, inference-driven platform for structured clinical intelligence and adaptive veterinary diagnostics.
+> AI-Native Veterinary Intelligence Infrastructure
 
----
+[![CI](https://img.shields.io/github/actions/workflow/status/Jaybe-123456/VetIOS/ci.yml?branch=main&label=ci&style=flat-square)](https://github.com/Jaybe-123456/VetIOS/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-20.x-339933?logo=node.js&logoColor=white&style=flat-square)](.nvmrc)
+[![pnpm](https://img.shields.io/badge/pnpm-9.14.4-F69220?logo=pnpm&logoColor=white&style=flat-square)](package.json)
+[![TypeScript](https://img.shields.io/badge/TypeScript-87%25-3178C6?logo=typescript&logoColor=white&style=flat-square)](package.json)
+[![Vercel](https://img.shields.io/badge/deploy-Vercel-000000?logo=vercel&style=flat-square)](https://vet-ios-web.vercel.app)
 
-## 2. Overview
+VetIOS is a simulation-first, inference-driven platform for structured clinical intelligence and adaptive veterinary diagnostics. It replaces passive veterinary record systems with a computable graph of probabilistic diagnostic reasoning.
 
-VetIOS is a production-grade infrastructure layer designed to bring structured clinical intelligence and adaptive machine reasoning to veterinary medicine. Traditional veterinary systems act as passive datastores, relying entirely on unstructured free-text and offering zero active computational assistance. VetIOS replaces this paradigm by enforcing structured data capture and routing it through probabilistic inference models. 
+**Live demo:** [vet-ios-web.vercel.app](https://vet-ios-web.vercel.app)
 
-By treating diagnostic reasoning as a computable graph of structured priors, VetIOS transforms veterinary software from digital filing cabinets into active intelligence systems. Structured, simulated data is the future of clinical medicine—it enables high-velocity model calibration, adversarial safety bounds, and continuous learning that unstructured records can never achieve.
+> **Project status:** Alpha. VetIOS is under active development and should be treated as clinical decision-support infrastructure, not a substitute for licensed veterinary judgment or regulated medical-device workflows.
 
----
+## Table of Contents
 
-## 3. Core System Architecture
+- [Why VetIOS?](#why-vetios)
+- [Architecture](#architecture)
+- [Data Flywheel](#data-flywheel)
+- [Core API](#core-api)
+- [Monorepo Map](#monorepo-map)
+- [Tech Stack](#tech-stack)
+- [Quick Start](#quick-start)
+- [Local Development](#local-development)
+- [Configuration](#configuration)
+- [Database Model](#database-model)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Use Cases](#use-cases)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [License](#license)
 
-The VetIOS architecture is composed of three interconnected pipelines:
+## Why VetIOS?
 
-### Inference Layer
-- Accepts strict, structured clinical input (symptoms, vitals, patient demographics).
-- Generates probabilistic diagnostic outputs and intervention recommendations.
-- Logs all inference events inherently, associating them with deep computational traces and uncertainty metrics before any action is taken.
+VetIOS turns every structured veterinary encounter into an auditable learning loop: inference creates a probabilistic hypothesis, outcomes ground it in reality, and simulations stress-test the next version before failure reaches production.
 
-### Outcome Layer
-- Attaches real-world ground truth outcomes to prior inference events.
-- Enables continuous model calibration through outcome alignment deltas.
-- Builds longitudinal clinical intelligence by closing the open-loop prediction cycle into a supervised learning dataset.
+## Architecture
 
-### Simulation Layer
-- Generates adversarial clinical scenarios and boundary probes.
-- Stress-tests model behavior by intentionally injecting noise and contradictory signals.
-- Maps failure modes and degradation bounds in a synthetic environment to prevent real-world catastrophic failure.
+VetIOS is built around three cooperating layers: inference, outcome capture, and adversarial simulation.
 
----
+```text
+Structured clinical input
+species, signalment, symptoms, vitals, labs, metadata
+        |
+        v
++-------------------------+
+| Inference Layer         |
+| /api/inference          |
+| probabilistic outputs   |
++-------------------------+
+        |
+        v
+ai_inference_events
+        |
+        v
++-------------------------+
+| Outcome Layer           |
+| /api/outcome            |
+| ground-truth alignment  |
++-------------------------+
+        |
+        v
+clinical_outcome_events
+        |
+        v
++-------------------------+
+| Simulation Layer        |
+| /api/simulate           |
+| edge-case generation    |
++-------------------------+
+        |
+        v
+edge_simulation_events
+        |
+        +----> safer routing, calibrated confidence, improved inference
+```
 
-## 4. Data Flywheel
+The platform favors structured schemas over free text, append-only event logs over destructive updates, and safety-bounded simulation over post-hoc incident response.
 
-The defining architectural moat of VetIOS is its compounding data flywheel:
+## Data Flywheel
 
-**Inference → Outcome → Simulation → Improved Inference**
+> **Inference -> Outcome -> Simulation -> Improved Inference**
+>
+> Every prediction can become supervised signal. Every outcome can reveal calibration drift. Every low-confidence or contradictory case can generate synthetic adversarial variants. The result is a compounding clinical intelligence loop designed for safer model routing, sharper confidence estimates, and clearer operational boundaries.
 
-Every prediction made by the inference layer is eventually grounded by the outcome layer. When variances or low-confidence edge cases are identified, the simulation layer programmatically synthesizes permutations of that specific clinical presentation. This automatically generates thousands of labeled synthetic edge cases, which are fed back to calibrate the underlying models, resulting in continuously compounding clinical accuracy. 
+## Core API
 
----
-
-## 5. API Design
-
-VetIOS exposes a robust, serverless API designed for integration into clinical dashboards and edge computing systems.
+The current application exposes the three core routes below from the Next.js App Router. Production requests are authenticated with a session or machine credential; local smoke tests can use `VETIOS_DEV_BYPASS=true`.
 
 ### `POST /api/inference`
-**Purpose**: Executes AI inference against structured clinical input to generate differential diagnoses and confidence scores.
-**Example Payload**:
+
+Runs structured veterinary inference and persists an `ai_inference_events` record.
+
+```bash
+curl -X POST "$VETIOS_API_BASE_URL/api/inference" \
+  -H "Authorization: Bearer $VETIOS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": {
+      "name": "gpt-4o-mini",
+      "version": "2024-07-18"
+    },
+    "input": {
+      "input_signature": {
+        "species": "canine",
+        "breed": "labrador retriever",
+        "weight_kg": 24.5,
+        "symptoms": ["lethargy", "vomiting"],
+        "vitals": {
+          "temperature_c": 39.2
+        }
+      }
+    }
+  }'
+```
+
+Typical response fields:
+
 ```json
 {
-  "tenant_id": "clinic_123",
-  "patient": {
-    "species": "canine",
-    "weight_kg": 24.5
+  "inference_event_id": "uuid",
+  "data": {
+    "differentials": [],
+    "confidence_score": 0.82
   },
-  "encounter": {
-    "symptoms": ["lethargy", "vomiting"],
-    "vitals": { "temperature_c": 39.2 }
-  }
+  "cire": {
+    "safety_state": "pass"
+  },
+  "meta": {
+    "request_id": "uuid"
+  },
+  "error": null
 }
 ```
-**Expected Response**: Diagnostic probabilities, uncertainty metrics, and a tracking `inference_event_id`.
 
 ### `POST /api/outcome`
-**Purpose**: Injects real-world ground truth data to close the loop on a prior inference event.
-**Example Payload**:
+
+Attaches clinical ground truth to a prior inference event and computes calibration delta.
+
+```bash
+curl -X POST "$VETIOS_API_BASE_URL/api/outcome" \
+  -H "Authorization: Bearer $VETIOS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "inference_event_id": "uuid-of-prior-inference",
+    "outcome": {
+      "type": "diagnosis_confirmed",
+      "payload": {
+        "label": "Pancreatitis",
+        "actual_diagnosis": "Pancreatitis",
+        "confidence": 0.94
+      },
+      "timestamp": "2026-05-08T00:00:00.000Z"
+    }
+  }'
+```
+
+Typical response fields:
+
 ```json
 {
-  "inference_event_id": "uuid-of-prior-inference",
-  "outcome": {
-    "type": "clinical_diagnosis",
-    "payload": { "actual_diagnosis": "Pancreatitis" }
-  }
+  "outcome_event_id": "uuid",
+  "linked_inference_event_id": "uuid-of-prior-inference",
+  "calibration_delta": 0.12,
+  "request_id": "uuid"
 }
 ```
-**Expected Response**: Evaluation event ID, calibration error, and outcome alignment delta.
 
 ### `POST /api/simulate`
-**Purpose**: Executes an adversarial simulation through the inference pipeline to map degradation curves.
-**Example Payload**:
+
+Runs an adaptive or fixed stability sweep against synthetic clinical variants and persists an `edge_simulation_events` record.
+
+```bash
+curl -X POST "$VETIOS_API_BASE_URL/api/simulate" \
+  -H "Authorization: Bearer $VETIOS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "steps": 10,
+    "mode": "adaptive",
+    "base_case": {
+      "species": "feline",
+      "breed": "siamese",
+      "symptoms": ["seizures", "ataxia", "blindness"],
+      "metadata": {
+        "edge_case": "contradictory neurological presentation"
+      }
+    },
+    "inference": {
+      "model": "gpt-4o-mini",
+      "model_version": "2024-07-18"
+    }
+  }'
+```
+
+Typical response fields:
+
 ```json
 {
-  "simulation": {
-    "type": "adversarial_scenario",
-    "parameters": {
-      "edge_cases": "contradictory lab results",
-      "iterations": 100
-    }
+  "simulation_event_id": "uuid",
+  "clinical_case_id": "uuid",
+  "stability_report": {
+    "passes": 9,
+    "failures": 1,
+    "mean_confidence": 0.77
   },
-  "inference": { "model": "gpt-4o-mini" }
+  "request_id": "uuid"
 }
 ```
-**Expected Response**: Simulation tracking ID, aggregated confidence scores, and safety bounds mapping.
 
----
+For the broader API contract, see [`openapi.yaml`](openapi.yaml) and [`apps/web/public/api-spec/openapi-v1.yaml`](apps/web/public/api-spec/openapi-v1.yaml).
 
-## 6. Technology Stack
+## Monorepo Map
 
-VetIOS is built on a modern, highly scalable stack optimized for type safety and edge execution:
-- **Application Framework**: Next.js (App Router)
-- **Database & Auth**: Supabase (PostgreSQL + RLS Auth)
-- **AI Core**: OpenAI-compatible inference layer
-- **Language**: TypeScript (end-to-end type safety)
-- **Deployment**: Vercel Serverless Edge
-
----
-
-## 7. Environment Setup
-
-To configure the environment, create a `.env.local` file at the root:
-
-```bash
-# .env.local
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-supabase-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
-OPENAI_API_KEY=sk-your-openai-api-key
+```text
+.
+|-- apps/
+|   |-- web/                  Next.js App Router product and API surface
+|   `-- ml-training/          Python calibration, drift, and model-training services
+|-- packages/
+|   |-- ask-vetios/           Ask VetIOS response and research pipeline
+|   |-- cire-engine/          Clinical integrity and safety-state engine
+|   |-- db/                   Shared database client and tenant helpers
+|   |-- gaas/                 Agent orchestration primitives
+|   |-- inference-schema/     Shared inference types and validation
+|   |-- logger/               Shared logging package
+|   |-- pharmacos/            Veterinary formulary and drug safety logic
+|   |-- tsconfig/             Shared TypeScript configuration
+|   `-- ui/                   Shared UI primitives
+|-- internal/
+|   |-- ai-core/              Provider client, prompts, RAG, simulation, feedback loops
+|   |-- domain/               Domain models for patients, encounters, outcomes, flywheel state
+|   |-- testing/              Adversarial and regression test harnesses
+|   |-- pharmacos/            Internal formulary seeding and FDA CVM sync tooling
+|   |-- species-bootstrap/    Species graph bootstrapping
+|   `-- image-pipeline/       Clinical image ingestion helpers
+|-- docs/                     Architecture notes, go-live guides, migration notes
+|-- infra/supabase/           Supabase infrastructure migrations and repair scripts
+|-- supabase/                 Current Supabase migrations and manual bundles
+|-- openapi.yaml              Platform API contract
+|-- pnpm-workspace.yaml       Workspace package graph
+`-- turbo.json                Turborepo task pipeline and environment passthrough
 ```
 
----
+## Tech Stack
 
-## 8. Local Development
+| Layer             | Technology                                                                      |
+| ----------------- | ------------------------------------------------------------------------------- |
+| Monorepo          | pnpm workspaces, Turborepo v2                                                   |
+| Web app           | Next.js App Router, React, TypeScript                                           |
+| API runtime       | Next.js route handlers, Vercel deployment target                                |
+| Database and auth | Supabase, PostgreSQL, Row-Level Security                                        |
+| AI provider       | OpenAI-compatible `/chat/completions` provider                                  |
+| Validation        | Zod, shared inference schema package                                            |
+| Testing           | Custom adversarial regression runner, API smoke scripts, Vitest coverage in web |
+| CI/CD             | GitHub Actions, Vercel auto-deploy                                              |
 
-Start the VetIOS platform locally and verify its endpoints:
+## Quick Start
 
 ```bash
-# Install dependencies
+git clone https://github.com/Jaybe-123456/VetIOS.git
+cd VetIOS
+corepack enable
 pnpm install
-
-# Start the development server
 pnpm -C apps/web dev
 ```
 
-To run local system checks and verify API route health:
+The web app starts at [http://localhost:3000](http://localhost:3000).
+
+## Local Development
+
+### Prerequisites
+
+- Node.js `20.x`
+- pnpm `9.14.4`
+- Supabase project credentials
+- OpenAI-compatible AI provider key
+
+### Environment
+
+Create `.env.local` in the repository root.
+
+```dotenv
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+
+AI_PROVIDER_BASE_URL=https://api.openai.com/v1
+AI_PROVIDER_API_KEY=sk-your-provider-key
+AI_PROVIDER_DEFAULT_MODEL=gpt-4o-mini
+
+# Optional local-only bypass for smoke tests and isolated development.
+VETIOS_DEV_BYPASS=true
+```
+
+### Commands
+
+```bash
+pnpm install
+pnpm -C apps/web dev
+pnpm build
+pnpm lint
+pnpm typecheck
+pnpm format
+```
+
+Run local API smoke tests against a running dev server:
+
 ```bash
 bash apps/web/scripts/test-api-local.sh
 ```
 
----
+Run the adversarial regression harness:
 
-## 9. Database Schema Philosophy
+```bash
+pnpm test:adversarial-regressions
+```
 
-The VetIOS schema is built around immutable, event-sourcing principles rather than CRUD mutations.
+## Configuration
 
-- **Append-only logging**: Data is never updated or deleted in-place; all system states are reconstructed from an immutable event log.
-- **Auditability**: Every diagnostic recommendation maintains absolute cryptographic and temporal provenance.
-- **Event-based design**: Subsystems react to events rather than mutating shared state.
-- **No destructive updates**: Prevents historical revisionism of clinical decisions to ensure ML tracing integrity.
+VetIOS can use OpenAI directly or any provider that implements an OpenAI-compatible chat completions API.
 
-**Core Tables:**
-- `ai_inference_events`
-- `clinical_outcome_events`
-- `edge_simulation_events`
+```dotenv
+# OpenAI default path
+OPENAI_API_KEY=sk-your-openai-key
 
----
+# Provider-agnostic path
+AI_PROVIDER_NAME=openai
+AI_PROVIDER_BASE_URL=https://api.openai.com/v1
+AI_PROVIDER_API_KEY=sk-your-provider-key
+AI_PROVIDER_DEFAULT_MODEL=gpt-4o-mini
+AI_PROVIDER_EMBEDDING_MODEL=text-embedding-3-small
+```
 
-## 10. Design Principles
+Optional custom-model validation is available through the Hugging Face-compatible provider hooks used by the AI layer:
 
-1. **Simulation-first**: We do not wait for edge cases to happen in the real world; we synthesize them.
-2. **Data compounding**: Every interaction must uniquely contribute to the long-term value of the models.
-3. **Observability by default**: Telemetry, uncertainty metrics, and latency are first-class citizens.
-4. **Failure-driven testing**: Adversarial stress-testing exposes model boundaries to define safe operational zones.
-5. **Structured over unstructured**: Free text is an operational liability; enforced schema is an asset.
+```dotenv
+HF_PROVIDER_BASE_URL=https://your-custom-provider.example/v1
+HF_PROVIDER_API_KEY=hf-or-provider-key
+HF_PROVIDER_MODEL=vetios-qwen-0.5b
+```
 
----
+Operational environment variables are passed through Turborepo in [`turbo.json`](turbo.json), including Supabase keys, telemetry flags, outbox controls, billing keys, simulation watchdog settings, and machine API tokens.
 
-## 11. Roadmap
+## Database Model
 
-- **Autonomous Diagnostic Agents**: Multi-agent systems capable of requesting specific diagnostic labs autonomously based on incomplete probability matrices.
-- **Clinical Knowledge Graph**: Dynamic relational mapping of species-specific pharmacological interactions and symptom clusters.
-- **Multimodal Inputs**: Processing real-time diagnostic imaging (radiographs, ultrasound) alongside structured telemetry.
-- **Reinforcement Learning from Outcomes**: Automated weight updating based on high-confidence clinician outcome signals.
-- **Real-Time Decision Systems**: Edge-deployed inference targeting sub-100ms response times for critical care environments.
+VetIOS uses an append-only, event-sourced database philosophy. Clinical intelligence should be reconstructed from event history, not overwritten in place.
 
----
+Core event tables:
 
-## 12. Use Cases
+| Table                     | Purpose                                                                                            |
+| ------------------------- | -------------------------------------------------------------------------------------------------- |
+| `ai_inference_events`     | Stores model inputs, diagnostic output payloads, confidence, latency, routing, and safety metadata |
+| `clinical_outcome_events` | Stores ground-truth clinical outcomes linked back to inference events                              |
+| `edge_simulation_events`  | Stores synthetic and adversarial simulation runs, stress metrics, and failure modes                |
 
-- **Veterinary Clinics**: Powering intelligent PMS interfaces with real-time diagnostic decision support.
-- **Research Labs**: In-silico modeling of pharmacological efficacy across diverse veterinary cohorts.
-- **Pharmaceutical Trials**: Accelerated adverse event detection via simulated cohort intersections.
-- **Epidemiology Tracking**: Aggregation of localized symptom clusters to detect regional pathogenic outbreaks.
+Design constraints:
 
----
+- No destructive updates for clinical provenance.
+- Every inference should be traceable to input signature, model version, tenant, and request metadata.
+- Outcomes are attached as new facts, not retroactive edits to clinical history.
+- Simulation events define known weak zones before they become operational failures.
 
-## 13. Deployment
+## Testing
 
-VetIOS is designed for global scale and zero-maintenance architecture:
-- **Deployed via Vercel**: Global edge network ensuring minimal latency regardless of endpoint location.
-- **Serverless API Routes**: Auto-scaling compute that handles bursts of complex inference tasks efficiently.
-- **Scalable Inference Layer**: Horizontally scalable abstraction separating the interface from underlying transformer models.
+VetIOS uses layered verification:
 
----
+- `pnpm lint` for code quality gates.
+- `pnpm typecheck` for TypeScript correctness.
+- `pnpm build` for application and package build validation.
+- `bash apps/web/scripts/test-api-local.sh` for core API smoke tests.
+- `pnpm test:adversarial-regressions` for failure-driven regression coverage.
 
-## 14. Contribution Guidelines
+The adversarial runner lives at [`internal/testing/test_adversarial_regressions.ts`](internal/testing/test_adversarial_regressions.ts) and is executed with Node's TypeScript stripping support.
 
-- Keep changes minimal, documented, and professional.
-- Use explicit, structured commits (e.g., `feat:`, `fix:`, `refactor:`).
-- Extensive unit and integration testing is mandatory prior to generating any PR affecting the inference or evaluation logic.
+## Deployment
 
----
+The web application is deployed to Vercel and designed for serverless scaling.
 
-## 15. License
+- Production URL: [https://vet-ios-web.vercel.app](https://vet-ios-web.vercel.app)
+- CI workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+- Deployment target: Vercel auto-deploy from `main`
+- Database/auth: Supabase PostgreSQL with RLS-backed tenant isolation
 
-MIT License.
+The GitHub Actions pipeline runs linting, typechecking, builds, and API smoke checks before merge or deployment promotion.
+
+## Use Cases
+
+- **Veterinary clinics:** Real-time diagnostic decision support inside PMS and clinical workflow interfaces.
+- **Research labs:** In-silico pharmacological efficacy modeling across structured veterinary cohorts.
+- **Pharmaceutical trials:** Faster adverse-event detection through simulated clinical cohorts.
+- **Epidemiology teams:** Regional pathogenic outbreak detection through symptom aggregation and population signals.
+
+## Roadmap
+
+- **Autonomous Diagnostic Agents:** Multi-agent diagnostic workflows that can request labs from incomplete probability matrices.
+- **Clinical Knowledge Graph:** Species-specific pharmacological interactions, contraindications, and symptom-cluster reasoning.
+- **Multimodal Inputs:** Radiographs, ultrasound, documents, and structured telemetry in the same inference graph.
+- **Reinforcement Learning from Outcomes:** Automated calibration and model-weight updates from clinician-confirmed outcomes.
+- **Real-Time Decision Systems:** Sub-100ms edge inference for critical-care routing and escalation support.
+
+## Design Principles
+
+- **Simulation-first:** Synthesize edge cases before they happen in production.
+- **Data compounding:** Every inference, outcome, and simulation should improve the next decision.
+- **Observability by default:** Uncertainty, latency, telemetry, and safety state are first-class system outputs.
+- **Failure-driven testing:** Adversarial stress tests define operational boundaries.
+- **Structured over unstructured:** Schema-enforced data is treated as durable clinical infrastructure.
+
+## Contributing
+
+Professional, narrowly scoped contributions are welcome.
+
+Before opening a pull request:
+
+- Keep changes minimal, documented, and aligned with existing package boundaries.
+- Use conventional commits such as `feat:`, `fix:`, and `refactor:`.
+- Include unit and integration coverage for changes touching inference, outcome evaluation, simulation, or safety logic.
+- Run `pnpm lint`, `pnpm typecheck`, and the relevant smoke or adversarial tests.
+- Avoid schema or migration changes without documenting rollout and rollback behavior.
+
+## License
+
+VetIOS is intended to be released under the [MIT License](LICENSE).
+
+## Links
+
+- Live demo: [https://vet-ios-web.vercel.app](https://vet-ios-web.vercel.app)
+- GitHub: [https://github.com/Jaybe-123456/VetIOS](https://github.com/Jaybe-123456/VetIOS)
+- License: [MIT](LICENSE)
+- Contact: [https://vet-ios-web.vercel.app/contact](https://vet-ios-web.vercel.app/contact)
