@@ -74,6 +74,39 @@ type CireCollapseProfile = {
     m_threshold_map: Record<string, unknown>;
 };
 
+type EvaluationMetricsResponse = {
+    tenant_id: string;
+    period: 'all_time';
+    inference: {
+        total: number;
+        mean_confidence: number;
+        outcomes_resolved: number;
+        mean_calibration_delta: number | null;
+    };
+    safety_distribution: {
+        nominal: number;
+        review: number;
+        hold: number;
+    };
+    simulation: {
+        total_runs: number;
+        mean_pass_rate: number;
+    };
+};
+
+type RecentInferenceEvent = {
+    id: string;
+    created_at: string;
+    differentials?: Array<{ label?: string; name?: string; p?: number; probability?: number }>;
+    confidence_score?: number | null;
+    output_payload?: Record<string, unknown>;
+};
+
+type HealthResponse = {
+    db: 'ok' | 'error';
+    inference: 'ok' | 'error';
+};
+
 interface CireApiResponse<T> {
     data?: T;
     error?: string | { message: string };
@@ -88,6 +121,10 @@ export default function DashboardControlPlaneClient() {
     const [cireHistory, setCireHistory] = useState<CireHistoryPoint[]>([]);
     const [cireIncidents, setCireIncidents] = useState<CireIncidentRecord[]>([]);
     const [cireProfile, setCireProfile] = useState<CireCollapseProfile | null>(null);
+    const [evaluationMetrics, setEvaluationMetrics] = useState<EvaluationMetricsResponse | null>(null);
+    const [recentInferenceEvents, setRecentInferenceEvents] = useState<RecentInferenceEvent[]>([]);
+    const [healthStatus, setHealthStatus] = useState<HealthResponse | null>(null);
+    const [liveDataError, setLiveDataError] = useState(false);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [requestError, setRequestError] = useState<string | null>(null);
@@ -162,6 +199,34 @@ export default function DashboardControlPlaneClient() {
         }
     }, []);
 
+    const refreshLiveData = useCallback(async () => {
+        try {
+            const [evaluationRes, recentRes, healthRes] = await Promise.all([
+                fetch('/api/evaluation', { cache: 'no-store' }),
+                fetch('/api/inference/recent', { cache: 'no-store' }),
+                fetch('/api/health', { cache: 'no-store' }),
+            ]);
+
+            if (!evaluationRes.ok || !recentRes.ok || !healthRes.ok) {
+                throw new Error('Live dashboard data request failed.');
+            }
+
+            const [evaluationJson, recentJson, healthJson] = await Promise.all([
+                evaluationRes.json() as Promise<EvaluationMetricsResponse>,
+                recentRes.json() as Promise<{ events?: RecentInferenceEvent[] }>,
+                healthRes.json() as Promise<HealthResponse>,
+            ]);
+
+            setEvaluationMetrics(evaluationJson);
+            setRecentInferenceEvents(Array.isArray(recentJson.events) ? recentJson.events : []);
+            setHealthStatus(healthJson);
+            setLiveDataError(false);
+        } catch (error) {
+            console.warn('Failed to refresh live dashboard data:', error);
+            setLiveDataError(true);
+        }
+    }, []);
+
     useEffect(() => {
         const handleVisibilityChange = () => {
             setPageVisible(document.visibilityState === 'visible');
@@ -187,14 +252,16 @@ export default function DashboardControlPlaneClient() {
     useEffect(() => {
         void refreshSnapshot(true);
         void refreshCire();
+        void refreshLiveData();
         const interval = window.setInterval(() => {
             if (document.visibilityState !== 'visible') return;
             void refreshSnapshot(false);
             void refreshCire();
+            void refreshLiveData();
         }, 60_000);
 
         return () => window.clearInterval(interval);
-    }, [refreshSnapshot, refreshCire]);
+    }, [refreshSnapshot, refreshCire, refreshLiveData]);
 
     useEffect(() => {
         if (!pageVisible) return;
@@ -274,10 +341,10 @@ export default function DashboardControlPlaneClient() {
             : null;
     const governanceFamilies = snapshot?.governance.families ?? [];
     const routingOverview = buildRoutingOverview(topologySnapshot, dashboardLens?.routing ?? null, governanceFamilies);
-    const recentInferences = dashboardLens?.recent_inferences ?? [];
     const recentLogs = (snapshot?.logs ?? []).slice(0, 8);
     const pipelineStates = snapshot?.pipelines ?? [];
     const loadingWithoutData = loading && !snapshot && !telemetrySnapshot && !topologySnapshot;
+    const liveMetricPending = !liveDataError && evaluationMetrics == null;
     const cireHistoryChart = cireHistory.map((point) => ({
         time: new Date(point.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         value: point.phi_mean,
@@ -437,35 +504,32 @@ export default function DashboardControlPlaneClient() {
 
             <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-4 lg:gap-6 mb-4 sm:mb-6">
                 <MetricCard
-                    label="Network Health"
-                    value={networkHealthScore != null ? `${networkHealthScore}%` : 'NO DATA'}
-                    tone={healthTone(networkHealthScore)}
+                    label="Total Inferences"
+                    value={formatLiveMetric(evaluationMetrics?.inference.total, liveMetricPending, liveDataError)}
+                    tone="accent"
                     icon={<Gauge className="w-4 h-4" />}
-                    detail={describeControlPlaneState(
-                        topologySnapshot?.control_plane_state ?? snapshot?.system_health.topology_state ?? 'CONTROL_PLANE_INITIALIZING',
-                        snapshot,
-                    )}
+                    detail="Tenant-scoped inference events"
                 />
                 <MetricCard
-                    label="Telemetry Pulse"
-                    value={telemetryPulse != null ? `${telemetryPulse.toFixed(2)}/min` : 'NO DATA'}
-                    tone={telemetrySnapshot?.system_state === 'STALE' || telemetryStreamStatus === 'disconnected' ? 'danger' : 'accent'}
+                    label="Mean Confidence"
+                    value={formatLivePercent(evaluationMetrics?.inference.mean_confidence, liveMetricPending, liveDataError)}
+                    tone={evaluationMetrics && evaluationMetrics.inference.mean_confidence < 0.4 ? 'warning' : 'accent'}
                     icon={<Activity className="w-4 h-4" />}
-                    detail={telemetrySnapshot?.last_event_timestamp ? `Last event ${new Date(telemetrySnapshot.last_event_timestamp).toLocaleTimeString()}` : 'Waiting for telemetry'}
+                    detail="Average model confidence"
                 />
                 <MetricCard
-                    label="Decision Fabric"
-                    value={snapshot ? snapshot.decision_engine.mode.toUpperCase() : 'NO DATA'}
-                    tone={snapshot?.decision_engine.mode === 'autonomous' ? 'danger' : snapshot?.decision_engine.mode === 'assist' ? 'warning' : 'accent'}
+                    label="Outcomes Resolved"
+                    value={formatLiveMetric(evaluationMetrics?.inference.outcomes_resolved, liveMetricPending, liveDataError)}
+                    tone="accent"
                     icon={<Bot className="w-4 h-4" />}
-                    detail={snapshot ? `${snapshot.decision_engine.active_decision_count} active | ${snapshot.decision_engine.latest_action ?? 'No action yet'}` : 'Decision engine unavailable'}
+                    detail="Linked ground-truth outcomes"
                 />
                 <MetricCard
-                    label="Active Alerts"
-                    value={String(activeAlerts.length)}
-                    tone={criticalAlertCount > 0 ? 'danger' : warningAlertCount > 0 ? 'warning' : 'accent'}
+                    label="Simulation Pass Rate"
+                    value={formatLivePercent(evaluationMetrics?.simulation.mean_pass_rate, liveMetricPending, liveDataError)}
+                    tone={evaluationMetrics && evaluationMetrics.simulation.mean_pass_rate < 0.7 ? 'warning' : 'accent'}
                     icon={<AlertTriangle className="w-4 h-4" />}
-                    detail={criticalAlertCount > 0 ? `${criticalAlertCount} critical | ${warningAlertCount} warning` : activeAlerts.length > 0 ? `${warningAlertCount} warnings` : 'No unresolved alerts'}
+                    detail="Non-hold simulation variants"
                 />
             </div>
 
@@ -482,6 +546,8 @@ export default function DashboardControlPlaneClient() {
                 </div>
 
                 <ConsoleCard title="Autonomous Posture" collapsible>
+                    <DataRow label="Database Health" value={<StateText tone={healthStatus?.db === 'ok' ? 'accent' : healthStatus ? 'danger' : 'muted'}>{healthStatus?.db.toUpperCase() ?? (liveDataError ? '\u2014' : 'LOADING')}</StateText>} />
+                    <DataRow label="Inference Health" value={<StateText tone={healthStatus?.inference === 'ok' ? 'accent' : healthStatus ? 'danger' : 'muted'}>{healthStatus?.inference.toUpperCase() ?? (liveDataError ? '\u2014' : 'LOADING')}</StateText>} />
                     <DataRow label="Decision Mode" value={<StateText tone={snapshot?.decision_engine.mode === 'autonomous' ? 'danger' : snapshot?.decision_engine.mode === 'assist' ? 'warning' : 'accent'}>{snapshot?.decision_engine.mode.toUpperCase() ?? 'NO DATA'}</StateText>} />
                     <DataRow label="Safe Mode" value={snapshot?.decision_engine.safe_mode_enabled ? 'ENABLED' : snapshot ? 'DISABLED' : 'NO DATA'} />
                     <DataRow label="Simulation" value={snapshot?.configuration.simulation_enabled ? 'ENABLED' : snapshot ? 'DISABLED' : 'NO DATA'} />
@@ -596,25 +662,17 @@ export default function DashboardControlPlaneClient() {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
                 <div className="xl:col-span-2">
                     <ConsoleCard title="Recent Inferences" collapsible>
-                        {recentInferences.length > 0 ? (
-                            recentInferences.map((event) => (
-                                <div key={event.id} className="pipeline-row-glass py-2 border-b border-[hsl(0_0%_100%_/_0.06)] px-2 -mx-2">
-                                    <div className="flex items-start justify-between gap-3">
-                                        <div className="font-mono text-xs text-foreground break-all">{event.id}</div>
-                                        <StateText tone={eventTone(event)}>
-                                            {formatInferenceOutcome(event)}
-                                        </StateText>
-                                    </div>
-                                    <div className="mt-2 font-mono text-[10px] text-muted">
-                                        model={resolveRouteModel(event)} | confidence={formatPercent(event.confidence)} | latency={formatLatency(event.latency_ms)}
-                                    </div>
-                                    <div className="mt-1 font-mono text-[10px] text-muted">
-                                        {new Date(event.timestamp).toLocaleString()}
-                                    </div>
-                                </div>
-                            ))
+                        {recentInferenceEvents.length > 0 ? (
+                            <ol className="space-y-2">
+                                {recentInferenceEvents.map((event) => (
+                                    <li key={event.id} className="pipeline-row-glass py-2 border-b border-[hsl(0_0%_100%_/_0.06)] px-2 -mx-2 font-mono text-[11px] text-foreground">
+                                        <span className="text-muted mr-2">{new Date(event.created_at).toLocaleTimeString()}</span>
+                                        inference.completed dx.{resolveRecentTopDifferential(event)} p={formatRecentConfidence(event)}
+                                    </li>
+                                ))}
+                            </ol>
                         ) : (
-                            <EmptyListState message={resolveInferenceMessage(snapshot)} />
+                            <EmptyListState message={liveDataError ? '\u2014' : 'NO RECENT INFERENCE EVENTS'} />
                         )}
                     </ConsoleCard>
                 </div>
@@ -1125,9 +1183,49 @@ function formatPercent(value: number | null | undefined) {
     return `${(value * 100).toFixed(1)}%`;
 }
 
+function formatLiveMetric(value: number | null | undefined, pending: boolean, failed: boolean) {
+    if (failed) return '\u2014';
+    if (pending) return '...';
+    if (value == null) return '\u2014';
+    return Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2);
+}
+
+function formatLivePercent(value: number | null | undefined, pending: boolean, failed: boolean) {
+    if (failed) return '\u2014';
+    if (pending) return '...';
+    if (value == null) return '\u2014';
+    return `${(value * 100).toFixed(1)}%`;
+}
+
 function formatLatency(value: number | null | undefined) {
     if (value == null) return 'NO DATA';
     return `${value.toFixed(1)}ms`;
+}
+
+function resolveRecentTopDifferential(event: RecentInferenceEvent) {
+    const direct = Array.isArray(event.differentials) ? event.differentials : [];
+    const top = direct[0] ?? readOutputDifferentials(event.output_payload)[0];
+    return top?.label ?? top?.name ?? 'unknown';
+}
+
+function formatRecentConfidence(event: RecentInferenceEvent) {
+    const value = typeof event.confidence_score === 'number'
+        ? event.confidence_score
+        : readOutputDifferentials(event.output_payload)[0]?.p
+            ?? readOutputDifferentials(event.output_payload)[0]?.probability
+            ?? null;
+    return value == null ? '\u2014' : value.toFixed(2);
+}
+
+function readOutputDifferentials(outputPayload: unknown): Array<{ label?: string; name?: string; p?: number; probability?: number }> {
+    const output = asRecord(outputPayload);
+    if (Array.isArray(output.differentials)) {
+        return output.differentials as Array<{ label?: string; name?: string; p?: number; probability?: number }>;
+    }
+    const diagnosis = asRecord(output.diagnosis);
+    return Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials as Array<{ label?: string; name?: string; p?: number; probability?: number }>
+        : [];
 }
 
 function formatInferenceOutcome(event: ControlPlaneDashboardInferenceRecord) {

@@ -1,0 +1,345 @@
+ WARN  Unsupported engine: wanted: {"node":"20.x"} (current: {"node":"v25.6.1","pnpm":"9.14.4"})
+
+> vetios@ build C:\Users\Administrator\New folder
+> turbo run build
+
+• turbo 2.8.9
+• Packages in scope: @vetios/ai-core, @vetios/ask-vetios, @vetios/cire-engine, @vetios/db, @vetios/domain, @vetios/gaas, @vetios/inference-schema, @vetios/logger, @vetios/pharmacos, @vetios/testing, @vetios/tsconfig, @vetios/ui, @vetios/web
+• Running build in 13 packages
+• Remote caching disabled
+@vetios/ui:build: cache hit, replaying logs a1e89e74b59b2478
+@vetios/logger:build: cache hit, replaying logs 8a33304f2e877323
+@vetios/ui:build: 
+@vetios/ui:build: > @vetios/ui@0.0.1 build C:\Users\Administrator\New folder\packages\ui
+@vetios/ui:build: > tsc
+@vetios/ui:build: 
+@vetios/db:build: cache hit, replaying logs 14673116da78cf0f
+@vetios/db:build: 
+@vetios/db:build: > @vetios/db@0.0.1 build C:\Users\Administrator\New folder\packages\db
+@vetios/db:build: > tsc
+@vetios/db:build: 
+@vetios/logger:build: 
+@vetios/logger:build: > @vetios/logger@0.0.1 build C:\Users\Administrator\New folder\packages\logger
+@vetios/logger:build: > tsc
+@vetios/logger:build: 
+@vetios/inference-schema:build: cache hit, replaying logs 624a52183aafd125
+@vetios/inference-schema:build: 
+@vetios/inference-schema:build: > @vetios/inference-schema@0.0.1 build C:\Users\Administrator\New folder\packages\inference-schema
+@vetios/inference-schema:build: > tsc
+@vetios/inference-schema:build: 
+@vetios/ask-vetios:build: cache hit, replaying logs 7119bf5cbd98b79f
+@vetios/ask-vetios:build: 
+@vetios/ask-vetios:build: > @vetios/ask-vetios@0.0.1 build C:\Users\Administrator\New folder\packages\ask-vetios
+@vetios/ask-vetios:build: > tsc
+@vetios/ask-vetios:build: 
+@vetios/gaas:build: cache hit, replaying logs 11ca08a4a85395a8
+@vetios/gaas:build: 
+@vetios/gaas:build: > @vetios/gaas@0.1.0 build C:\Users\Administrator\New folder\packages\gaas
+@vetios/gaas:build: > tsc
+@vetios/gaas:build: 
+@vetios/cire-engine:build: cache hit, replaying logs 3e23e63dc5c45685
+@vetios/cire-engine:build: 
+@vetios/cire-engine:build: > @vetios/cire-engine@0.0.1 build C:\Users\Administrator\New folder\packages\cire-engine
+@vetios/cire-engine:build: > tsc
+@vetios/cire-engine:build: 
+@vetios/testing:build: cache hit, replaying logs 8caec3f41ce01851
+@vetios/domain:build: cache hit, replaying logs 59c967e72b024feb
+@vetios/domain:build: 
+@vetios/domain:build: > @vetios/domain@0.0.1 build C:\Users\Administrator\New folder\internal\domain
+@vetios/domain:build: > tsc
+@vetios/domain:build: 
+@vetios/ai-core:build: cache hit, replaying logs 3762d5eaca0233ec
+@vetios/testing:build: 
+@vetios/testing:build: > @vetios/testing@0.0.1 build C:\Users\Administrator\New folder\internal\testing
+@vetios/testing:build: > tsc
+@vetios/testing:build: 
+@vetios/ai-core:build: 
+@vetios/ai-core:build: > @vetios/ai-core@0.0.1 build C:\Users\Administrator\New folder\internal\ai-core
+@vetios/ai-core:build: > tsc
+@vetios/ai-core:build: 
+@vetios/pharmacos:build: cache hit, replaying logs c50801eb6db6708b
+@vetios/pharmacos:build: 
+@vetios/pharmacos:build: > @vetios/pharmacos@0.0.1 build C:\Users\Administrator\New folder\packages\pharmacos
+@vetios/pharmacos:build: > tsc
+@vetios/pharmacos:build: 
+@vetios/web:build: cache hit, replaying logs 623b3900db64fef8
+@vetios/web:build: 
+@vetios/web:build: > @vetios/web@0.1.0 build C:\Users\Administrator\New folder\apps\web
+@vetios/web:build: > next build
+@vetios/web:build: 
+@vetios/web:build: ▲ Next.js 16.2.4 (Turbopack)
+@vetios/web:build: - Environments: .env.local
+@vetios/web:build: 
+@vetios/web:build:   Creating an optimized production build ...
+@vetios/web:build: ✓ Compiled successfully in 2.2min
+@vetios/web:build:   Running TypeScript ...
+@vetios/web:build:   Finished TypeScript in 3.7min ...
+@vetios/web:build:   Collecting page data using 7 workers ...
+@vetios/web:build:   Generating static pages using 7 workers (0/57) ...
+@vetios/web:build:   Generating static pages using 7 workers (14/57) 
+@vetios/web:build:   Generating static pages using 7 workers (28/57) 
+@vetios/web:build:   Generating static pages using 7 workers (42/57) 
+@vetios/web:build: ✓ Generating static pages using 7 workers (57/57) in 7.5s
+@vetios/web:build:   Finalizing page optimization ...
+@vetios/web:build: 
+@vetios/web:build: Route (app)
+@vetios/web:build: ┌ ○ /
+@vetios/web:build: ├ ○ /_not-found
+@vetios/web:build: ├ ƒ /admin/developer/analytics
+@vetios/web:build: ├ ƒ /api/active-learning
+@vetios/web:build: ├ ƒ /api/admin/partners
+@vetios/web:build: ├ ƒ /api/admin/partners/[id]
+@vetios/web:build: ├ ƒ /api/admin/partners/[id]/activate
+@vetios/web:build: ├ ƒ /api/admin/partners/[id]/change-plan
+@vetios/web:build: ├ ƒ /api/admin/partners/[id]/credentials
+@vetios/web:build: ├ ƒ /api/admin/partners/[id]/credentials/revoke
+@vetios/web:build: ├ ƒ /api/admin/partners/[id]/suspend
+@vetios/web:build: ├ ƒ /api/adverse-event
+@vetios/web:build: ├ ƒ /api/agent/interrupts
+@vetios/web:build: ├ ƒ /api/agent/multi
+@vetios/web:build: ├ ƒ /api/agent/resume
+@vetios/web:build: ├ ƒ /api/agent/run
+@vetios/web:build: ├ ƒ /api/alerts
+@vetios/web:build: ├ ƒ /api/ask-vetios
+@vetios/web:build: ├ ƒ /api/ask-vetios/clinical-images
+@vetios/web:build: ├ ƒ /api/ask-vetios/drug-formulary
+@vetios/web:build: ├ ƒ /api/ask-vetios/feedback
+@vetios/web:build: ├ ƒ /api/ask-vetios/similar-cases
+@vetios/web:build: ├ ƒ /api/assistant
+@vetios/web:build: ├ ƒ /api/audit/case/[case_id]
+@vetios/web:build: ├ ƒ /api/audit/report/[case_id]
+@vetios/web:build: ├ ƒ /api/audit/verify
+@vetios/web:build: ├ ƒ /api/auth/email-verification/resend
+@vetios/web:build: ├ ƒ /api/auth/login
+@vetios/web:build: ├ ƒ /api/auth/signup
+@vetios/web:build: ├ ƒ /api/calibration
+@vetios/web:build: ├ ƒ /api/cire/calibrate
+@vetios/web:build: ├ ƒ /api/cire/collapse-profile
+@vetios/web:build: ├ ƒ /api/cire/incidents
+@vetios/web:build: ├ ƒ /api/cire/incidents/[id]/resolve
+@vetios/web:build: ├ ƒ /api/cire/phi-history
+@vetios/web:build: ├ ƒ /api/cire/status
+@vetios/web:build: ├ ƒ /api/cron/active-learning-sweep
+@vetios/web:build: ├ ƒ /api/cron/calibration-recompute
+@vetios/web:build: ├ ƒ /api/cron/federation-rounds
+@vetios/web:build: ├ ƒ /api/cron/outbox-dispatch
+@vetios/web:build: ├ ƒ /api/cron/outbreak-scan
+@vetios/web:build: ├ ƒ /api/cron/passive-signal-sync
+@vetios/web:build: ├ ƒ /api/cron/platform-drift-monitor
+@vetios/web:build: ├ ƒ /api/cron/platform-orphan-monitor
+@vetios/web:build: ├ ƒ /api/cron/population-calibration
+@vetios/web:build: ├ ƒ /api/cron/population-signal-sweep
+@vetios/web:build: ├ ƒ /api/cron/rlhf-batch
+@vetios/web:build: ├ ƒ /api/cron/simulation-watchdog
+@vetios/web:build: ├ ƒ /api/dataset/backfill
+@vetios/web:build: ├ ƒ /api/dataset/debug
+@vetios/web:build: ├ ƒ /api/datasets/stats
+@vetios/web:build: ├ ƒ /api/datasets/versions
+@vetios/web:build: ├ ƒ /api/developer/analytics/endpoints
+@vetios/web:build: ├ ƒ /api/developer/analytics/errors
+@vetios/web:build: ├ ƒ /api/developer/analytics/overview
+@vetios/web:build: ├ ƒ /api/developer/analytics/quota-usage
+@vetios/web:build: ├ ƒ /api/developer/analytics/usage-timeseries
+@vetios/web:build: ├ ƒ /api/developer/billing/invoice
+@vetios/web:build: ├ ƒ /api/developer/billing/portal
+@vetios/web:build: ├ ƒ /api/developer/billing/upgrade
+@vetios/web:build: ├ ƒ /api/developer/changelog
+@vetios/web:build: ├ ƒ /api/developer/changelog.xml
+@vetios/web:build: ├ ƒ /api/developer/credentials
+@vetios/web:build: ├ ƒ /api/developer/credentials/revoke
+@vetios/web:build: ├ ƒ /api/diagnostic/run
+@vetios/web:build: ├ ƒ /api/drug-interaction
+@vetios/web:build: ├ ƒ /api/drug/check
+@vetios/web:build: ├ ƒ /api/episodes/[episodeId]
+@vetios/web:build: ├ ƒ /api/episodes/reconcile
+@vetios/web:build: ├ ƒ /api/evaluation
+@vetios/web:build: ├ ƒ /api/evaluation/backfill
+@vetios/web:build: ├ ƒ /api/evaluation/latest
+@vetios/web:build: ├ ƒ /api/evaluation/test
+@vetios/web:build: ├ ƒ /api/events/orphans/count
+@vetios/web:build: ├ ƒ /api/experiments/bootstrap
+@vetios/web:build: ├ ƒ /api/experiments/compare
+@vetios/web:build: ├ ƒ /api/experiments/runs
+@vetios/web:build: ├ ƒ /api/experiments/runs/[runId]
+@vetios/web:build: ├ ƒ /api/experiments/runs/[runId]/adversarial
+@vetios/web:build: ├ ƒ /api/experiments/runs/[runId]/benchmarks
+@vetios/web:build: ├ ƒ /api/experiments/runs/[runId]/calibration
+@vetios/web:build: ├ ƒ /api/experiments/runs/[runId]/failure
+@vetios/web:build: ├ ƒ /api/experiments/runs/[runId]/heartbeat
+@vetios/web:build: ├ ƒ /api/experiments/runs/[runId]/metrics
+@vetios/web:build: ├ ƒ /api/experiments/runs/[runId]/registry
+@vetios/web:build: ├ ƒ /api/governance/audit
+@vetios/web:build: ├ ƒ /api/governance/policy
+@vetios/web:build: ├ ƒ /api/governance/policy/[id]/activate
+@vetios/web:build: ├ ƒ /api/health
+@vetios/web:build: ├ ƒ /api/imaging/ingest
+@vetios/web:build: ├ ƒ /api/inference
+@vetios/web:build: ├ ƒ /api/inference/latest
+@vetios/web:build: ├ ƒ /api/inference/recent
+@vetios/web:build: ├ ƒ /api/inference/test
+@vetios/web:build: ├ ƒ /api/inference/v2
+@vetios/web:build: ├ ƒ /api/intake
+@vetios/web:build: ├ ƒ /api/intelligence/topology
+@vetios/web:build: ├ ƒ /api/intelligence/topology/diagnostics
+@vetios/web:build: ├ ƒ /api/labs/recommend
+@vetios/web:build: ├ ƒ /api/labs/recommendations/[inference_event_id]
+@vetios/web:build: ├ ƒ /api/labs/result
+@vetios/web:build: ├ ƒ /api/learning/active-queue
+@vetios/web:build: ├ ƒ /api/learning/cycle
+@vetios/web:build: ├ ƒ /api/learning/dashboard
+@vetios/web:build: ├ ƒ /api/learning/promote
+@vetios/web:build: ├ ƒ /api/learning/rlhf/accuracy
+@vetios/web:build: ├ ƒ /api/learning/rlhf/override
+@vetios/web:build: ├ ƒ /api/learning/rollback
+@vetios/web:build: ├ ƒ /api/learning/scheduler
+@vetios/web:build: ├ ƒ /api/longitudinal
+@vetios/web:build: ├ ƒ /api/ml/predict
+@vetios/web:build: ├ ƒ /api/ml/shadow-report
+@vetios/web:build: ├ ƒ /api/models/[version]/unblock
+@vetios/web:build: ├ ƒ /api/models/active
+@vetios/web:build: ├ ƒ /api/models/available
+@vetios/web:build: ├ ƒ /api/models/registry/control-plane
+@vetios/web:build: ├ ƒ /api/outbox/dispatch
+@vetios/web:build: ├ ƒ /api/outbox/events
+@vetios/web:build: ├ ƒ /api/outbox/events/[id]/attempts
+@vetios/web:build: ├ ƒ /api/outbox/release-stale-leases
+@vetios/web:build: ├ ƒ /api/outbox/retry-dead-letters
+@vetios/web:build: ├ ƒ /api/outbox/snapshot
+@vetios/web:build: ├ ƒ /api/outbreak/clusters
+@vetios/web:build: ├ ƒ /api/outbreak/subscribe
+@vetios/web:build: ├ ƒ /api/outcome
+@vetios/web:build: ├ ƒ /api/outcome/test
+@vetios/web:build: ├ ƒ /api/pharma/signals
+@vetios/web:build: ├ ƒ /api/pharma/webhook-subscribe
+@vetios/web:build: ├ ƒ /api/pharmacos/formulary-update
+@vetios/web:build: ├ ƒ /api/platform/developer-platform
+@vetios/web:build: ├ ƒ /api/platform/edge-box
+@vetios/web:build: ├ ƒ /api/platform/federation
+@vetios/web:build: ├ ƒ /api/platform/machine-auth
+@vetios/web:build: ├ ƒ /api/platform/model-trust
+@vetios/web:build: ├ ƒ /api/platform/outbox
+@vetios/web:build: ├ ƒ /api/platform/passive-signals
+@vetios/web:build: ├ ƒ /api/platform/petpass
+@vetios/web:build: ├ ƒ /api/population-signal
+@vetios/web:build: ├ ƒ /api/population-signal/report
+@vetios/web:build: ├ ƒ /api/population/contribute
+@vetios/web:build: ├ ƒ /api/public/developer-catalog
+@vetios/web:build: ├ ƒ /api/public/edge-box
+@vetios/web:build: ├ ƒ /api/public/model-cards
+@vetios/web:build: ├ ƒ /api/public/network-learning
+@vetios/web:build: ├ ƒ /api/public/petpass
+@vetios/web:build: ├ ƒ /api/rate-limits
+@vetios/web:build: ├ ƒ /api/rlhf/feedback
+@vetios/web:build: ├ ƒ /api/settings/control-plane
+@vetios/web:build: ├ ƒ /api/signals/connect
+@vetios/web:build: ├ ƒ /api/signals/ingest
+@vetios/web:build: ├ ƒ /api/simulate
+@vetios/web:build: ├ ƒ /api/simulation/[id]/status
+@vetios/web:build: ├ ƒ /api/simulations
+@vetios/web:build: ├ ƒ /api/simulations/[id]
+@vetios/web:build: ├ ƒ /api/simulations/[id]/export
+@vetios/web:build: ├ ƒ /api/simulations/[id]/progress
+@vetios/web:build: ├ ƒ /api/simulations/[id]/status
+@vetios/web:build: ├ ƒ /api/simulations/adversarial
+@vetios/web:build: ├ ƒ /api/simulations/adversarial/prompts
+@vetios/web:build: ├ ƒ /api/simulations/load
+@vetios/web:build: ├ ƒ /api/simulations/regression
+@vetios/web:build: ├ ƒ /api/simulations/run
+@vetios/web:build: ├ ƒ /api/teleconsult/extract
+@vetios/web:build: ├ ƒ /api/teleconsult/session
+@vetios/web:build: ├ ƒ /api/teleconsult/stream/[session_id]
+@vetios/web:build: ├ ƒ /api/telemetry
+@vetios/web:build: ├ ƒ /api/telemetry/ingest
+@vetios/web:build: ├ ƒ /api/telemetry/patient/[patient_id]/history
+@vetios/web:build: ├ ƒ /api/telemetry/patient/[patient_id]/live
+@vetios/web:build: ├ ƒ /api/telemetry/stream
+@vetios/web:build: ├ ƒ /api/telemetry/test
+@vetios/web:build: ├ ƒ /api/treatment/outcome
+@vetios/web:build: ├ ƒ /api/treatment/performance
+@vetios/web:build: ├ ƒ /api/treatment/recommend
+@vetios/web:build: ├ ƒ /api/v1/dataset/prevalence
+@vetios/web:build: ├ ƒ /api/v1/inference/adversarial
+@vetios/web:build: ├ ƒ /api/v1/inference/differential
+@vetios/web:build: ├ ƒ /api/v1/inference/drug-check
+@vetios/web:build: ├ ƒ /api/v1/models/card
+@vetios/web:build: ├ ƒ /api/v1/outcomes/contribute
+@vetios/web:build: ├ ƒ /api/v1/petpass/history/[pet_id]
+@vetios/web:build: ├ ƒ /api/v1/petpass/sync
+@vetios/web:build: ├ ƒ /api/v1/usage/analytics
+@vetios/web:build: ├ ƒ /api/v1/usage/quota
+@vetios/web:build: ├ ƒ /api/vkg
+@vetios/web:build: ├ ƒ /api/vkg/differentials
+@vetios/web:build: ├ ƒ /api/vkg/path
+@vetios/web:build: ├ ƒ /api/wearable/ingest
+@vetios/web:build: ├ ƒ /api/webhooks
+@vetios/web:build: ├ ƒ /api/webhooks/[id]
+@vetios/web:build: ├ ƒ /api/webhooks/stripe
+@vetios/web:build: ├ ○ /ask-vetios
+@vetios/web:build: ├ ƒ /auth/callback
+@vetios/web:build: ├ ○ /contact
+@vetios/web:build: ├ ƒ /dashboard
+@vetios/web:build: ├ ƒ /dataset
+@vetios/web:build: ├ ○ /developer
+@vetios/web:build: ├ ƒ /developer/analytics
+@vetios/web:build: ├ ƒ /developer/billing
+@vetios/web:build: ├ ƒ /developer/changelog
+@vetios/web:build: ├ ƒ /developer/pharma
+@vetios/web:build: ├ ƒ /developer/versioning
+@vetios/web:build: ├ ○ /docs
+@vetios/web:build: ├ ƒ /experiments
+@vetios/web:build: ├ ○ /forgot-password
+@vetios/web:build: ├ ƒ /guide
+@vetios/web:build: ├ ○ /icon.svg
+@vetios/web:build: ├ ƒ /inference
+@vetios/web:build: ├ ƒ /intelligence
+@vetios/web:build: ├ ƒ /intelligence/stream
+@vetios/web:build: ├ ○ /login
+@vetios/web:build: ├ ○ /manifest.webmanifest
+@vetios/web:build: ├ ƒ /models
+@vetios/web:build: ├ ƒ /outbox
+@vetios/web:build: ├ ƒ /outcome
+@vetios/web:build: ├ ○ /platform
+@vetios/web:build: ├ ƒ /platform/developers
+@vetios/web:build: ├ ƒ /platform/edge-box
+@vetios/web:build: ├ ƒ /platform/model-cards
+@vetios/web:build: ├ ƒ /platform/network-learning
+@vetios/web:build: ├ ○ /platform/passive-signals
+@vetios/web:build: ├ ƒ /platform/petpass
+@vetios/web:build: ├ ○ /privacy
+@vetios/web:build: ├ ○ /reset-password
+@vetios/web:build: ├ ○ /robots.txt
+@vetios/web:build: ├ ƒ /settings
+@vetios/web:build: ├ ƒ /settings/developer-platform
+@vetios/web:build: ├ ƒ /settings/edge-box
+@vetios/web:build: ├ ƒ /settings/federation
+@vetios/web:build: ├ ƒ /settings/model-trust
+@vetios/web:build: ├ ƒ /settings/outbox
+@vetios/web:build: ├ ƒ /settings/passive-signals
+@vetios/web:build: ├ ƒ /settings/petpass
+@vetios/web:build: ├ ○ /signup
+@vetios/web:build: ├ ƒ /simulate
+@vetios/web:build: ├ ○ /sitemap.xml
+@vetios/web:build: ├ ƒ /sovereign/benchmark
+@vetios/web:build: ├ ƒ /sovereign/register
+@vetios/web:build: ├ ƒ /sovereign/run
+@vetios/web:build: ├ ƒ /sovereign/runs/[id]
+@vetios/web:build: ├ ƒ /sovereign/runs/[id]/progress
+@vetios/web:build: ├ ƒ /sovereign/runs/[id]/report
+@vetios/web:build: ├ ƒ /sovereign/runs/[id]/sentinel-config
+@vetios/web:build: ├ ○ /support
+@vetios/web:build: ├ ƒ /telemetry
+@vetios/web:build: ├ ƒ /telemetry/stream
+@vetios/web:build: ├ ○ /terms
+@vetios/web:build: └ ○ /verify-email
+@vetios/web:build: 
+@vetios/web:build: 
+@vetios/web:build: ƒ Proxy (Middleware)
+@vetios/web:build: 
+@vetios/web:build: ○  (Static)   prerendered as static content
+@vetios/web:build: ƒ  (Dynamic)  server-rendered on demand
+@vetios/web:build: 
+
+ Tasks:    12 successful, 12 total
+Cached:    12 cached, 12 total
+  Time:    1m13.351s >>> FULL TURBO
+

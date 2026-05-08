@@ -68,7 +68,7 @@ export const stackBlocks = [
     'Next.js',
     'TypeScript',
     'Supabase',
-    'OpenAI-compatible inference',
+    'Hugging Face primary inference',
     'Event-driven architecture',
     'Vercel deployment',
 ] as const;
@@ -77,7 +77,7 @@ export const techStackDescriptions: Record<(typeof stackBlocks)[number], string>
     'Next.js': 'Public surface and operator console delivery',
     TypeScript: 'Typed application contracts across runtime boundaries',
     Supabase: 'Auth, session state, persistence, and event adjacency',
-    'OpenAI-compatible inference': 'Model orchestration with provider portability',
+    'Hugging Face primary inference': 'Custom model inference with OpenAI fallback only',
     'Event-driven architecture': 'Outcome, simulation, and observability fanout',
     'Vercel deployment': 'Fast edge delivery for interface and control plane surfaces',
 };
@@ -175,7 +175,7 @@ export const endpointCards = [
     "symptoms": ["vomiting", "lethargy"],
     "metadata": { "wbc": 4.1, "pcv": 29 }
   },
-  "inference": { "model": "gpt-4o-mini", "model_version": "gpt-4o-mini" }
+  "inference": { "model": "VetIOS Diagnostics", "model_version": "latest" }
 }`,
         response: `{
   "simulation_event_id": "sim_901A…",

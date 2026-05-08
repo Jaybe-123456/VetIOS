@@ -64,7 +64,7 @@ interface OutcomeState {
 interface CireState {
     phi_hat: number;
     cps: number;
-    safety_state: 'nominal' | 'warning' | 'critical' | 'blocked';
+    safety_state: 'nominal' | 'review' | 'hold' | 'warning' | 'critical' | 'blocked';
     reliability_badge: 'HIGH' | 'REVIEW' | 'CAUTION' | 'SUPPRESSED';
     input_quality: number;
     incident_id?: string | null;
@@ -584,7 +584,6 @@ export default function InferenceConsole() {
             pushLog('INPUT NORMALIZATION COMPLETE');
             pushLog('GENERATING ROUTING PLAN...');
             // ...
-            const v2Payload = readEncounterPayloadV2(finalInput.metadata?.encounter_payload_v2);
             const metadata = {
                 ...(finalInput.metadata ?? {}),
                 model_family: (finalInput.metadata as Record<string, unknown> | undefined)?.model_family ?? 'diagnostics',
@@ -592,8 +591,8 @@ export default function InferenceConsole() {
             };
             const v1RequestBody = {
                 model: {
-                    name: "gpt-4o-mini",
-                    version: "1.0.0"
+                    name: "VetIOS Diagnostics",
+                    version: "latest"
                 },
                 input: {
                     input_signature: {
@@ -613,10 +612,8 @@ export default function InferenceConsole() {
                     }
                 }
             };
-            const data = v2Payload ?? v1RequestBody;
-            const requestPayloadForState = v2Payload
-                ? v2Payload as unknown as Record<string, unknown>
-                : v1RequestBody.input.input_signature as Record<string, unknown>;
+            const data = v1RequestBody;
+            const requestPayloadForState = v1RequestBody.input.input_signature as Record<string, unknown>;
 
             const startTime = performance.now();
             const res = await fetch('/api/inference', {
@@ -655,17 +652,32 @@ export default function InferenceConsole() {
                 throw new Error('Inference succeeded but returned an invalid inference_event_id.');
             }
 
-            const cire = result.cire && typeof result.cire === 'object'
-                ? result.cire as CireState
-                : null;
             const dataPayload = result.data && typeof result.data === 'object'
                 ? result.data as Record<string, unknown>
                 : null;
-            const output = (
-                dataPayload?.output
-                ?? result.output
-                ?? result.prediction
-            ) as Record<string, unknown> | undefined;
+            const rawCire = result.cire && typeof result.cire === 'object'
+                ? result.cire as Record<string, unknown>
+                : null;
+            const cire = rawCire
+                ? normalizeCireState(rawCire)
+                : null;
+            const apiDifferentials = Array.isArray(dataPayload?.differentials)
+                ? dataPayload.differentials as Array<{ label?: string; p?: number }>
+                : [];
+            const apiConfidence = typeof dataPayload?.confidence_score === 'number'
+                ? dataPayload.confidence_score
+                : apiDifferentials[0]?.p ?? 0;
+            const output = {
+                confidence_score: apiConfidence,
+                differentials: apiDifferentials,
+                diagnosis: {
+                    top_differentials: apiDifferentials.map((entry, index) => ({
+                        name: entry.label ?? 'Unknown',
+                        probability: typeof entry.p === 'number' ? entry.p : 0,
+                        rank: index + 1,
+                    })),
+                },
+            } as Record<string, unknown>;
             const diagnosis = output?.diagnosis as Record<string, unknown> | undefined;
             const riskAssessment = output?.risk_assessment as Record<string, unknown> | undefined;
             const riskModelOutput = output?.risk_model_output as Record<string, unknown> | undefined;
@@ -687,9 +699,8 @@ export default function InferenceConsole() {
                     .map(([k, v]) => ({ feature: k, impact: typeof v === 'number' ? v : Number(v) || 0 }))
                     .sort((a, b) => b.impact - a.impact);
 
-            // Simulate metric history
-            const generateHistory = (base: number, variance: number) => 
-                Array.from({ length: 20 }, () => ({ value: base + (Math.random() - 0.5) * variance }));
+            const generateFlatHistory = (value: number) =>
+                Array.from({ length: 20 }, () => ({ value }));
 
             pushLog('INFERENCE PIPELINE COMPLETE', 'success');
 
@@ -726,12 +737,12 @@ export default function InferenceConsole() {
                 diagnosticImages: [],
                 labResults: [],
                 cire,
-                cireMessage: result.error?.message ?? null,
+                cireMessage: null,
                 metrics: {
                     inferenceTimeMs: Math.round(measuredLatencyMs),
-                    confidenceHistory: generateHistory(result.confidence_score || 0.85, 0.1),
-                    loadHistory: generateHistory(70, 20),
-                    tempHistory: generateHistory(65, 5),
+                    confidenceHistory: generateFlatHistory(apiConfidence),
+                    loadHistory: generateFlatHistory(cire?.phi_hat ?? 0),
+                    tempHistory: generateFlatHistory(cire?.cps ?? 0),
                 },
             }));
             setActiveTab('vectors');
@@ -811,12 +822,15 @@ export default function InferenceConsole() {
         setOutcomeState(prev => ({ ...prev, status: 'submitting' }));
 
         const formData = new FormData(e.currentTarget);
+        const actualDiagnosis = String(formData.get('actualDiagnosis') ?? '').trim();
         const data = {
             inference_event_id: state.eventId,
             outcome: {
-                type: 'clinical_diagnosis',
+                type: 'confirmed_diagnosis',
                 payload: {
-                    actual_diagnosis: formData.get('actualDiagnosis'),
+                    label: actualDiagnosis,
+                    confidence: 1,
+                    actual_diagnosis: actualDiagnosis,
                     notes: formData.get('notes'),
                 },
                 timestamp: new Date().toISOString(),
@@ -1074,16 +1088,14 @@ export default function InferenceConsole() {
                                         color="#00ff9d"
                                     />
                                     <MetricCard 
-                                        label="GPU Load" 
-                                        value={state.metrics ? state.metrics.loadHistory[state.metrics.loadHistory.length - 1].value.toFixed(0) : '--'} 
-                                        unit="%"
+                                        label="Phi Hat" 
+                                        value={state.cire ? state.cire.phi_hat.toFixed(2) : '--'} 
                                         sparklineData={state.metrics?.loadHistory}
                                         color="#3b82f6"
                                     />
                                     <MetricCard 
-                                        label="Temperature" 
-                                        value={state.metrics ? state.metrics.tempHistory[state.metrics.tempHistory.length - 1].value.toFixed(1) : '--'} 
-                                        unit="°C"
+                                        label="CPS" 
+                                        value={state.cire ? state.cire.cps.toFixed(2) : '--'} 
                                         sparklineData={state.metrics?.tempHistory}
                                         color="#ef4444"
                                     />
@@ -1442,6 +1454,47 @@ function cireBadgeLabel(badge: CireState['reliability_badge']) {
     if (badge === 'REVIEW') return 'REVIEW';
     if (badge === 'CAUTION') return 'CAUTION';
     return 'SUPPRESSED';
+}
+
+function normalizeCireState(value: Record<string, unknown>): CireState {
+    const phiHat = readNumber(value.phi_hat) ?? 0;
+    const cps = readNumber(value.cps) ?? 1;
+    const safetyState = readCireSafetyState(value.safety_state);
+
+    return {
+        phi_hat: phiHat,
+        cps,
+        safety_state: safetyState,
+        reliability_badge: safetyState === 'nominal'
+            ? 'HIGH'
+            : safetyState === 'review' || safetyState === 'warning'
+                ? 'REVIEW'
+                : safetyState === 'hold' || safetyState === 'critical'
+                    ? 'CAUTION'
+                    : 'SUPPRESSED',
+        input_quality: Math.max(0, Math.min(1, 1 - cps)),
+        incident_id: typeof value.incident_id === 'string' ? value.incident_id : null,
+    };
+}
+
+function readCireSafetyState(value: unknown): CireState['safety_state'] {
+    return value === 'nominal'
+        || value === 'review'
+        || value === 'hold'
+        || value === 'warning'
+        || value === 'critical'
+        || value === 'blocked'
+        ? value
+        : 'hold';
+}
+
+function readNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
 
 function CireReliabilityGlyph({ badge }: { badge: CireState['reliability_badge'] }) {
