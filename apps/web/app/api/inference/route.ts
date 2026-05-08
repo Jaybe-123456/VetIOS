@@ -200,6 +200,7 @@ export async function POST(req: Request) {
     }
 
     const userId = actor.userId;
+    const simulationContext = readSimulationContext(req.headers);
 
     const parsed = await safeJson(req);
     if (!parsed.ok) {
@@ -252,9 +253,18 @@ export async function POST(req: Request) {
     }
 
     const body = result.data;
-    const inputMetadata = asRecord(body.input.input_signature.metadata);
+    const inputMetadata: Record<string, unknown> = {
+        ...asRecord(body.input.input_signature.metadata),
+        ...(simulationContext.simulationId ? { simulation_id: simulationContext.simulationId } : {}),
+        ...(simulationContext.agentIndex != null ? { simulation_agent_index: simulationContext.agentIndex } : {}),
+        ...(simulationContext.requestIndex != null ? { simulation_request_index: simulationContext.requestIndex } : {}),
+        ...(simulationContext.isSynthetic ? { is_synthetic: true } : {}),
+        ...(simulationContext.adversarialType ? { adversarial_type: simulationContext.adversarialType } : {}),
+    };
+    body.input.input_signature.metadata = inputMetadata;
     const sourceModule = readText(body.input.input_signature.source)
         ?? readText(inputMetadata.source)
+        ?? (simulationContext.isSynthetic ? 'simulation_workbench' : null)
         ?? 'inference_console';
 
     await enrichInferenceInputForMoat(supabase, tenantId, body.input.input_signature)
@@ -398,6 +408,12 @@ export async function POST(req: Request) {
         telemetry.provider_model = routedModel.provider_model;
         telemetry.inference_id = inferenceEventId;
         telemetry.run_id = telemetryRunId;
+        if (simulationContext.simulationId) {
+            telemetry.simulation_id = simulationContext.simulationId;
+            telemetry.simulation_agent_index = simulationContext.agentIndex;
+            telemetry.simulation_request_index = simulationContext.requestIndex;
+            telemetry.is_synthetic = simulationContext.isSynthetic;
+        }
         Object.assign(telemetry, routingTelemetryMetadata);
         inferenceResult.output_payload.telemetry = telemetry;
 
@@ -486,6 +502,10 @@ export async function POST(req: Request) {
             top_diagnosis: (() => { try { const d = inferenceResult.output_payload?.diagnosis as Record<string,unknown>; const diffs = Array.isArray(d?.top_differentials) ? d.top_differentials as Array<Record<string,unknown>> : []; return String(diffs[0]?.name ?? diffs[0]?.condition ?? d?.top_diagnosis ?? ''); } catch { return null; } })(),
             contradiction_score: typeof inferenceResult.uncertainty_metrics?.contradiction_score === 'number' ? inferenceResult.uncertainty_metrics.contradiction_score as number : null,
             outcome_confirmed: false,
+            simulation_id: simulationContext.simulationId,
+            is_synthetic: simulationContext.isSynthetic,
+            simulation_agent_index: simulationContext.agentIndex,
+            simulation_request_index: simulationContext.requestIndex,
         });
 
         // ── Vector store upsert (inline, capped at 8s, non-blocking on error) ──
@@ -548,6 +568,8 @@ export async function POST(req: Request) {
                     latest_inference_emergency_level: extractEmergencyLevel(inferenceResult.output_payload),
                     latest_inference_model_version: routedModel.model_version,
                     latest_inference_source: sourceModule,
+                    simulation_id: simulationContext.simulationId,
+                    is_synthetic: simulationContext.isSynthetic,
                 },
             },
         );
@@ -608,6 +630,10 @@ export async function POST(req: Request) {
                 metadata: {
                     request_id: requestId,
                     case_id: canonicalClinicalCase.id,
+                    simulation_id: simulationContext.simulationId,
+                    is_synthetic: simulationContext.isSynthetic,
+                    simulation_agent_index: simulationContext.agentIndex,
+                    simulation_request_index: simulationContext.requestIndex,
                 },
             });
             flywheelEvaluation = {
@@ -920,6 +946,8 @@ export async function POST(req: Request) {
                     timestamp: new Date().toISOString(),
                     request_id: requestId,
                     inference_id: persistedInferenceEventId,
+                    simulation_id: simulationContext.simulationId,
+                    is_synthetic: simulationContext.isSynthetic,
                 },
                 error: {
                     code: 'INFERENCE_SUPPRESSED',
@@ -948,6 +976,8 @@ export async function POST(req: Request) {
                 timestamp: new Date().toISOString(),
                 request_id: requestId,
                 inference_id: persistedInferenceEventId,
+                simulation_id: simulationContext.simulationId,
+                is_synthetic: simulationContext.isSynthetic,
             },
             error: null,
             confidence_score: inferenceResult.confidence_score,
@@ -1069,6 +1099,23 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function readText(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readSimulationContext(headers: Headers) {
+    const simulationId = readText(headers.get('X-Simulation-Run-Id'));
+    return {
+        simulationId,
+        agentIndex: readHeaderInteger(headers.get('X-Simulation-Agent-Index')),
+        requestIndex: readHeaderInteger(headers.get('X-Simulation-Request-Index')),
+        isSynthetic: headers.get('X-Is-Synthetic') === 'true' || simulationId != null,
+        adversarialType: readText(headers.get('X-Adversarial-Type')),
+    };
+}
+
+function readHeaderInteger(value: string | null) {
+    if (value == null || value.trim().length === 0) return null;
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function asNullableRecord(value: unknown): Record<string, unknown> | null {

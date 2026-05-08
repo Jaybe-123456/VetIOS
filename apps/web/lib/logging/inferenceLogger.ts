@@ -40,6 +40,10 @@ export interface InferenceLogInput {
     parent_inference_event_id?: string | null;
     structured_input_text?: string | null;
     active_systems?: string[] | null;
+    simulation_id?: string | null;
+    is_synthetic?: boolean;
+    simulation_agent_index?: number | null;
+    simulation_request_index?: number | null;
 }
 
 export async function logInference(
@@ -80,6 +84,10 @@ export async function logInference(
             [C.governance_policy_id]: input.governance_policy_id ?? null,
             [C.orphaned]: input.orphaned ?? false,
             [C.orphaned_at]: input.orphaned_at ?? null,
+            ...(input.simulation_id !== undefined ? { [C.simulation_id]: input.simulation_id } : {}),
+            ...(input.is_synthetic !== undefined ? { [C.is_synthetic]: input.is_synthetic } : {}),
+            ...(input.simulation_agent_index !== undefined ? { [C.simulation_agent_index]: input.simulation_agent_index } : {}),
+            ...(input.simulation_request_index !== undefined ? { [C.simulation_request_index]: input.simulation_request_index } : {}),
         })
         .select('id')
         .single();

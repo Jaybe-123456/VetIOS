@@ -79,6 +79,8 @@ export interface OutcomeRecord {
     status: 'pending' | 'scored' | 'failed';
     raw_output: string;
     metadata: Record<string, unknown>;
+    simulation_id?: string | null;
+    is_synthetic?: boolean;
     created_at: string;
     updated_at: string;
 }
@@ -158,6 +160,21 @@ export interface SimulationRecord {
     error_message: string | null;
     started_at?: string | null;
     completed_at?: string | null;
+    heartbeat_at?: string | null;
+    worker_id?: string | null;
+    timeout_at?: string | null;
+    duration_s?: number | null;
+    failure_reason?: string | null;
+    failure_stack?: string | null;
+    requests_completed?: number | null;
+    requests_failed?: number | null;
+    requests_total?: number | null;
+    mean_latency_ms?: number | null;
+    p50_latency_ms?: number | null;
+    p95_latency_ms?: number | null;
+    p99_latency_ms?: number | null;
+    success_rate?: number | null;
+    model_safety_class?: 'production' | 'experimental' | 'archived' | null;
     created_by?: string | null;
     created_at: string;
     updated_at: string;

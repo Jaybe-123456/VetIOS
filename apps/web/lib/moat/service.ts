@@ -235,10 +235,14 @@ export async function handlePopulationCalibrationCron(req: Request) {
             .limit(5000);
         if (error) throw error;
         const rows = (signals ?? []) as Array<{ species?: string; confidence_delta?: number | null }>;
-        const deltas = rows.map((row) => readNumber(row.confidence_delta)).filter((value): value is number => value != null);
+        const simulationSignals = await loadProductionSimulationCalibrationSignals(supabase, since);
+        const deltas = [
+            ...rows.map((row) => readNumber(row.confidence_delta)),
+            ...simulationSignals.map((row) => readNumber(row.confidence_delta)),
+        ].filter((value): value is number => value != null);
         const mean = deltas.length ? deltas.reduce((sum, value) => sum + value, 0) / deltas.length : 0;
         const p95 = percentile(deltas, 0.95);
-        const speciesBreakdowns = rows.reduce<Record<string, number>>((acc, row) => {
+        const speciesBreakdowns = [...rows, ...simulationSignals].reduce<Record<string, number>>((acc, row) => {
             const species = row.species ?? 'unknown';
             acc[species] = (acc[species] ?? 0) + 1;
             return acc;
@@ -246,8 +250,12 @@ export async function handlePopulationCalibrationCron(req: Request) {
         const { data: run, error: runError } = await supabase
             .from('calibration_runs')
             .insert({
-                signals_consumed: rows.length,
-                species_breakdowns: speciesBreakdowns,
+                signals_consumed: rows.length + simulationSignals.length,
+                species_breakdowns: {
+                    ...speciesBreakdowns,
+                    _population_signals: rows.length,
+                    _production_simulation_signals: simulationSignals.length,
+                },
                 confidence_shift_mean: mean,
                 confidence_shift_p95: p95,
                 model_version_before: process.env.AI_PROVIDER_DEFAULT_MODEL ?? null,
@@ -262,14 +270,62 @@ export async function handlePopulationCalibrationCron(req: Request) {
             eventName: 'population.calibrated',
             aggregateType: 'calibration_run',
             aggregateId: String(run.id),
-            payload: { calibration_run_id: run.id, signals_consumed: rows.length, confidence_shift_mean: mean, confidence_shift_p95: p95 },
+            payload: { calibration_run_id: run.id, signals_consumed: rows.length + simulationSignals.length, production_simulation_signals: simulationSignals.length, confidence_shift_mean: mean, confidence_shift_p95: p95 },
         });
-        await finishCronRun(supabase, cron.id, rows.length, 'completed', null);
-        return jsonOk({ calibration_run_id: run.id, signals_consumed: rows.length, confidence_shift_mean: mean, confidence_shift_p95: p95 }, requestId, startTime);
+        await finishCronRun(supabase, cron.id, rows.length + simulationSignals.length, 'completed', null);
+        return jsonOk({ calibration_run_id: run.id, signals_consumed: rows.length + simulationSignals.length, production_simulation_signals: simulationSignals.length, confidence_shift_mean: mean, confidence_shift_p95: p95 }, requestId, startTime);
     } catch (error) {
         await finishCronRun(supabase, cron.id, 0, 'failed', error instanceof Error ? error.message : String(error));
         return jsonError('population_calibration_failed', error instanceof Error ? error.message : 'Calibration failed.', 500, requestId, startTime);
     }
+}
+
+async function loadProductionSimulationCalibrationSignals(
+    supabase: SupabaseClient,
+    since: string,
+) {
+    const { data: runs, error: runError } = await supabase
+        .from('simulations')
+        .select('id')
+        .eq('model_safety_class', process.env.VETIOS_SIMULATION_CALIBRATION_MODEL_CLASS ?? 'production')
+        .gte('created_at', since)
+        .limit(1000);
+
+    if (runError) {
+        console.warn('[population-calibration] production simulation run lookup failed:', runError.message);
+        return [];
+    }
+
+    const runIds = (runs ?? [])
+        .map((row) => readString((row as Record<string, unknown>).id))
+        .filter((value): value is string => Boolean(value));
+    if (runIds.length === 0) {
+        return [];
+    }
+
+    const { data: events, error: eventError } = await supabase
+        .from('simulation_events')
+        .select('species,response_body')
+        .in('simulation_id', runIds)
+        .eq('success', true)
+        .not('inference_event_id', 'is', null)
+        .gte('created_at', since)
+        .limit(5000);
+
+    if (eventError) {
+        console.warn('[population-calibration] production simulation event lookup failed:', eventError.message);
+        return [];
+    }
+
+    return (events ?? []).map((row) => {
+        const responseBody = asRecord((row as Record<string, unknown>).response_body);
+        const confidence = readNumber(responseBody.confidence_score)
+            ?? readNumber(asRecord(responseBody.diagnosis).confidence_score);
+        return {
+            species: readString((row as Record<string, unknown>).species) ?? 'unknown',
+            confidence_delta: confidence == null ? null : Number((1 - confidence).toFixed(4)),
+        };
+    });
 }
 
 export async function handleAdverseEventPost(req: Request) {

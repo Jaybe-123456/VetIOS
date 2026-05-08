@@ -208,6 +208,8 @@ export async function ensureOutcomeRecord(
       status: 'pending',
       raw_output: input.rawOutput,
       metadata: input.metadata ?? {},
+      simulation_id: readText(input.metadata?.simulation_id),
+      is_synthetic: input.metadata?.is_synthetic === true,
     })
     .select('*')
     .single();

@@ -5,7 +5,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
 import { PlatformAuthError } from '@/lib/platform/tenantContext';
-import { countInferenceEventsForScope, getActiveModelVersion, startSimulationRun } from '@/lib/platform/simulations';
+import { countInferenceEventsForScope, getActiveModelVersion, resolveSimulationModelSafetyClass, startSimulationRun } from '@/lib/platform/simulations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -75,6 +75,10 @@ export async function POST(req: Request) {
         if ((modelRows ?? []).length === 0) {
             throw new PlatformAuthError(404, 'model_not_found', `Candidate model ${candidateModel} was not found in model_registry.`);
         }
+        const safetyClass = await resolveSimulationModelSafetyClass(supabase, tenantId, candidateModel);
+        if (safetyClass === 'archived' && body.confirm_archived_run !== true) {
+            throw new PlatformAuthError(422, 'ARCHIVED_MODEL', `Model ${candidateModel} is archived. Results from this run will not enter the calibration pipeline. Pass confirm_archived_run: true to proceed.`);
+        }
 
         const simulation = await startSimulationRun(supabase, {
             actor,
@@ -90,6 +94,8 @@ export async function POST(req: Request) {
                 auto_block: autoBlock,
                 tenant_scope: tenantScope,
                 available_inference_events: await countInferenceEventsForScope(supabase, { tenantId, scope: tenantScope, actor }),
+                confirm_archived_run: body.confirm_archived_run === true,
+                model_safety_class: safetyClass,
             },
         });
 

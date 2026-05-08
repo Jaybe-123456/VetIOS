@@ -21,6 +21,8 @@ export interface OutcomeLogInput {
     outcome_payload: Record<string, unknown>;
     outcome_timestamp: string;
     label_type?: string | null;
+    simulation_id?: string | null;
+    is_synthetic?: boolean;
 }
 
 export async function logOutcome(
@@ -42,6 +44,8 @@ export async function logOutcome(
             [C.outcome_payload]: input.outcome_payload,
             [C.outcome_timestamp]: input.outcome_timestamp,
             [C.label_type]: input.label_type ?? null,
+            ...(input.simulation_id !== undefined ? { [C.simulation_id]: input.simulation_id } : {}),
+            ...(input.is_synthetic !== undefined ? { [C.is_synthetic]: input.is_synthetic } : {}),
         })
         .select('id')
         .single();

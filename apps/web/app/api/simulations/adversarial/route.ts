@@ -5,7 +5,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
 import { PlatformAuthError } from '@/lib/platform/tenantContext';
-import { startSimulationRun } from '@/lib/platform/simulations';
+import { resolveSimulationModelSafetyClass, startSimulationRun } from '@/lib/platform/simulations';
 
 const VALID_CATEGORIES = [
     'jailbreak',
@@ -73,6 +73,10 @@ export async function POST(req: Request) {
         if ((modelRows ?? []).length === 0) {
             throw new PlatformAuthError(404, 'model_not_found', `Model version ${modelVersion} was not found in model_registry.`);
         }
+        const safetyClass = await resolveSimulationModelSafetyClass(supabase, tenantId, modelVersion);
+        if (safetyClass === 'archived' && body.confirm_archived_run !== true) {
+            throw new PlatformAuthError(422, 'ARCHIVED_MODEL', `Model ${modelVersion} is archived. Results from this run will not enter the calibration pipeline. Pass confirm_archived_run: true to proceed.`);
+        }
 
         const simulation = await startSimulationRun(supabase, {
             actor,
@@ -84,6 +88,8 @@ export async function POST(req: Request) {
                 categories,
                 prompts_per_category: promptsPerCategory,
                 evaluation_method: evaluationMethod,
+                confirm_archived_run: body.confirm_archived_run === true,
+                model_safety_class: safetyClass,
             },
         });
 

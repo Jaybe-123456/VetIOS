@@ -30,6 +30,10 @@ export const AI_INFERENCE_EVENTS = {
         governance_policy_id: 'governance_policy_id', // uuid, nullable
         orphaned: 'orphaned',                     // boolean, NOT NULL
         orphaned_at: 'orphaned_at',               // timestamptz, nullable
+        simulation_id: 'simulation_id',           // uuid, nullable
+        is_synthetic: 'is_synthetic',             // boolean, NOT NULL
+        simulation_agent_index: 'simulation_agent_index', // integer, nullable
+        simulation_request_index: 'simulation_request_index', // integer, nullable
         created_at: 'created_at',                 // timestamptz, NOT NULL
     },
 } as const;
@@ -162,6 +166,8 @@ export const CLINICAL_OUTCOME_EVENTS = {
         clinician_feedback_score: 'clinician_feedback_score', // double precision, nullable
         clinician_notes: 'clinician_notes',       // text, nullable
         label_type: 'label_type',                 // text, nullable (synthetic, expert, confirmed)
+        simulation_id: 'simulation_id',           // uuid, nullable
+        is_synthetic: 'is_synthetic',             // boolean, NOT NULL
         created_at: 'created_at',                 // timestamptz, NOT NULL
     },
 } as const;

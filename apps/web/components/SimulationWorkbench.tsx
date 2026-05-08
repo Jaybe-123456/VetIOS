@@ -47,6 +47,20 @@ type SimulationProgress = {
     error_message?: string | null;
 };
 
+type SimulationStatusPayload = {
+    id?: string | null;
+    status?: 'pending' | 'running' | 'complete' | 'failed' | 'blocked';
+    simulation_type?: SimulationMode;
+    requests_total?: number | null;
+    requests_completed?: number | null;
+    requests_failed?: number | null;
+    progress_pct?: number | null;
+    success_rate?: number | null;
+    mean_latency_ms?: number | null;
+    p95_latency_ms?: number | null;
+    failure_reason?: string | null;
+};
+
 type SimulationDetail = {
     simulation?: {
         id?: string;
@@ -380,6 +394,45 @@ export default function SimulationWorkbench({
         return data;
     }
 
+    async function fetchSimulationStatus(simulationId: string) {
+        const { response, body } = await requestJson(`/api/simulations/${simulationId}/status`);
+        if (!response.ok) {
+            throw new Error(extractApiErrorMessage(body, 'Failed to load simulation status.'));
+        }
+        const data = extractEnvelopeData<SimulationStatusPayload | null>(body);
+        if (!data) return null;
+        const progressPayload: SimulationProgress = {
+            simulation_id: data.id ?? simulationId,
+            type: data.status === 'complete' || data.status === 'blocked'
+                ? 'complete'
+                : data.status === 'failed'
+                    ? 'error'
+                    : 'progress',
+            mode: data.simulation_type,
+            status: data.status,
+            completed: data.requests_completed ?? 0,
+            total: data.requests_total ?? 0,
+            progress_pct: data.progress_pct ?? 0,
+            stats: {
+                success_rate: data.success_rate != null ? data.success_rate * 100 : null,
+                mean_latency_ms: data.mean_latency_ms,
+                p95_latency_ms: data.p95_latency_ms,
+            },
+            results: {
+                completed: data.requests_completed ?? 0,
+                total_requests: data.requests_total ?? 0,
+                errors: data.requests_failed ?? 0,
+                success_rate: data.success_rate != null ? data.success_rate * 100 : null,
+                mean_latency_ms: data.mean_latency_ms,
+                p95_latency_ms: data.p95_latency_ms,
+            },
+            last_event: null,
+            error_message: data.failure_reason ?? null,
+        };
+        applyProgress(progressPayload);
+        return progressPayload;
+    }
+
     function scheduleProgressPoll(simulationId: string, delayMs = 3000) {
         if (pollingTimeoutRef.current) {
             clearTimeout(pollingTimeoutRef.current);
@@ -387,9 +440,9 @@ export default function SimulationWorkbench({
         pollingTimeoutRef.current = setTimeout(() => {
             void (async () => {
                 try {
-                    const nextDetail = await fetchSimulationDetail(simulationId);
-                    const nextProgress = nextDetail?.progress ?? null;
+                    const nextProgress = await fetchSimulationStatus(simulationId);
                     if (nextProgress?.status === 'complete' || nextProgress?.status === 'failed' || nextProgress?.status === 'blocked') {
+                        await fetchSimulationDetail(simulationId).catch(() => null);
                         return;
                     }
                     scheduleProgressPoll(simulationId);
@@ -401,15 +454,17 @@ export default function SimulationWorkbench({
         }, delayMs);
     }
 
-    function startProgressPolling(simulationId: string) {
+    function startProgressPolling(simulationId: string, showFallbackMessage = false) {
         eventSourceRef.current?.close();
         eventSourceRef.current = null;
-        setError(STREAM_FALLBACK_MESSAGE);
+        if (showFallbackMessage) {
+            setError(STREAM_FALLBACK_MESSAGE);
+        }
         void (async () => {
             try {
-                const nextDetail = await fetchSimulationDetail(simulationId);
-                const nextProgress = nextDetail?.progress ?? null;
+                const nextProgress = await fetchSimulationStatus(simulationId);
                 if (nextProgress?.status === 'complete' || nextProgress?.status === 'failed' || nextProgress?.status === 'blocked') {
+                    await fetchSimulationDetail(simulationId).catch(() => null);
                     return;
                 }
             } catch (pollError) {
@@ -439,7 +494,7 @@ export default function SimulationWorkbench({
 
         source.onerror = () => {
             if (eventSourceRef.current !== source) return;
-            startProgressPolling(simulationId);
+            startProgressPolling(simulationId, true);
         };
     }
 
@@ -487,7 +542,7 @@ export default function SimulationWorkbench({
             }
             setRunId(simulationId);
             appendLog(`${simulationId}:started`, 'info', `${mode.toUpperCase()} simulation started`, new Date().toISOString());
-            startProgressStream(simulationId);
+            startProgressPolling(simulationId);
             await loadSimulationHistory();
         } catch (submitError) {
             setError(submitError instanceof Error ? submitError.message : 'Failed to start simulation.');
@@ -905,7 +960,11 @@ function ModelSelect({
                 <option value="">NO MODELS AVAILABLE</option>
             ) : null}
             {models.map((model) => (
-                <option key={model.model_version} value={model.model_version}>
+                <option
+                    key={model.model_version}
+                    value={model.model_version}
+                    disabled={model.blocked === true || model.lifecycle_status === 'archived'}
+                >
                     {formatModelLabel(model)}
                 </option>
             ))}

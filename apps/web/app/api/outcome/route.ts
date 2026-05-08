@@ -139,7 +139,7 @@ export async function POST(req: Request) {
 
         const { data: inferenceRecord, error: lookupError } = await supabase
             .from('ai_inference_events')
-            .select('id, tenant_id, clinic_id, case_id, input_signature')
+            .select('id, tenant_id, clinic_id, case_id, input_signature, simulation_id, is_synthetic')
             .eq('id', body.inference_event_id)
             .single();
 
@@ -155,6 +155,8 @@ export async function POST(req: Request) {
             clinic_id?: string | null;
             case_id?: string | null;
             input_signature?: Record<string, unknown>;
+            simulation_id?: string | null;
+            is_synthetic?: boolean | null;
         };
 
         if (resolvedInferenceRecord.tenant_id !== tenantId) {
@@ -197,6 +199,8 @@ export async function POST(req: Request) {
             outcome_payload: body.outcome.payload,
             outcome_timestamp: body.outcome.timestamp,
             label_type: deriveOutcomeLabelType(body.outcome.type, body.outcome.payload),
+            simulation_id: resolvedInferenceRecord.simulation_id ?? null,
+            is_synthetic: resolvedInferenceRecord.is_synthetic === true,
         });
 
         const finalizedClinicalCase = await finalizeClinicalCaseAfterOutcome(caseStore, canonicalClinicalCase, outcomeEventId, {
@@ -209,6 +213,8 @@ export async function POST(req: Request) {
                 latest_outcome_type: body.outcome.type,
                 latest_outcome_timestamp: body.outcome.timestamp,
                 latest_outcome_payload: body.outcome.payload,
+                simulation_id: resolvedInferenceRecord.simulation_id ?? null,
+                is_synthetic: resolvedInferenceRecord.is_synthetic === true,
             },
         });
         const episodeOutcomeState = deriveEpisodeOutcomeState(body.outcome.type, body.outcome.payload);

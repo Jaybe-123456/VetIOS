@@ -5,7 +5,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
 import { PlatformAuthError } from '@/lib/platform/tenantContext';
-import { startSimulationRun } from '@/lib/platform/simulations';
+import { resolveSimulationModelSafetyClass, startSimulationRun } from '@/lib/platform/simulations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,12 +34,23 @@ export async function POST(req: Request) {
         }
 
         const mode = readMode(parsed.data.mode);
+        const modelVersion = readText(parsed.data.model_version)
+            ?? readText(parsed.data.candidate_model)
+            ?? readText(parsed.data.candidate_model_version);
+        const safetyClass = await resolveSimulationModelSafetyClass(supabase, tenantId, modelVersion);
+        if (safetyClass === 'archived' && parsed.data.confirm_archived_run !== true) {
+            throw new PlatformAuthError(422, 'ARCHIVED_MODEL', `Model ${modelVersion ?? 'unknown'} is archived. Results from this run will not enter the calibration pipeline. Pass confirm_archived_run: true to proceed.`);
+        }
+
         const simulation = await startSimulationRun(supabase, {
             actor,
             tenantId,
             mode,
             scenarioName: readText(parsed.data.scenario_name) ?? `${mode}_simulation`,
-            config: parsed.data,
+            config: {
+                ...parsed.data,
+                model_safety_class: safetyClass,
+            },
             candidateModelVersion: readText(parsed.data.candidate_model_version),
         });
 
