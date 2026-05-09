@@ -27,6 +27,7 @@ import { evaluateInferenceReliability } from '@/lib/cire/engine';
 import type { PlatformActor } from '@/lib/platform/types';
 import { getRAGPipeline } from '@/lib/rag/ragPipeline';
 import type { RAGContext } from '@/lib/rag/ragPipeline';
+import { panelsToDiagnosticTests } from '@/lib/inference/panel-diagnostics';
 import {
     validateEncounterPayloadV2,
     validateSpeciesPanelGating,
@@ -52,18 +53,7 @@ function mapV2ToV1InputSignature(
 ) {
     const { patient, encounter } = payload;
 
-    const diagnosticTests: Record<string, unknown> = {};
-    for (const panel of payload.active_system_panels) {
-        const activeTests: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(panel.tests)) {
-            if (isPopulatedPanelValue(value)) {
-                activeTests[key] = value;
-            }
-        }
-        if (Object.keys(activeTests).length > 0) {
-            diagnosticTests[`${panel.system}_${panel.panel}`] = activeTests;
-        }
-    }
+    const diagnosticTests = panelsToDiagnosticTests(payload.active_system_panels);
 
     return {
         species: patient.species,
@@ -106,13 +96,6 @@ function mapV2ToV1InputSignature(
         diagnostic_images: [],
         lab_results: [],
     };
-}
-
-function isPopulatedPanelValue(value: unknown): boolean {
-    if (value === 'not_done') return false;
-    if (typeof value === 'string') return value.trim().length > 0;
-    if (typeof value === 'number') return Number.isFinite(value);
-    return value != null;
 }
 
 export async function POST(req: Request) {

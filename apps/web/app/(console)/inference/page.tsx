@@ -19,6 +19,7 @@ import { ShieldCheck, Activity, AlertTriangle, Brain, CheckCircle2, ChevronDown,
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel, TerminalInput, TerminalTextarea, TerminalButton, TerminalTabs } from '@/components/ui/terminal';
 import { MetricCard } from '@/components/InferenceMetrics';
 import { SystemLogConsole, type LogEntry } from '@/components/SystemLogConsole';
+import { isPopulatedPanelValue, panelsToDiagnosticTests } from '@/lib/inference/panel-diagnostics';
 
 type InferenceTab = 'analysis' | 'vectors' | 'diagnostics' | 'pathways';
 
@@ -251,7 +252,7 @@ export default function InferenceConsole() {
         const trimmed = value.trim();
         if (!trimmed) return null;
         const normalized = trimmed.toLowerCase().replace(/\s+/g, '_');
-        if (normalized === 'not_performed' || normalized === 'not_assessed') return null;
+        if (['not_performed', 'not_assessed', 'not_done', 'unspecified', 'unknown', 'none'].includes(normalized)) return null;
         if (!numeric) return trimmed;
         const parsed = Number(trimmed);
         return Number.isFinite(parsed) ? parsed : null;
@@ -354,31 +355,8 @@ export default function InferenceConsole() {
         };
     }
 
-    function panelsToDiagnosticTests(panels: SystemPanel[]): Record<string, unknown> {
-        const diagnosticTests: Record<string, unknown> = {};
-        for (const panel of panels) {
-            const activeTests: Record<string, unknown> = {};
-            for (const [key, value] of Object.entries(panel.tests)) {
-                if (isPopulatedPanelValue(value)) {
-                    activeTests[key] = value;
-                }
-            }
-            if (Object.keys(activeTests).length > 0) {
-                diagnosticTests[`${panel.system}_${panel.panel}`] = activeTests;
-            }
-        }
-        return diagnosticTests;
-    }
-
     function panelHasPopulatedTests(panel: SystemPanel): boolean {
         return Object.values(panel.tests).some(isPopulatedPanelValue);
-    }
-
-    function isPopulatedPanelValue(value: unknown): value is TestValue {
-        if (value === 'not_done') return false;
-        if (typeof value === 'string') return value.trim().length > 0;
-        if (typeof value === 'number') return Number.isFinite(value);
-        return value != null;
     }
 
     function readFormString(formData: FormData, key: string): string {
@@ -461,7 +439,7 @@ export default function InferenceConsole() {
 
             if (inputMode === 'panels') {
                 const encounterPayload = buildEncounterPayloadV2(formData);
-                const diagnosticTests = panelsToDiagnosticTests(encounterPayload.active_system_panels);
+                const diagnosticTests = panelsToDiagnosticTests(encounterPayload.active_system_panels) as Record<string, unknown>;
                 const normalizedWithPanels: NormalizedInput = {
                     species: encounterPayload.patient.species,
                     breed: encounterPayload.patient.breed || null,
