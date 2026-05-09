@@ -682,6 +682,15 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
 }
 
 function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
+    const tokenExpiryMs = input.snapshot.access_security.token_expiry
+        ? new Date(input.snapshot.access_security.token_expiry).getTime()
+        : null;
+    const tokenExpired = tokenExpiryMs != null && Number.isFinite(tokenExpiryMs) && tokenExpiryMs <= Date.now();
+    const tokenExpiringSoon = tokenExpiryMs != null
+        && Number.isFinite(tokenExpiryMs)
+        && tokenExpiryMs > Date.now()
+        && tokenExpiryMs - Date.now() < 10 * 60 * 1000;
+
     return (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
             <ConsoleCard title="Access & Tokens" className="xl:col-span-2">
@@ -692,7 +701,12 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                         <DataRow
                             label="Token Expiry"
                             value={input.snapshot.access_security.token_expiry ? new Date(input.snapshot.access_security.token_expiry).toLocaleString() : 'NO DATA'}
-                            tone="warning"
+                            tone={tokenExpired ? 'danger' : tokenExpiringSoon ? 'warning' : 'accent'}
+                        />
+                        <DataRow
+                            label="Token Status"
+                            value={tokenExpired ? 'EXPIRED' : tokenExpiringSoon ? 'EXPIRING SOON' : input.snapshot.access_security.token_expiry ? 'VALID' : 'NO SESSION TOKEN'}
+                            tone={tokenExpired ? 'danger' : tokenExpiringSoon ? 'warning' : input.snapshot.access_security.token_expiry ? 'accent' : 'muted'}
                         />
                         <DataRow label="Scope" value={input.snapshot.access_security.access_scope.join(', ')} tone="muted" />
                     </div>
@@ -728,9 +742,12 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                 ))}
             </ConsoleCard>
 
-            <ConsoleCard title="API Key Management" className="xl:col-span-3">
+            <ConsoleCard title="Control-Plane API Keys" className="xl:col-span-3">
                 <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
                     <div className="space-y-4">
+                        <div className="border border-grid/50 bg-black/20 p-3 font-mono text-[11px] text-[hsl(0_0%_72%)]">
+                            These keys are for tenant control-plane automation. Clinical endpoint keys are issued from Developer API Explorer or Partner Ops.
+                        </div>
                         <div>
                             <TerminalLabel>Key Label</TerminalLabel>
                             <TerminalInput value={input.newKeyLabel} onChange={(event: ChangeEvent<HTMLInputElement>) => input.onNewKeyLabelChange(event.target.value)} />
