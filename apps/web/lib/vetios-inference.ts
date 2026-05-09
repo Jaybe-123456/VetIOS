@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { computeCIRE, type CIRESignals, type Differential } from '@/lib/cire';
-import { callInferenceModel } from '@/lib/inference-client';
+import { runClinicalInferenceEngine } from '@/lib/inference/engine';
+import type { ClinicalInferenceEngineResult } from '@/lib/inference/engine';
 
 export interface InputSignature {
     species: string;
@@ -50,19 +51,18 @@ interface ModelOutput {
 
 export async function runInference(options: RunInferenceOptions): Promise<RunInferenceResult> {
     const startTime = Date.now();
-    const prompt = buildDiagnosticPrompt(options.inputSignature);
-    const modelOutputText = await callInferenceModel(prompt);
-    const parsedOutput = parseModelOutput(modelOutputText);
+    const clinicalOutput = runClinicalInferenceEngine(options.inputSignature);
+    const engineDifferentials = mapClinicalDifferentials(clinicalOutput);
     const calibratedDifferentials = await applyLabelCalibration(
         options.supabase,
         options.tenantId,
-        parsedOutput.differentials,
+        engineDifferentials,
     );
     const cire = computeCIRE(calibratedDifferentials);
     const confidenceScore = calibratedDifferentials[0]?.p
-        ?? clampProbability(parsedOutput.primary_confidence);
+        ?? clampProbability(clinicalOutput.confidence);
     const latencyMs = Date.now() - startTime;
-    const outputPayload = buildOutputPayload(calibratedDifferentials, confidenceScore, cire);
+    const outputPayload = buildOutputPayload(calibratedDifferentials, confidenceScore, cire, clinicalOutput);
     const inferenceEventId = options.persist === false
         ? null
         : await persistInferenceEvent(options.supabase, {
@@ -164,12 +164,12 @@ async function applyLabelCalibration(
         ]),
     );
 
-    return differentials
+    return renormalizeDifferentials(differentials
         .map((entry) => ({
             ...entry,
-            p: clampProbability(entry.p + (calibrationMap[entry.label] ?? 0)),
+            p: clampProbability(entry.p + clampCalibrationDelta(calibrationMap[entry.label] ?? 0)),
         }))
-        .sort((left, right) => right.p - left.p);
+        .sort((left, right) => right.p - left.p));
 }
 
 async function persistInferenceEvent(
@@ -249,19 +249,59 @@ function buildOutputPayload(
     differentials: Differential[],
     confidenceScore: number,
     cire: CIRESignals,
+    clinicalOutput?: ClinicalInferenceEngineResult,
 ): Record<string, unknown> {
+    const topDifferentials = clinicalOutput?.diagnosis.top_differentials ?? differentials.map((entry, index) => ({
+        rank: index + 1,
+        condition: entry.label,
+        name: entry.label,
+        probability: entry.p,
+        confidence: entry.p >= 0.75 ? 'high' : entry.p >= 0.3 ? 'moderate' : 'low',
+        determination_basis: 'symptom_scoring',
+        supporting_evidence: [],
+        contradicting_evidence: [],
+        clinical_urgency: 'routine',
+    }));
+
     return {
         differentials,
         primary_confidence: confidenceScore,
         confidence_score: confidenceScore,
         cire,
+        inference_engine: 'clinical_deterministic_multisystem_v1',
+        clinical_output: clinicalOutput ?? null,
+        inference_explanation: clinicalOutput?.inference_explanation ?? null,
+        ground_truth_summary: clinicalOutput?.ground_truth_summary ?? null,
+        treatment_plans: clinicalOutput?.treatment_plans ?? {},
+        diagnosis_feature_importance: clinicalOutput?.diagnosis_feature_importance ?? clinicalOutput?.feature_importance ?? {},
+        feature_importance: clinicalOutput?.feature_importance ?? {},
+        contradiction_analysis: clinicalOutput?.contradiction_analysis ?? null,
+        contradiction_score: clinicalOutput?.contradiction_score ?? 0,
+        abstain_recommendation: clinicalOutput?.abstain_recommendation ?? false,
+        abstain_reason: clinicalOutput?.abstain_reason ?? null,
+        competitive_differential: clinicalOutput?.competitive_differential ?? false,
+        urgent_confirmatory_testing: clinicalOutput?.urgent_confirmatory_testing ?? false,
+        uncertainty_notes: clinicalOutput?.uncertainty_notes ?? [],
+        differential_spread: clinicalOutput?.differential_spread ?? null,
+        multisystem_assessment: clinicalOutput ? buildMultisystemAssessment(clinicalOutput) : null,
         diagnosis: {
-            top_differentials: differentials.map((entry, index) => ({
-                name: entry.label,
-                label: entry.label,
-                probability: entry.p,
-                rank: index + 1,
-            })),
+            ...(clinicalOutput?.diagnosis ?? {}),
+            confidence_score: confidenceScore,
+            top_differentials: topDifferentials,
+        },
+        risk_assessment: {
+            severity_score: clinicalOutput?.differentials.some((entry) => entry.clinical_urgency === 'urgent' || entry.clinical_urgency === 'immediate')
+                ? 0.82
+                : clinicalOutput?.competitive_differential || clinicalOutput?.urgent_confirmatory_testing
+                    ? 0.62
+                    : 0.35,
+            emergency_level: clinicalOutput?.differentials.some((entry) => entry.clinical_urgency === 'immediate')
+                ? 'CRITICAL'
+                : clinicalOutput?.differentials.some((entry) => entry.clinical_urgency === 'urgent')
+                    ? 'HIGH'
+                    : clinicalOutput?.competitive_differential || clinicalOutput?.urgent_confirmatory_testing
+                        ? 'REVIEW'
+                        : 'ROUTINE',
         },
     };
 }
@@ -295,16 +335,16 @@ async function applyOutcomePayloadCalibration(
         stats.set(label, entry);
     }
 
-    return differentials
+    return renormalizeDifferentials(differentials
         .map((entry) => {
             const stat = stats.get(entry.label);
             const meanDelta = stat && stat.count > 0 ? stat.total / stat.count : 0;
             return {
                 ...entry,
-                p: clampProbability(entry.p + meanDelta),
+                p: clampProbability(entry.p + clampCalibrationDelta(meanDelta)),
             };
         })
-        .sort((left, right) => right.p - left.p);
+        .sort((left, right) => right.p - left.p));
 }
 
 function normalizeDifferential(value: unknown): Differential | null {
@@ -340,6 +380,67 @@ function parseJsonObject(value: string): unknown {
 function clampProbability(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Number(Math.min(1, Math.max(0, value)).toFixed(4));
+}
+
+function clampCalibrationDelta(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(-0.08, Math.min(0.08, value));
+}
+
+function renormalizeDifferentials(entries: Differential[]): Differential[] {
+    const positive = entries.filter((entry) => entry.p > 0);
+    const total = positive.reduce((sum, entry) => sum + entry.p, 0);
+    if (total <= 0) return positive;
+    return positive
+        .map((entry) => ({
+            ...entry,
+            p: clampProbability(entry.p / total),
+        }))
+        .sort((left, right) => right.p - left.p)
+        .slice(0, 8);
+}
+
+function mapClinicalDifferentials(output: ClinicalInferenceEngineResult): Differential[] {
+    return renormalizeDifferentials(output.differentials.map((entry) => ({
+        label: entry.condition,
+        p: clampProbability(entry.probability),
+    })));
+}
+
+function buildMultisystemAssessment(output: ClinicalInferenceEngineResult) {
+    const clusterEntries = Object.entries(output.cluster_scores ?? {})
+        .filter(([, score]) => typeof score === 'number' && Number.isFinite(score))
+        .sort((left, right) => Number(right[1]) - Number(left[1]));
+    const dominant = clusterEntries[0]?.[0] ?? 'unknown';
+
+    return {
+        dominant_system: dominant,
+        active_systems: clusterEntries
+            .filter(([, score]) => Number(score) > 0)
+            .map(([system]) => system),
+        system_scores: Object.fromEntries(clusterEntries.map(([system, score]) => [system, Number(Number(score).toFixed(3))])),
+        species_gate: output.species_gate,
+        airway_level: output.airway_level,
+        condition_class_probabilities: output.diagnosis.condition_class_probabilities,
+        uncertainty_notes: output.uncertainty_notes,
+        interpretation: buildMultisystemInterpretation(dominant, output),
+    };
+}
+
+function buildMultisystemInterpretation(
+    dominant: string,
+    output: ClinicalInferenceEngineResult,
+): string {
+    if (output.abstain_recommendation) {
+        return 'Clinical contradictions require manual review before committing to a primary diagnosis.';
+    }
+    if (output.competitive_differential || output.urgent_confirmatory_testing) {
+        return 'Multiple plausible systems remain active; confirmatory diagnostics should resolve the top competing branches.';
+    }
+    if (dominant === 'unknown') {
+        return 'No dominant system could be established from the captured signals.';
+    }
+    return `${dominant.replace(/_/g, ' ')} signals dominate the current inference while lower-supported systems are retained as monitored alternatives.`;
 }
 
 function readText(value: unknown): string | null {

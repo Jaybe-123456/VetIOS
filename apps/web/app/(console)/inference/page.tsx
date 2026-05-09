@@ -78,6 +78,16 @@ interface CorrectionData {
     correction_applied: boolean;
 }
 
+interface MultisystemAssessmentData {
+    dominant_system?: string;
+    active_systems?: string[];
+    system_scores?: Record<string, number>;
+    species_gate?: string;
+    airway_level?: string;
+    interpretation?: string;
+    uncertainty_notes?: string[];
+}
+
 interface InferenceState {
     status: 'idle' | 'previewing' | 'computing' | 'success' | 'error';
     eventId: string | null;
@@ -89,6 +99,9 @@ interface InferenceState {
         severityFeatureImportance: Array<{ feature: string; impact: number }>;
     } | null;
     correction: CorrectionData | null;
+    multisystemAssessment: MultisystemAssessmentData | null;
+    contradictionAnalysis: Record<string, unknown> | null;
+    uncertaintyNotes: string[];
     mlRisk: MLRiskData | null;
     riskModelOutput: RiskModelOutputData | null;
     riskAssessment: {
@@ -122,6 +135,9 @@ export default function InferenceConsole() {
         probabilities: [],
         explainability: null,
         correction: null,
+        multisystemAssessment: null,
+        contradictionAnalysis: null,
+        uncertaintyNotes: [],
         mlRisk: null,
         riskModelOutput: null,
         riskAssessment: null,
@@ -661,21 +677,34 @@ export default function InferenceConsole() {
             const cire = rawCire
                 ? normalizeCireState(rawCire)
                 : null;
+            const fullOutput = result.output_payload && typeof result.output_payload === 'object'
+                ? result.output_payload as Record<string, unknown>
+                : dataPayload?.output_payload && typeof dataPayload.output_payload === 'object'
+                    ? dataPayload.output_payload as Record<string, unknown>
+                    : null;
             const apiDifferentials = Array.isArray(dataPayload?.differentials)
                 ? dataPayload.differentials as Array<{ label?: string; p?: number }>
                 : [];
             const apiConfidence = typeof dataPayload?.confidence_score === 'number'
                 ? dataPayload.confidence_score
                 : apiDifferentials[0]?.p ?? 0;
+            const fullDiagnosis = fullOutput?.diagnosis && typeof fullOutput.diagnosis === 'object'
+                ? fullOutput.diagnosis as Record<string, unknown>
+                : {};
+            const fullTopDifferentials = Array.isArray(fullDiagnosis.top_differentials)
+                ? fullDiagnosis.top_differentials
+                : null;
             const output = {
+                ...(fullOutput ?? {}),
                 confidence_score: apiConfidence,
                 differentials: apiDifferentials,
                 diagnosis: {
-                    top_differentials: apiDifferentials.map((entry, index) => ({
-                        name: entry.label ?? 'Unknown',
-                        probability: typeof entry.p === 'number' ? entry.p : 0,
-                        rank: index + 1,
-                    })),
+                    ...fullDiagnosis,
+                    top_differentials: fullTopDifferentials ?? apiDifferentials.map((entry, index) => ({
+                            name: entry.label ?? 'Unknown',
+                            probability: typeof entry.p === 'number' ? entry.p : 0,
+                            rank: index + 1,
+                        })),
                 },
             } as Record<string, unknown>;
             const diagnosis = output?.diagnosis as Record<string, unknown> | undefined;
@@ -687,7 +716,7 @@ export default function InferenceConsole() {
 
             const diffs = Array.isArray(diagnosis?.top_differentials) ? diagnosis.top_differentials : [];
             const mappedProbabilities = diffs.map((d: any) => ({
-                label: d.name || 'Unknown',
+                label: d.name || d.condition || d.label || 'Unknown',
                 value: typeof d.probability === 'number' ? d.probability : 0,
             }));
 
@@ -720,6 +749,15 @@ export default function InferenceConsole() {
                 correction: (output?.correction_layer && typeof output.correction_layer === 'object')
                     ? output.correction_layer as CorrectionData
                     : null,
+                multisystemAssessment: output?.multisystem_assessment && typeof output.multisystem_assessment === 'object'
+                    ? output.multisystem_assessment as MultisystemAssessmentData
+                    : null,
+                contradictionAnalysis: output?.contradiction_analysis && typeof output.contradiction_analysis === 'object'
+                    ? output.contradiction_analysis as Record<string, unknown>
+                    : null,
+                uncertaintyNotes: Array.isArray(output?.uncertainty_notes)
+                    ? output.uncertainty_notes.filter((entry): entry is string => typeof entry === 'string')
+                    : [],
                 mlRisk: result.ml_risk || null,
                 riskModelOutput: riskModelOutput ? {
                     definition: typeof riskModelOutput.definition === 'string' ? riskModelOutput.definition : '',
@@ -1242,6 +1280,68 @@ export default function InferenceConsole() {
                             </div>
                         ) : (
                             <>
+                                {state.multisystemAssessment && (
+                                    <ConsoleCard title="Multisystem Inference Run" className="border-accent/40">
+                                        <div className="grid grid-cols-1 md:grid-cols-[1fr,1.4fr] gap-5">
+                                            <div className="space-y-3 font-mono text-xs">
+                                                <DataRow label="Dominant System" value={formatSystemLabel(state.multisystemAssessment.dominant_system)} />
+                                                <DataRow label="Species Gate" value={formatSystemLabel(state.multisystemAssessment.species_gate)} />
+                                                <DataRow label="Airway Level" value={formatSystemLabel(state.multisystemAssessment.airway_level)} />
+                                                <div className="pt-2 text-[10px] uppercase tracking-widest text-muted">
+                                                    {state.multisystemAssessment.interpretation ?? 'Multisystem routing completed.'}
+                                                </div>
+                                            </div>
+                                            <div className="space-y-3">
+                                                {Object.entries(state.multisystemAssessment.system_scores ?? {})
+                                                    .filter(([, score]) => Number.isFinite(score))
+                                                    .slice(0, 8)
+                                                    .map(([system, score]) => (
+                                                        <div key={system} className="flex flex-col gap-1">
+                                                            <div className="flex justify-between font-mono text-[10px] uppercase">
+                                                                <span className="text-foreground/70">{formatSystemLabel(system)}</span>
+                                                                <span className="text-accent">{Number(score).toFixed(2)}</span>
+                                                            </div>
+                                                            <div className="w-full h-[2px] bg-dim">
+                                                                <div className="bg-accent h-full" style={{ width: `${Math.min(100, Number(score) * 20)}%` }} />
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                            </div>
+                                        </div>
+                                        {state.uncertaintyNotes.length > 0 && (
+                                            <div className="mt-5 border border-grid bg-black/20 p-3 font-mono text-[11px] text-muted space-y-2">
+                                                {state.uncertaintyNotes.slice(0, 4).map((note, index) => (
+                                                    <div key={index}>- {note}</div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </ConsoleCard>
+                                )}
+
+                                {state.contradictionAnalysis && (
+                                    <ConsoleCard title="Contradiction & Plausibility Guard" className="border-yellow-400/30">
+                                        <div className="grid grid-cols-1 md:grid-cols-[160px,1fr] gap-4 font-mono text-xs">
+                                            <div>
+                                                <div className="text-muted uppercase tracking-widest text-[10px] mb-1">Contradiction Score</div>
+                                                <div className="text-2xl text-yellow-400">
+                                                    {((readNumber(state.contradictionAnalysis.contradiction_score) ?? 0) * 100).toFixed(0)}%
+                                                </div>
+                                            </div>
+                                            <div className="space-y-2 text-[11px] text-muted">
+                                                {(Array.isArray(state.contradictionAnalysis.contradiction_reasons)
+                                                    ? state.contradictionAnalysis.contradiction_reasons
+                                                    : []
+                                                ).slice(0, 4).map((reason, index) => (
+                                                    <div key={index}>- {String(reason)}</div>
+                                                ))}
+                                                {(!Array.isArray(state.contradictionAnalysis.contradiction_reasons) || state.contradictionAnalysis.contradiction_reasons.length === 0) && (
+                                                    <div>No hard contradictions detected in the top differential set.</div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </ConsoleCard>
+                                )}
+
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <ConsoleCard title="Diagnostic Feature Weights" className="border-muted/30">
                                         <div className="space-y-3">
@@ -1495,6 +1595,12 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function formatSystemLabel(value: unknown): string {
+    return typeof value === 'string' && value.trim().length > 0
+        ? value.replace(/_/g, ' ').toUpperCase()
+        : 'UNKNOWN';
 }
 
 function CireReliabilityGlyph({ badge }: { badge: CireState['reliability_badge'] }) {

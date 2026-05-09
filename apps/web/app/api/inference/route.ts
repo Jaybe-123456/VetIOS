@@ -115,7 +115,12 @@ export async function POST(req: Request) {
 
         const response = NextResponse.json({
             inference_event_id: result.inference_event_id,
-            data: result.data,
+            data: {
+                ...result.data,
+                output_payload: result.output_payload,
+            },
+            output_payload: result.output_payload,
+            latency_ms: result.latency_ms,
             cire: result.cire,
             meta: result.meta,
             error: null,
