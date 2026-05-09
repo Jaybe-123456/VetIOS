@@ -3,7 +3,7 @@ const path = require('path');
 const ts = require('typescript');
 
 const appRoot = path.resolve(__dirname, '..');
-const generatedDir = path.join(appRoot, '.generated-tests');
+const generatedDir = path.join(appRoot, '.generated-tests', 'auth-surface');
 const siteSourcePath = path.join(appRoot, 'lib', 'site.ts');
 const generatedSitePath = path.join(generatedDir, 'site.cjs');
 
@@ -58,7 +58,7 @@ function main() {
     process.env.VERCEL_ENV = 'preview';
     assert(site.shouldIndexSite() === false, 'Preview deployments must not be indexed.');
 
-    assertFileContains(path.join(appRoot, 'middleware.ts'), 'shouldRedirectPreviewAuthHost');
+    assertFileContains(path.join(appRoot, 'proxy.ts'), 'shouldRedirectPreviewAuthHost');
     assertFileContains(path.join(appRoot, 'lib', 'auth', 'pageGuard.ts'), "redirect(`/login?next=${encodeURIComponent(nextPath)}`)");
     assertFileContains(path.join(appRoot, 'app', 'dashboard', 'layout.tsx'), "requirePageSession('/dashboard')");
     assertFileContains(path.join(appRoot, 'app', '(console)', 'layout.tsx'), "requirePageSession('/inference')");

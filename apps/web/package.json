@@ -10,6 +10,7 @@
         "typecheck": "tsc --noEmit",
         "typecheck:tests": "tsc --project tsconfig.test.json --noEmit",
         "test:auth-surface": "node scripts/test-auth-surface.cjs",
+        "test:api-auth-surface": "node scripts/test-api-auth-surface.cjs",
         "test:access-control": "node scripts/test-access-control.cjs",
         "test:disease-ontology": "node scripts/test-disease-ontology.cjs",
         "test:signal-prioritization": "node scripts/test-signal-prioritization.cjs",

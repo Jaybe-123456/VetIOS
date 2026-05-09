@@ -3,7 +3,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { getRequestId } from '@/lib/http/requestId';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runRlhfBatch } from '@/lib/rlhf/processor';
-import { authorizeCronRequest, buildCronExecutionRecord } from '@/lib/http/cronAuth';
+import { authorizeCronRequest } from '@/lib/http/cronAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,15 +13,11 @@ export async function GET(req: Request) {
     const requestId = getRequestId(req);
     const startTime = Date.now();
 
-    const authHeader = req.headers.get('authorization');
-    const cronSecret = process.env.CRON_SECRET;
-
-    if (!cronSecret) {
-        console.error('[cron/rlhf-batch] CRON_SECRET not set');
-        return NextResponse.json({ error: 'Misconfigured' }, { status: 500 });
-    }
-
-    if (authHeader !== `Bearer ${cronSecret}`) {
+    const auth = authorizeCronRequest(req, 'rlhf-batch');
+    if (!auth.authorized) {
+        if (auth.reason === 'CRON_SECRET not configured') {
+            return NextResponse.json({ error: 'Misconfigured' }, { status: 500 });
+        }
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

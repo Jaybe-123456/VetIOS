@@ -52,11 +52,49 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck --filter=@vetios/web
 
+      - name: API auth surface
+        run: pnpm run security:routes
+
       - name: Build
         run: pnpm run build --filter=@vetios/web
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ env.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ env.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+  security:
+    name: Security Gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Production dev-bypass guard
+        run: |
+          node -e "try { require('./apps/web/next.config.js'); console.error('Production build unexpectedly allowed VETIOS_DEV_BYPASS=true'); process.exit(1); } catch (error) { if (!String(error.message).includes('Refusing production build with VETIOS_DEV_BYPASS enabled.')) throw error; console.log('Production dev-bypass guard failed closed.'); }"
+        env:
+          VERCEL_ENV: production
+          VETIOS_DEV_BYPASS: 'true'
+
+      - name: API auth surface
+        run: pnpm run security:routes
+
+      - name: Dependency audit
+        run: pnpm run security:audit
 
   # ── Smoke Tests: API endpoint validation ──────────────
   smoke:

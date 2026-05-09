@@ -1,4 +1,16 @@
 /** @type {import('next').NextConfig} */
+function assertProductionSecurityEnvironment() {
+    const isProductionDeployment = process.env.VERCEL_ENV === 'production';
+    const devBypassEnabled = process.env.VETIOS_DEV_BYPASS === 'true'
+        || process.env.NEXT_PUBLIC_VETIOS_DEV_BYPASS === 'true';
+
+    if (isProductionDeployment && devBypassEnabled) {
+        throw new Error('Refusing production build with VETIOS_DEV_BYPASS enabled.');
+    }
+}
+
+assertProductionSecurityEnvironment();
+
 const nextConfig = {
     transpilePackages: ['@vetios/cire-engine', '@vetios/inference-schema'],
     // ── Security Headers ──────────────────────────────────────────────────────

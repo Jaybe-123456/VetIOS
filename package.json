@@ -5,6 +5,8 @@
         "build": "turbo run build",
         "dev": "turbo run dev",
         "lint": "turbo run lint",
+        "security:audit": "pnpm audit --prod",
+        "security:routes": "pnpm --filter @vetios/web run test:api-auth-surface",
         "test:adversarial-regressions": "node --experimental-strip-types --loader ./internal/testing/alias-loader.mjs ./internal/testing/test_adversarial_regressions.ts",
         "typecheck": "turbo run typecheck",
         "clean": "turbo run clean",

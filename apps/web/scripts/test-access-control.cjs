@@ -3,7 +3,7 @@ const path = require('path');
 const ts = require('typescript');
 
 const appRoot = path.resolve(__dirname, '..');
-const generatedDir = path.join(appRoot, '.generated-tests');
+const generatedDir = path.join(appRoot, '.generated-tests', 'access-control');
 const permissionsSourcePath = path.join(appRoot, 'lib', 'settings', 'permissions.ts');
 const generatedPermissionsPath = path.join(generatedDir, 'permissions.cjs');
 

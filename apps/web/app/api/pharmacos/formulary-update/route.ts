@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 import {
     formularyUpdateRequestSchema,
     normalizeDrugName,
@@ -91,8 +92,18 @@ function authorizeOperator(req: Request): { ok: true } | { ok: false; status: nu
     const configured = process.env.VETIOS_INTERNAL_API_TOKEN?.trim();
     if (!configured) return { ok: false, status: 503, error: 'Operator token is not configured' };
     const bearer = req.headers.get('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim();
-    if (bearer !== configured) return { ok: false, status: 401, error: 'Unauthorized' };
+    if (!bearer || !safeCompare(bearer, configured)) return { ok: false, status: 401, error: 'Unauthorized' };
     return { ok: true };
+}
+
+function safeCompare(a: string, b: string): boolean {
+    try {
+        const left = Buffer.from(a);
+        const right = Buffer.from(b);
+        return left.length === right.length && timingSafeEqual(left, right);
+    } catch {
+        return false;
+    }
 }
 
 async function findExistingDrug(
