@@ -53,7 +53,7 @@ export async function POST(req: Request) {
 
     const { data: inferenceEvent, error: inferenceError } = await supabase
         .from('ai_inference_events')
-        .select('id, tenant_id, case_id, output_payload')
+        .select('id, tenant_id, case_id, input_signature, output_payload')
         .eq('id', body.inference_event_id)
         .eq('tenant_id', tenantId)
         .maybeSingle();
@@ -76,10 +76,13 @@ export async function POST(req: Request) {
     const predictedP = differentials.find((entry) => entry.label === actualLabel)?.p ?? 0;
     const calibrationDelta = Number((body.outcome.payload.confidence - predictedP).toFixed(4));
 
+    const inputSignature = asRecord((inferenceEvent as Record<string, unknown>).input_signature);
+    const diagnosticEvidenceSnapshot = buildDiagnosticEvidenceSnapshot(inputSignature);
     const outcomePayload = {
         ...body.outcome.payload,
         calibration_delta: calibrationDelta,
         predicted_probability: predictedP,
+        diagnostic_evidence_snapshot: diagnosticEvidenceSnapshot,
     };
 
     const { data: outcomeEvent, error: insertError } = await supabase
@@ -136,6 +139,7 @@ export async function POST(req: Request) {
                     actual_label: actualLabel,
                     actual_confidence: body.outcome.payload.confidence,
                     outcome_event_id: persistedOutcomeId,
+                    diagnostic_evidence_snapshot: diagnosticEvidenceSnapshot,
                     timestamp: body.outcome.timestamp,
                 },
             },
@@ -162,6 +166,7 @@ export async function POST(req: Request) {
                         actual_label: actualLabel,
                         actual_confidence: body.outcome.payload.confidence,
                         outcome_event_id: persistedOutcomeId,
+                        diagnostic_evidence_snapshot: diagnosticEvidenceSnapshot,
                         timestamp: body.outcome.timestamp,
                     },
                 },
@@ -183,6 +188,33 @@ export async function POST(req: Request) {
         linked_inference_event_id: body.inference_event_id,
         calibration_delta: calibrationDelta,
         request_id: requestId,
+    });
+}
+
+function buildDiagnosticEvidenceSnapshot(inputSignature: Record<string, unknown>) {
+    const diagnosticTests = asRecord(inputSignature.diagnostic_tests);
+    const metadata = asRecord(inputSignature.metadata);
+    const encounterPayload = asRecord(metadata.encounter_payload_v2 ?? metadata.v2_payload);
+    const activePanels = Array.isArray(encounterPayload.active_system_panels)
+        ? encounterPayload.active_system_panels
+        : [];
+
+    return {
+        diagnostic_tests: diagnosticTests,
+        active_system_panels: activePanels,
+        panel_count: activePanels.length,
+        evidence_keys: flattenDiagnosticEvidenceKeys(diagnosticTests),
+    };
+}
+
+function flattenDiagnosticEvidenceKeys(value: unknown, prefix = ''): string[] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, nested]) => {
+        const nextPrefix = prefix ? `${prefix}.${key}` : key;
+        if (nested && typeof nested === 'object' && !Array.isArray(nested)) {
+            return flattenDiagnosticEvidenceKeys(nested, nextPrefix);
+        }
+        return [nextPrefix];
     });
 }
 

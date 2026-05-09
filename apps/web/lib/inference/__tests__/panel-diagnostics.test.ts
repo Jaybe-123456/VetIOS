@@ -91,4 +91,65 @@ describe('panelsToDiagnosticTests', () => {
             },
         });
     });
+
+    it('maps broad lab domains into molecular, parasitology, cardiac, and cytology evidence', () => {
+        const panels: SystemPanel[] = [
+            {
+                system: 'molecular',
+                panel: 'pcr_panel',
+                tests: {
+                    parvovirus_pcr: 'positive',
+                    ehrlichia_pcr: 'negative',
+                    leptospira_pcr: 'equivocal',
+                },
+            },
+            {
+                system: 'parasitology',
+                panel: 'fecal_parasitology',
+                tests: {
+                    fecal_flotation: 'roundworms, hookworms',
+                    giardia_antigen: 'positive',
+                    coccidia_seen: 'present',
+                },
+            },
+            {
+                system: 'imaging',
+                panel: 'echocardiography',
+                tests: {
+                    worms_visualised: 'present',
+                    pulmonary_hypertension: 'present',
+                },
+            },
+            {
+                system: 'cytology',
+                panel: 'effusion_analysis',
+                tests: {
+                    abdominal_fluid_bacteria: 'present',
+                    effusion_rivalta: 'positive',
+                },
+            },
+        ];
+
+        expect(panelsToDiagnosticTests(panels)).toEqual({
+            pcr: {
+                parvovirus_pcr: 'positive',
+                ehrlichia_pcr: 'negative',
+                leptospira_pcr: 'not_done',
+            },
+            parasitology: {
+                fecal_flotation: ['roundworms', 'hookworms', 'Coccidia'],
+            },
+            serology: {
+                giardia_antigen: 'positive',
+            },
+            echocardiography: {
+                worms_visualised: 'present',
+                pulmonary_hypertension: 'present',
+            },
+            cytology: {
+                abdominal_fluid_bacteria: 'present',
+                effusion_rivalta: 'positive',
+            },
+        });
+    });
 });

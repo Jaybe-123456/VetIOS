@@ -46,23 +46,35 @@ function setDiagnosticValue(
     value: unknown,
 ) {
     const existing = diagnosticTests[bucket];
+    const existingRecord = typeof existing === 'object' && existing != null && !Array.isArray(existing)
+        ? existing as DiagnosticRecord
+        : {};
+    const currentValue = existingRecord[key];
     diagnosticTests[bucket] = {
-        ...(typeof existing === 'object' && existing != null && !Array.isArray(existing)
-            ? existing as DiagnosticRecord
-            : {}),
-        [key]: value,
+        ...existingRecord,
+        [key]: mergeDiagnosticValue(currentValue, value),
     };
+}
+
+function mergeDiagnosticValue(currentValue: unknown, nextValue: unknown): unknown {
+    if (Array.isArray(currentValue) && Array.isArray(nextValue)) return Array.from(new Set([...currentValue, ...nextValue]));
+    if (Array.isArray(currentValue)) return Array.from(new Set([...currentValue, nextValue]));
+    if (Array.isArray(nextValue)) return currentValue == null ? nextValue : Array.from(new Set([currentValue, ...nextValue]));
+    return nextValue;
 }
 
 function diagnosticBucketForPanel(panel: SystemPanel): DiagnosticBucket {
     if (panel.panel === 'CBC') return 'cbc';
     if (panel.panel === 'thoracic_radiograph') return 'thoracic_radiograph';
     if (panel.panel === 'abdominal_ultrasound') return 'abdominal_ultrasound';
+    if (panel.panel === 'echocardiography') return 'echocardiography';
     if (panel.system === 'urinalysis') return 'urinalysis';
     if (panel.system === 'serology') return 'serology';
     if (panel.system === 'biochemistry') return 'biochemistry';
     if (panel.system === 'endocrine') return 'serology';
     if (panel.system === 'cytology') return 'cytology';
+    if (panel.system === 'molecular') return 'pcr';
+    if (panel.system === 'parasitology') return 'parasitology';
     return 'serology';
 }
 
@@ -89,6 +101,7 @@ function canonicalMappingsForPanelTest(
             borrelia: 'borrelia_antibody',
         };
         if (tickMapping[key]) return [{ bucket: 'serology', key: tickMapping[key] }];
+        if (key === 'babesia') return [{ bucket: 'cbc', key: 'hemoparasites_seen', value: value === 'positive' ? ['Babesia'] : value }];
     }
 
     if (panel.panel === 'infectious' && key === 'leishmania_serology') {
@@ -152,6 +165,39 @@ function canonicalMappingsForPanelTest(
         ];
     }
 
+    if (panel.panel === 'thoracic_radiograph' && key === 'pulmonary_infiltrates' && value === 'present') {
+        return [
+            { bucket: 'thoracic_radiograph', key: 'pulmonary_infiltrates' },
+            { bucket: 'thoracic_radiograph', key: 'pulmonary_pattern', value: 'interstitial' },
+        ];
+    }
+
+    if (panel.panel === 'neurologic_imaging') {
+        return [{ bucket: 'imaging', key }];
+    }
+
+    if (panel.panel === 'effusion_analysis') {
+        if (key === 'effusion_rivalta') return [{ bucket: 'cytology', key: 'effusion_rivalta' }];
+        return [{ bucket: 'cytology', key }];
+    }
+
+    if (panel.panel === 'pcr_panel') {
+        return [{ bucket: 'pcr', key, value: normalizeQualitativePcrValue(value) }];
+    }
+
+    if (panel.panel === 'fecal_parasitology') {
+        if (key === 'giardia_antigen') return [{ bucket: 'serology', key: 'giardia_antigen' }];
+        if (key === 'coccidia_seen') return [{ bucket: 'parasitology', key: 'fecal_flotation', value: value === 'present' ? ['Coccidia'] : value }];
+        return [{ bucket: 'parasitology', key, value: splitPanelTextValue(value) }];
+    }
+
+    if (panel.panel === 'skin_parasitology') {
+        if (key === 'demodex_seen' || key === 'sarcoptes_seen') {
+            return [{ bucket: 'parasitology', key: 'skin_scrape', value: value === 'present' ? key.replace('_seen', '') : value }];
+        }
+        return [{ bucket: 'parasitology', key }];
+    }
+
     return [];
 }
 
@@ -163,4 +209,17 @@ function normalizeSodiumPotassiumRatio(value: TestValue): 'low' | 'normal' | nul
     if (typeof value === 'number') return value < 27 ? 'low' : 'normal';
     if (value === 'low' || value === 'normal') return value;
     return null;
+}
+
+function normalizeQualitativePcrValue(value: TestValue): 'positive' | 'negative' | 'not_done' {
+    return value === 'positive' || value === 'negative' ? value : 'not_done';
+}
+
+function splitPanelTextValue(value: TestValue): TestValue | string[] {
+    if (typeof value !== 'string') return value;
+    const entries = value
+        .split(/[,;\n]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+    return entries.length > 1 ? entries : value;
 }

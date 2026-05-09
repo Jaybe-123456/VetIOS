@@ -34,7 +34,9 @@ export type SystemType =
     | 'biochemistry'
     | 'imaging'
     | 'cytology'
-    | 'microbiology';
+    | 'microbiology'
+    | 'molecular'
+    | 'parasitology';
 
 export const ALL_SYSTEM_TYPES: readonly SystemType[] = [
     'haematology',
@@ -45,6 +47,8 @@ export const ALL_SYSTEM_TYPES: readonly SystemType[] = [
     'imaging',
     'cytology',
     'microbiology',
+    'molecular',
+    'parasitology',
 ] as const;
 
 export type TestValue = 'positive' | 'negative' | 'equivocal' | 'not_done' | number | string;
@@ -91,8 +95,14 @@ const BASE_PANEL_ENTRIES: SpeciesPanelEntry[] = [
     { system: 'biochemistry', panel: 'pancreatic' },
     { system: 'imaging', panel: 'thoracic_radiograph' },
     { system: 'imaging', panel: 'abdominal_ultrasound' },
+    { system: 'imaging', panel: 'echocardiography' },
+    { system: 'imaging', panel: 'neurologic_imaging' },
     { system: 'cytology', panel: 'fine_needle_aspirate' },
+    { system: 'cytology', panel: 'effusion_analysis' },
     { system: 'microbiology', panel: 'culture_sensitivity' },
+    { system: 'molecular', panel: 'pcr_panel' },
+    { system: 'parasitology', panel: 'fecal_parasitology' },
+    { system: 'parasitology', panel: 'skin_parasitology' },
 ];
 
 const EQUINE_SPECIFIC_PANEL_ENTRIES: SpeciesPanelEntry[] = [
@@ -362,6 +372,30 @@ export const PANEL_TEST_DEFINITIONS: Record<string, PanelDefinition> = {
             { key: 'renal_changes', label: 'Renal Changes', type: 'select', options: PRESENT_ABSENT_OPTIONS },
         ],
     },
+    echocardiography: {
+        system: 'imaging',
+        panel: 'echocardiography',
+        label: 'Echocardiography',
+        tests: [
+            { key: 'worms_visualised', label: 'Worms Visualised', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'pulmonary_hypertension', label: 'Pulmonary Hypertension', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'right_heart_enlargement', label: 'Right Heart Enlargement', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'left_heart_enlargement', label: 'Left Heart Enlargement', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'pericardial_effusion', label: 'Pericardial Effusion', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'reduced_contractility', label: 'Reduced Contractility', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+        ],
+    },
+    neurologic_imaging: {
+        system: 'imaging',
+        panel: 'neurologic_imaging',
+        label: 'Neurologic Imaging',
+        tests: [
+            { key: 'ivdd_compression', label: 'IVDD Compression', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'intracranial_mass', label: 'Intracranial Mass', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'meningeal_enhancement', label: 'Meningeal Enhancement', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'spinal_fracture_luxation', label: 'Spinal Fracture/Luxation', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+        ],
+    },
     fine_needle_aspirate: {
         system: 'cytology',
         panel: 'fine_needle_aspirate',
@@ -391,6 +425,17 @@ export const PANEL_TEST_DEFINITIONS: Record<string, PanelDefinition> = {
             },
         ],
     },
+    effusion_analysis: {
+        system: 'cytology',
+        panel: 'effusion_analysis',
+        label: 'Effusion Analysis',
+        tests: [
+            { key: 'abdominal_fluid_bacteria', label: 'Intracellular Bacteria', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'effusion_rivalta', label: 'Rivalta Test', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'septic_exudate', label: 'Septic Exudate', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'chylous_effusion', label: 'Chylous Effusion', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+        ],
+    },
     culture_sensitivity: {
         system: 'microbiology',
         panel: 'culture_sensitivity',
@@ -410,6 +455,43 @@ export const PANEL_TEST_DEFINITIONS: Record<string, PanelDefinition> = {
             },
             { key: 'organism', label: 'Organism', type: 'text' },
             { key: 'sensitivity_pattern', label: 'Sensitivity Pattern', type: 'text' },
+        ],
+    },
+    pcr_panel: {
+        system: 'molecular',
+        panel: 'pcr_panel',
+        label: 'PCR / Molecular Panel',
+        tests: [
+            { key: 'parvovirus_pcr', label: 'Parvovirus PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'ehrlichia_pcr', label: 'Ehrlichia PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'anaplasma_pcr', label: 'Anaplasma PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'leishmania_pcr', label: 'Leishmania PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'leptospira_pcr', label: 'Leptospira PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'toxoplasma_pcr', label: 'Toxoplasma PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'neospora_pcr', label: 'Neospora PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+        ],
+    },
+    fecal_parasitology: {
+        system: 'parasitology',
+        panel: 'fecal_parasitology',
+        label: 'Fecal Parasitology',
+        tests: [
+            { key: 'fecal_flotation', label: 'Fecal Flotation Findings', type: 'text' },
+            { key: 'fecal_direct_smear', label: 'Direct Smear Findings', type: 'text' },
+            { key: 'modified_baermann', label: 'Baermann', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'giardia_antigen', label: 'Giardia Antigen', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'coccidia_seen', label: 'Coccidia Seen', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+        ],
+    },
+    skin_parasitology: {
+        system: 'parasitology',
+        panel: 'skin_parasitology',
+        label: 'Skin Parasitology',
+        tests: [
+            { key: 'skin_scrape', label: 'Skin Scrape', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'demodex_seen', label: 'Demodex Seen', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'sarcoptes_seen', label: 'Sarcoptes Seen', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'dermatophyte_culture', label: 'Dermatophyte Culture', type: 'select', options: QUALITATIVE_OPTIONS },
         ],
     },
     coggins_test: {
