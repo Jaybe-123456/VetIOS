@@ -185,92 +185,6 @@ export default function InferenceConsole() {
 
     // ── Step 1: Normalize & Preview ──────────────────────────────────────────
 
-    function buildDiagnosticTestsObject(formData: FormData): Record<string, unknown> {
-        const diagnosticTests: Record<string, unknown> = {};
-        const fieldMap: Array<{ field: string; path: string; numeric?: boolean }> = [
-            { field: 'diag_cbc_spherocytes', path: 'cbc.spherocytes' },
-            { field: 'diag_cbc_autoagglutination', path: 'cbc.autoagglutination' },
-            { field: 'diag_serology_coombs_test', path: 'serology.coombs_test' },
-            { field: 'diag_serology_saline_agglutination', path: 'serology.saline_agglutination' },
-            { field: 'diag_cbc_anemia_type', path: 'cbc.anemia_type' },
-            { field: 'diag_cbc_reticulocytosis', path: 'cbc.reticulocytosis' },
-            { field: 'diag_cbc_thrombocytopenia', path: 'cbc.thrombocytopenia' },
-            { field: 'diag_cbc_leukocytosis', path: 'cbc.leukocytosis' },
-            { field: 'diag_cbc_neutrophilia', path: 'cbc.neutrophilia' },
-            { field: 'diag_cbc_eosinophilia', path: 'cbc.eosinophilia' },
-            { field: 'diag_cbc_pancytopenia', path: 'cbc.pancytopenia' },
-            { field: 'diag_cbc_microfilaremia', path: 'cbc.microfilaremia' },
-            { field: 'diag_cbc_packed_cell_volume_percent', path: 'cbc.packed_cell_volume_percent', numeric: true },
-            { field: 'diag_serology_tick_borne_disease_panel', path: 'serology.tick_borne_disease_panel' },
-            { field: 'diag_serology_heartworm_antigen', path: 'serology.heartworm_antigen' },
-            { field: 'diag_serology_leishmania_serology', path: 'serology.leishmania_serology' },
-            { field: 'diag_serology_fcov_antibody_titre', path: 'serology.fcov_antibody_titre' },
-            { field: 'diag_serology_mat_leptospira', path: 'serology.mat_leptospira' },
-            { field: 'diag_serology_distemper_antigen', path: 'serology.distemper_antigen' },
-            { field: 'diag_serology_total_t4', path: 'serology.total_t4' },
-            { field: 'diag_serology_pancreatic_lipase', path: 'serology.pancreatic_lipase' },
-            { field: 'diag_serology_acth_stimulation', path: 'serology.acth_stimulation' },
-            { field: 'diag_serology_sodium_potassium_ratio', path: 'serology.sodium_potassium_ratio' },
-            { field: 'diag_serology_sodium_potassium_ratio', path: 'biochemistry.sodium_potassium_ratio' },
-            { field: 'diag_urinalysis_glucose_in_urine', path: 'urinalysis.glucose_in_urine' },
-            { field: 'diag_urinalysis_hemoglobinuria', path: 'urinalysis.hemoglobinuria' },
-            { field: 'diag_urinalysis_bilirubinuria', path: 'urinalysis.bilirubinuria' },
-            { field: 'diag_urinalysis_proteinuria', path: 'urinalysis.proteinuria' },
-            { field: 'diag_imaging_abdominal_ultrasound', path: 'imaging.abdominal_ultrasound' },
-            { field: 'diag_imaging_thoracic_radiograph', path: 'imaging.thoracic_radiograph' },
-        ];
-
-        for (const item of fieldMap) {
-            const value = readDiagnosticValue(formData.get(item.field), item.numeric === true);
-            if (value == null) continue;
-            setNestedDiagnosticValue(diagnosticTests, item.path, value);
-        }
-
-        const abdominalUltrasound = readDiagnosticValue(formData.get('diag_imaging_abdominal_ultrasound'));
-        if (abdominalUltrasound === 'uterine_distension') {
-            setNestedDiagnosticValue(diagnosticTests, 'abdominal_ultrasound.uterine_distension', 'present');
-        }
-        const thoracicRadiograph = readDiagnosticValue(formData.get('diag_imaging_thoracic_radiograph'));
-        if (thoracicRadiograph === 'gastric_volvulus') {
-            setNestedDiagnosticValue(diagnosticTests, 'thoracic_radiograph.gastric_volvulus', 'present');
-        }
-        if (thoracicRadiograph === 'pulmonary_artery_enlargement') {
-            setNestedDiagnosticValue(diagnosticTests, 'thoracic_radiograph.pulmonary_artery_enlargement', 'present');
-        }
-        if (thoracicRadiograph === 'pleural_effusion') {
-            setNestedDiagnosticValue(diagnosticTests, 'thoracic_radiograph.pleural_effusion', 'present');
-        }
-        if (thoracicRadiograph === 'cardiomegaly') {
-            setNestedDiagnosticValue(diagnosticTests, 'thoracic_radiograph.cardiomegaly', 'generalised');
-        }
-
-        return diagnosticTests;
-    }
-
-    function readDiagnosticValue(value: FormDataEntryValue | null, numeric = false): string | number | null {
-        if (typeof value !== 'string') return null;
-        const trimmed = value.trim();
-        if (!trimmed) return null;
-        const normalized = trimmed.toLowerCase().replace(/\s+/g, '_');
-        if (['not_performed', 'not_assessed', 'not_done', 'unspecified', 'unknown', 'none'].includes(normalized)) return null;
-        if (!numeric) return trimmed;
-        const parsed = Number(trimmed);
-        return Number.isFinite(parsed) ? parsed : null;
-    }
-
-    function setNestedDiagnosticValue(target: Record<string, unknown>, path: string, value: string | number) {
-        const parts = path.split('.');
-        let current = target;
-        for (const part of parts.slice(0, -1)) {
-            const existing = current[part];
-            if (typeof existing !== 'object' || existing === null || Array.isArray(existing)) {
-                current[part] = {};
-            }
-            current = current[part] as Record<string, unknown>;
-        }
-        current[parts[parts.length - 1]] = value;
-    }
-
     function mergeDiagnosticTests(
         base: Record<string, unknown> | undefined,
         structured: Record<string, unknown>,
@@ -514,7 +428,7 @@ export default function InferenceConsole() {
             // Run normalizer
             const normalized = normalizeInferenceInput(rawInput, inputMode as BaseInputMode);
             const structuredDiagnosticTests = inputMode === 'structured'
-                ? buildDiagnosticTestsObject(formData)
+                ? panelsToDiagnosticTests(activePanels.filter(panelHasPopulatedTests)) as Record<string, unknown>
                 : {};
             const mergedDiagnosticTests = mergeDiagnosticTests(normalized.diagnostic_tests, structuredDiagnosticTests);
             const normalizedWithDiagnostics: NormalizedInput = mergedDiagnosticTests

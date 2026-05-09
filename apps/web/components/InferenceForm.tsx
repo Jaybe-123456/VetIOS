@@ -25,87 +25,6 @@ const MODES: { key: InputMode | 'panels'; label: string; icon: React.ReactNode; 
     { key: 'json', label: 'JSON', icon: <Code className="w-3.5 h-3.5" />, desc: 'Raw JSON' },
 ];
 
-interface DiagnosticSelectField {
-    name: string;
-    label: string;
-    options: Array<{ value: string; label: string }>;
-}
-
-const PRESENT_ABSENT = [
-    { value: 'absent', label: 'Absent' },
-    { value: 'present', label: 'Present' },
-];
-
-const NOT_PERFORMED_RESULT = [
-    { value: 'not_performed', label: 'Not performed' },
-    { value: 'negative', label: 'Negative' },
-    { value: 'positive', label: 'Positive' },
-];
-
-const CBC_FIELDS: DiagnosticSelectField[] = [
-    { name: 'diag_cbc_spherocytes', label: 'Spherocytes', options: PRESENT_ABSENT },
-    { name: 'diag_cbc_autoagglutination', label: 'Autoagglutination', options: [{ value: 'negative', label: 'Negative' }, { value: 'positive', label: 'Positive' }] },
-    { name: 'diag_serology_coombs_test', label: 'Coombs Test', options: NOT_PERFORMED_RESULT },
-    { name: 'diag_serology_saline_agglutination', label: 'Saline Agglutination', options: NOT_PERFORMED_RESULT },
-    { name: 'diag_cbc_anemia_type', label: 'Anaemia Type', options: [{ value: 'not_assessed', label: 'Not assessed' }, { value: 'regenerative', label: 'Regenerative' }, { value: 'non_regenerative', label: 'Non-regenerative' }] },
-    { name: 'diag_cbc_reticulocytosis', label: 'Reticulocytosis', options: [{ value: 'not_assessed', label: 'Not assessed' }, { value: 'normal', label: 'Normal' }, { value: 'elevated', label: 'Elevated' }] },
-    { name: 'diag_cbc_thrombocytopenia', label: 'Thrombocytopenia', options: [{ value: 'absent', label: 'Absent' }, { value: 'mild', label: 'Mild' }, { value: 'moderate', label: 'Moderate' }, { value: 'severe', label: 'Severe' }] },
-    { name: 'diag_cbc_leukocytosis', label: 'Leukocytosis', options: PRESENT_ABSENT },
-    { name: 'diag_cbc_neutrophilia', label: 'Neutrophilia', options: PRESENT_ABSENT },
-    { name: 'diag_cbc_eosinophilia', label: 'Eosinophilia', options: [{ value: 'absent', label: 'Absent' }, { value: 'mild', label: 'Mild' }, { value: 'moderate', label: 'Moderate' }, { value: 'severe', label: 'Severe' }] },
-    { name: 'diag_cbc_pancytopenia', label: 'Pancytopenia', options: PRESENT_ABSENT },
-    { name: 'diag_cbc_microfilaremia', label: 'Microfilaremia', options: [{ value: 'not_assessed', label: 'Not assessed' }, { value: 'absent', label: 'Absent' }, { value: 'present', label: 'Present' }] },
-];
-
-const SEROLOGY_FIELDS: DiagnosticSelectField[] = [
-    { name: 'diag_serology_tick_borne_disease_panel', label: 'Tick-Borne Disease Panel', options: NOT_PERFORMED_RESULT },
-    { name: 'diag_serology_heartworm_antigen', label: 'Heartworm Antigen', options: NOT_PERFORMED_RESULT },
-    { name: 'diag_serology_leishmania_serology', label: 'Leishmania Serology', options: NOT_PERFORMED_RESULT },
-    { name: 'diag_serology_fcov_antibody_titre', label: 'FCoV Antibody Titre', options: [{ value: 'not_performed', label: 'Not performed' }, { value: 'negative', label: 'Negative' }, { value: 'high_positive', label: 'High positive' }] },
-    { name: 'diag_serology_mat_leptospira', label: 'MAT Leptospira', options: NOT_PERFORMED_RESULT },
-    { name: 'diag_serology_distemper_antigen', label: 'Distemper Antigen', options: NOT_PERFORMED_RESULT },
-    { name: 'diag_serology_total_t4', label: 'Total T4', options: [{ value: 'not_assessed', label: 'Not assessed' }, { value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' }, { value: 'elevated', label: 'Elevated' }] },
-    { name: 'diag_serology_pancreatic_lipase', label: 'Pancreatic Lipase', options: [{ value: 'not_assessed', label: 'Not assessed' }, { value: 'normal', label: 'Normal' }, { value: 'elevated', label: 'Elevated' }, { value: 'markedly_elevated', label: 'Markedly elevated' }] },
-    { name: 'diag_serology_acth_stimulation', label: 'ACTH Stimulation', options: [{ value: 'not_performed', label: 'Not performed' }, { value: 'flat_response', label: 'Flat response' }, { value: 'normal_response', label: 'Normal response' }] },
-    { name: 'diag_serology_sodium_potassium_ratio', label: 'Sodium:Potassium Ratio', options: [{ value: 'not_assessed', label: 'Not assessed' }, { value: 'low', label: 'Low' }, { value: 'normal', label: 'Normal' }] },
-];
-
-const URINALYSIS_FIELDS: DiagnosticSelectField[] = [
-    { name: 'diag_urinalysis_glucose_in_urine', label: 'Glucose In Urine', options: PRESENT_ABSENT },
-    { name: 'diag_urinalysis_hemoglobinuria', label: 'Hemoglobinuria', options: PRESENT_ABSENT },
-    { name: 'diag_urinalysis_bilirubinuria', label: 'Bilirubinuria', options: [{ value: 'absent', label: 'Absent' }, { value: 'present', label: 'Present' }, { value: 'mild', label: 'Mild' }] },
-    { name: 'diag_urinalysis_proteinuria', label: 'Proteinuria', options: PRESENT_ABSENT },
-];
-
-const IMAGING_FIELDS: DiagnosticSelectField[] = [
-    {
-        name: 'diag_imaging_abdominal_ultrasound',
-        label: 'Abdominal Ultrasound',
-        options: [
-            { value: 'not_performed', label: 'Not performed' },
-            { value: 'no_uterine_pathology', label: 'No uterine pathology' },
-            { value: 'uterine_distension', label: 'Uterine distension' },
-            { value: 'splenic_mass', label: 'Splenic mass' },
-            { value: 'hepatic_changes', label: 'Hepatic changes' },
-            { value: 'free_fluid', label: 'Free fluid' },
-            { value: 'other', label: 'Other' },
-        ],
-    },
-    {
-        name: 'diag_imaging_thoracic_radiograph',
-        label: 'Thoracic Radiograph',
-        options: [
-            { value: 'not_performed', label: 'Not performed' },
-            { value: 'normal', label: 'Normal' },
-            { value: 'pulmonary_artery_enlargement', label: 'Pulmonary artery enlargement' },
-            { value: 'pleural_effusion', label: 'Pleural effusion' },
-            { value: 'gastric_volvulus', label: 'Gastric volvulus' },
-            { value: 'cardiomegaly', label: 'Cardiomegaly' },
-            { value: 'other', label: 'Other' },
-        ],
-    },
-];
-
 export function InferenceForm({ 
     onSubmit, 
     isComputing, 
@@ -339,23 +258,13 @@ export function InferenceForm({
                             {diagnosticsOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         </button>
                         {diagnosticsOpen && (
-                            <div className="border-t border-grid p-3 sm:p-4 space-y-5">
-                                <DiagnosticFieldset title="CBC Panel" fields={CBC_FIELDS} />
-                                <div>
-                                    <TerminalLabel htmlFor="diag_cbc_packed_cell_volume_percent">Packed Cell Volume Percent</TerminalLabel>
-                                    <TerminalInput
-                                        id="diag_cbc_packed_cell_volume_percent"
-                                        name="diag_cbc_packed_cell_volume_percent"
-                                        type="number"
-                                        min="0"
-                                        max="100"
-                                        step="0.1"
-                                        placeholder="Optional"
-                                    />
-                                </div>
-                                <DiagnosticFieldset title="Serology / Infectious Tests" fields={SEROLOGY_FIELDS} />
-                                <DiagnosticFieldset title="Urinalysis" fields={URINALYSIS_FIELDS} />
-                                <DiagnosticFieldset title="Imaging" fields={IMAGING_FIELDS} />
+                            <div className="border-t border-grid p-3 sm:p-4">
+                                <PanelSelector
+                                    species={species}
+                                    onSpeciesChange={onSpeciesChange}
+                                    activePanels={activePanels}
+                                    onChange={onActivePanelsChange}
+                                />
                             </div>
                         )}
                     </div>
@@ -398,36 +307,5 @@ export function InferenceForm({
                 {isComputing ? 'NORMALIZING & COMPUTING VECTORS...' : 'EXECUTE INFERENCE PIPELINE'}
             </TerminalButton>
         </form>
-    );
-}
-
-function DiagnosticFieldset({ title, fields }: { title: string; fields: DiagnosticSelectField[] }) {
-    return (
-        <fieldset className="space-y-3">
-            <legend className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted mb-2">{title}</legend>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {fields.map((field) => (
-                    <DiagnosticSelect key={field.name} field={field} />
-                ))}
-            </div>
-        </fieldset>
-    );
-}
-
-function DiagnosticSelect({ field }: { field: DiagnosticSelectField }) {
-    return (
-        <label className="block">
-            <span className="block font-mono text-[10px] uppercase tracking-[0.14em] text-muted mb-1.5">{field.label}</span>
-            <select
-                name={field.name}
-                defaultValue=""
-                className="w-full bg-[hsl(0_0%_8%_/_0.9)] border border-[hsl(0_0%_100%_/_0.08)] px-3 py-2.5 font-mono text-[13px] text-[hsl(0_0%_94%)] focus:outline-none focus:border-accent/60 focus:bg-[hsl(0_0%_10%)] transition-colors"
-            >
-                <option value="">Unspecified</option>
-                {field.options.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-            </select>
-        </label>
     );
 }
