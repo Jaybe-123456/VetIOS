@@ -336,10 +336,15 @@ function extractPrimaryDiagnosis(outputPayload: JsonRecord) {
     const diagnosis = asRecord(outputPayload.diagnosis);
     const differentials = Array.isArray(diagnosis.top_differentials) ? diagnosis.top_differentials : [];
     const top = differentials.find((entry) => typeof entry === 'object' && entry !== null) as JsonRecord | undefined;
-    const label = readText(top?.name) ?? readText(diagnosis.primary_diagnosis) ?? 'Undifferentiated';
+    const label = readText(top?.name)
+        ?? readText(top?.condition)
+        ?? readText(top?.label)
+        ?? readText(diagnosis.primary_diagnosis)
+        ?? readText(outputPayload.primary_diagnosis)
+        ?? 'Undifferentiated';
     return {
         label,
-        probability: readNumber(top?.probability),
+        probability: readNumber(top?.probability) ?? readNumber(top?.p),
     };
 }
 

@@ -638,7 +638,7 @@ export default function InferenceConsole() {
                 }
 
                 const requestIdSuffix = typeof result.request_id === 'string' ? ` [request_id=${result.request_id}]` : '';
-                throw new Error((result.error || `Inference computation failed (HTTP ${res.status})`) + requestIdSuffix);
+                throw new Error(formatApiError(result, `Inference computation failed (HTTP ${res.status})`) + requestIdSuffix);
             }
 
             const inferenceEventId = extractUuidFromText(result.inference_event_id);
@@ -874,7 +874,7 @@ export default function InferenceConsole() {
                     router.push('/login?next=%2Finference');
                     return;
                 }
-                throw new Error(result.error || 'Failed to attach outcome');
+                throw new Error(formatApiError(result, 'Failed to attach outcome'));
             }
 
             const episodeId = typeof result.episode_id === 'string' ? result.episode_id : undefined;
@@ -1573,6 +1573,19 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function formatApiError(result: unknown, fallback: string): string {
+    if (!result || typeof result !== 'object') return fallback;
+    const record = result as Record<string, unknown>;
+    const error = record.error;
+    const detail = typeof record.detail === 'string' ? record.detail : null;
+    if (typeof error === 'string') return detail ? `${error}: ${detail}` : error;
+    if (error && typeof error === 'object') {
+        const message = (error as Record<string, unknown>).message;
+        if (typeof message === 'string') return detail ? `${message}: ${detail}` : message;
+    }
+    return detail ?? fallback;
 }
 
 function formatSystemLabel(value: unknown): string {

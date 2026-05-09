@@ -58,6 +58,8 @@ export default function OutcomeLearning() {
             outcome: {
                 type: 'clinical_diagnosis',
                 payload: {
+                    label: String(formData.get('actualDiagnosis') ?? '').trim(),
+                    confidence: 1,
                     actual_diagnosis: formData.get('actualDiagnosis'),
                     notes: formData.get('notes'),
                 },
@@ -76,13 +78,15 @@ export default function OutcomeLearning() {
             const res = await fetch('/api/outcome', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                cache: 'no-store',
                 body: JSON.stringify(data)
             });
 
             const result = await res.json();
 
             if (!res.ok) {
-                throw new Error(result.error || 'Failed to attach outcome');
+                throw new Error(formatApiError(result, 'Failed to attach outcome'));
             }
 
             // Stage 3: Weights updated (evaluation computed)
@@ -323,4 +327,17 @@ function UncertaintyBar({ value }: { value: number }) {
 
 function delay(ms: number) {
     return new Promise(r => setTimeout(r, ms));
+}
+
+function formatApiError(result: unknown, fallback: string): string {
+    if (!result || typeof result !== 'object') return fallback;
+    const record = result as Record<string, unknown>;
+    const error = record.error;
+    const detail = typeof record.detail === 'string' ? record.detail : null;
+    if (typeof error === 'string') return detail ? `${error}: ${detail}` : error;
+    if (error && typeof error === 'object') {
+        const message = (error as Record<string, unknown>).message;
+        if (typeof message === 'string') return detail ? `${message}: ${detail}` : message;
+    }
+    return detail ?? fallback;
 }
