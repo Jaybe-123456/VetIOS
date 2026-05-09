@@ -93,7 +93,8 @@ const MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS = 120;
 type ControlPlaneUserContext = {
     user: User | null;
     token_expiry: string | null;
-    auth_mode: 'session' | 'dev_bypass';
+    auth_mode: 'session' | 'dev_bypass' | 'control_plane_key';
+    principal_label?: string | null;
 };
 
 export async function getControlPlaneSnapshot(input: {
@@ -691,6 +692,52 @@ export async function listTelemetryEvents(client: SupabaseClient, tenantId: stri
         .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
 }
 
+export async function resolveControlPlaneApiKey(input: {
+    client: SupabaseClient;
+    presentedKey: string;
+    requiredScope: 'tenant.read' | 'tenant.write';
+}): Promise<{ ok: true; tenantId: string; keyId: string; label: string; scopes: string[] } | { ok: false; status: number; message: string }> {
+    const C = CONTROL_PLANE_API_KEYS.COLUMNS;
+    const hash = createHash('sha256').update(input.presentedKey).digest('hex');
+    const { data, error } = await input.client
+        .from(CONTROL_PLANE_API_KEYS.TABLE)
+        .select('*')
+        .eq(C.key_hash, hash)
+        .maybeSingle();
+
+    if (error) {
+        return { ok: false, status: 500, message: `Failed to resolve control-plane API key: ${error.message}` };
+    }
+    if (!data) {
+        return { ok: false, status: 401, message: 'Invalid control-plane API key.' };
+    }
+
+    const record = mapControlPlaneApiKey(data as Record<string, unknown>);
+    if (record.status !== 'active') {
+        return { ok: false, status: 403, message: 'Control-plane API key is not active.' };
+    }
+    if (!record.scopes.includes(input.requiredScope) && !record.scopes.includes('tenant.admin')) {
+        return { ok: false, status: 403, message: `Control-plane API key requires ${input.requiredScope}.` };
+    }
+    const tenantId = textOrNull((data as Record<string, unknown>).tenant_id);
+    if (!tenantId) {
+        return { ok: false, status: 500, message: 'Control-plane API key is missing tenant scope.' };
+    }
+
+    await input.client
+        .from(CONTROL_PLANE_API_KEYS.TABLE)
+        .update({ [C.last_used_at]: new Date().toISOString() })
+        .eq(C.id, record.id);
+
+    return {
+        ok: true,
+        tenantId,
+        keyId: record.id,
+        label: record.label,
+        scopes: record.scopes,
+    };
+}
+
 function collectRecentTelemetryTimestamps(
     events: TelemetryEventRecord[],
     windowMinutes: number = 15,
@@ -1181,7 +1228,7 @@ export async function runDatasetBackfill(client: SupabaseClient, tenantId: strin
     return backfillTenantClinicalCaseLearningState(client, tenantId);
 }
 
-function buildProfile(user: User | null, authMode: 'session' | 'dev_bypass'): ControlPlaneProfile {
+function buildProfile(user: User | null, authMode: 'session' | 'dev_bypass' | 'control_plane_key'): ControlPlaneProfile {
     const role = resolveControlPlaneRole(user, authMode);
     const permissions = CONTROL_PLANE_ROLE_PERMISSIONS[role];
     return {

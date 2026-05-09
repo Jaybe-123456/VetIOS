@@ -50,9 +50,10 @@ export function buildControlPlanePermissionSet(role: ControlPlaneUserRole): Cont
 
 export function resolveControlPlaneRole(
     user: User | null,
-    authMode: 'session' | 'dev_bypass',
+    authMode: 'session' | 'dev_bypass' | 'control_plane_key',
 ): ControlPlaneUserRole {
     if (authMode === 'dev_bypass') return 'admin';
+    if (authMode === 'control_plane_key') return 'admin';
     if (!user) return 'clinician';
 
     // Priority 1: Email-based Superuser Fallback

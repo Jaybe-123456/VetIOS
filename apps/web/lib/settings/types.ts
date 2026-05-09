@@ -65,7 +65,7 @@ export interface ControlPlaneApiKeyRecord {
 
 export interface ControlPlaneAccessSecurity {
     tenant_id: string;
-    auth_mode: 'session' | 'dev_bypass';
+    auth_mode: 'session' | 'dev_bypass' | 'control_plane_key';
     active_sessions: ControlPlaneSessionSummary[];
     token_expiry: string | null;
     access_scope: string[];

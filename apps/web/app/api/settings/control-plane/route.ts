@@ -16,6 +16,7 @@ import {
     markControlPlaneAlertResolved,
     redactControlPlaneSnapshotForPermissions,
     recordControlPlaneAction,
+    resolveControlPlaneApiKey,
     revokeControlPlaneApiKey,
     runDatasetBackfill,
     runRegistryControlAction,
@@ -100,17 +101,30 @@ export async function GET(req: Request) {
     const { requestId, startTime } = guard;
     const url = new URL(req.url);
     const view = resolveControlPlaneView(url.searchParams.get('view'));
+    const adminClient = getSupabaseServer();
+    const keyAuth = await resolvePresentedControlPlaneKey(req, adminClient, 'tenant.read');
+    if (!keyAuth.ok && keyAuth.presented) {
+        return NextResponse.json({ error: keyAuth.message, request_id: requestId }, { status: keyAuth.status });
+    }
 
     const session = await resolveSessionTenant();
-    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
+    if (!session && !keyAuth.identity && process.env.VETIOS_DEV_BYPASS !== 'true') {
         return NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
     }
 
     try {
-        const actor = resolveRequestActor(session);
-        const adminClient = getSupabaseServer();
+        const actor = keyAuth.identity
+            ? { tenantId: keyAuth.identity.tenantId, userId: null }
+            : resolveRequestActor(session);
         const observerHeartbeatTimestamp = new Date().toISOString();
-        const userContext = await resolveUserContext(session);
+        const userContext = keyAuth.identity
+            ? {
+                user: null,
+                token_expiry: null,
+                auth_mode: 'control_plane_key' as const,
+                principal_label: keyAuth.identity.label,
+            }
+            : await resolveUserContext(session);
         const currentRole = resolveControlPlaneRole(userContext.user, userContext.auth_mode);
         const permissionSet = buildControlPlanePermissionSet(currentRole);
         let response: NextResponse;
@@ -170,9 +184,14 @@ export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 20, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
+    const adminClient = getSupabaseServer();
+    const keyAuth = await resolvePresentedControlPlaneKey(req, adminClient, 'tenant.write');
+    if (!keyAuth.ok && keyAuth.presented) {
+        return NextResponse.json({ error: keyAuth.message, request_id: requestId }, { status: keyAuth.status });
+    }
 
     const session = await resolveSessionTenant();
-    if (!session && process.env.VETIOS_DEV_BYPASS !== 'true') {
+    if (!session && !keyAuth.identity && process.env.VETIOS_DEV_BYPASS !== 'true') {
         return NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 });
     }
 
@@ -181,15 +200,23 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: parsed.error, request_id: requestId }, { status: 400 });
     }
 
-    const adminClient = getSupabaseServer();
-    const actor = resolveRequestActor(session);
-    const userContext = await resolveUserContext(session);
+    const actor = keyAuth.identity
+        ? { tenantId: keyAuth.identity.tenantId, userId: null }
+        : resolveRequestActor(session);
+    const userContext = keyAuth.identity
+        ? {
+            user: null,
+            token_expiry: null,
+            auth_mode: 'control_plane_key' as const,
+            principal_label: keyAuth.identity.label,
+        }
+        : await resolveUserContext(session);
     const currentRole = resolveControlPlaneRole(userContext.user, userContext.auth_mode);
     const permissionSet = buildControlPlanePermissionSet(currentRole);
     const authContext = buildRouteAuthorizationContext({
         tenantId: actor.tenantId,
         userId: actor.userId,
-        authMode: userContext.auth_mode,
+        authMode: userContext.auth_mode === 'control_plane_key' ? 'internal_token' : userContext.auth_mode,
         user: userContext.user,
     });
     const observerHeartbeatTimestamp = new Date().toISOString();
@@ -480,4 +507,54 @@ function resolveControlPlaneView(value: string | null) {
         return value;
     }
     return 'full';
+}
+
+async function resolvePresentedControlPlaneKey(
+    req: Request,
+    adminClient: ReturnType<typeof getSupabaseServer>,
+    requiredScope: 'tenant.read' | 'tenant.write',
+): Promise<
+    | { presented: false; ok: true; identity: null }
+    | { presented: true; ok: true; identity: { tenantId: string; keyId: string; label: string; scopes: string[] } }
+    | { presented: true; ok: false; status: number; message: string; identity: null }
+> {
+    const presentedKey = extractPresentedControlPlaneKey(req);
+    if (!presentedKey) {
+        return { presented: false, ok: true, identity: null };
+    }
+
+    const resolved = await resolveControlPlaneApiKey({
+        client: adminClient,
+        presentedKey,
+        requiredScope,
+    });
+
+    if (!resolved.ok) {
+        return {
+            presented: true,
+            ok: false,
+            status: resolved.status,
+            message: resolved.message,
+            identity: null,
+        };
+    }
+
+    return {
+        presented: true,
+        ok: true,
+        identity: {
+            tenantId: resolved.tenantId,
+            keyId: resolved.keyId,
+            label: resolved.label,
+            scopes: resolved.scopes,
+        },
+    };
+}
+
+function extractPresentedControlPlaneKey(req: Request): string | null {
+    const authorization = req.headers.get('authorization');
+    const bearer = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
+    const direct = req.headers.get('x-vetios-control-plane-key')?.trim() ?? null;
+    const candidate = bearer ?? direct;
+    return candidate?.startsWith('vetios_cp_') ? candidate : null;
 }
