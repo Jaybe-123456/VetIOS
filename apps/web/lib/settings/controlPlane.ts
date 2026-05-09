@@ -152,9 +152,7 @@ export async function getControlPlaneSnapshot(input: {
         triggerSource: 'settings_control_plane',
         readOnly: input.readOnly === true,
     });
-    const persistedAlerts = input.readOnly === true
-        ? mapTopologyAlertsToControlPlaneAlerts(topologySnapshot.alerts)
-        : await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
+    const persistedAlerts = await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
     const profile = buildProfile(input.userContext.user, input.userContext.auth_mode);
     const accessScope = buildAccessScope(profile.role, input.tenantId);
     const governanceFamilies = buildGovernanceFamilies(registrySnapshot);
@@ -298,9 +296,7 @@ export async function getDashboardControlPlaneSnapshot(input: {
         triggerSource: 'dashboard_control_plane',
         readOnly: input.readOnly === true,
     });
-    const persistedAlerts = input.readOnly === true
-        ? mapTopologyAlertsToControlPlaneAlerts(topologySnapshot.alerts)
-        : await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
+    const persistedAlerts = await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
     const pipelines = buildPipelineStates(topologySnapshot);
 
     return {

@@ -2661,37 +2661,47 @@ export async function syncControlPlaneAlerts(
 ) {
     const C = CONTROL_PLANE_ALERTS.COLUMNS;
     try {
+        const { data: existingRows } = await client
+            .from(CONTROL_PLANE_ALERTS.TABLE)
+            .select(`${C.id},${C.alert_key},${C.resolved},${C.resolved_at}`)
+            .eq(C.tenant_id, tenantId);
+        const existingByKey = new Map(
+            (existingRows ?? [])
+                .map((row) => asRecord(row))
+                .map((row) => [readString(row.alert_key), row] as const)
+                .filter((entry): entry is [string, Record<string, unknown>] => entry[0] != null),
+        );
+
         if (alerts.length > 0) {
             await client
                 .from(CONTROL_PLANE_ALERTS.TABLE)
-                .upsert(alerts.map((alert) => ({
-                    [C.alert_key]: alert.id,
-                    [C.tenant_id]: tenantId,
-                    [C.severity]: alert.severity,
-                    [C.title]: alert.title,
-                    [C.message]: alert.message,
-                    [C.node_id]: alert.node_id,
-                    [C.resolved]: false,
-                    [C.resolved_at]: null,
-                    [C.metadata]: {
-                        category: alert.category,
-                        timestamp: alert.timestamp,
-                    },
-                })), {
+                .upsert(alerts.map((alert) => {
+                    const existing = existingByKey.get(alert.id);
+                    const isAcknowledged = existing?.[C.resolved] === true;
+                    return {
+                        [C.alert_key]: alert.id,
+                        [C.tenant_id]: tenantId,
+                        [C.severity]: alert.severity,
+                        [C.title]: alert.title,
+                        [C.message]: alert.message,
+                        [C.node_id]: alert.node_id,
+                        [C.resolved]: isAcknowledged,
+                        [C.resolved_at]: isAcknowledged
+                            ? readString(existing?.[C.resolved_at]) ?? new Date().toISOString()
+                            : null,
+                        [C.metadata]: {
+                            category: alert.category,
+                            timestamp: alert.timestamp,
+                            active: true,
+                        },
+                    };
+                }), {
                     onConflict: `${C.tenant_id},${C.alert_key}`,
                 });
         }
 
-        const { data: existing, error } = await client
-            .from(CONTROL_PLANE_ALERTS.TABLE)
-            .select(`${C.id},${C.alert_key}`)
-            .eq(C.tenant_id, tenantId)
-            .eq(C.resolved, false);
-
-        if (error) return;
-
         const activeKeys = new Set(alerts.map((alert) => alert.id));
-        const staleIds = (existing ?? [])
+        const staleIds = (existingRows ?? [])
             .map((row) => asRecord(row))
             .filter((row) => !activeKeys.has(readString(row.alert_key) ?? ''))
             .map((row) => readString(row.id))
