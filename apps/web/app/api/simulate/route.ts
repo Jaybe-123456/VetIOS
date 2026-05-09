@@ -46,7 +46,7 @@ export async function POST(req: Request) {
         );
     }
 
-    const parsed = SimulateRequestSchema.safeParse(parsedJson.data);
+    const parsed = SimulateRequestSchema.safeParse(normalizeSimulateRequest(parsedJson.data));
     if (!parsed.success) {
         return NextResponse.json(
             { error: 'invalid_input', detail: formatZodErrors(parsed.error) },
@@ -217,6 +217,47 @@ function average(values: number[]): number {
     return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+function normalizeSimulateRequest(value: unknown): unknown {
+    const record = asRecord(value);
+    if ('steps' in record || 'base_case' in record) {
+        return value;
+    }
+
+    const legacySimulation = asRecord(record.simulation);
+    if (Object.keys(legacySimulation).length === 0) {
+        return value;
+    }
+
+    const parameters = asRecord(legacySimulation.parameters);
+    const targetDisease = readText(parameters.target_disease) ?? readText(parameters.targetDisease);
+    const edgeCases = readTextArray(parameters.edge_cases);
+    const contradictions = parameters.contradictions;
+    const inferredSymptoms = [
+        targetDisease,
+        ...edgeCases,
+        readText(contradictions),
+    ]
+        .filter((entry): entry is string => entry != null)
+        .flatMap((entry) => entry.split(/[+,;]/).map((part) => part.trim()).filter(Boolean));
+    const simulationMode = readText(legacySimulation.mode) ?? readText(parameters.mode);
+
+    return {
+        steps: Math.min(50, Math.max(1, readNumber(parameters.steps) ?? 5)),
+        mode: simulationMode === 'fixed' ? 'fixed' : 'adaptive',
+        base_case: {
+            species: readText(parameters.species) ?? 'canine',
+            breed: readText(parameters.breed) ?? undefined,
+            symptoms: inferredSymptoms.length > 0 ? inferredSymptoms : ['fever', 'lethargy'],
+            metadata: {
+                source: 'legacy_simulation_payload',
+                simulation_type: readText(legacySimulation.type),
+                ...parameters,
+            },
+        },
+        inference: asRecord(record.inference),
+    };
+}
+
 function formatZodErrors(error: z.ZodError): string {
     return error.issues
         .map((issue) => {
@@ -239,4 +280,16 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function readText(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readTextArray(value: unknown): string[] {
+    if (Array.isArray(value)) {
+        return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+    }
+    const text = readText(value);
+    return text ? [text] : [];
 }

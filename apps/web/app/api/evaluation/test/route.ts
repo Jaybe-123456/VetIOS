@@ -3,7 +3,6 @@ import { POST as runEvaluation } from '@/app/api/evaluation/route';
 import { buildEvaluationTestPayload } from '@/lib/debugTools/payloads';
 import { buildJsonProxyRequest } from '@/lib/debugTools/proxy';
 import { requireDebugToolsRouteAccess } from '@/lib/debugTools/routeAccess';
-import { getLatestInferenceEventId } from '@/lib/debugTools/service';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 
@@ -24,21 +23,8 @@ export async function POST(req: Request) {
     }
 
     try {
-        const inferenceEventId = await getLatestInferenceEventId(access.access.client, access.access.tenantId);
-        if (!inferenceEventId) {
-            const response = NextResponse.json(
-                {
-                    error: 'No inference event is available yet. Run Test Inference Endpoint first.',
-                    request_id: guard.requestId,
-                },
-                { status: 409 },
-            );
-            withRequestHeaders(response.headers, guard.requestId, guard.startTime);
-            return response;
-        }
-
         return await runEvaluation(
-            buildJsonProxyRequest(req, '/api/evaluation', buildEvaluationTestPayload(inferenceEventId)),
+            buildJsonProxyRequest(req, '/api/evaluation', buildEvaluationTestPayload(null)),
         );
     } catch (error) {
         const response = NextResponse.json(

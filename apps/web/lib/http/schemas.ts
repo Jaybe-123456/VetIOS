@@ -60,8 +60,11 @@ export const OutcomeRequestSchema = z.object({
     case_id: z.string().optional(),
     outcome: z.object({
         type: z.string().min(1),
-        payload: z.record(z.string(), z.unknown()),
-        timestamp: z.string().min(1),
+        payload: z.object({
+            label: z.string().min(1),
+            confidence: z.number().min(0).max(1),
+        }).passthrough(),
+        timestamp: z.string().datetime(),
     }),
 });
 
@@ -70,24 +73,19 @@ export type OutcomeRequest = z.infer<typeof OutcomeRequestSchema>;
 // ── /api/simulate ────────────────────────────────────────────────────────────
 
 export const SimulateRequestSchema = z.object({
-    base_case: z.record(z.string(), z.unknown()).optional(),
-    steps: z.number().int().min(5).max(15).optional().default(10),
-    mode: z.enum(['linear', 'adaptive']).optional().default('adaptive'),
-    simulation: z.object({
-        type: z.string().min(1),
-        parameters: z.record(z.string(), z.unknown()),
-    }).optional(),
+    steps: z.number().int().min(1).max(50),
+    mode: z.enum(['adaptive', 'fixed']),
+    base_case: z.object({
+        species: z.string().min(1),
+        symptoms: z.array(z.string().min(1)).min(1),
+        breed: z.string().min(1).optional(),
+        metadata: z.record(z.string(), z.unknown()).optional(),
+    }).passthrough(),
     inference: z.object({
-        model: z.string().min(1),
+        model: z.string().min(1).optional(),
         model_version: z.string().optional(),
-    }).optional().default({
-        model: 'gpt-4o-mini',
-        model_version: 'gpt-4o-mini',
-    }),
-}).refine(
-    (value) => value.base_case != null || value.simulation != null,
-    { message: 'Either base_case or simulation must be provided.' },
-);
+    }).optional(),
+});
 
 export type SimulateRequest = z.infer<typeof SimulateRequestSchema>;
 

@@ -43,17 +43,18 @@ async function simulateCase(species: Species, conditionCode: string) {
         },
         body: JSON.stringify({
             steps: 5,
+            mode: 'adaptive',
             base_case: {
                 species,
-                condition_code: conditionCode,
                 symptoms: ['lethargy'],
-            },
-            simulation: {
-                type: 'species_knowledge_graph_bootstrap',
-                parameters: {
-                    species,
+                metadata: {
                     condition_code: conditionCode,
+                    source: 'species_knowledge_graph_bootstrap',
                 },
+            },
+            inference: {
+                model: 'VetIOS Diagnostics',
+                model_version: 'latest',
             },
         }),
     });

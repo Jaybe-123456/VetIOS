@@ -12,6 +12,7 @@ type SafetyDistribution = {
 };
 
 export async function GET(req: Request) {
+    const requestId = randomUUID();
     const supabase = getSupabaseServer();
     const auth = await resolveClinicalApiActor(req, {
         client: supabase,
@@ -105,7 +106,7 @@ export async function GET(req: Request) {
         },
     };
 
-    const { error: evaluationInsertError } = await supabase
+    const { data: evaluationEvent, error: evaluationInsertError } = await supabase
         .from('model_evaluation_events')
         .insert({
             tenant_id: tenantId,
@@ -118,10 +119,12 @@ export async function GET(req: Request) {
             calibrated_confidence: payload.inference.mean_confidence,
             evaluation_payload: {
                 ...payload,
-                request_id: randomUUID(),
+                request_id: requestId,
                 evaluated_at: new Date().toISOString(),
             },
-        });
+        })
+        .select('evaluation_event_id,id')
+        .single();
 
     if (evaluationInsertError) {
         return NextResponse.json(
@@ -130,7 +133,12 @@ export async function GET(req: Request) {
         );
     }
 
-    return NextResponse.json(payload);
+    const evaluationRecord = (evaluationEvent ?? null) as Record<string, unknown> | null;
+    return NextResponse.json({
+        ...payload,
+        evaluation_event_id: readText(evaluationRecord?.evaluation_event_id) ?? readText(evaluationRecord?.id),
+        request_id: requestId,
+    });
 }
 
 export async function POST(req: Request) {

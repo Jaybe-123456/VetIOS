@@ -48,7 +48,9 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             outcome: {
                 type: 'confirmed_diagnosis',
                 payload: {
-                    confirmed_diagnosis: 'Pancreatitis',
+                    label: 'canine_pancreatitis',
+                    confidence: 0.94,
+                    confirmed_diagnosis: 'canine_pancreatitis',
                     primary_condition_class: 'gastrointestinal',
                 },
                 timestamp: '2026-04-01T00:00:00.000Z',
@@ -66,11 +68,19 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             'Useful for safety regression and failure probing before promotion.',
         ],
         samplePayload: {
-            simulation: {
-                type: 'adversarial_case',
-                parameters: {
-                    target_disease: 'Canine Distemper',
-                    edge_cases: 'hypothermia + fever',
+            steps: 5,
+            mode: 'adaptive',
+            base_case: {
+                species: 'canine',
+                breed: 'mixed',
+                symptoms: ['fever', 'lethargy', 'nasal discharge', 'cough'],
+                metadata: {
+                    target_disease: 'canine_distemper',
+                    edge_cases: ['hypothermia_plus_fever'],
+                    labs: {
+                        wbc: 3.8,
+                        lymphocytes: 0.7,
+                    },
                 },
             },
             inference: {
@@ -85,14 +95,14 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         path: '/api/evaluation',
         auth: 'service_account',
         readiness: 'live',
-        purpose: 'Create evaluation events for confidence calibration and model review.',
+        purpose: 'Create an aggregate tenant evaluation snapshot for confidence calibration and model review.',
         notes: [
+            'POST is accepted as an operational alias for the aggregate evaluation read path.',
             'Feeds model assessment and governance review workflows.',
         ],
         samplePayload: {
-            inference_event_id: '11111111-1111-4111-8111-111111111111',
             model_name: 'VetIOS Diagnostics',
-            model_version: 'latest',
+            model_version: 'aggregate',
             predicted_confidence: 0.82,
             trigger_type: 'inference',
         },

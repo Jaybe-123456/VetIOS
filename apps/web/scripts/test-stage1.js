@@ -79,7 +79,7 @@ test('POST /api/outcome returns 401', async () => {
     const res = await httpRequest('http://localhost:3000/api/outcome', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inference_event_id: 'x', outcome: { type: 'test', payload: {}, timestamp: new Date().toISOString() } }),
+        body: JSON.stringify({ inference_event_id: '11111111-1111-4111-8111-111111111111', outcome: { type: 'test', payload: { label: 'test', confidence: 0.5 }, timestamp: new Date().toISOString() } }),
     });
     if (res.status === 401) return `PASS: 401`;
     return `FAIL: Got ${res.status}`;
@@ -90,7 +90,7 @@ test('POST /api/simulate returns 401', async () => {
     const res = await httpRequest('http://localhost:3000/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ simulation: { type: 'test', parameters: {} }, inference: { model: 'test', input_signature: {} } }),
+        body: JSON.stringify({ steps: 1, mode: 'fixed', base_case: { species: 'canine', symptoms: ['test'] }, inference: { model: 'test', model_version: '1.0' } }),
     });
     if (res.status === 401) return `PASS: 401`;
     return `FAIL: Got ${res.status}`;

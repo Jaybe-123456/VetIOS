@@ -117,7 +117,11 @@ if [ -n "$INFERENCE_EVENT_ID" ]; then
         \"case_id\": \"c2aad211-be2d-4caa-ad8f-8ddbce5a1c33\",
         \"outcome\": {
           \"type\": \"diagnosis_confirmed\",
-          \"payload\": { \"diagnosis\": \"cushing_syndrome\", \"confirmed_by\": \"veterinarian\" },
+          \"payload\": {
+            \"label\": \"cushing_syndrome\",
+            \"confidence\": 0.92,
+            \"confirmed_by\": \"veterinarian\"
+          },
           \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"
         }
       }")
@@ -142,14 +146,16 @@ SIMULATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$BASE_URL/api/simulate"
   -H "Content-Type: application/json" \
   -d '{
     "tenant_id": "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11",
-    "simulation": {
-      "type": "rare_disease_adversarial",
-      "parameters": {
-        "species": "feline",
-        "breed": "siamese",
+    "steps": 5,
+    "mode": "adaptive",
+    "base_case": {
+      "species": "feline",
+      "breed": "siamese",
+      "symptoms": ["seizures", "ataxia", "blindness"],
+      "metadata": {
         "age_years": 12,
-        "symptoms": ["seizures", "ataxia", "blindness"],
-        "severity": "critical"
+        "severity": "critical",
+        "target_disease": "hypertensive_retinopathy"
       }
     },
     "inference": {

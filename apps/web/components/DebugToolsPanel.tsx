@@ -32,6 +32,12 @@ type DiagnosticActionState = {
     body: unknown;
 };
 
+type MachineCredentialIssueState = {
+    status: 'idle' | 'running' | 'success' | 'error';
+    message: string | null;
+    apiKey: string | null;
+};
+
 const INITIAL_RESOURCE_STATE = {
     value: null,
     status: 'idle',
@@ -49,6 +55,14 @@ const INITIAL_ACTION_STATE: DiagnosticActionState = {
     body: null,
 };
 
+const MACHINE_EXPLORER_SCOPES = [
+    'inference:write',
+    'outcome:write',
+    'simulation:write',
+    'evaluation:write',
+    'evaluation:read',
+];
+
 export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
     const [latestInferenceEvent, setLatestInferenceEvent] = useState<DebugResourceState<string>>(
         INITIAL_RESOURCE_STATE as DebugResourceState<string>,
@@ -63,6 +77,11 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
         INITIAL_RESOURCE_STATE as DebugResourceState<number>,
     );
     const [actionState, setActionState] = useState<DiagnosticActionState>(INITIAL_ACTION_STATE);
+    const [machineCredentialState, setMachineCredentialState] = useState<MachineCredentialIssueState>({
+        status: 'idle',
+        message: null,
+        apiKey: null,
+    });
     const [telemetryStreamStatus, setTelemetryStreamStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
     const [telemetryStreamError, setTelemetryStreamError] = useState<string | null>(null);
     const [telemetryEvents, setTelemetryEvents] = useState<Array<Record<string, unknown>>>([]);
@@ -335,7 +354,7 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
             key: 'evaluation-test',
             label: 'Test Evaluation Creation',
             endpoint: '/api/evaluation/test',
-            disabled: !normalizedLatestInferenceEventId,
+            disabled: false,
         },
         {
             key: 'evaluation-backfill',
@@ -429,6 +448,70 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
         }
     }
 
+    async function issueExplorerCredential() {
+        if (!isAdmin || machineCredentialState.status === 'running') {
+            return;
+        }
+
+        setMachineCredentialState({
+            status: 'running',
+            message: 'Issuing scoped service-account credential...',
+            apiKey: null,
+        });
+
+        try {
+            const { response, body } = await requestJson('/api/platform/machine-auth', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    action: 'create_service_account',
+                    name: `settings-api-explorer-${new Date().toISOString()}`,
+                    label: 'Settings API Explorer',
+                    description: 'Short-lived operator credential for the settings Developer API Explorer.',
+                    scopes: MACHINE_EXPLORER_SCOPES,
+                    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                    metadata: {
+                        source_module: 'settings_debug_tools',
+                        purpose: 'developer_api_explorer',
+                    },
+                }),
+            });
+
+            if (!response.ok) {
+                throw new ApiResponseError(
+                    response.status,
+                    response.statusText,
+                    body,
+                    extractApiErrorMessage(body, 'Failed to issue explorer credential.'),
+                );
+            }
+
+            const generatedApiKey = getStringFromBody(body, 'generated_api_key');
+            if (!generatedApiKey) {
+                throw new Error('Machine-auth endpoint did not return a generated API key.');
+            }
+
+            setMachineCredentialState({
+                status: 'success',
+                message: 'Credential issued. The explorer Authorization header has been populated for this session.',
+                apiKey: generatedApiKey,
+            });
+        } catch (error) {
+            const message = error instanceof ApiResponseError
+                ? extractApiErrorMessage(error.body, error.message)
+                : error instanceof Error
+                    ? error.message
+                    : 'Failed to issue explorer credential.';
+            setMachineCredentialState({
+                status: 'error',
+                message,
+                apiKey: null,
+            });
+        }
+    }
+
     return (
         <div className="space-y-4">
             <ConsoleCard title="System Diagnostics">
@@ -488,7 +571,7 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
 
                 {latestInferenceEvent.value && !normalizedLatestInferenceEventId && (
                     <div className="mt-4 border border-yellow-500/30 bg-yellow-500/10 p-3 font-mono text-[11px] text-yellow-300">
-                        The latest inference reference is not a canonical UUID. Outcome and evaluation test actions stay disabled until a fresh inference event is generated.
+                        The latest inference reference is not a canonical UUID. Outcome test actions stay disabled until a fresh inference event is generated.
                     </div>
                 )}
 
@@ -573,7 +656,40 @@ export default function DebugToolsPanel({ isAdmin }: { isAdmin: boolean }) {
             </ConsoleCard>
 
             <ConsoleCard title="Developer API Explorer">
-                <DeveloperApiExplorer latestInferenceEventId={latestInferenceEvent.value} />
+                <div className="mb-4 border border-grid bg-black/20 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                            <div className="font-mono text-[11px] uppercase tracking-widest text-foreground">
+                                Explorer Machine Credential
+                            </div>
+                            <div className="mt-1 font-mono text-[11px] text-[hsl(0_0%_62%)]">
+                                Scope: {MACHINE_EXPLORER_SCOPES.join(', ')}
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            disabled={!isAdmin || machineCredentialState.status === 'running'}
+                            onClick={() => void issueExplorerCredential()}
+                            className="border border-accent/60 px-3 py-2 font-mono text-[10px] uppercase tracking-widest text-accent hover:bg-accent hover:text-black disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                            {machineCredentialState.status === 'running' ? 'Issuing...' : 'Issue Explorer Key'}
+                        </button>
+                    </div>
+                    {machineCredentialState.message && (
+                        <div className={`mt-3 font-mono text-[11px] ${machineCredentialState.status === 'error' ? 'text-danger' : 'text-accent'}`}>
+                            {machineCredentialState.message}
+                        </div>
+                    )}
+                    {!isAdmin && (
+                        <div className="mt-3 font-mono text-[11px] text-[hsl(0_0%_62%)]">
+                            Admin role required to issue machine credentials. Authenticated browser sessions can still run the explorer.
+                        </div>
+                    )}
+                </div>
+                <DeveloperApiExplorer
+                    latestInferenceEventId={latestInferenceEvent.value}
+                    initialAuthorizationHeader={machineCredentialState.apiKey ? `Bearer ${machineCredentialState.apiKey}` : null}
+                />
             </ConsoleCard>
         </div>
     );

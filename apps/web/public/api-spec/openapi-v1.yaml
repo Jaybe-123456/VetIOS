@@ -340,8 +340,14 @@ components:
           type: string
     EvaluationResponse:
       type: object
-      required: [tenant_id, period, inference, safety_distribution, simulation]
+      required: [tenant_id, period, inference, safety_distribution, simulation, evaluation_event_id, request_id]
       properties:
+        evaluation_event_id:
+          type: string
+          format: uuid
+          nullable: true
+        request_id:
+          type: string
         tenant_id:
           type: string
         period:

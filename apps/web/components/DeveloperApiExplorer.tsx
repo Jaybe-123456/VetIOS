@@ -12,6 +12,7 @@ import {
     buildEvaluationTestPayload,
     buildInferenceTestPayload,
     buildOutcomeTestPayload,
+    buildSimulateTestPayload,
 } from '@/lib/debugTools/payloads';
 import { extractUuidFromText } from '@/lib/utils/uuid';
 import { Activity, AlertTriangle, Code, Play, ShieldCheck } from 'lucide-react';
@@ -38,31 +39,21 @@ const ENDPOINTS: ExplorerEndpoint[] = [
 
 export default function DeveloperApiExplorer({
     latestInferenceEventId,
+    initialAuthorizationHeader,
 }: {
     latestInferenceEventId?: string | null;
+    initialAuthorizationHeader?: string | null;
 }) {
+    const [sessionInferenceEventId, setSessionInferenceEventId] = useState<string | null>(null);
     const normalizedLatestInferenceEventId = useMemo(
-        () => extractUuidFromText(latestInferenceEventId),
-        [latestInferenceEventId],
+        () => extractUuidFromText(sessionInferenceEventId) ?? extractUuidFromText(latestInferenceEventId),
+        [latestInferenceEventId, sessionInferenceEventId],
     );
 
     const defaultPayloads = useMemo<Record<ExplorerEndpoint, string>>(() => ({
         '/api/inference': JSON.stringify(buildInferenceTestPayload(), null, 2),
         '/api/outcome': JSON.stringify(buildOutcomeTestPayload(normalizedLatestInferenceEventId ?? ''), null, 2),
-        '/api/simulate': JSON.stringify({
-            simulation: {
-                type: 'adversarial_case',
-                parameters: {
-                    target_disease: 'Canine Distemper',
-                    edge_cases: 'hypothermia + fever',
-                    contradictions: 'age: 2mo, weight: 80kg',
-                },
-            },
-            inference: {
-                model: 'gpt-4o-mini',
-                model_version: '1.0.0',
-            },
-        }, null, 2),
+        '/api/simulate': JSON.stringify(buildSimulateTestPayload(), null, 2),
         '/api/evaluation': JSON.stringify(buildEvaluationTestPayload(normalizedLatestInferenceEventId), null, 2),
     }), [normalizedLatestInferenceEventId]);
 
@@ -76,10 +67,19 @@ export default function DeveloperApiExplorer({
     const [tenantScopeValue, setTenantScopeValue] = useState('');
     const [requestHistory, setRequestHistory] = useState<ExplorerHistoryEntry[]>([]);
     const showAuthWarning = authHeaderValue.trim().length === 0;
+    const displayedLatestInferenceEventId = normalizedLatestInferenceEventId
+        ?? sessionInferenceEventId
+        ?? latestInferenceEventId
+        ?? 'No inference event available yet';
 
     useEffect(() => {
         setPayload(defaultPayloads[endpoint]);
     }, [defaultPayloads, endpoint]);
+
+    useEffect(() => {
+        if (!initialAuthorizationHeader) return;
+        setAuthHeaderValue(initialAuthorizationHeader);
+    }, [initialAuthorizationHeader]);
 
     function handleEndpointChange(nextEndpoint: ExplorerEndpoint) {
         setEndpoint(nextEndpoint);
@@ -95,19 +95,33 @@ export default function DeveloperApiExplorer({
         setStatusText(null);
 
         try {
+            const headers = new Headers({
+                'Content-Type': 'application/json',
+            });
+            const authorization = authHeaderValue.trim();
+            const tenantScope = tenantScopeValue.trim();
+            if (authorization.length > 0) {
+                headers.set('Authorization', authorization);
+            }
+            if (tenantScope.length > 0) {
+                headers.set('X-Tenant-Scope', tenantScope);
+            }
+
             const { response, body } = await requestJson(endpoint, {
                 method: 'POST',
-                headers: {
-                    Authorization: authHeaderValue,
-                    'Content-Type': 'application/json',
-                    'X-Tenant-Scope': tenantScopeValue,
-                },
+                headers,
                 body: payload,
             });
 
             setStatus(response.status);
             setStatusText(response.statusText);
             setResponseBody(body);
+            if (endpoint === '/api/inference' && response.ok) {
+                const nextInferenceEventId = extractInferenceEventId(body);
+                if (nextInferenceEventId) {
+                    setSessionInferenceEventId(nextInferenceEventId);
+                }
+            }
             setRequestHistory((current) => [{
                 endpoint,
                 payload,
@@ -203,7 +217,7 @@ export default function DeveloperApiExplorer({
                             <input
                                 type="text"
                                 disabled
-                                value={normalizedLatestInferenceEventId ?? latestInferenceEventId ?? 'No inference event available yet'}
+                                value={displayedLatestInferenceEventId}
                                 className="w-full bg-dim border border-grid p-2 font-mono text-[10px] text-muted outline-none cursor-not-allowed"
                             />
                         </div>
@@ -258,11 +272,11 @@ export default function DeveloperApiExplorer({
                         Execute
                     </button>
                 </div>
-                {((endpoint === '/api/outcome' || endpoint === '/api/evaluation') && !normalizedLatestInferenceEventId) && (
+                {(endpoint === '/api/outcome' && !normalizedLatestInferenceEventId) && (
                     <div className="bg-danger/10 border-b border-danger/30 p-3 flex items-center gap-3">
                         <AlertTriangle className="w-4 h-4 text-danger shrink-0" />
                         <span className="font-mono text-[10px] text-danger uppercase tracking-tight">
-                            Latest inference UUID is unavailable. Execute <span className="font-bold">POST /api/inference</span> first, or replace the request payload with a real inference event id before executing.
+                            Latest inference UUID is unavailable. Execute <span className="font-bold">POST /api/inference</span> first, or replace the request payload with a real inference event id before executing outcome creation.
                         </span>
                     </div>
                 )}
@@ -318,4 +332,15 @@ export default function DeveloperApiExplorer({
             </div>
         </div>
     );
+}
+
+function extractInferenceEventId(body: unknown) {
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+        return null;
+    }
+
+    const record = body as Record<string, unknown>;
+    return extractUuidFromText(record.inference_event_id)
+        ?? extractUuidFromText(record.data)
+        ?? extractUuidFromText(record.meta);
 }
