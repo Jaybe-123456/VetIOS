@@ -9,6 +9,12 @@ import { authorizeCronRequest } from '@/lib/http/cronAuth';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { createOutboxEvent } from '@/lib/outbox/outbox-service';
+import { runInference } from '@/lib/vetios-inference';
+import { matchesOptionalFilter, summarizeAdverseSignals } from '@/lib/moat/pharmaAdr';
+import { buildLabOrderPayload, shouldAutoOrderLabs, type LabPanelRecommendation } from '@/lib/moat/labOrdering';
+import { scoreTelemedicineSymptoms } from '@/lib/moat/telemedicineScoring';
+import { classifyOutbreakStatus, matchesOutbreakSubscriber, outbreakClusterKey } from '@/lib/moat/outbreakEarlyWarning';
+import { buildTelemetryInferenceSignature, shouldTriggerTelemetryInference } from '@/lib/moat/telemetryInference';
 
 const SPECIES = [
     'canine',
@@ -51,6 +57,7 @@ const SYMPTOM_CODES = [
     'pale_mucous_membranes',
     'cyanosis',
 ] as const;
+const SYMPTOM_CODE_SET = new Set<string>(SYMPTOM_CODES);
 
 const MM_COLORS = ['pink', 'pale', 'cyanotic', 'icteric', 'brick_red', 'muddy'] as const;
 const LAB_PANEL_RULES = [
@@ -115,6 +122,12 @@ const LabResultSchema = z.object({
     received_at: z.string().datetime().optional(),
 });
 
+const LabOrderSchema = z.object({
+    lab_recommendation_id: z.string().uuid(),
+    vendor: z.string().min(1).max(120).optional(),
+    ordered_by: z.string().min(1).max(160).optional(),
+});
+
 const TelemetryIngestSchema = z.object({
     tenant_id: z.string().uuid(),
     patient_id: z.string().uuid(),
@@ -127,6 +140,20 @@ const TelemetryIngestSchema = z.object({
         recorded_at: z.string().datetime(),
         quality_score: z.number().min(0).max(1).default(1),
     })).min(1).max(Number(process.env.VETIOS_TELEMETRY_BATCH_MAX_READINGS ?? 500)),
+});
+
+const TeleconsultScoreSchema = z.object({
+    session_id: z.string().uuid(),
+    description: z.string().min(1).max(4000).optional(),
+    symptom_codes: z.array(z.enum(SYMPTOM_CODES)).default([]),
+    vitals: z.object({
+        temp_c: z.number().min(25).max(45).optional(),
+        hr_bpm: z.number().int().min(10).max(360).optional(),
+        rr_bpm: z.number().int().min(1).max(220).optional(),
+        mm_color: z.enum(MM_COLORS).optional(),
+        cap_refill_s: z.number().min(0).max(10).optional(),
+    }).default({}),
+    region_code: z.string().min(2).max(24).optional(),
 });
 
 export async function handleIntakePost(req: Request) {
@@ -359,14 +386,38 @@ export async function handlePharmaSignalsGet(req: Request) {
     const severity = url.searchParams.get('severity');
     const from = url.searchParams.get('from');
     const to = url.searchParams.get('to');
+    if (species && !matchesOptionalFilter(species, licensee.speciesFilter)) {
+        return jsonOk({
+            signals: [],
+            aggregate: summarizeAdverseSignals([]),
+            licensee_id: licensee.licenseeId,
+            access_scope: { species_filter: licensee.speciesFilter, drug_class_filter: licensee.drugClassFilter },
+        }, requestId, startTime);
+    }
+    if (drugClass && !matchesOptionalFilter(drugClass, licensee.drugClassFilter)) {
+        return jsonOk({
+            signals: [],
+            aggregate: summarizeAdverseSignals([]),
+            licensee_id: licensee.licenseeId,
+            access_scope: { species_filter: licensee.speciesFilter, drug_class_filter: licensee.drugClassFilter },
+        }, requestId, startTime);
+    }
     if (species) query = query.eq('species', species);
+    else if (licensee.speciesFilter.length > 0) query = query.in('species', licensee.speciesFilter);
     if (drugClass) query = query.eq('drug_class', drugClass);
+    else if (licensee.drugClassFilter.length > 0) query = query.in('drug_class', licensee.drugClassFilter);
     if (severity) query = query.eq('outcome_severity', severity);
     if (from) query = query.gte('created_at', from);
     if (to) query = query.lte('created_at', to);
     const { data, error } = await query;
     if (error) return jsonError('pharma_signal_query_failed', error.message, 500, requestId, startTime);
-    return jsonOk({ signals: data ?? [], licensee_id: licensee.licenseeId }, requestId, startTime);
+    const signals = (data ?? []) as Array<Record<string, unknown>>;
+    return jsonOk({
+        signals,
+        aggregate: summarizeAdverseSignals(signals),
+        licensee_id: licensee.licenseeId,
+        access_scope: { species_filter: licensee.speciesFilter, drug_class_filter: licensee.drugClassFilter },
+    }, requestId, startTime);
 }
 
 export async function handlePharmaWebhookSubscribePost(req: Request) {
@@ -463,6 +514,24 @@ export async function handleLabRecommendPost(req: Request) {
     if (parsed instanceof NextResponse) return parsed;
     const recommendation = await createLabRecommendationForInference(supabase, auth.actor.tenantId, parsed.inference_event_id);
     return jsonOk(recommendation, requestId, startTime, 201);
+}
+
+export async function handleLabOrderPost(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 90, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+    const { requestId, startTime } = guard;
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, { client: supabase, requiredScopes: ['inference:write'] });
+    if (auth.error || !auth.actor) return jsonError('unauthorized', auth.error?.message ?? 'Unauthorized', auth.error?.status ?? 401, requestId, startTime);
+    const parsed = await parseBody(req, LabOrderSchema, requestId, startTime);
+    if (parsed instanceof NextResponse) return parsed;
+    const order = await orderLabRecommendation(supabase, auth.actor.tenantId, {
+        labRecommendationId: parsed.lab_recommendation_id,
+        vendor: parsed.vendor ?? null,
+        orderedBy: parsed.ordered_by ?? auth.actor.userId ?? 'vetios_operator',
+        mode: 'manual',
+    });
+    return jsonOk(order, requestId, startTime, 201);
 }
 
 export async function handleLabResultPost(req: Request) {
@@ -575,7 +644,7 @@ export async function handleLabRecommendationsGet(req: Request, inferenceEventId
     if (auth.error || !auth.actor) return jsonError('unauthorized', auth.error?.message ?? 'Unauthorized', auth.error?.status ?? 401, requestId, startTime);
     const { data, error } = await supabase
         .from('lab_recommendations')
-        .select('id,recommended_panels,agent_confidence,status,created_at')
+        .select('id,recommended_panels,agent_confidence,status,order_status,ordering_mode,ordered_at,order_payload,created_at')
         .eq('tenant_id', auth.actor.tenantId)
         .eq('inference_event_id', inferenceEventId)
         .order('created_at', { ascending: false });
@@ -689,6 +758,130 @@ export async function handleTeleconsultExtractPost(req: Request) {
     return jsonOk({ symptom_codes: symptomCodes, raw_text_discarded: true }, requestId, startTime);
 }
 
+export async function handleTeleconsultScorePost(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 120, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+    const { requestId, startTime } = guard;
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, { client: supabase, requiredScopes: ['inference:write'] });
+    if (auth.error || !auth.actor) return jsonError('unauthorized', auth.error?.message ?? 'Unauthorized', auth.error?.status ?? 401, requestId, startTime);
+    const parsed = await parseBody(req, TeleconsultScoreSchema, requestId, startTime);
+    if (parsed instanceof NextResponse) return parsed;
+
+    const { data: session, error: sessionError } = await supabase
+        .from('intake_sessions')
+        .select('id,patient_id,species,weight_kg,age_years,presenting_symptoms,vitals,teleconsult_provider_id')
+        .eq('tenant_id', auth.actor.tenantId)
+        .eq('teleconsult_session_id', parsed.session_id)
+        .maybeSingle();
+    if (sessionError) return jsonError('teleconsult_session_lookup_failed', sessionError.message, 500, requestId, startTime);
+    if (!session) return jsonError('teleconsult_session_not_found', 'Teleconsult session was not found for this tenant.', 404, requestId, startTime);
+
+    const species = readString(session.species) ?? 'other';
+    const extractedSymptoms = parsed.description ? await extractSymptomCodes(parsed.description, species) : [];
+    const symptoms = Array.from(new Set([
+        ...readStringArray(session.presenting_symptoms),
+        ...parsed.symptom_codes,
+        ...extractedSymptoms,
+    ])).filter((symptom): symptom is (typeof SYMPTOM_CODES)[number] => SYMPTOM_CODE_SET.has(symptom));
+    const mergedVitals = {
+        ...asRecord(session.vitals),
+        ...parsed.vitals,
+    };
+    const triage = scoreTelemedicineSymptoms({
+        species,
+        symptoms,
+        description: parsed.description ?? null,
+        vitals: mergedVitals as z.infer<typeof IntakeSchema>['vitals'],
+    });
+
+    let inferenceEventId: string | null = null;
+    let inferencePayload: Record<string, unknown> | null = null;
+    if (symptoms.length > 0) {
+        inferencePayload = buildInferencePayload({
+            patient_id: String(session.patient_id),
+            species: species as z.infer<typeof IntakeSchema>['species'],
+            weight_kg: readNumber(session.weight_kg) ?? undefined,
+            age_years: readNumber(session.age_years) ?? undefined,
+            presenting_symptoms: symptoms,
+            vitals: mergedVitals as z.infer<typeof IntakeSchema>['vitals'],
+            medications_current: [],
+            imaging_study_ids: [],
+            modality: 'telemedicine',
+            teleconsult_session_id: parsed.session_id,
+            teleconsult_provider_id: readString(session.teleconsult_provider_id) ?? undefined,
+            region_code: parsed.region_code,
+        }, auth.actor.tenantId, 'teleconsult_score');
+        const inference = await callInternalInference(req, inferencePayload).catch((error) => {
+            return { error: error instanceof Error ? error.message : 'Teleconsult inference failed.' };
+        });
+        if (readString((inference as Record<string, unknown>).error)) {
+            return jsonError('teleconsult_inference_failed', readString((inference as Record<string, unknown>).error) ?? 'Teleconsult inference failed.', 502, requestId, startTime);
+        }
+        inferenceEventId = readString(inference.inference_event_id) ?? readString(inference.data?.inference_event_id);
+    }
+
+    const { data: triageEvent, error: triageError } = await supabase
+        .from('teleconsult_triage_events')
+        .insert({
+            tenant_id: auth.actor.tenantId,
+            intake_session_id: session.id,
+            patient_id: session.patient_id,
+            teleconsult_session_id: parsed.session_id,
+            species,
+            symptom_codes: symptoms,
+            vitals: mergedVitals,
+            red_flags: triage.red_flags,
+            scoring_signals: triage.scoring_signals,
+            triage_score: triage.triage_score,
+            urgency_level: triage.urgency_level,
+            disposition: triage.disposition,
+            inference_event_id: inferenceEventId,
+            description_hash: parsed.description ? hashRecord({ session_id: parsed.session_id, description: parsed.description }) : null,
+        })
+        .select('id')
+        .single();
+    if (triageError || !triageEvent) {
+        return jsonError('teleconsult_triage_persist_failed', triageError?.message ?? 'Failed to persist teleconsult triage event.', 500, requestId, startTime);
+    }
+
+    await supabase
+        .from('intake_sessions')
+        .update({
+            presenting_symptoms: symptoms,
+            vitals: mergedVitals,
+            inference_event_id: inferenceEventId,
+            status: inferenceEventId ? 'inferred' : 'pending',
+        })
+        .eq('id', session.id);
+
+    await emitMoatEvent(supabase, {
+        tenantId: auth.actor.tenantId,
+        eventName: 'teleconsult.triage_scored',
+        aggregateType: 'teleconsult_triage_event',
+        aggregateId: String(triageEvent.id),
+        payload: {
+            teleconsult_triage_event_id: triageEvent.id,
+            session_id: parsed.session_id,
+            patient_id: session.patient_id,
+            triage_score: triage.triage_score,
+            urgency_level: triage.urgency_level,
+            inference_event_id: inferenceEventId,
+            raw_text_discarded: true,
+        },
+    });
+
+    return jsonOk({
+        teleconsult_triage_event_id: triageEvent.id,
+        session_id: parsed.session_id,
+        symptom_codes: symptoms,
+        triage,
+        inference_event_id: inferenceEventId,
+        inference_requested: inferencePayload != null,
+        raw_text_discarded: true,
+    }, requestId, startTime, 201);
+}
+
 export async function handleTeleconsultStreamGet(req: Request, sessionId: string) {
     const supabase = getSupabaseServer();
     const auth = await resolveClinicalApiActor(req, { client: supabase, requiredScopes: ['inference:write'] });
@@ -784,7 +977,7 @@ export async function handleTelemetryIngestPost(req: Request) {
     const supabase = getSupabaseServer();
     const parsed = await parseBody(req, TelemetryIngestSchema, requestId, startTime);
     if (parsed instanceof NextResponse) return parsed;
-    const rows = parsed.readings.map((reading) => ({
+    const rows = parsed.readings.map((reading: z.infer<typeof TelemetryIngestSchema>['readings'][number]) => ({
         tenant_id: parsed.tenant_id,
         patient_id: parsed.patient_id,
         device_id: parsed.device_id,
@@ -797,14 +990,20 @@ export async function handleTelemetryIngestPost(req: Request) {
     const { error } = await supabase.from('telemetry_streams').insert(rows);
     if (error) return jsonError('telemetry_ingest_failed', error.message, 500, requestId, startTime);
     const anomalies = await detectTelemetryAnomalies(supabase, parsed);
+    const inference = await maybeRunTelemetryInference(supabase, requestId, parsed, anomalies);
     await emitMoatEvent(supabase, {
         tenantId: parsed.tenant_id,
         eventName: 'telemetry.ingested',
         aggregateType: 'telemetry_stream',
         aggregateId: parsed.patient_id,
-        payload: { patient_id: parsed.patient_id, readings: rows.length, anomalies: anomalies.length },
+        payload: {
+            patient_id: parsed.patient_id,
+            readings: rows.length,
+            anomalies: anomalies.length,
+            inference_event_id: inference?.inference_event_id ?? null,
+        },
     });
-    return jsonOk({ readings_ingested: rows.length, anomalies }, requestId, startTime, 201);
+    return jsonOk({ readings_ingested: rows.length, anomalies, inference }, requestId, startTime, 201);
 }
 
 export async function handleTelemetryLiveGet(req: Request, patientId: string) {
@@ -1048,14 +1247,92 @@ async function insertAdverseEventSignal(
         .select('id,signal_id')
         .single();
     if (error || !data) throw error ?? new Error('Failed to write adverse event signal.');
+    const webhookEventsEnqueued = await enqueuePharmaSignalWebhooks(supabase, {
+        adverseEventSignalId: String(data.id),
+        publicSignalId: String(data.signal_id),
+        species: input.species,
+        drugCode: input.drug_code,
+        drugClass: input.drug_class,
+        symptomCodes: input.symptom_codes,
+        outcomeSeverity: input.outcome_severity,
+        outcomeLabel: input.outcome_label,
+        timeToOnsetHours: input.time_to_onset_hours ?? null,
+    });
     await emitMoatEvent(supabase, {
         tenantId,
         eventName: 'adverse_event.signal_created',
         aggregateType: 'adverse_event_signal',
         aggregateId: String(data.id),
-        payload: { adverse_event_signal_id: data.id, signal_id: data.signal_id, drug_code: input.drug_code },
+        payload: {
+            adverse_event_signal_id: data.id,
+            signal_id: data.signal_id,
+            drug_code: input.drug_code,
+            webhook_events_enqueued: webhookEventsEnqueued,
+        },
     });
-    return { adverse_event_signal_id: data.id, signal_id: data.signal_id };
+    return { adverse_event_signal_id: data.id, signal_id: data.signal_id, webhook_events_enqueued: webhookEventsEnqueued };
+}
+
+async function enqueuePharmaSignalWebhooks(
+    supabase: SupabaseClient,
+    input: {
+        adverseEventSignalId: string;
+        publicSignalId: string;
+        species: string;
+        drugCode: string;
+        drugClass: string;
+        symptomCodes: string[];
+        outcomeSeverity: string;
+        outcomeLabel: string;
+        timeToOnsetHours: number | null;
+    },
+) {
+    const { data, error } = await supabase
+        .from('pharma_webhook_subscriptions')
+        .select('id,licensee_id,webhook_url,species_filter,drug_class_filter')
+        .eq('active', true)
+        .limit(500);
+    if (error) {
+        console.warn('[pharma] webhook subscription lookup failed:', error.message);
+        return 0;
+    }
+
+    let enqueued = 0;
+    for (const row of data ?? []) {
+        const subscription = row as Record<string, unknown>;
+        if (!matchesOptionalFilter(input.species, readStringArray(subscription.species_filter))) continue;
+        if (!matchesOptionalFilter(input.drugClass, readStringArray(subscription.drug_class_filter))) continue;
+
+        await createOutboxEvent({
+            aggregateType: 'api_webhook',
+            aggregateId: readString(subscription.id) ?? input.adverseEventSignalId,
+            eventName: 'pharma.adverse_event_signal',
+            payload: {
+                webhook_url: readString(subscription.webhook_url),
+                signal: {
+                    signal_id: input.publicSignalId,
+                    species: input.species,
+                    drug_code: input.drugCode,
+                    drug_class: input.drugClass,
+                    symptom_codes: input.symptomCodes,
+                    outcome_severity: input.outcomeSeverity,
+                    time_to_onset_hours: input.timeToOnsetHours,
+                    outcome_label: input.outcomeLabel,
+                },
+            },
+            metadata: {
+                tenant_id: 'outbox_system',
+                source: 'pharma_adr_pipeline',
+                licensee_id: readString(subscription.licensee_id),
+                subscription_id: readString(subscription.id),
+            },
+        }, supabase).then(() => {
+            enqueued += 1;
+        }).catch((fanoutError) => {
+            console.warn('[pharma] failed to enqueue ADR webhook:', fanoutError);
+        });
+    }
+    return enqueued;
 }
 
 async function createLabRecommendationForInference(supabase: SupabaseClient, tenantId: string, inferenceEventId: string) {
@@ -1100,6 +1377,21 @@ async function createLabRecommendationForInference(supabase: SupabaseClient, ten
         .select('id')
         .single();
     if (insertError || !data) throw insertError ?? new Error('Failed to write lab recommendation.');
+    const autoOrder = shouldAutoOrderLabs({
+        enabled: process.env.VETIOS_LAB_AUTO_ORDER_ENABLED === 'true',
+        agentConfidence,
+        panels,
+        threshold: Number(process.env.VETIOS_LAB_AUTO_ORDER_CONFIDENCE_THRESHOLD ?? 0.82),
+    })
+        ? await orderLabRecommendation(supabase, tenantId, {
+            labRecommendationId: String(data.id),
+            vendor: process.env.VETIOS_LAB_DEFAULT_VENDOR ?? null,
+            orderedBy: 'vetios_lab_ordering_agent',
+            mode: 'auto',
+        }).catch((error) => ({
+            order_error: error instanceof Error ? error.message : 'Auto-order failed.',
+        }))
+        : null;
     await emitMoatEvent(supabase, {
         tenantId,
         eventName: 'labs.recommended',
@@ -1107,7 +1399,78 @@ async function createLabRecommendationForInference(supabase: SupabaseClient, ten
         aggregateId: String(data.id),
         payload: { lab_recommendation_id: data.id, inference_event_id: inferenceEventId, recommended_panels: panels },
     });
-    return { lab_recommendation_id: data.id, recommended_panels: panels, agent_confidence: agentConfidence };
+    return { lab_recommendation_id: data.id, recommended_panels: panels, agent_confidence: agentConfidence, auto_order: autoOrder };
+}
+
+async function orderLabRecommendation(
+    supabase: SupabaseClient,
+    tenantId: string,
+    input: {
+        labRecommendationId: string;
+        vendor: string | null;
+        orderedBy: string;
+        mode: 'auto' | 'manual';
+    },
+) {
+    const { data: recommendation, error } = await supabase
+        .from('lab_recommendations')
+        .select('id,tenant_id,inference_event_id,patient_id,recommended_panels')
+        .eq('id', input.labRecommendationId)
+        .single();
+    if (error || !recommendation) throw error ?? new Error('Lab recommendation was not found.');
+    if (String(recommendation.tenant_id) !== tenantId) throw new Error('Lab recommendation belongs to another tenant.');
+
+    const panels = asArray(recommendation.recommended_panels)
+        .map((panel) => asRecord(panel))
+        .map((panel): LabPanelRecommendation => ({
+            panel_code: readString(panel.panel_code) ?? 'unspecified_panel',
+            rationale: readString(panel.rationale) ?? undefined,
+            priority: readString(panel.priority) ?? undefined,
+            estimated_diagnostic_lift: readNumber(panel.estimated_diagnostic_lift) ?? undefined,
+        }));
+    const orderPayload = buildLabOrderPayload({
+        recommendationId: input.labRecommendationId,
+        inferenceEventId: String(recommendation.inference_event_id),
+        patientId: readString(recommendation.patient_id),
+        panels,
+        vendor: input.vendor,
+        mode: input.mode,
+    });
+    const orderedAt = new Date().toISOString();
+
+    const { error: updateError } = await supabase
+        .from('lab_recommendations')
+        .update({
+            status: 'ordered',
+            order_status: 'pending_dispatch',
+            ordering_mode: input.mode,
+            ordered_at: orderedAt,
+            ordered_by: input.orderedBy,
+            order_payload: orderPayload,
+        })
+        .eq('id', input.labRecommendationId)
+        .eq('tenant_id', tenantId);
+    if (updateError) throw updateError;
+
+    await emitMoatEvent(supabase, {
+        tenantId,
+        eventName: 'labs.order_requested',
+        aggregateType: 'lab_order',
+        aggregateId: input.labRecommendationId,
+        payload: {
+            ...orderPayload,
+            ordered_at: orderedAt,
+            ordered_by: input.orderedBy,
+        },
+    });
+
+    return {
+        lab_recommendation_id: input.labRecommendationId,
+        order_status: 'pending_dispatch',
+        ordering_mode: input.mode,
+        ordered_at: orderedAt,
+        order_payload: orderPayload,
+    };
 }
 
 async function scanOutbreakClusters(supabase: SupabaseClient) {
@@ -1129,13 +1492,22 @@ async function scanOutbreakClusters(supabase: SupabaseClient) {
     for (const [key, group] of currentGroups.entries()) {
         const previousCount = previousGroups.get(key)?.count ?? 0;
         const velocity = previousCount === 0 ? group.count : (group.count - previousCount) / previousCount;
-        const status = velocity > alertThreshold && group.count >= Math.max(10, minCount)
-            ? 'alert'
-            : velocity > elevatedThreshold && group.count >= minCount
-                ? 'elevated'
-                : 'monitoring';
+        const status = classifyOutbreakStatus({
+            velocity,
+            count: group.count,
+            minCount,
+            elevatedThreshold,
+            alertThreshold,
+        });
         if (status === 'monitoring') continue;
+        const clusterKey = outbreakClusterKey({
+            regionCode: group.region_code,
+            species: group.species,
+            symptomSignature: group.symptom_signature,
+            suggestedDifferential: group.outcome_label,
+        });
         const row = {
+            cluster_key: clusterKey,
             region_code: group.region_code,
             species: group.species,
             symptom_signature: group.symptom_signature,
@@ -1149,6 +1521,24 @@ async function scanOutbreakClusters(supabase: SupabaseClient) {
         const { data, error } = await supabase.from('symptom_cluster_snapshots').insert(row).select('id').single();
         if (error) throw error;
         snapshots.push({ ...row, id: data.id });
+        const subscriberNotifications = await enqueueOutbreakSubscriberNotifications(supabase, {
+            snapshotId: String(data.id),
+            clusterKey,
+            regionCode: group.region_code,
+            species: group.species,
+            symptomSignature: group.symptom_signature,
+            caseCount7d: group.count,
+            previousCount7d: previousCount,
+            velocity,
+            status,
+            suggestedDifferential: group.outcome_label,
+            confidence: group.confidence,
+        });
+        await supabase
+            .from('symptom_cluster_snapshots')
+            .update({ subscriber_notifications_enqueued: subscriberNotifications })
+            .eq('id', data.id);
+        (snapshots[snapshots.length - 1] as Record<string, unknown>).subscriber_notifications_enqueued = subscriberNotifications;
         await emitMoatEvent(supabase, {
             tenantId: 'outbox_system',
             eventName: 'outbreak.snapshot_created',
@@ -1185,8 +1575,147 @@ async function scanOutbreakClusters(supabase: SupabaseClient) {
     return snapshots;
 }
 
+async function enqueueOutbreakSubscriberNotifications(
+    supabase: SupabaseClient,
+    input: {
+        snapshotId: string;
+        clusterKey: string;
+        regionCode: string;
+        species: string;
+        symptomSignature: string[];
+        caseCount7d: number;
+        previousCount7d: number;
+        velocity: number;
+        status: 'elevated' | 'alert';
+        suggestedDifferential: string | null;
+        confidence: number | null;
+    },
+) {
+    const { data, error } = await supabase
+        .from('outbreak_subscribers')
+        .select('id,organization_name,webhook_url,region_filter,species_filter')
+        .eq('active', true)
+        .limit(500);
+    if (error) {
+        console.warn('[outbreak] subscriber lookup failed:', error.message);
+        return 0;
+    }
+
+    let enqueued = 0;
+    for (const row of data ?? []) {
+        const subscriber = row as Record<string, unknown>;
+        const matches = matchesOutbreakSubscriber({
+            regionFilter: readStringArray(subscriber.region_filter),
+            speciesFilter: readStringArray(subscriber.species_filter),
+        }, {
+            regionCode: input.regionCode,
+            species: input.species,
+        });
+        if (!matches) continue;
+
+        await createOutboxEvent({
+            aggregateType: 'api_webhook',
+            aggregateId: readString(subscriber.id) ?? input.snapshotId,
+            eventName: 'outbreak.early_warning',
+            payload: {
+                webhook_url: readString(subscriber.webhook_url),
+                alert: {
+                    snapshot_id: input.snapshotId,
+                    cluster_key: input.clusterKey,
+                    region_code: input.regionCode,
+                    species: input.species,
+                    symptom_signature: input.symptomSignature,
+                    case_count_7d: input.caseCount7d,
+                    case_count_prev_7d: input.previousCount7d,
+                    velocity: input.velocity,
+                    status: input.status,
+                    suggested_differential: input.suggestedDifferential,
+                    confidence: input.confidence,
+                },
+            },
+            metadata: {
+                tenant_id: 'outbox_system',
+                source: 'outbreak_early_warning',
+                subscriber_id: readString(subscriber.id),
+                organization_name: readString(subscriber.organization_name),
+            },
+        }, supabase).then(() => {
+            enqueued += 1;
+        }).catch((fanoutError) => {
+            console.warn('[outbreak] failed to enqueue subscriber notification:', fanoutError);
+        });
+    }
+    return enqueued;
+}
+
+async function maybeRunTelemetryInference(
+    supabase: SupabaseClient,
+    requestId: string,
+    input: z.infer<typeof TelemetryIngestSchema>,
+    anomalies: Array<{
+        telemetry_anomaly_event_id: string;
+        metric_type: string;
+        anomaly_type: string;
+        severity: string;
+    }>,
+) {
+    if (!shouldTriggerTelemetryInference(anomalies)) return null;
+    const model = process.env.AI_PROVIDER_DEFAULT_MODEL ?? 'gpt-4o-mini';
+    const inputSignature = buildTelemetryInferenceSignature({
+        tenantId: input.tenant_id,
+        patientId: input.patient_id,
+        species: input.species,
+        deviceId: input.device_id,
+        deviceType: input.device_type,
+        source: 'telemetry_stream',
+        readings: input.readings,
+        anomalies,
+    });
+    if (inputSignature.symptoms.length === 0) return null;
+
+    const inference = await runInference({
+        tenantId: input.tenant_id,
+        requestId,
+        supabase,
+        model: { name: model, version: model },
+        inputSignature,
+        persist: true,
+        sourceModule: 'telemetry_stream',
+    });
+    if (inference.inference_event_id) {
+        await supabase
+            .from('telemetry_anomaly_events')
+            .update({ triggered_inference_event_id: inference.inference_event_id })
+            .in('id', anomalies.map((anomaly) => anomaly.telemetry_anomaly_event_id));
+        await emitMoatEvent(supabase, {
+            tenantId: input.tenant_id,
+            eventName: 'telemetry.inference_triggered',
+            aggregateType: 'ai_inference_event',
+            aggregateId: inference.inference_event_id,
+            payload: {
+                inference_event_id: inference.inference_event_id,
+                patient_id: input.patient_id,
+                device_id: input.device_id,
+                symptom_codes: inputSignature.symptoms,
+                anomaly_event_ids: anomalies.map((anomaly) => anomaly.telemetry_anomaly_event_id),
+            },
+        });
+    }
+    return {
+        inference_event_id: inference.inference_event_id,
+        symptom_codes: inputSignature.symptoms,
+        confidence_score: inference.data.confidence_score,
+        differentials: inference.data.differentials,
+    };
+}
+
 async function detectTelemetryAnomalies(supabase: SupabaseClient, input: z.infer<typeof TelemetryIngestSchema>) {
-    const anomalies = [];
+    const anomalies: Array<{
+        telemetry_anomaly_event_id: string;
+        metric_type: string;
+        anomaly_type: string;
+        severity: string;
+    }> = [];
     for (const reading of input.readings) {
         const anomaly = classifyTelemetryAnomaly(reading.metric_type, reading.value, input.species);
         if (!anomaly) continue;
@@ -1380,19 +1909,38 @@ async function finishCronRun(supabase: SupabaseClient, id: string, recordsProces
     });
 }
 
-async function resolveResearchLicensee(req: Request, supabase: SupabaseClient): Promise<{ ok: true; licenseeId: string } | { ok: false; status: number; message: string }> {
+async function resolveResearchLicensee(req: Request, supabase: SupabaseClient): Promise<{
+    ok: true;
+    licenseeId: string;
+    speciesFilter: string[];
+    drugClassFilter: string[];
+} | { ok: false; status: number; message: string }> {
     const apiKey = extractPresentedKey(req);
     const secret = process.env.API_KEY_SIGNING_SECRET;
     if (!apiKey || !secret) return { ok: false, status: 401, message: 'Missing pharma API key.' };
     const apiKeyHash = createHmac('sha256', secret).update(apiKey).digest('hex');
     const { data, error } = await supabase
         .from('pharma_licensees')
-        .select('id')
+        .select('id,species_filter,drug_class_filter')
         .eq('api_key_hash', apiKeyHash)
         .eq('active', true)
         .maybeSingle();
-    if (!error && data?.id) return { ok: true, licenseeId: String(data.id) };
-    if (apiKey === secret) return { ok: true, licenseeId: 'internal-research-license' };
+    if (!error && data?.id) {
+        return {
+            ok: true,
+            licenseeId: String(data.id),
+            speciesFilter: readStringArray((data as Record<string, unknown>).species_filter),
+            drugClassFilter: readStringArray((data as Record<string, unknown>).drug_class_filter),
+        };
+    }
+    if (apiKey === secret) {
+        return {
+            ok: true,
+            licenseeId: 'internal-research-license',
+            speciesFilter: [],
+            drugClassFilter: [],
+        };
+    }
     return { ok: false, status: 403, message: 'Invalid or inactive pharma licensee key.' };
 }
 
@@ -1596,4 +2144,6 @@ export const __moatTest = {
     classifyTelemetryAnomaly,
     extractSymptomCodes,
     groupPopulationSignals,
+    matchesOptionalFilter,
+    summarizeAdverseSignals,
 };

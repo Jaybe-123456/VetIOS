@@ -27,6 +27,12 @@ export interface RunInferenceOptions {
     requestId: string;
     supabase: SupabaseClient;
     persist?: boolean;
+    sourceModule?: string | null;
+    simulationId?: string | null;
+    isSynthetic?: boolean;
+    simulationAgentIndex?: number | null;
+    simulationRequestIndex?: number | null;
+    parentInferenceEventId?: string | null;
 }
 
 export interface RunInferenceResult {
@@ -74,6 +80,12 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
             cire,
             latencyMs,
             outputPayload,
+            sourceModule: options.sourceModule,
+            simulationId: options.simulationId,
+            isSynthetic: options.isSynthetic,
+            simulationAgentIndex: options.simulationAgentIndex,
+            simulationRequestIndex: options.simulationRequestIndex,
+            parentInferenceEventId: options.parentInferenceEventId,
         });
 
     return {
@@ -183,9 +195,15 @@ async function persistInferenceEvent(
         cire: CIRESignals;
         latencyMs: number;
         outputPayload: Record<string, unknown>;
+        sourceModule?: string | null;
+        simulationId?: string | null;
+        isSynthetic?: boolean;
+        simulationAgentIndex?: number | null;
+        simulationRequestIndex?: number | null;
+        parentInferenceEventId?: string | null;
     },
 ): Promise<string> {
-    const enrichedOutputPayload = {
+    const enrichedOutputPayload: Record<string, unknown> = {
         ...input.outputPayload,
         calibration: {
             adjusted: true,
@@ -200,49 +218,118 @@ async function persistInferenceEvent(
         differentials: input.differentials,
     };
 
-    const { data, error } = await supabase
-        .from('ai_inference_events')
-        .insert({
-            tenant_id: input.tenantId,
-            input_signature: input.inputSignature,
-            model_name: input.model.name,
-            model_version: input.model.version,
-            confidence_score: input.confidenceScore,
-            inference_latency_ms: input.latencyMs,
-            output_payload: enrichedOutputPayload,
-            uncertainty_metrics: uncertaintyMetrics,
-        })
-        .select('id')
-        .single();
+    const metadata = asRecord(input.inputSignature.metadata);
+    const simulationId = input.simulationId ?? readText(metadata.simulation_id);
+    const isSynthetic = input.isSynthetic ?? (metadata.is_synthetic === true || Boolean(simulationId));
+    const topDiagnosis = input.differentials[0]?.label ?? null;
+    const contradiction = asRecord(enrichedOutputPayload.contradiction_analysis);
+    const contradictionScore = readNumber(enrichedOutputPayload.contradiction_score)
+        ?? readNumber(contradiction.contradiction_score);
 
-    if (error && !isMissingColumnError(error.message)) {
-        throw new Error(`Failed to persist inference event: ${error.message}`);
+    const payload: Record<string, unknown> = {
+        tenant_id: input.tenantId,
+        input_signature: input.inputSignature,
+        model_name: input.model.name,
+        model_version: input.model.version,
+        confidence_score: input.confidenceScore,
+        inference_latency_ms: input.latencyMs,
+        output_payload: enrichedOutputPayload,
+        uncertainty_metrics: uncertaintyMetrics,
+        source_module: input.sourceModule ?? (simulationId ? 'simulation_api' : 'clinical_api'),
+        species: readText(input.inputSignature.species),
+        top_diagnosis: topDiagnosis,
+        contradiction_score: contradictionScore,
+        region: readText(input.inputSignature.region) ?? readText(metadata.region) ?? readText(metadata.region_code),
+        parent_inference_event_id: input.parentInferenceEventId ?? readText(metadata.parent_inference_event_id),
+    };
+
+    if (simulationId) {
+        payload.simulation_id = simulationId;
+        payload.is_synthetic = isSynthetic;
+        payload.simulation_agent_index = input.simulationAgentIndex ?? readNumber(metadata.simulation_agent_index);
+        payload.simulation_request_index = input.simulationRequestIndex
+            ?? readNumber(metadata.simulation_request_index)
+            ?? readNumber(metadata.simulation_step);
     }
 
-    if (!error && data?.id) {
-        return String(data.id);
+    return insertInferenceEvent(supabase, payload, {
+        requireSimulationProvenance: Boolean(simulationId),
+    });
+}
+
+const OPTIONAL_INFERENCE_COLUMNS = [
+    'source_module',
+    'species',
+    'top_diagnosis',
+    'contradiction_score',
+    'region',
+    'parent_inference_event_id',
+    'simulation_id',
+    'is_synthetic',
+    'simulation_agent_index',
+    'simulation_request_index',
+] as const;
+
+async function insertInferenceEvent(
+    supabase: SupabaseClient,
+    payload: Record<string, unknown>,
+    options: { requireSimulationProvenance: boolean },
+): Promise<string> {
+    const requiredSimulationColumns = new Set(options.requireSimulationProvenance
+        ? ['simulation_id', 'is_synthetic']
+        : []);
+    const optionalColumns = new Set<string>(OPTIONAL_INFERENCE_COLUMNS);
+    let nextPayload = { ...payload };
+
+    for (;;) {
+        const { data, error } = await supabase
+            .from('ai_inference_events')
+            .insert(nextPayload)
+            .select('id')
+            .single();
+
+        if (!error && data?.id) {
+            return String(data.id);
+        }
+
+        if (!error) {
+            throw new Error('Failed to persist inference event: Unknown error');
+        }
+
+        const missingColumn = resolveMissingColumn(error.message ?? '', nextPayload, optionalColumns);
+        if (!missingColumn) {
+            throw new Error(`Failed to persist inference event: ${error.message}`);
+        }
+
+        if (requiredSimulationColumns.has(missingColumn)) {
+            throw new Error(
+                `Failed to persist simulation provenance: ai_inference_events.${missingColumn} is missing. Apply the simulation closed-loop migration before running synthetic inference.`,
+            );
+        }
+
+        nextPayload = { ...nextPayload };
+        delete nextPayload[missingColumn];
     }
+}
 
-    const fallbackInsert = await supabase
-        .from('ai_inference_events')
-        .insert({
-            tenant_id: input.tenantId,
-            input_signature: input.inputSignature,
-            model_name: input.model.name,
-            model_version: input.model.version,
-            confidence_score: input.confidenceScore,
-            inference_latency_ms: input.latencyMs,
-            output_payload: enrichedOutputPayload,
-            uncertainty_metrics: uncertaintyMetrics,
-        })
-        .select('id')
-        .single();
-
-    if (fallbackInsert.error || !fallbackInsert.data?.id) {
-        throw new Error(`Failed to persist inference event: ${fallbackInsert.error?.message ?? 'Unknown error'}`);
+function resolveMissingColumn(
+    message: string,
+    payload: Record<string, unknown>,
+    optionalColumns: Set<string>,
+) {
+    if (!isMissingColumnError(message)) return null;
+    for (const column of Object.keys(payload)) {
+        if (!optionalColumns.has(column)) continue;
+        if (
+            message.includes(`'${column}' column`) ||
+            message.includes(`column ai_inference_events.${column}`) ||
+            message.includes(`column public.ai_inference_events.${column}`) ||
+            message.includes(`'${column}'`)
+        ) {
+            return column;
+        }
     }
-
-    return String(fallbackInsert.data.id);
+    return null;
 }
 
 function buildOutputPayload(

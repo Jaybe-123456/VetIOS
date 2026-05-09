@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
-import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { resolveClinicalApiActor, type ClinicalApiActor } from '@/lib/auth/machineAuth';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { checkRateLimit } from '@/lib/inference-rate-limit';
 import { runInference } from '@/lib/vetios-inference';
@@ -104,6 +104,18 @@ export async function POST(req: Request) {
     }
 
     try {
+        const simulationContext = resolveSimulationContext(
+            req,
+            parsed.data.input.input_signature as InputSignature,
+            auth.actor,
+        );
+        if (!simulationContext.ok) {
+            return NextResponse.json(
+                { error: simulationContext.code, detail: simulationContext.message },
+                { status: simulationContext.status },
+            );
+        }
+
         const result = await runInference({
             tenantId,
             requestId,
@@ -111,6 +123,12 @@ export async function POST(req: Request) {
             model: parsed.data.model,
             inputSignature: parsed.data.input.input_signature as InputSignature,
             persist: true,
+            sourceModule: simulationContext.simulationId ? 'simulation_api' : 'clinical_api',
+            simulationId: simulationContext.simulationId,
+            isSynthetic: simulationContext.isSynthetic,
+            simulationAgentIndex: simulationContext.agentIndex,
+            simulationRequestIndex: simulationContext.requestIndex,
+            parentInferenceEventId: simulationContext.parentInferenceEventId,
         });
 
         const response = NextResponse.json({
@@ -142,6 +160,92 @@ export async function POST(req: Request) {
             { status: 502 },
         );
     }
+}
+
+type SimulationContext =
+    | {
+        ok: true;
+        simulationId: string | null;
+        isSynthetic: boolean;
+        agentIndex: number | null;
+        requestIndex: number | null;
+        parentInferenceEventId: string | null;
+    }
+    | { ok: false; status: number; code: string; message: string };
+
+function resolveSimulationContext(
+    req: Request,
+    inputSignature: InputSignature,
+    actor: ClinicalApiActor,
+): SimulationContext {
+    const metadata = asRecord(inputSignature.metadata);
+    const headerSimulationId = readText(req.headers.get('x-simulation-run-id'))
+        ?? readText(req.headers.get('x-vetios-simulation-id'));
+    const metadataSimulationId = readText(metadata.simulation_id);
+    const simulationId = headerSimulationId ?? metadataSimulationId;
+    const isSynthetic = metadata.is_synthetic === true || Boolean(simulationId);
+
+    if (simulationId && !isUuid(simulationId)) {
+        return {
+            ok: false,
+            status: 400,
+            code: 'invalid_simulation_id',
+            message: 'simulation_id must be a UUID.',
+        };
+    }
+
+    if (isSynthetic && !simulationId) {
+        return {
+            ok: false,
+            status: 400,
+            code: 'simulation_id_required',
+            message: 'Synthetic inference requests must include X-Simulation-Run-Id or metadata.simulation_id.',
+        };
+    }
+
+    if (simulationId && !actorHasScope(actor, 'simulation:write')) {
+        return {
+            ok: false,
+            status: 403,
+            code: 'simulation_scope_required',
+            message: 'Simulation-linked inference requires simulation:write scope.',
+        };
+    }
+
+    return {
+        ok: true,
+        simulationId: simulationId ?? null,
+        isSynthetic,
+        agentIndex: readNumber(metadata.simulation_agent_index),
+        requestIndex: readNumber(metadata.simulation_request_index) ?? readNumber(metadata.simulation_step),
+        parentInferenceEventId: readText(metadata.parent_inference_event_id),
+    };
+}
+
+function actorHasScope(actor: ClinicalApiActor, scope: string) {
+    const scopes = actor.scopes as readonly string[];
+    return scopes.includes('*') || scopes.includes(scope);
+}
+
+function isUuid(value: string) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function readText(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
 
 function formatZodErrors(error: z.ZodError): string {

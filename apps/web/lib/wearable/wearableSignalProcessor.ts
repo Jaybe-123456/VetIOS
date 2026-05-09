@@ -21,6 +21,8 @@
 
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { getVKG } from '@/lib/vkg/veterinaryKnowledgeGraph';
+import { runInference } from '@/lib/vetios-inference';
+import { buildTelemetryInferenceSignature } from '@/lib/moat/telemetryInference';
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -54,6 +56,7 @@ export interface AnomalyAssessment {
   alertTitle: string | null;
   alertDescription: string | null;
   recommendedActions: string[];
+  inferenceEventId: string | null;
 }
 
 // ─── Vital → VKG symptom mapping ─────────────────────────────
@@ -175,6 +178,7 @@ export class WearableSignalProcessor {
         isAnomalous: false, severity: null, triggeredVitals: [],
         zScores, maxZScore, inferredSymptoms: [], vkgDifferentials: [],
         alertTitle: null, alertDescription: null, recommendedActions: [],
+        inferenceEventId: null,
       };
     }
 
@@ -191,7 +195,12 @@ export class WearableSignalProcessor {
       reading, triggeredVitals, zScores, severity, vkgDifferentials
     );
 
-    // Step 7: Persist alert (non-blocking)
+    // Step 7: Run durable telemetry inference and persist the alert.
+    const inferenceEventId = await this.runAnomalyInference(reading, triggeredVitals, zScores, severity)
+      .catch((err) => {
+        console.error('[WearableSignalProcessor] runAnomalyInference failed:', err);
+        return null;
+      });
     const readingId = (savedReading as Record<string, unknown> | null)?.id as string | null;
     void this.persistAlert({
       tenantId: reading.tenantId,
@@ -208,6 +217,7 @@ export class WearableSignalProcessor {
       description,
       recommendedActions: actions,
       readingId,
+      inferenceEventId,
     });
 
     // Step 8: Update last_reading_at on device registration (non-blocking)
@@ -228,6 +238,7 @@ export class WearableSignalProcessor {
       alertTitle: title,
       alertDescription: description,
       recommendedActions: actions,
+      inferenceEventId,
     };
   }
 
@@ -380,13 +391,60 @@ export class WearableSignalProcessor {
     return { title, description, actions: actions.slice(0, 4) };
   }
 
+  private async runAnomalyInference(
+    reading: NormalisedReading,
+    triggeredVitals: string[],
+    zScores: Record<string, number>,
+    severity: AnomalySeverity
+  ): Promise<string | null> {
+    const metricMap: Record<string, string> = {
+      heart_rate: 'heart_rate_bpm',
+      temperature: 'temperature_c',
+      respiratory_rate: 'respiratory_rate_bpm',
+      activity_score: 'activity_score',
+    };
+    const anomalies = triggeredVitals.map((vital) => ({
+      metric_type: metricMap[vital] ?? vital,
+      anomaly_type: (zScores[vital] ?? 0) < 0 ? 'low' : 'high',
+      severity,
+    }));
+    const readings = [
+      reading.heartRate == null ? null : { metric_type: 'heart_rate_bpm', value: reading.heartRate, recorded_at: reading.recordedAt },
+      reading.temperature == null ? null : { metric_type: 'temperature_c', value: reading.temperature, recorded_at: reading.recordedAt },
+      reading.respiratoryRate == null ? null : { metric_type: 'respiratory_rate_bpm', value: reading.respiratoryRate, recorded_at: reading.recordedAt },
+      reading.activityScore == null ? null : { metric_type: 'activity_score', value: reading.activityScore, recorded_at: reading.recordedAt },
+    ].filter((entry): entry is { metric_type: string; value: number; recorded_at: string } => entry !== null);
+    const inputSignature = buildTelemetryInferenceSignature({
+      tenantId: reading.tenantId,
+      patientId: reading.patientId,
+      species: reading.species,
+      deviceId: reading.deviceId,
+      deviceType: reading.deviceType,
+      source: 'wearable_passive_signal',
+      readings,
+      anomalies,
+    });
+    if (inputSignature.symptoms.length === 0) return null;
+    const model = process.env.AI_PROVIDER_DEFAULT_MODEL ?? 'gpt-4o-mini';
+    const inference = await runInference({
+      tenantId: reading.tenantId,
+      requestId: `wearable_${Date.now()}`,
+      supabase: this.supabase,
+      model: { name: model, version: model },
+      inputSignature,
+      persist: true,
+      sourceModule: 'wearable_passive_signal',
+    });
+    return inference.inference_event_id;
+  }
+
   private async persistAlert(input: {
     tenantId: string; patientId: string; deviceId: string;
     species: string; region: string | null; triggeredVitals: string[];
     severity: AnomalySeverity; maxZScore: number; inferredSymptoms: string[];
     vkgDifferentials: Array<{ diagnosis: string; score: number }>;
     title: string; description: string; recommendedActions: string[];
-    readingId: string | null;
+    readingId: string | null; inferenceEventId: string | null;
   }): Promise<void> {
     try {
       await this.supabase.from('vital_anomaly_alerts').insert({
@@ -404,6 +462,7 @@ export class WearableSignalProcessor {
         description: input.description,
         recommended_actions: input.recommendedActions,
         reading_id: input.readingId,
+        inference_event_id: input.inferenceEventId,
         created_at: new Date().toISOString(),
       });
     } catch (err) {

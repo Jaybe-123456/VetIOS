@@ -112,8 +112,10 @@ export async function POST(req: Request) {
             summary,
             candidateSource: explicitDrugCount > 0 ? 'explicit_response' : pharmacos.total_drugs > 0 ? 'condition_rules' : 'none',
             validation: validation.valid ? { valid: true } : validation,
-            structured_drug_cards: structuredDrugPanel?.cards ?? [],
-            structured_warnings: structuredDrugPanel?.warnings ?? [],
+            structured_drug_cards: structuredDrugPanel?.response.cards ?? [],
+            structured_warnings: structuredDrugPanel?.response.warnings ?? [],
+            structured_formulary_source: structuredDrugPanel?.formularySource ?? 'fallback_formulary',
+            structured_interaction_source: structuredDrugPanel?.interactionSource ?? 'fallback_interactions',
         });
     } catch (error) {
         const fallbackSpecies = detectSpeciesFromTexts([]);
@@ -172,26 +174,38 @@ async function buildStructuredDrugPanel(input: {
     try {
         const supabase = getSupabaseServer();
         const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_API_KEY;
-        return await buildPharmacOSReasoningResponse({
+        const formularyRecords = await loadFormularyRecordsFromSupabase(supabase as never);
+        const interactionRecords = await loadInteractionRecordsFromSupabase(supabase as never);
+        const response = await buildPharmacOSReasoningResponse({
             query: input.query,
             species: input.species,
             weight_kg: input.weightKg,
             indication: input.indication,
             max_candidates: Number(process.env.VETIOS_PHARMACOS_MAX_DRUG_CANDIDATES ?? 6),
         }, {
-            fetchFormularyRecords: () => loadFormularyRecordsFromSupabase(supabase as never),
-            fetchInteractions: () => loadInteractionRecordsFromSupabase(supabase as never),
+            fetchFormularyRecords: async () => formularyRecords,
+            fetchInteractions: async () => interactionRecords,
             generateCommentary: apiKey
                 ? (commentaryInput) => generateAnthropicDrugCommentary(commentaryInput, apiKey)
                 : undefined,
         });
+        return {
+            response,
+            formularySource: formularyRecords.length > 0 ? 'drug_formulary' : 'fallback_formulary',
+            interactionSource: interactionRecords.length > 0 ? 'drug_interactions' : 'fallback_interactions',
+        };
     } catch {
-        return buildPharmacOSReasoningResponse({
+        const response = await buildPharmacOSReasoningResponse({
             query: input.query,
             species: input.species,
             weight_kg: input.weightKg,
             indication: input.indication,
             max_candidates: Number(process.env.VETIOS_PHARMACOS_MAX_DRUG_CANDIDATES ?? 6),
         });
+        return {
+            response,
+            formularySource: 'fallback_formulary',
+            interactionSource: 'fallback_interactions',
+        };
     }
 }

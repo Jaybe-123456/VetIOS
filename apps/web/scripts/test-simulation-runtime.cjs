@@ -108,6 +108,14 @@ exports.logInference = async function(client, input) {
         input_signature: input.input_signature,
         model_name: input.model_name,
         model_version: input.model_version,
+        source_module: input.source_module,
+        output_payload: input.output_payload,
+        confidence_score: input.confidence_score,
+        inference_latency_ms: input.inference_latency_ms,
+        simulation_id: input.simulation_id,
+        is_synthetic: input.is_synthetic,
+        simulation_agent_index: input.simulation_agent_index,
+        simulation_request_index: input.simulation_request_index,
         created_at: new Date().toISOString(),
     });
     return input.id;
@@ -455,6 +463,10 @@ async function main() {
         assert.equal(scenarioLoadDone.summary.success_rate, 100, 'Scenario load should report successful mock responses.');
         assert.ok(client.tables.platform_telemetry.length >= scenarioLoadDone.total, 'Scenario load should emit simulation telemetry records.');
         assert.ok(client.tables.simulation_events.some((entry) => entry.simulation_id === scenarioLoad.id && entry.event_type === 'request_complete'), 'Scenario load should persist request_complete events.');
+        const scenarioInferenceRows = client.tables.ai_inference_events.filter((entry) => entry.simulation_id === scenarioLoad.id);
+        assert.equal(scenarioInferenceRows.length, scenarioLoadDone.total, 'Scenario load should persist one linked inference row per request.');
+        assert.ok(scenarioInferenceRows.every((entry) => entry.is_synthetic === true), 'Scenario load inference rows should be marked synthetic.');
+        assert.ok(scenarioInferenceRows.every((entry) => typeof entry.simulation_request_index === 'number'), 'Scenario load inference rows should preserve request indexes.');
 
         const adversarial = await startSimulationRun(client, {
             actor,

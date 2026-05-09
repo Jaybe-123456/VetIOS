@@ -10,6 +10,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { logLearningPromotionDecision } from '@/lib/learningEngine/auditLogger';
 import { applyPromotionDecisionToRegistry } from '@/lib/learningEngine/modelRegistryConnector';
+import { evaluateModelPromotionGate, listCandidateRegressionRuns } from '@/lib/learningEngine/promotionGate';
 import { createSupabaseLearningEngineStore } from '@/lib/learningEngine/supabaseStore';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
@@ -59,6 +60,38 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Candidate model version not found in registry', request_id: requestId }, { status: 404 });
     }
 
+    const [benchmarkReports, calibrationReports, regressionRuns] = await Promise.all([
+        store.listBenchmarkReports(actor.tenantId, 250),
+        store.listCalibrationReports(actor.tenantId, 250),
+        listCandidateRegressionRuns(adminClient, actor.tenantId, body.data.candidate_model_version),
+    ]);
+    const promotionGate = evaluateModelPromotionGate({
+        candidateModelVersion: body.data.candidate_model_version,
+        targetEntries,
+        benchmarkReports,
+        calibrationReports,
+        regressionRuns,
+    });
+
+    if (!promotionGate.allowed) {
+        await logLearningPromotionDecision(store, {
+            tenantId: actor.tenantId,
+            candidateModelVersion: body.data.candidate_model_version,
+            championModelVersion: null,
+            decision: 'reject',
+            reasons: promotionGate.blockers,
+        });
+
+        return NextResponse.json({
+            error: 'promotion_gate_failed',
+            message: 'Candidate model cannot be promoted until benchmark, calibration, adversarial, and regression gates pass.',
+            blockers: promotionGate.blockers,
+            warnings: promotionGate.warnings,
+            evidence: promotionGate.evidence,
+            request_id: requestId,
+        }, { status: 409 });
+    }
+
     const updated = await applyPromotionDecisionToRegistry(
         store,
         actor.tenantId,
@@ -71,11 +104,12 @@ export async function POST(req: Request) {
         candidateModelVersion: body.data.candidate_model_version,
         championModelVersion: null,
         decision: 'promote',
-        reasons: ['Manual promote requested through Learning Engine API.'],
+        reasons: ['Manual promote requested through Learning Engine API after promotion gates passed.'],
     });
 
     const response = NextResponse.json({
         promoted_models: updated,
+        promotion_gate: promotionGate,
         authenticated_user_id: actor.userId,
         request_id: requestId,
     });

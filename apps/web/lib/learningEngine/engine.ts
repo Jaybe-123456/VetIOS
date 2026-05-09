@@ -131,6 +131,7 @@ export async function runLearningCycle(
                 learningCycleId: cycle.id,
                 benchmarkSummary,
                 calibrationReport,
+                adversarialReport,
                 registeredModels,
             });
             if (selectionDecision) {
@@ -242,6 +243,7 @@ async function persistReports(
         learningCycleId: string;
         benchmarkSummary: ReturnType<typeof runBenchmarkSuite> | null;
         calibrationReport: ReturnType<typeof buildCalibrationReport> | null;
+        adversarialReport: ReturnType<typeof runAdversarialEvaluation> | null;
         registeredModels: Awaited<ReturnType<typeof registerCandidateModels>>;
     },
 ) {
@@ -278,6 +280,20 @@ async function persistReports(
             report_payload: toRecord(family),
             summary_score: family.pass ? 1 : 0,
             pass_status: family.pass ? 'pass' : 'fail',
+        });
+    }
+
+    if (input.adversarialReport) {
+        const modelRegistryId = diagnosisRegistry?.id ?? severityRegistry?.id ?? null;
+        await store.createBenchmarkReport({
+            tenant_id: input.tenantId,
+            learning_cycle_id: input.learningCycleId,
+            model_registry_id: modelRegistryId,
+            benchmark_family: 'adversarial_safety',
+            task_type: 'safety',
+            report_payload: toRecord(input.adversarialReport),
+            summary_score: input.adversarialReport.pass ? 1 : 0,
+            pass_status: input.adversarialReport.pass ? 'pass' : 'fail',
         });
     }
 }

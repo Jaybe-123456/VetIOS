@@ -222,7 +222,7 @@ async function loadRecords(fetchRecords?: () => Promise<DrugFormularyRecord[]>):
 async function loadInteractions(fetchInteractions?: () => Promise<DrugInteractionRecord[]>): Promise<DrugInteractionRecord[]> {
     try {
         const interactions = await fetchInteractions?.();
-        if (interactions?.length) return [...FALLBACK_INTERACTIONS, ...interactions];
+        if (interactions?.length) return interactions;
     } catch {
         return FALLBACK_INTERACTIONS;
     }
@@ -715,7 +715,7 @@ const BASE_ORGAN_ADJUSTMENTS: OrganAdjustments = {
     },
 };
 
-const FALLBACK_FORMULARY: DrugFormularyRecord[] = [
+export const FALLBACK_FORMULARY: DrugFormularyRecord[] = [
     {
         drug_name: 'Flunixin meglumine',
         brand_names: ['Banamine'],
@@ -922,7 +922,7 @@ const FALLBACK_FORMULARY: DrugFormularyRecord[] = [
     },
 ];
 
-const FALLBACK_INTERACTIONS: DrugInteractionRecord[] = [
+export const FALLBACK_INTERACTIONS: DrugInteractionRecord[] = [
     {
         drug_a_name: 'Flunixin meglumine',
         drug_b_name: 'Buprenorphine',

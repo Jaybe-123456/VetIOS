@@ -563,8 +563,8 @@ async function searchCuratedImages(
             .limit(4);
         if (error || !data?.length) return [];
         return data.map((row) => {
-            const thumb = supabase.storage.from(bucket).getPublicUrl(String(row.thumbnail_path)).data.publicUrl;
-            const full = supabase.storage.from(bucket).getPublicUrl(String(row.storage_path)).data.publicUrl;
+            const thumb = resolveCuratedImageUrl(supabase, bucket, String(row.thumbnail_path));
+            const full = resolveCuratedImageUrl(supabase, bucket, String(row.storage_path));
             return {
                 title: String(row.caption ?? finding.label),
                 thumbnailUrl: thumb,
@@ -577,6 +577,15 @@ async function searchCuratedImages(
     } catch {
         return [];
     }
+}
+
+function resolveCuratedImageUrl(
+    supabase: ReturnType<typeof getSupabaseServer>,
+    bucket: string,
+    path: string,
+) {
+    if (/^https?:\/\//i.test(path)) return path;
+    return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
 
 async function searchPmcFigureImages(query: string): Promise<ReferenceImage[]> {

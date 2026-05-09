@@ -373,4 +373,65 @@ describe('clinical inference engine deep upgrade', () => {
         expect(result.output_payload.multisystem_assessment).toBeTruthy();
         expect(result.data.differentials[0]?.label).not.toBe('Unknown');
     });
+
+    it('persists synthetic inference provenance when simulation context is supplied', async () => {
+        const inserted: Array<Record<string, unknown>> = [];
+        const supabase = {
+            from: (table: string) => {
+                if (table === 'label_calibration') {
+                    return {
+                        select: () => ({
+                            eq: () => ({
+                                in: () => Promise.resolve({ data: [], error: null }),
+                            }),
+                        }),
+                    };
+                }
+
+                if (table === 'ai_inference_events') {
+                    return {
+                        insert: (payload: Record<string, unknown>) => {
+                            inserted.push(payload);
+                            return {
+                                select: () => ({
+                                    single: () => Promise.resolve({ data: { id: '11111111-1111-4111-8111-111111111111' }, error: null }),
+                                }),
+                            };
+                        },
+                    };
+                }
+
+                throw new Error(`Unexpected table ${table}`);
+            },
+        } as any;
+
+        const result = await runInference({
+            tenantId: 'tenant_test',
+            requestId: 'request_test',
+            supabase,
+            persist: true,
+            model: { name: 'clinical-engine', version: 'test' },
+            simulationId: '22222222-2222-4222-8222-222222222222',
+            isSynthetic: true,
+            simulationRequestIndex: 3,
+            sourceModule: 'legacy_simulate',
+            inputSignature: {
+                species: 'canine',
+                symptoms: ['vomiting', 'lethargy'],
+                metadata: {
+                    simulation_id: '22222222-2222-4222-8222-222222222222',
+                    simulation_step: 3,
+                    is_synthetic: true,
+                },
+            },
+        });
+
+        expect(result.inference_event_id).toBe('11111111-1111-4111-8111-111111111111');
+        expect(inserted[0]).toMatchObject({
+            simulation_id: '22222222-2222-4222-8222-222222222222',
+            is_synthetic: true,
+            simulation_request_index: 3,
+            source_module: 'legacy_simulate',
+        });
+    });
 });

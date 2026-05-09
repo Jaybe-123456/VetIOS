@@ -64,15 +64,36 @@ export async function POST(req: Request) {
     const confidenceHistory: number[] = [];
     const variants: InputSignature[] = [];
     const results = [];
+    const simulationRun = await createSimulationRun(supabase, {
+        tenantId,
+        steps: body.steps,
+        mode: body.mode,
+        model,
+        baseCase: body.base_case,
+    });
+
+    if (!simulationRun.ok) {
+        return NextResponse.json(
+            { error: 'simulation_run_create_failed', detail: simulationRun.message },
+            { status: 500 },
+        );
+    }
+
+    const inferenceEventIds: string[] = [];
 
     try {
         for (let index = 0; index < body.steps; index += 1) {
-            const variant = generateVariants(
+            const generatedVariant = generateVariants(
                 body.base_case as InputSignature,
                 index + 1,
                 body.mode,
                 confidenceHistory,
             )[index];
+            const variant = attachSimulationMetadata(generatedVariant, {
+                simulationId: simulationRun.id,
+                step: index + 1,
+                mode: body.mode,
+            });
             variants.push(variant);
 
             const result = await runInference({
@@ -81,12 +102,30 @@ export async function POST(req: Request) {
                 supabase,
                 model,
                 inputSignature: variant,
-                persist: false,
+                persist: true,
+                sourceModule: 'legacy_simulate',
+                simulationId: simulationRun.id,
+                isSynthetic: true,
+                simulationRequestIndex: index + 1,
             });
             confidenceHistory.push(result.data.confidence_score);
+            if (result.inference_event_id) {
+                inferenceEventIds.push(result.inference_event_id);
+            }
             results.push(result);
         }
     } catch (error) {
+        await updateSimulationRun(supabase, simulationRun.id, {
+            status: 'failed',
+            completed: results.length,
+            total: body.steps,
+            summary: {
+                request_id: requestId,
+                error: error instanceof Error ? error.message : 'Unknown simulation error',
+                inference_event_ids: inferenceEventIds,
+            },
+            error_message: error instanceof Error ? error.message : 'Unknown simulation error',
+        }).catch(() => undefined);
         return NextResponse.json(
             { error: 'simulation_failed', detail: error instanceof Error ? error.message : 'Unknown simulation error' },
             { status: 502 },
@@ -120,33 +159,133 @@ export async function POST(req: Request) {
                 base_case: body.base_case,
             },
             case_id: clinicalCaseId,
-            triggered_inference_id: null,
             stress_metrics: {
+                simulation_id: simulationRun.id,
                 clinical_case_id: clinicalCaseId,
                 base_case: body.base_case,
                 variants,
+                inference_event_ids: inferenceEventIds,
                 stability_report: stabilityReport,
                 results_summary: resultsSummary,
             },
             failure_mode: failures > 0 ? 'hold_state_detected' : null,
             is_real_world: false,
+            triggered_inference_id: inferenceEventIds[0] ?? null,
         })
         .select('id')
         .single();
 
     if (insertError || !simulationEvent?.id) {
+        await updateSimulationRun(supabase, simulationRun.id, {
+            status: 'failed',
+            completed: results.length,
+            total: body.steps,
+            summary: {
+                request_id: requestId,
+                error: insertError?.message ?? 'Unknown insert error',
+                inference_event_ids: inferenceEventIds,
+            },
+            error_message: insertError?.message ?? 'Unknown insert error',
+        }).catch(() => undefined);
         return NextResponse.json(
             { error: 'simulation_insert_failed', detail: insertError?.message ?? 'Unknown insert error' },
             { status: 500 },
         );
     }
 
+    await updateSimulationRun(supabase, simulationRun.id, {
+        status: 'completed',
+        completed: body.steps,
+        total: body.steps,
+        summary: {
+            request_id: requestId,
+            edge_simulation_event_id: String(simulationEvent.id),
+            clinical_case_id: clinicalCaseId,
+            stability_report: stabilityReport,
+            results_summary: resultsSummary,
+            inference_event_ids: inferenceEventIds,
+            synthetic_inference_events: inferenceEventIds.length,
+        },
+    }).catch(() => undefined);
+
     return NextResponse.json({
+        simulation_id: simulationRun.id,
         simulation_event_id: String(simulationEvent.id),
         clinical_case_id: clinicalCaseId,
+        inference_event_ids: inferenceEventIds,
         stability_report: stabilityReport,
         request_id: requestId,
     });
+}
+
+function attachSimulationMetadata(
+    input: InputSignature,
+    metadata: { simulationId: string; step: number; mode: SimulationMode },
+): InputSignature {
+    return {
+        ...input,
+        metadata: {
+            ...asRecord(input.metadata),
+            simulation_id: metadata.simulationId,
+            simulation_step: metadata.step,
+            simulation_request_index: metadata.step,
+            simulation_mode: metadata.mode,
+            is_synthetic: true,
+        },
+    };
+}
+
+async function createSimulationRun(
+    supabase: ReturnType<typeof getSupabaseServer>,
+    input: {
+        tenantId: string;
+        steps: number;
+        mode: SimulationMode;
+        model: { name: string; version: string };
+        baseCase: unknown;
+    },
+): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+    const { data, error } = await supabase
+        .from('simulations')
+        .insert({
+            tenant_id: input.tenantId,
+            scenario_name: `Legacy stability simulation (${input.mode})`,
+            mode: 'scenario_load',
+            status: 'running',
+            config: {
+                source: 'api_simulate',
+                requested_mode: input.mode,
+                steps: input.steps,
+                model: input.model,
+                base_case: input.baseCase,
+            },
+            summary: {},
+            completed: 0,
+            total: input.steps,
+            candidate_model_version: input.model.version,
+        })
+        .select('id')
+        .single();
+
+    if (error || !data?.id) {
+        return { ok: false, message: error?.message ?? 'Unknown simulation run insert error' };
+    }
+
+    return { ok: true, id: String(data.id) };
+}
+
+async function updateSimulationRun(
+    supabase: ReturnType<typeof getSupabaseServer>,
+    simulationId: string,
+    patch: Record<string, unknown>,
+) {
+    return supabase
+        .from('simulations')
+        .update({
+            ...patch,
+            updated_at: new Date().toISOString(),
+        })
+        .eq('id', simulationId);
 }
 
 export function generateVariants(
