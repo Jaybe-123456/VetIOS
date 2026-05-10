@@ -62,6 +62,8 @@ interface RagQueryResult {
         vector_hits: number;
         lexical_hits: number;
         direct_lexical_hits?: number;
+        candidate_citations?: number;
+        withheld_citations?: number;
         total_citations: number;
         retrieval_time_ms: number;
     };
@@ -391,6 +393,8 @@ export default function AgenticRagClient() {
                                 <DataRow label="Vector Hits" value={queryResult.retrieval_stats.vector_hits} />
                                 <DataRow label="Lexical Hits" value={queryResult.retrieval_stats.lexical_hits} />
                                 <DataRow label="Direct Lexical" value={queryResult.retrieval_stats.direct_lexical_hits ?? 0} />
+                                <DataRow label="Candidates" value={queryResult.retrieval_stats.candidate_citations ?? queryResult.retrieval_stats.total_citations} />
+                                <DataRow label="Withheld" value={queryResult.retrieval_stats.withheld_citations ?? 0} />
                                 <DataRow label="Causal Memory" value={queryResult.evaluation.causal_memory_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.causal_memory_linked ? 'accent' : undefined} />
                                 <DataRow label="Counterfactual" value={queryResult.evaluation.counterfactual_reasoning_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.counterfactual_reasoning_linked ? 'accent' : undefined} />
                                 <DataRow label="One Health" value={queryResult.evaluation.one_health_surveillance_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.one_health_surveillance_linked ? 'accent' : undefined} />

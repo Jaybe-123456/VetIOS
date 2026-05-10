@@ -147,6 +147,8 @@ export interface RagAnswerResult {
         retrieval_time_ms: number;
         semantic_first: boolean;
         species_filtered_hits?: number;
+        candidate_citations?: number;
+        withheld_citations?: number;
     };
     evaluation: {
         grounded: boolean;

@@ -270,6 +270,59 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.evaluation.grounded).toBe(false);
         expect(result.evaluation.warnings).toContain('No indexed evidence was retrieved.');
     });
+
+    it('withholds unverified retrieval candidates from clinical grounding citations', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '55555555-5555-4555-8555-555555555555',
+                    tenant_id: 'tenant_1',
+                    name: 'BioVenic animal health biotechnology platform',
+                    source_type: 'web',
+                    authority_tier: 'unverified',
+                    species_scope: ['feline'],
+                    medicine_domain: ['diagnostics'],
+                    url: 'https://www.biovenic.com/',
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: '66666666-6666-4666-8666-666666666666',
+                    source_id: '55555555-5555-4555-8555-555555555555',
+                    document_id: '77777777-7777-4777-8777-777777777777',
+                    chunk_index: 0,
+                    chunk_text: 'Feline panleukopenia virus parvovirus antibody discovery page with commercial biotechnology services.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: '77777777-7777-4777-8777-777777777777',
+                    title: 'BioVenic FPV commercial discovery page',
+                    document_type: 'web_snapshot',
+                    metadata: {},
+                    provenance: { source_url: 'https://www.biovenic.com/' },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What are the diagnostic criteria for Feline Panleukopenia Virus infection, supported by references?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.answer).toBe('No direct evidence available — consult licensed veterinary guidance.');
+        expect(result.citations).toEqual([]);
+        expect(result.retrieval_stats.candidate_citations).toBe(1);
+        expect(result.retrieval_stats.withheld_citations).toBe(1);
+        expect(result.evaluation.warnings).toContain('Retrieved candidates were not accepted as grounding citations because they did not meet the clinical evidence threshold.');
+    });
 });
 
 function restoreEnv(key: string, value: string | undefined): void {

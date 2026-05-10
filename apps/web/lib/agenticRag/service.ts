@@ -240,7 +240,12 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         retrievalWarnings.push(`${mergedChunks.length - filteredChunks.length} retrieval hit(s) were removed by species, domain, or relevance filters.`);
     }
     const chunks = filteredChunks.slice(0, limit);
-    const citations = chunks.map((chunk, index) => buildCitation(chunk, index + 1));
+    const candidateCitations = chunks.map((chunk, index) => buildCitation(chunk, index + 1));
+    const grounded = hasHighConfidenceEvidence(candidateCitations);
+    const citations = grounded ? candidateCitations : [];
+    if (!grounded && candidateCitations.length > 0) {
+        retrievalWarnings.push(`${candidateCitations.length} retrieval candidate(s) were withheld because no high-confidence evidence met the clinical grounding threshold.`);
+    }
     const integrationContexts = await buildIntegratedRagContexts(input.client, {
         tenantId: input.tenantId,
         question: input.question,
@@ -260,7 +265,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         recommendations,
         integrationContexts,
     });
-    const warnings = [...buildRagWarnings(citations), ...retrievalWarnings];
+    const warnings = [...buildRagWarnings(citations, candidateCitations.length), ...retrievalWarnings];
     const retrievalStats = {
         strategy: plan.strategy,
         vector_hits: vectorRows.length,
@@ -271,10 +276,12 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         retrieval_time_ms: Date.now() - start,
         semantic_first: plan.retrievalOrder === 'semantic_first_then_hybrid',
         species_filtered_hits: mergedChunks.length - filteredChunks.length,
+        candidate_citations: candidateCitations.length,
+        withheld_citations: candidateCitations.length - citations.length,
     };
     const evaluation = {
-        grounded: hasHighConfidenceEvidence(citations),
-        citation_coverage: hasHighConfidenceEvidence(citations) ? 1 : 0,
+        grounded,
+        citation_coverage: grounded ? 1 : 0,
         unsupported_claims: 0,
         warnings,
         top_recommendations: recommendations,
@@ -833,10 +840,12 @@ function formatCitationReference(citation: RagCitation): string {
     return `${citation.source_name}, ${citation.year ?? 'n.d.'}, ${citation.url ?? 'no URL'}`;
 }
 
-function buildRagWarnings(citations: RagCitation[]): string[] {
+function buildRagWarnings(citations: RagCitation[], candidateCount = citations.length): string[] {
     const warnings: string[] = [];
     if (citations.length === 0) {
-        warnings.push('No indexed evidence was retrieved.');
+        warnings.push(candidateCount > 0
+            ? 'Retrieved candidates were not accepted as grounding citations because they did not meet the clinical evidence threshold.'
+            : 'No indexed evidence was retrieved.');
         return warnings;
     }
     if (citations.some((citation) => citation.authority_tier === 'unverified')) {
