@@ -1,8 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { summarizeExperimentSynapse } from '../guideOs';
+import {
+    buildRoutePlaybookSynapse,
+    normalizeGuidePathname,
+    summarizeExperimentSynapse,
+} from '../guideOs';
+import { listAssistantRouteContexts } from '../routeContext';
 import type { ExperimentDashboardSnapshot } from '@/lib/experiments/types';
 
 describe('GUIDE_OS synapse context', () => {
+    it('builds route-aware playbook synapse for every GUIDE_OS route', () => {
+        for (const route of listAssistantRouteContexts()) {
+            const synapse = buildRoutePlaybookSynapse(route);
+
+            expect(synapse.route_key).toBe(route.key);
+            expect(synapse.signals.length).toBeGreaterThanOrEqual(4);
+            expect(synapse.signals.some((signal) => signal.label === 'Guardrail')).toBe(true);
+            expect(synapse.next_actions.length).toBeGreaterThan(0);
+        }
+    });
+
+    it('hardens guide pathname routing before synapse lookup', () => {
+        expect(normalizeGuidePathname('/settings/developer-platform?tab=tokens')).toBe('/settings/developer-platform');
+        expect(normalizeGuidePathname('//evil.example/settings')).toBe('/dashboard');
+        expect(normalizeGuidePathname('https://evil.example/settings')).toBe('/dashboard');
+        expect(normalizeGuidePathname('/settings/../../api')).toBe('/dashboard');
+    });
+
+    it('keeps Settings synapse credential-safe', () => {
+        const settings = listAssistantRouteContexts().find((route) => route.key === 'settings');
+        expect(settings).toBeDefined();
+
+        const synapse = buildRoutePlaybookSynapse(settings!);
+
+        expect(synapse.signals.find((signal) => signal.label === 'Guardrail')?.value).toBe('No secrets');
+        expect(synapse.warnings.join(' ')).toContain('never exposes raw JWTs');
+    });
+
     it('marks Experiment Track idle when no runs exist', () => {
         const synapse = summarizeExperimentSynapse(mockSnapshot({
             total_runs: 0,

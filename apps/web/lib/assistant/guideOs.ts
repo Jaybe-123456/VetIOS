@@ -1,14 +1,19 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { resolveAssistantRouteContext } from '@/lib/assistant/routeContext';
+import {
+    resolveAssistantRouteContext,
+    type AssistantRouteContext,
+} from '@/lib/assistant/routeContext';
 import type { GuideSynapseSignal, GuideSynapseState } from '@/lib/assistant/types';
 import type { ExperimentDashboardSnapshot } from '@/lib/experiments/types';
+
+const MAX_GUIDE_PATHNAME_LENGTH = 200;
 
 export async function buildGuideSynapseContext(input: {
     client: SupabaseClient;
     tenantId: string;
     pathname: string;
 }): Promise<GuideSynapseState> {
-    const route = resolveAssistantRouteContext(input.pathname);
+    const route = resolveAssistantRouteContext(normalizeGuidePathname(input.pathname));
 
     if (route.key === 'experiments') {
         try {
@@ -32,7 +37,7 @@ export async function buildGuideSynapseContext(input: {
                     { label: 'Route', value: route.title, tone: 'muted' },
                     { label: 'Snapshot', value: 'Unavailable', tone: 'danger' },
                 ],
-                warnings: [error instanceof Error ? error.message : 'Experiment context unavailable.'],
+                warnings: ['Experiment context unavailable. Check the experiments service and server logs before trusting run comparisons.'],
                 next_actions: [
                     'Refresh Experiment Track and confirm the experiments tables are reachable.',
                     'Use bootstrap only for UI validation; use learning cycle telemetry for real evidence.',
@@ -43,17 +48,42 @@ export async function buildGuideSynapseContext(input: {
         }
     }
 
+    return buildRoutePlaybookSynapse(route);
+}
+
+export function normalizeGuidePathname(pathname: string | null | undefined): string {
+    const raw = typeof pathname === 'string' ? pathname.trim() : '';
+    if (!raw || raw.length > MAX_GUIDE_PATHNAME_LENGTH || !raw.startsWith('/') || raw.startsWith('//')) {
+        return '/dashboard';
+    }
+
+    const withoutHash = raw.split('#')[0] ?? '';
+    const pathOnly = withoutHash.split('?')[0] ?? '';
+    if (!pathOnly || pathOnly === '/') {
+        return '/dashboard';
+    }
+
+    return /^\/[A-Za-z0-9/_-]+$/.test(pathOnly) ? pathOnly : '/dashboard';
+}
+
+export function buildRoutePlaybookSynapse(route: AssistantRouteContext): GuideSynapseState {
+    const profile = routeSynapseProfile(route.key);
+
     return {
         status: 'active',
         route_key: route.key,
-        title: `${route.title} Guide Synapse`,
-        summary: route.summary,
+        title: `${route.title} Synapse`,
+        summary: `GUIDE_OS is active on ${route.title}. ${profile.summary}`,
         signals: [
             { label: 'Route', value: route.title, tone: 'accent' },
-            { label: 'Goal', value: route.primary_goal, tone: 'muted' },
+            { label: 'Mode', value: profile.mode, tone: 'accent' },
+            { label: 'Feature Set', value: profile.featureSet, tone: 'muted' },
+            { label: 'Guardrail', value: profile.guardrail, tone: profile.guardrailTone },
+            { label: 'Prompts', value: String(route.starter_prompts.length), tone: 'muted' },
+            { label: 'Actions', value: String(route.suggested_actions.length), tone: 'muted' },
         ],
-        warnings: [],
-        next_actions: route.recommended_steps.slice(0, 3),
+        warnings: profile.warnings,
+        next_actions: dedupe([...profile.nextActions, ...route.recommended_steps]).slice(0, 4),
         generated_at: new Date().toISOString(),
     };
 }
@@ -141,6 +171,137 @@ function coverageTone(value: number): GuideSynapseSignal['tone'] {
     if (value >= 80) return 'accent';
     if (value >= 50) return 'warning';
     return 'danger';
+}
+
+function routeSynapseProfile(routeKey: string): {
+    mode: string;
+    featureSet: string;
+    guardrail: string;
+    guardrailTone: GuideSynapseSignal['tone'];
+    summary: string;
+    warnings: string[];
+    nextActions: string[];
+} {
+    switch (routeKey) {
+        case 'inference':
+            return {
+                mode: 'Clinical CDS',
+                featureSet: 'Case workflow',
+                guardrail: 'Clinician review',
+                guardrailTone: 'warning',
+                summary: 'It can guide case entry, normalized review, diagnostic output inspection, and handoff into ground-truth learning.',
+                warnings: ['GUIDE_OS provides workflow guidance only; clinical conclusions must be verified by licensed clinician judgment and the inference output itself.'],
+                nextActions: [
+                    'Use structured input before free text when you need reliable downstream learning signals.',
+                    'Verify diagnostic panels and differential rankings before attaching outcome feedback.',
+                ],
+            };
+        case 'outcome-learning':
+            return {
+                mode: 'Ground truth',
+                featureSet: 'Closed loop',
+                guardrail: 'Event scoped',
+                guardrailTone: 'accent',
+                summary: 'It can guide confirmed outcome capture, calibration handoff, and reinforcement pipeline review without exposing unrelated tenant events.',
+                warnings: [],
+                nextActions: [
+                    'Attach outcomes only to the matching inference event.',
+                    'Review calibration and feedback state after saving ground truth.',
+                ],
+            };
+        case 'simulate':
+            return {
+                mode: 'Stress lab',
+                featureSet: 'Adversarial cases',
+                guardrail: 'Synthetic label',
+                guardrailTone: 'warning',
+                summary: 'It can guide simulation setup, contradiction review, robustness inspection, and escalation into experiment evidence.',
+                warnings: ['Simulation evidence must stay labeled as synthetic and should not be treated as live clinical ground truth.'],
+                nextActions: [
+                    'Define the failure mode before running a simulation.',
+                    'Move meaningful failures into Experiment Track for reproducible comparison.',
+                ],
+            };
+        case 'dataset':
+            return {
+                mode: 'Evidence intake',
+                featureSet: 'Curation',
+                guardrail: 'No record export',
+                guardrailTone: 'accent',
+                summary: 'It can guide dataset review, artifact curation, and readiness checks for experiments without dumping raw records into the assistant surface.',
+                warnings: [],
+                nextActions: [
+                    'Check species, disease, and artifact coverage before training or comparison.',
+                    'Use Experiment Track once the dataset slice is ready to evaluate.',
+                ],
+            };
+        case 'models':
+            return {
+                mode: 'Governance',
+                featureSet: 'Promotion',
+                guardrail: 'Readiness gate',
+                guardrailTone: 'warning',
+                summary: 'It can guide lineage review, readiness interpretation, and telemetry follow-up before any model is treated as deployable.',
+                warnings: ['GUIDE_OS cannot promote, deploy, or approve a model by conversation; operators must use governed registry controls.'],
+                nextActions: [
+                    'Trace the model artifact back to its producing experiment.',
+                    'Confirm calibration, safety, and monitoring evidence before promotion review.',
+                ],
+            };
+        case 'telemetry':
+            return {
+                mode: 'Observability',
+                featureSet: 'Latency drift',
+                guardrail: 'Read-only',
+                guardrailTone: 'accent',
+                summary: 'It can guide latency, drift, observer, and failure analysis while keeping system changes outside the assistant channel.',
+                warnings: [],
+                nextActions: [
+                    'Classify the symptom as latency, drift, failure, or observer instability.',
+                    'Resolve alerts through scoped telemetry controls rather than assistant text.',
+                ],
+            };
+        case 'intelligence':
+            return {
+                mode: 'Topology',
+                featureSet: 'Dependency graph',
+                guardrail: 'Read-only',
+                guardrailTone: 'accent',
+                summary: 'It can guide graph interpretation, dependency tracing, and escalation into Dashboard or Telemetry for live confirmation.',
+                warnings: [],
+                nextActions: [
+                    'Select the node or dependency you want to explain.',
+                    'Validate suspected propagation paths against live telemetry before acting.',
+                ],
+            };
+        case 'settings':
+            return {
+                mode: 'Admin control',
+                featureSet: 'Access policy',
+                guardrail: 'No secrets',
+                guardrailTone: 'warning',
+                summary: 'It can explain identity, credential, subsystem, and policy workflows while keeping raw credentials out of the guide channel.',
+                warnings: ['GUIDE_OS never exposes raw JWTs, refresh tokens, API keys, or credential values. Do not paste secrets into guide messages.'],
+                nextActions: [
+                    'Confirm the target subsystem before changing settings.',
+                    'Rotate or manage credentials only through scoped Settings controls.',
+                ],
+            };
+        case 'dashboard':
+        default:
+            return {
+                mode: 'Ops triage',
+                featureSet: 'Health routing',
+                guardrail: 'Read-only',
+                guardrailTone: 'accent',
+                summary: 'It can guide high-level health triage and route operators into the right specialist workspace.',
+                warnings: [],
+                nextActions: [
+                    'Use Dashboard to choose the next workspace before opening deeper tooling.',
+                    'Move to Telemetry or Network when health signals need investigation.',
+                ],
+            };
+    }
 }
 
 function dedupe(values: string[]) {

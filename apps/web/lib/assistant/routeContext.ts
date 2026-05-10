@@ -346,9 +346,16 @@ function matchesPrefix(pathname: string, matcher: string): boolean {
 }
 
 function normalizePath(pathname: string | null | undefined): string {
-    if (!pathname || !pathname.startsWith('/')) {
+    const raw = typeof pathname === 'string' ? pathname.trim() : '';
+    if (!raw || raw.length > 200 || !raw.startsWith('/') || raw.startsWith('//')) {
         return '/dashboard';
     }
 
-    return pathname === '/' ? '/dashboard' : pathname;
+    const withoutHash = raw.split('#')[0] ?? '';
+    const pathOnly = withoutHash.split('?')[0] ?? '';
+    if (!pathOnly || pathOnly === '/') {
+        return '/dashboard';
+    }
+
+    return /^\/[A-Za-z0-9/_-]+$/.test(pathOnly) ? pathOnly : '/dashboard';
 }

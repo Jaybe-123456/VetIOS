@@ -103,8 +103,9 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
     useEffect(() => {
         if (!standalone || typeof window === 'undefined') return;
         const context = new URLSearchParams(window.location.search).get('context');
-        if (context?.startsWith('/')) {
-            setStandaloneContextPathname(context);
+        const safeContext = normalizeClientPathname(context);
+        if (safeContext) {
+            setStandaloneContextPathname(safeContext);
         }
     }, [standalone]);
 
@@ -219,8 +220,10 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
 
     function handleAction(action: AssistantAction) {
         if (action.type === 'navigate' && action.href) {
+            const safeHref = normalizeClientPathname(action.href);
+            if (!safeHref) return;
             if (!standalone) setIsOpen(false);
-            window.location.href = action.href;
+            window.location.href = safeHref;
             return;
         }
         if (action.type === 'prompt' && action.prompt) {
@@ -586,7 +589,10 @@ function safeParseVisitedPaths(raw: string | null): string[] {
     try {
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return [];
-        return parsed.filter((v): v is string => typeof v === 'string' && v.startsWith('/'));
+        return parsed
+            .filter((v): v is string => typeof v === 'string')
+            .map((v) => normalizeClientPathname(v))
+            .filter((v): v is string => Boolean(v));
     } catch {
         return [];
     }
@@ -594,6 +600,21 @@ function safeParseVisitedPaths(raw: string | null): string[] {
 
 function dedupePaths(paths: string[]): string[] {
     return Array.from(new Set(paths));
+}
+
+function normalizeClientPathname(value: string | null | undefined): string | null {
+    const raw = typeof value === 'string' ? value.trim() : '';
+    if (!raw || raw.length > 200 || !raw.startsWith('/') || raw.startsWith('//')) {
+        return null;
+    }
+
+    const withoutHash = raw.split('#')[0] ?? '';
+    const pathOnly = withoutHash.split('?')[0] ?? '';
+    if (!pathOnly || pathOnly === '/') {
+        return '/dashboard';
+    }
+
+    return /^\/[A-Za-z0-9/_-]+$/.test(pathOnly) ? pathOnly : null;
 }
 
 function synapseStatusClass(status: GuideSynapseState['status']) {
