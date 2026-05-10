@@ -809,6 +809,29 @@ function buildDiagnosticWorkflow(question: string): Array<{
         ];
     }
 
+    if (isPancreatitisDiagnosticQuestion(question)) {
+        return [
+            {
+                step: 'history_exam',
+                label: 'Integrate compatible signs and risk factors before interpreting pancreatitis tests',
+                terms: ['vomit', 'vomiting', 'anorexia', 'weakness', 'abdominal', 'pain', 'dehydration', 'diarrhea', 'risk', 'clinical', 'history', 'physical'],
+                fallback: 'Use the cited evidence to match compatible clinical signs and risk factors before interpreting pancreatitis tests.',
+            },
+            {
+                step: 'labs',
+                label: 'Use pancreas-specific lipase testing with CBC, chemistry, electrolytes, hydration, and concurrent-disease assessment',
+                terms: ['pancreatic', 'lipase', 'pli', 'cpli', 'spec', 'serum', 'cbc', 'chemistry', 'electrolyte', 'laboratory', 'lab', 'biochemical', 'marker', 'markers'],
+                fallback: 'Use the cited evidence to combine pancreas-specific lipase testing with baseline laboratory context rather than relying on one marker.',
+            },
+            {
+                step: 'imaging',
+                label: 'Use abdominal ultrasound to support pancreatitis and radiographs mainly to exclude important differentials',
+                terms: ['ultrasound', 'ultrasonography', 'radiograph', 'radiographs', 'radiography', 'imaging', 'pancreatic', 'enlargement', 'echogenicity', 'peripancreatic', 'fluid', 'mass'],
+                fallback: 'Use the cited evidence to decide when imaging supports pancreatitis or rules out competing abdominal disease.',
+            },
+        ];
+    }
+
     return [
         {
             step: 'labs',
@@ -833,6 +856,10 @@ function buildDiagnosticWorkflow(question: string): Array<{
 
 function isRespiratoryDiagnosticQuestion(question: string): boolean {
     return /\b(nasal|sneeze|sneezing|sneezes|rhinitis|sinusitis|respiratory|airway|conjunctivitis|ocular discharge|calicivirus|herpesvirus|fvr|fhv)\b/i.test(question);
+}
+
+function isPancreatitisDiagnosticQuestion(question: string): boolean {
+    return /\b(pancreatitis|pancreatic|pancreas|cpli|pli|spec cpl|pancreatic lipase|serum lipase)\b/i.test(question);
 }
 
 function hasHighConfidenceEvidence(citations: RagCitation[]): boolean {
@@ -1120,15 +1147,16 @@ function normalizeSpecies(value: string | null | undefined): string | null {
 }
 
 function inferSpecies(lower: string): string | null {
-    const species = ['canine', 'dog', 'feline', 'cat', 'equine', 'horse', 'bovine', 'cow', 'caprine', 'goat', 'ovine', 'sheep', 'avian', 'rabbit'];
+    const species = ['canine', 'dog', 'dogs', 'feline', 'cat', 'cats', 'equine', 'horse', 'horses', 'bovine', 'cow', 'cows', 'caprine', 'goat', 'goats', 'ovine', 'sheep', 'avian', 'rabbit', 'rabbits'];
     const match = species.find((candidate) => new RegExp(`\\b${candidate}\\b`).test(lower));
     if (!match) return null;
-    if (match === 'dog') return 'canine';
-    if (match === 'cat') return 'feline';
-    if (match === 'horse') return 'equine';
-    if (match === 'cow') return 'bovine';
-    if (match === 'goat') return 'caprine';
+    if (match === 'dog' || match === 'dogs') return 'canine';
+    if (match === 'cat' || match === 'cats') return 'feline';
+    if (match === 'horse' || match === 'horses') return 'equine';
+    if (match === 'cow' || match === 'cows') return 'bovine';
+    if (match === 'goat' || match === 'goats') return 'caprine';
     if (match === 'sheep') return 'ovine';
+    if (match === 'rabbit' || match === 'rabbits') return 'rabbit';
     return match;
 }
 
@@ -1144,6 +1172,9 @@ function normalizeDomainFilters(value: string | null | undefined): string[] | nu
 
 function inferDomainFilters(lower: string): string[] {
     if (/dose|drug|interaction|contraindication|formulary|withdrawal|adverse/.test(lower)) return ['drug_safety'];
+    if (isPancreatitisDiagnosticQuestion(lower)) {
+        return ['diagnostics', 'lab_reference', 'disease_reference', 'imaging', 'gastroenterology', 'pancreatitis', 'clinical_guideline'];
+    }
     if (/cbc|chemistry|urinalysis|lab|reference range|diagnostic panel|biomarker/.test(lower)) return ['lab_reference', 'diagnostics'];
     if (/nasal|sneez|rhinitis|sinusitis|respiratory|airway|conjunctivitis|calicivirus|herpesvirus|fvr|fhv/.test(lower)) return ['diagnostics', 'clinical_guideline', 'infectious_disease', 'respiratory_disease'];
     if (/diagnos|vomit|diarrhea|diarrhoea|workup|differential|test/.test(lower)) return ['diagnostics', 'clinical_guideline'];
@@ -1273,6 +1304,15 @@ function extractClinicalAnchorGroups(question: string, species: string | null): 
     if (/\bdistemper\b/.test(normalized)) {
         groups.push(['distemper']);
     }
+    if (isPancreatitisDiagnosticQuestion(question)) {
+        groups.push(['pancreatitis', 'pancreatic', 'pancreas']);
+        if (/\b(lab|laboratory|marker|markers|biomarker|serum|lipase|cpli|pli|spec|cbc|chemistry|electrolyte)\b/i.test(question)) {
+            groups.push(['lab', 'laboratory', 'marker', 'markers', 'biomarker', 'serum', 'lipase', 'cpli', 'pli', 'spec', 'cbc', 'chemistry', 'electrolyte']);
+        }
+        if (/\b(imaging|ultrasound|ultrasonography|radiograph|radiographs|radiography|ct|mri)\b/i.test(question)) {
+            groups.push(['imaging', 'ultrasound', 'ultrasonography', 'radiograph', 'radiographs', 'radiography', 'ct', 'mri']);
+        }
+    }
     if (/\b(vomit|vomiting|emesis|diarrhea|diarrhoea|gastroenteritis|gastrointestinal)\b/i.test(question)) {
         const symptomGroups: string[][] = [];
         if (/\b(vomit|vomiting|emesis)\b/i.test(question)) {
@@ -1319,12 +1359,18 @@ function genericClinicalAnchorStopwords(species: string | null): Set<string> {
         'diagnosis',
         'disease',
         'evidence',
+        'early',
         'guidance',
         'guideline',
         'guidelines',
-        'list',
+        'include',
+        'includes',
+        'including',
         'infection',
         'infections',
+        'list',
+        'marker',
+        'markers',
         'reference',
         'references',
         'supported',
@@ -1388,7 +1434,7 @@ function conflictingSpeciesTerms(requestedSpecies: string): Set<string> {
 }
 
 function isClinicalSpecificQuestion(question: string): boolean {
-    return /\b(criteria|diagnos|infection|infectious|virus|viral|disease|syndrome|workup|treatment|dose|prognosis)\b/i.test(question);
+    return /\b(criteria|diagnos|infection|infectious|virus|viral|disease|syndrome|workup|treatment|dose|prognosis|pancreatitis|pancreatic|marker|markers)\b/i.test(question);
 }
 
 function isCatalogOrSourceMetadataChunk(chunk: RagRetrievedChunk): boolean {
@@ -1456,9 +1502,14 @@ function extractRetrievalTerms(value: string): string[] {
         'that',
         'this',
         'about',
+        'acute',
         'criteria',
         'criterion',
         'clinical',
+        'detect',
+        'detected',
+        'detecting',
+        'detection',
         'diagnose',
         'diagnoses',
         'diagnosis',
@@ -1468,8 +1519,13 @@ function extractRetrievalTerms(value: string): string[] {
         'guidance',
         'guideline',
         'guidelines',
+        'include',
+        'includes',
+        'including',
         'infection',
         'infections',
+        'marker',
+        'markers',
         'reference',
         'references',
         'supported',

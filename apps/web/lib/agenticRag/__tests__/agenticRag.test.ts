@@ -49,6 +49,15 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(buildRagQueryPlan({ question: 'What is the meloxicam dose contraindication in feline CKD?' }).strategy).toBe('drug_safety');
         expect(buildRagQueryPlan({ question: 'How should I interpret CBC leukopenia in canine parvovirus?' }).strategy).toBe('lab_reference');
         expect(buildRagQueryPlan({ question: 'Show the WSAVA guideline for vaccination.' }).strategy).toBe('clinical_guideline');
+        expect(buildRagQueryPlan({ question: 'Evidence for early detection of acute pancreatitis in dogs, including lab and imaging markers?' }).domain_filters).toEqual([
+            'diagnostics',
+            'lab_reference',
+            'disease_reference',
+            'imaging',
+            'gastroenterology',
+            'pancreatitis',
+            'clinical_guideline',
+        ]);
 
         const diagnosticPlan = buildRagQueryPlan({
             question: 'What diagnostics are supported for canine vomiting and diarrhea?',
@@ -66,7 +75,7 @@ describe('VetIOS Agentic RAG service primitives', () => {
         const keys = catalog.map((source) => source.external_key);
         const biovenic = catalog.find((source) => source.external_key === 'biovenic_canine_distemper_antibody');
 
-        expect(catalog.length).toBeGreaterThanOrEqual(23);
+        expect(catalog.length).toBeGreaterThanOrEqual(30);
         expect(keys).toContain('acvim_endorsed_statements');
         expect(keys).toContain('aafp_feline_guidelines');
         expect(keys).toContain('capc_parasite_guidelines');
@@ -78,6 +87,9 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(keys).toContain('woah_terrestrial_manual');
         expect(keys).toContain('pmc_open_access');
         expect(keys).toContain('veterinary_partner_vin');
+        expect(keys).toContain('merck_pancreatitis_dogs_cats');
+        expect(keys).toContain('texas_am_gi_lab_pli_assay');
+        expect(keys).toContain('texas_am_gi_lab_pancreatitis_information');
         expect(keys).toContain('merck_feline_respiratory_disease_complex');
         expect(keys).toContain('merck_rhinitis_sinusitis_dogs_cats');
         expect(keys).toContain('cornell_feline_respiratory_infections');
@@ -106,6 +118,25 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(evidence?.document.content_text).toContain('PCR');
         expect(evidence?.document.content_text).not.toContain('Canonical source URL');
         expect(evidence?.document.metadata.curated_evidence_summary).toBe(true);
+    });
+
+    it('adds seedable canine pancreatitis evidence summaries to the catalog plan', async () => {
+        const merckPancreatitis = getCuratedRagCatalog().find((source) => source.external_key === 'merck_pancreatitis_dogs_cats');
+        expect(merckPancreatitis).toBeTruthy();
+
+        const plan = await buildCatalogDocumentPlans({
+            definition: merckPancreatitis!,
+            now: new Date('2026-05-10T00:00:00.000Z'),
+            fetcher: async () => new Response('Remote pancreatitis page snapshot', { status: 200 }) as Response,
+        });
+        const evidence = plan.documents.find((entry) => entry.document.document_type === 'curated_evidence_summary');
+
+        expect(evidence).toBeTruthy();
+        expect(evidence?.document.content_text).toContain('pancreatitis');
+        expect(evidence?.document.content_text).toContain('pancreatic lipase');
+        expect(evidence?.document.content_text?.toLowerCase()).toContain('abdominal ultrasound');
+        expect(evidence?.document.content_text).not.toContain('Canonical source URL');
+        expect(evidence?.document.metadata.evidence_topics).toContain('canine pancreatitis');
     });
 
     it('source cards link RAG evidence into causal memory, counterfactual review, and One Health surveillance', () => {
@@ -511,6 +542,94 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.answer).toContain('Labs - Run baseline laboratory diagnostics first');
         expect(result.answer).toContain('Imaging - Use imaging when history, exam, or labs support obstruction');
         expect(result.answer).toContain('Fecal/external tests - Add fecal, parasite, infectious, toxin, or external exposure testing');
+    });
+
+    it('builds a pancreatitis-specific canine diagnostic workflow from lab and imaging evidence', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '19191919-1919-4191-8191-191919191919',
+                    tenant_id: 'tenant_1',
+                    name: 'Merck Veterinary Manual pancreatitis in dogs and cats',
+                    source_type: 'textbook',
+                    authority_tier: 'institutional',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['disease_reference', 'diagnostics', 'lab_reference', 'imaging', 'gastroenterology', 'pancreatitis'],
+                    url: 'https://www.merckvetmanual.com/digestive-system/the-exocrine-pancreas/pancreatitis-in-dogs-and-cats',
+                    status: 'active',
+                },
+                {
+                    id: '20202020-2020-4202-8202-202020202020',
+                    tenant_id: 'tenant_1',
+                    name: 'Texas A&M GI Lab pancreatic lipase immunoreactivity assay',
+                    source_type: 'lab_reference',
+                    authority_tier: 'institutional',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['diagnostics', 'lab_reference', 'gastroenterology', 'pancreatitis'],
+                    url: 'https://vetmed.tamu.edu/gilab/service/assays/pli/',
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: '21212121-2121-4212-8212-212121212121',
+                    source_id: '19191919-1919-4191-8191-191919191919',
+                    document_id: '22222222-2222-4222-8222-222222222223',
+                    chunk_index: 0,
+                    chunk_text: 'Canine pancreatitis diagnosis integrates clinical findings, imaging findings, and serum pancreatic lipase levels; no single test should be used in isolation. For early detection in dogs, combine compatible signs such as vomiting, anorexia, weakness, abdominal pain, dehydration, or diarrhea with CBC, serum chemistry, electrolyte review, and pancreas-specific lipase testing. Abdominal ultrasonography supports severe acute pancreatitis when pancreatic enlargement, peripancreatic fluid, altered pancreatic echogenicity, increased peripancreatic fat echogenicity, or pancreatic mass effect are present. Abdominal radiographs help exclude other differentials but should not be used alone for diagnosis.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+                {
+                    id: '23232323-2323-4232-8232-232323232323',
+                    source_id: '20202020-2020-4202-8202-202020202020',
+                    document_id: '24242424-2424-4242-8242-242424242424',
+                    chunk_index: 0,
+                    chunk_text: 'Canine Spec cPL is a serum pancreas-specific lipase marker used in dogs with suspected pancreatitis. The laboratory reference interval lists canine Spec cPL at 0 to 200 ug/L, 201 to 399 ug/L as a questionable range, and 400 ug/L or higher as consistent with pancreatitis. Interpret cPLI with patient signs, physical examination, CBC, serum chemistry, electrolytes, hydration status, and imaging.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: '22222222-2222-4222-8222-222222222223',
+                    title: 'Canine acute pancreatitis diagnostic evidence summary',
+                    document_type: 'curated_evidence_summary',
+                    metadata: { curated_evidence_summary: true },
+                    provenance: {
+                        source_url: 'https://www.merckvetmanual.com/digestive-system/the-exocrine-pancreas/pancreatitis-in-dogs-and-cats',
+                        publication_year: '2025',
+                    },
+                },
+                {
+                    id: '24242424-2424-4242-8242-242424242424',
+                    title: 'Canine pancreatic lipase immunoreactivity laboratory interpretation summary',
+                    document_type: 'curated_evidence_summary',
+                    metadata: { curated_evidence_summary: true },
+                    provenance: {
+                        source_url: 'https://vetmed.tamu.edu/gilab/service/assays/pli/',
+                        publication_year: '2026',
+                    },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'Evidence for early detection of acute pancreatitis in dogs, including lab and imaging markers?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.plan.species).toBe('canine');
+        expect(result.evaluation.grounded).toBe(true);
+        expect(result.citations.length).toBeGreaterThanOrEqual(2);
+        expect(result.answer).toContain('History/exam - Integrate compatible signs and risk factors before interpreting pancreatitis tests');
+        expect(result.answer).toContain('Labs - Use pancreas-specific lipase testing with CBC, chemistry, electrolytes');
+        expect(result.answer).toContain('Imaging - Use abdominal ultrasound to support pancreatitis');
+        expect(result.answer).not.toContain('Fecal/external tests');
     });
 
     it('builds a respiratory diagnostic workflow for feline nasal discharge and sneezing evidence', async () => {
