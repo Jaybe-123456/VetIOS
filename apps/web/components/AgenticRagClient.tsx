@@ -81,6 +81,7 @@ export default function AgenticRagClient() {
     const [querying, setQuerying] = useState(false);
     const [seedingCatalog, setSeedingCatalog] = useState(false);
     const [status, setStatus] = useState<string | null>(null);
+    const [catalogErrors, setCatalogErrors] = useState<Array<{ source: string; message: string }>>([]);
     const [catalogCount, setCatalogCount] = useState(0);
     const [readiness, setReadiness] = useState<RagReadiness | null>(null);
     const [queryResult, setQueryResult] = useState<RagQueryResult | null>(null);
@@ -141,6 +142,7 @@ export default function AgenticRagClient() {
     async function handleSeedCatalog(forceRefresh = false) {
         setSeedingCatalog(true);
         setStatus(null);
+        setCatalogErrors([]);
         try {
             const response = await fetch('/api/rag/catalog', {
                 method: 'POST',
@@ -159,6 +161,7 @@ export default function AgenticRagClient() {
             if (!response.ok && response.status !== 207) {
                 throw new Error(body.detail ?? body.error ?? 'RAG catalog refresh failed.');
             }
+            setCatalogErrors(body.errors ?? []);
             const errorSuffix = body.errors?.length ? ` ${body.errors.length} source(s) need review.` : '';
             setStatus(`Catalog indexed ${body.sources_indexed ?? 0} source(s), ${body.documents_indexed ?? 0} document(s), ${body.chunks_indexed ?? 0} chunk(s).${errorSuffix}`);
             await refreshSnapshot();
@@ -263,6 +266,19 @@ export default function AgenticRagClient() {
             {status && (
                 <div className="mb-6 border border-accent/20 bg-accent/5 px-4 py-3 font-mono text-xs uppercase tracking-[0.12em] text-accent">
                     {status}
+                </div>
+            )}
+
+            {catalogErrors.length > 0 && (
+                <div className="mb-6 border border-amber-300/20 bg-amber-300/5 p-4">
+                    <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-amber-200">Catalog Seed Diagnostics</div>
+                    <div className="space-y-2">
+                        {summarizeCatalogErrors(catalogErrors).map((error) => (
+                            <div key={`${error.source}-${error.message}`} className="font-mono text-[10px] uppercase tracking-[0.12em] text-amber-100">
+                                {error.source}: {error.message}
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 
@@ -480,4 +496,15 @@ function formatDate(value: string | null): string {
     if (!value) return 'Never';
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
+}
+
+function summarizeCatalogErrors(errors: Array<{ source: string; message: string }>): Array<{ source: string; message: string }> {
+    const firstMissingSchema = errors.find((error) => /Could not find the table 'public\.rag_|schema cache/i.test(error.message));
+    if (firstMissingSchema) {
+        return [{
+            source: 'schema',
+            message: 'RAG database tables are missing. Apply supabase/migrations/20260510000000_agentic_rag_service.sql and supabase/migrations/20260510010000_agentic_rag_automation.sql, then rerun Seed Catalog.',
+        }];
+    }
+    return errors.slice(0, 6);
 }

@@ -41,6 +41,19 @@ The Supabase migrations add:
 
 Retrieval uses `match_rag_chunks` for vector search and `search_rag_chunks_lexical` for lexical search, then reranks by source authority plus similarity.
 
+Apply the schema before pressing **Seed Catalog**:
+
+```bash
+supabase db push
+```
+
+Or apply these SQL files in order through the Supabase SQL editor:
+
+```text
+supabase/migrations/20260510000000_agentic_rag_service.sql
+supabase/migrations/20260510010000_agentic_rag_automation.sql
+```
+
 ## Environment
 
 ```dotenv

@@ -42,7 +42,8 @@ export async function refreshCuratedRagCatalog(input: {
 }
 
 export async function evaluateRagReadiness(client: SupabaseClient, tenantId: string): Promise<RagReadinessSummary> {
-    const [sources, documents, chunks, highAuthoritySources, staleDocuments, lastRefresh] = await Promise.all([
+    const [schemaCheck, sourceRows, documentRows, chunkRows, highAuthorityRows, staleDocumentRows, lastRefresh] = await Promise.all([
+        checkRagSchema(client, tenantId),
         countRows(client, 'rag_sources', tenantId),
         countRows(client, 'rag_documents', tenantId),
         countRows(client, 'rag_chunks', tenantId),
@@ -51,7 +52,22 @@ export async function evaluateRagReadiness(client: SupabaseClient, tenantId: str
         latestRefresh(client, tenantId),
     ]);
 
+    const sources = sourceRows.count;
+    const documents = documentRows.count;
+    const chunks = chunkRows.count;
+    const highAuthoritySources = highAuthorityRows.count;
+    const staleDocuments = staleDocumentRows.count;
+    const schemaErrors = [schemaCheck, sourceRows, documentRows, chunkRows, highAuthorityRows, staleDocumentRows]
+        .map((result) => result.error)
+        .filter((error): error is string => Boolean(error));
     const warnings: string[] = [];
+    if (schemaErrors.length > 0) {
+        if (schemaErrors.some(isMissingRagSchemaError)) {
+            warnings.push('RAG database schema is missing. Apply supabase/migrations/20260510000000_agentic_rag_service.sql and supabase/migrations/20260510010000_agentic_rag_automation.sql, then rerun Seed Catalog.');
+        } else {
+            warnings.push(`RAG readiness check could not query the corpus tables: ${schemaErrors[0]}`);
+        }
+    }
     if (sources === 0) warnings.push('No RAG sources are registered.');
     if (documents === 0) warnings.push('No RAG documents are indexed.');
     if (chunks === 0) warnings.push('No retrieval chunks are available.');
@@ -275,11 +291,30 @@ async function countRows(
     table: string,
     tenantId: string,
     refine?: (query: any) => any,
-): Promise<number> {
+): Promise<{ count: number; error: string | null }> {
     let query = client.from(table).select('id', { count: 'exact', head: true }).eq('tenant_id', tenantId);
     if (refine) query = refine(query);
-    const { count } = await query;
-    return count ?? 0;
+    const { count, error } = await query;
+    return {
+        count: count ?? 0,
+        error: error?.message ?? null,
+    };
+}
+
+async function checkRagSchema(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<{ count: number; error: string | null }> {
+    const { error } = await client
+        .from('rag_sources')
+        .select('id')
+        .eq('tenant_id', tenantId)
+        .limit(1);
+
+    return {
+        count: 0,
+        error: error?.message ?? null,
+    };
 }
 
 async function latestRefresh(client: SupabaseClient, tenantId: string): Promise<string | null> {
@@ -308,4 +343,8 @@ function authorityQualityScore(tier: string): number {
 
 function addDaysIso(date: Date, days: number): string {
     return new Date(date.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function isMissingRagSchemaError(message: string): boolean {
+    return /Could not find the table 'public\.rag_|relation "public\.rag_|schema cache/i.test(message);
 }
