@@ -123,6 +123,7 @@ export async function ingestRagDocument(input: IngestRagDocumentInput): Promise<
     }
 
     const contentSha = contentHash(normalizedContent);
+    const documentMetadata = input.document.metadata ?? {};
     const document = await upsertRagDocument(input.client, {
         tenantId: input.tenantId,
         sourceId: source.id,
@@ -131,10 +132,13 @@ export async function ingestRagDocument(input: IngestRagDocumentInput): Promise<
         language: input.document.language ?? 'en',
         contentSha,
         contentLength: normalizedContent.length,
-        metadata: input.document.metadata ?? {},
+        metadata: documentMetadata,
         provenance: {
             source_url: source.url,
             content_url: input.document.content_url ?? null,
+            publication_year: normalizeOptional(documentMetadata.source_year)
+                ?? normalizeOptional(documentMetadata.publication_year)
+                ?? normalizeOptional(documentMetadata.year),
             actor: input.actorLabel,
             content_sha256: contentSha,
             indexed_by: 'vetios_agentic_rag',
@@ -757,12 +761,55 @@ function buildEvidenceBackedRecommendations(input: {
         return [];
     }
 
-    const workflow: Array<{
-        step: RagDiagnosticRecommendation['workflow_step'];
-        label: string;
-        terms: string[];
-        fallback: string;
-    }> = [
+    const workflow = buildDiagnosticWorkflow(input.question);
+
+    return workflow.map((entry, index) => {
+        const matched = citationsForTerms(input.citations, entry.terms);
+        const citations = matched.length > 0 ? matched : input.citations.slice(0, 2);
+        const confidence = recommendationConfidence(citations);
+        return {
+            rank: index + 1,
+            workflow_step: entry.step,
+            recommendation: matched.length > 0 ? entry.label : entry.fallback,
+            confidence,
+            citation_indexes: citations.map((citation) => citation.index),
+            rationale: citations
+                .map((citation) => selectBestSentence(citation.quote, input.question))
+                .join(' '),
+        };
+    });
+}
+
+function buildDiagnosticWorkflow(question: string): Array<{
+    step: RagDiagnosticRecommendation['workflow_step'];
+    label: string;
+    terms: string[];
+    fallback: string;
+}> {
+    if (isRespiratoryDiagnosticQuestion(question)) {
+        return [
+            {
+                step: 'history_exam',
+                label: 'Localize upper versus lower respiratory disease with history, exposure risk, physical exam, and ocular/oral findings',
+                terms: ['history', 'physical', 'exam', 'nasal', 'sneeze', 'sneezing', 'discharge', 'conjunctivitis', 'ocular', 'oral', 'ulcer', 'fever', 'appetite', 'breathing', 'respiratory'],
+                fallback: 'Use the cited evidence to first localize the respiratory pattern and identify red flags before selecting tests.',
+            },
+            {
+                step: 'infectious_testing',
+                label: 'Use targeted infectious testing or sampling when agent confirmation changes isolation, outbreak control, prognosis, or treatment planning',
+                terms: ['pcr', 'virus', 'viral', 'isolation', 'agent', 'sample', 'oropharyngeal', 'nares', 'conjunctival', 'scraping', 'chlamydia', 'mycoplasma', 'herpesvirus', 'calicivirus', 'culture'],
+                fallback: 'Use the cited evidence to select infectious testing only when confirmation will change the clinical or population-health decision.',
+            },
+            {
+                step: 'advanced_airway_diagnostics',
+                label: 'Escalate to imaging, rhinoscopy, biopsy, or deep culture for chronic, unilateral, obstructive, hemorrhagic, recurrent, or severe disease',
+                terms: ['radiograph', 'radiography', 'ct', 'computed', 'imaging', 'rhinoscopy', 'endoscopy', 'biopsy', 'culture', 'chronic', 'unilateral', 'obstructive', 'hemorrhagic', 'foreign', 'neoplasia', 'fungal'],
+                fallback: 'Use the cited evidence to decide whether chronic or complicated nasal disease needs advanced airway diagnostics.',
+            },
+        ];
+    }
+
+    return [
         {
             step: 'labs',
             label: 'Run baseline laboratory diagnostics first',
@@ -782,22 +829,10 @@ function buildEvidenceBackedRecommendations(input: {
             fallback: 'Use the cited evidence to select fecal, infectious, parasite, toxin, or exposure tests that match the presentation.',
         },
     ];
+}
 
-    return workflow.map((entry, index) => {
-        const matched = citationsForTerms(input.citations, entry.terms);
-        const citations = matched.length > 0 ? matched : input.citations.slice(0, 2);
-        const confidence = recommendationConfidence(citations);
-        return {
-            rank: index + 1,
-            workflow_step: entry.step,
-            recommendation: matched.length > 0 ? entry.label : entry.fallback,
-            confidence,
-            citation_indexes: citations.map((citation) => citation.index),
-            rationale: citations
-                .map((citation) => selectBestSentence(citation.quote, input.question))
-                .join(' '),
-        };
-    });
+function isRespiratoryDiagnosticQuestion(question: string): boolean {
+    return /\b(nasal|sneeze|sneezing|sneezes|rhinitis|sinusitis|respiratory|airway|conjunctivitis|ocular discharge|calicivirus|herpesvirus|fvr|fhv)\b/i.test(question);
 }
 
 function hasHighConfidenceEvidence(citations: RagCitation[]): boolean {
@@ -842,6 +877,9 @@ function formatWorkflowStep(step: RagDiagnosticRecommendation['workflow_step']):
         case 'labs': return 'Labs';
         case 'imaging': return 'Imaging';
         case 'fecal_external_tests': return 'Fecal/external tests';
+        case 'history_exam': return 'History/exam';
+        case 'infectious_testing': return 'Infectious testing';
+        case 'advanced_airway_diagnostics': return 'Advanced airway diagnostics';
         default: return step;
     }
 }
@@ -1107,6 +1145,7 @@ function normalizeDomainFilters(value: string | null | undefined): string[] | nu
 function inferDomainFilters(lower: string): string[] {
     if (/dose|drug|interaction|contraindication|formulary|withdrawal|adverse/.test(lower)) return ['drug_safety'];
     if (/cbc|chemistry|urinalysis|lab|reference range|diagnostic panel|biomarker/.test(lower)) return ['lab_reference', 'diagnostics'];
+    if (/nasal|sneez|rhinitis|sinusitis|respiratory|airway|conjunctivitis|calicivirus|herpesvirus|fvr|fhv/.test(lower)) return ['diagnostics', 'clinical_guideline', 'infectious_disease', 'respiratory_disease'];
     if (/diagnos|vomit|diarrhea|diarrhoea|workup|differential|test/.test(lower)) return ['diagnostics', 'clinical_guideline'];
     if (/guideline|consensus|standard|protocol/.test(lower)) return ['clinical_guideline'];
     if (/vaccine|infectious|zoonotic|biosecurity|isolation/.test(lower)) return ['infectious_disease', 'clinical_guideline'];
@@ -1154,6 +1193,7 @@ function evidenceRankScore(chunk: RagRetrievedChunk): number {
 function highAuthoritySourceBoost(chunk: RagRetrievedChunk): number {
     const value = `${chunk.source_name} ${chunk.url ?? ''}`.toLowerCase();
     if (/merck|merckvetmanual|acvim|wsava/.test(value)) return 0.16;
+    if (/cornell|abcdcatsvets|iscaid/.test(value)) return 0.12;
     return 0;
 }
 
@@ -1245,6 +1285,17 @@ function extractClinicalAnchorGroups(question: string, species: string | null): 
             groups.push(...symptomGroups);
         }
     }
+    if (isRespiratoryDiagnosticQuestion(question)) {
+        if (/\b(nasal|discharge|rhinitis|sinusitis|runny)\b/i.test(question)) {
+            groups.push(['nasal', 'discharge', 'rhinitis', 'sinusitis', 'runny']);
+        }
+        if (/\b(sneez|sneezing|sneeze)\b/i.test(question)) {
+            groups.push(['sneez', 'sneeze', 'sneezing']);
+        }
+        if (/\b(respiratory|airway|conjunctivitis|ocular|calicivirus|herpesvirus|fvr|fhv)\b/i.test(question)) {
+            groups.push(['respiratory', 'airway', 'conjunctivitis', 'ocular', 'calicivirus', 'herpesvirus', 'fvr', 'fhv']);
+        }
+    }
 
     const genericAnchors = extractRetrievalTerms(question)
         .filter((term) => !genericClinicalAnchorStopwords(species).has(term));
@@ -1258,6 +1309,8 @@ function extractClinicalAnchorGroups(question: string, species: string | null): 
 function genericClinicalAnchorStopwords(species: string | null): Set<string> {
     const values = [
         'clinical',
+        'citation',
+        'citations',
         'criterion',
         'criteria',
         'diagnostic',
@@ -1269,6 +1322,7 @@ function genericClinicalAnchorStopwords(species: string | null): Set<string> {
         'guidance',
         'guideline',
         'guidelines',
+        'list',
         'infection',
         'infections',
         'reference',
@@ -1421,6 +1475,10 @@ function extractRetrievalTerms(value: string): string[] {
         'supported',
         'virus',
         'viral',
+        'cat',
+        'cats',
+        'dog',
+        'dogs',
         'feline',
         'canine',
         'equine',
@@ -1428,7 +1486,12 @@ function extractRetrievalTerms(value: string): string[] {
         'into',
         'does',
         'have',
+        'patient',
+        'patients',
+        'presenting',
         'should',
+        'step',
+        'steps',
     ]);
     return [...new Set(value
         .toLowerCase()

@@ -53,6 +53,7 @@ export async function buildCatalogDocumentPlans(input: {
 }): Promise<CatalogDocumentPlanResult> {
     const documents: CatalogDocumentPlan[] = [
         buildSourceCardPlan(input.definition, input.now),
+        ...buildEvidenceSummaryPlans(input.definition, input.now),
     ];
     const connectorWarnings: string[] = [];
 
@@ -76,6 +77,31 @@ export async function buildCatalogDocumentPlans(input: {
         documents,
         connector_warnings: connectorWarnings,
     };
+}
+
+function buildEvidenceSummaryPlans(definition: CuratedRagSourceDefinition, now: Date): CatalogDocumentPlan[] {
+    return (definition.evidence_summaries ?? []).map((summary, index) => ({
+        document: {
+            title: summary.title,
+            document_type: 'curated_evidence_summary',
+            language: 'en',
+            content_text: summary.summary,
+            metadata: {
+                ...baseCatalogMetadata(definition),
+                source_card: false,
+                remote_fetch: false,
+                connector: definition.refresh_policy.connector,
+                curated_evidence_summary: true,
+                evidence_summary_index: index,
+                evidence_topics: summary.topics,
+                source_year: summary.source_year ?? null,
+            },
+            auto_indexed: true,
+            source_fetched_at: now.toISOString(),
+        },
+        chunking: { maxTokens: 520, overlapTokens: 60, maxChunks: 8 },
+        optional: false,
+    }));
 }
 
 function buildSourceCardPlan(definition: CuratedRagSourceDefinition, now: Date): CatalogDocumentPlan {

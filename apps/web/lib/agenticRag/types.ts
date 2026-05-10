@@ -97,7 +97,13 @@ export interface RagCitation {
 
 export interface RagDiagnosticRecommendation {
     rank: number;
-    workflow_step: 'labs' | 'imaging' | 'fecal_external_tests';
+    workflow_step:
+        | 'labs'
+        | 'imaging'
+        | 'fecal_external_tests'
+        | 'history_exam'
+        | 'infectious_testing'
+        | 'advanced_airway_diagnostics';
     recommendation: string;
     confidence: 'high' | 'medium' | 'low';
     citation_indexes: number[];

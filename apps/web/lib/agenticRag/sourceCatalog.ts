@@ -23,6 +23,12 @@ export interface CuratedRagSourceDefinition {
         query: string;
         max_records?: number;
     }>;
+    evidence_summaries?: Array<{
+        title: string;
+        summary: string;
+        topics: string[];
+        source_year?: string;
+    }>;
     source_card: {
         retrieval_use: string;
         safety_boundary: string;
@@ -238,6 +244,162 @@ export const CURATED_VETERINARY_RAG_SOURCES: CuratedRagSourceDefinition[] = [
             safety_boundary: 'Owner-facing education must be translated back into clinician-supervised diagnostic and treatment decisions.',
             integration_hooks: ['client_education_guardrail', 'clinical_safety_guardrail', 'treatment_intelligence'],
             seed_topics: ['veterinary partner', 'client education', 'pet medications', 'species health information'],
+        },
+    },
+    {
+        external_key: 'merck_feline_respiratory_disease_complex',
+        name: 'Merck Veterinary Manual feline respiratory disease complex',
+        source_type: 'textbook',
+        authority_tier: 'institutional',
+        species_scope: ['feline'],
+        medicine_domain: ['disease_reference', 'diagnostics', 'infectious_disease', 'respiratory_disease'],
+        url: 'https://www.merckvetmanual.com/respiratory-system/respiratory-diseases-of-small-animals/feline-respiratory-disease-complex',
+        license: 'public web reference; verify source terms before redistributing extracted text',
+        attribution: 'Merck Veterinary Manual',
+        ingestion_policy: {
+            preferred_for: ['feline upper respiratory disease', 'feline respiratory diagnostics', 'infectious disease differential'],
+            high_authority: true,
+        },
+        refresh_policy: {
+            connector: 'public_https',
+            refresh_interval_days: 30,
+            fetch_remote_text: true,
+        },
+        evidence_summaries: [
+            {
+                title: 'Feline respiratory disease complex diagnostic evidence summary',
+                source_year: '2024',
+                topics: ['feline respiratory disease complex', 'nasal discharge', 'sneezing', 'PCR', 'virus isolation', 'conjunctival scraping'],
+                summary: [
+                    'Merck Veterinary Manual describes feline respiratory disease complex as a common feline upper-airway syndrome involving the nose, eyes, and mouth, with signs that can include rhinitis, sneezing, conjunctivitis, ocular or nasal discharge, salivation, oral ulceration, fever, and occasionally pneumonia.',
+                    'Diagnostic use for VetIOS: start with history and physical examination findings that localize disease to the upper respiratory tract; use clinical pattern recognition for a presumptive diagnosis; use laboratory testing to identify infectious agents when confirmation affects isolation, outbreak control, prognosis, or treatment planning.',
+                    'Sampling and test selection: conjunctival scrapings can support identification of Chlamydia or Mycoplasma organisms; oropharyngeal mucosa, external nares, and conjunctival sacs are relevant sampling sites for agent detection; feline herpesvirus testing can be complicated by intermittent shedding and background seroprevalence, so results require clinical interpretation.',
+                    'Source note: Merck Veterinary Manual, reviewed/revised February 2022 and modified November 2024.',
+                ].join('\n'),
+            },
+        ],
+        source_card: {
+            retrieval_use: 'Institutional feline respiratory disease reference for upper-airway signs, infectious differentials, and targeted diagnostic testing.',
+            safety_boundary: 'Use as decision-support context; respiratory distress, anorexia, fever, ocular disease, oral ulceration, or suspected pneumonia require clinician-directed triage.',
+            integration_hooks: ['diagnostic_panel_selector', 'counterfactual_reviewer', 'clinical_safety_guardrail'],
+            seed_topics: ['feline respiratory disease complex', 'feline herpesvirus', 'feline calicivirus', 'nasal discharge', 'sneezing diagnostics'],
+        },
+    },
+    {
+        external_key: 'merck_rhinitis_sinusitis_dogs_cats',
+        name: 'Merck Veterinary Manual rhinitis and sinusitis in dogs and cats',
+        source_type: 'textbook',
+        authority_tier: 'institutional',
+        species_scope: ['canine', 'feline'],
+        medicine_domain: ['disease_reference', 'diagnostics', 'respiratory_disease', 'infectious_disease'],
+        url: 'https://www.merckvetmanual.com/respiratory-system/respiratory-diseases-of-small-animals/rhinitis-and-sinusitis-in-dogs-and-cats',
+        license: 'public web reference; verify source terms before redistributing extracted text',
+        attribution: 'Merck Veterinary Manual',
+        ingestion_policy: {
+            preferred_for: ['rhinitis', 'sinusitis', 'nasal discharge workup', 'advanced airway diagnostics'],
+            high_authority: true,
+        },
+        refresh_policy: {
+            connector: 'public_https',
+            refresh_interval_days: 30,
+            fetch_remote_text: true,
+        },
+        evidence_summaries: [
+            {
+                title: 'Cat nasal discharge and sneezing diagnostic escalation evidence summary',
+                source_year: '2024',
+                topics: ['rhinitis', 'sinusitis', 'nasal discharge', 'sneezing', 'CT', 'rhinoscopy', 'biopsy', 'culture'],
+                summary: [
+                    'Merck Veterinary Manual identifies feline viral rhinotracheitis and feline calicivirus as common causes of acute rhinitis in cats, with bacterial rhinitis or sinusitis often occurring as a secondary complication.',
+                    'Diagnostic use for VetIOS: for a cat with nasal discharge and sneezing, begin with duration, vaccination/exposure history, ocular/oral findings, severity, unilateral versus bilateral discharge, character of discharge, appetite, temperature, and respiratory effort.',
+                    'Escalation logic: chronic, obstructive, unilateral, hemorrhagic, facial-deforming, severe, or recurrent nasal disease should prompt consideration of imaging, rhinoscopy, nasal biopsy, deep nasal tissue culture, and exclusion of foreign body, fungal disease, neoplasia, or other non-routine causes.',
+                    'Source note: Merck Veterinary Manual, reviewed/revised February 2022 and modified September 2024.',
+                ].join('\n'),
+            },
+        ],
+        source_card: {
+            retrieval_use: 'Institutional respiratory diagnostic reference for rhinitis, sinusitis, nasal discharge, sneezing, imaging, rhinoscopy, biopsy, and culture decisions.',
+            safety_boundary: 'Advanced diagnostics require patient stabilization, anesthesia-risk assessment, imaging availability, and licensed veterinary judgment.',
+            integration_hooks: ['diagnostic_panel_selector', 'counterfactual_reviewer', 'clinical_safety_guardrail'],
+            seed_topics: ['rhinitis', 'sinusitis', 'nasal discharge', 'sneezing', 'rhinoscopy', 'nasal biopsy', 'CT'],
+        },
+    },
+    {
+        external_key: 'cornell_feline_respiratory_infections',
+        name: 'Cornell Feline Health Center respiratory infections',
+        source_type: 'web',
+        authority_tier: 'institutional',
+        species_scope: ['feline'],
+        medicine_domain: ['disease_reference', 'client_education', 'infectious_disease', 'diagnostics', 'respiratory_disease'],
+        url: 'https://www.vet.cornell.edu/departments-centers-and-institutes/cornell-feline-health-center/health-information/respiratory-infections',
+        license: 'public university veterinary reference; verify reuse terms before redistributing extracted text',
+        attribution: 'Cornell University College of Veterinary Medicine Feline Health Center',
+        ingestion_policy: {
+            preferred_for: ['feline respiratory infection', 'feline herpesvirus', 'feline calicivirus', 'owner-facing respiratory triage'],
+            high_authority: true,
+        },
+        refresh_policy: {
+            connector: 'public_https',
+            refresh_interval_days: 30,
+            fetch_remote_text: true,
+        },
+        evidence_summaries: [
+            {
+                title: 'Cornell feline respiratory infection diagnostic evidence summary',
+                source_year: '2018',
+                topics: ['feline respiratory infection', 'nasal discharge', 'sneezing', 'conjunctivitis', 'PCR', 'virus isolation'],
+                summary: [
+                    'Cornell Feline Health Center describes upper respiratory infection signs in cats as potentially including clear or colored ocular or nasal discharge, sneezing, conjunctivitis, oral ulcers, lethargy, anorexia, and rarely difficulty breathing.',
+                    'Diagnostic use for VetIOS: in a cat with nasal discharge and sneezing, localize disease to upper versus lower respiratory tract, check for ocular/oral lesions and systemic illness, and prioritize urgent assessment when breathing difficulty, anorexia, fever, or marked lethargy is present.',
+                    'For feline herpesvirus suspicion, Cornell describes diagnosis as combining compatible upper respiratory signs in young, unvaccinated, or recurrent ocular cases with diagnostic testing such as PCR for viral DNA or virus isolation from clinical samples.',
+                    'Source note: Cornell University College of Veterinary Medicine Feline Health Center respiratory infections topic page.',
+                ].join('\n'),
+            },
+        ],
+        source_card: {
+            retrieval_use: 'University-vetted feline respiratory infection reference for URI signs, feline herpesvirus context, and diagnostic test routing.',
+            safety_boundary: 'Client education material supports triage and evidence routing but does not replace examination, stabilization, or clinician-directed diagnostic planning.',
+            integration_hooks: ['client_education_guardrail', 'diagnostic_panel_selector', 'counterfactual_reviewer'],
+            seed_topics: ['feline respiratory infections', 'cat nasal discharge', 'cat sneezing', 'feline herpesvirus PCR', 'virus isolation'],
+        },
+    },
+    {
+        external_key: 'abcd_feline_herpesvirus_guideline',
+        name: 'ABCD feline herpesvirus infection guideline',
+        source_type: 'guideline',
+        authority_tier: 'specialist_guideline',
+        species_scope: ['feline'],
+        medicine_domain: ['clinical_guideline', 'diagnostics', 'infectious_disease', 'respiratory_disease'],
+        url: 'https://www.abcdcatsvets.org/guideline-for-feline-herpesvirus-infection/',
+        license: 'public specialist guideline reference; verify reuse terms before redistributing extracted text',
+        attribution: 'European Advisory Board on Cat Diseases',
+        ingestion_policy: {
+            preferred_for: ['feline herpesvirus guideline', 'chronic rhinitis imaging', 'feline respiratory diagnostics'],
+            high_authority: true,
+        },
+        refresh_policy: {
+            connector: 'public_https',
+            refresh_interval_days: 30,
+            fetch_remote_text: true,
+        },
+        evidence_summaries: [
+            {
+                title: 'Feline herpesvirus chronic rhinitis diagnostic imaging evidence summary',
+                source_year: '2022',
+                topics: ['feline herpesvirus', 'chronic rhinitis', 'diagnostic imaging', 'CT', 'radiography', 'nasal endoscopy'],
+                summary: [
+                    'The ABCD feline herpesvirus guideline supports diagnostic imaging in chronic rhinitis or obstructive respiratory syndrome to help distinguish inflammatory disease from neoplastic disease.',
+                    'Diagnostic use for VetIOS: when a sneezing or nasal-discharge cat has chronic, obstructive, recurrent, or complicated signs, escalate beyond routine URI triage to skull/nasal imaging and nasal endoscopy as clinically appropriate.',
+                    'Imaging options include radiography and computed tomography, with CT providing stronger evaluation of turbinate structures, mass lesions, sinuses, nasopharynx, middle ear involvement, and cribriform plate integrity.',
+                    'Source note: ABCD guideline for feline herpesvirus infection.',
+                ].join('\n'),
+            },
+        ],
+        source_card: {
+            retrieval_use: 'Specialist feline infectious-disease guideline grounding for feline herpesvirus and chronic upper-respiratory diagnostic escalation.',
+            safety_boundary: 'Guideline evidence must be interpreted with patient stability, anesthesia risk, regional pathogen prevalence, and clinician judgment.',
+            integration_hooks: ['counterfactual_reviewer', 'diagnostic_panel_selector', 'clinical_safety_guardrail'],
+            seed_topics: ['feline herpesvirus', 'chronic rhinitis', 'nasal endoscopy', 'computed tomography', 'upper respiratory diagnostics'],
         },
     },
     {

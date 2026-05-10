@@ -78,12 +78,34 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(keys).toContain('woah_terrestrial_manual');
         expect(keys).toContain('pmc_open_access');
         expect(keys).toContain('veterinary_partner_vin');
+        expect(keys).toContain('merck_feline_respiratory_disease_complex');
+        expect(keys).toContain('merck_rhinitis_sinusitis_dogs_cats');
+        expect(keys).toContain('cornell_feline_respiratory_infections');
+        expect(keys).toContain('abcd_feline_herpesvirus_guideline');
         expect(keys).toContain('biovenic_animal_health_platform');
         expect(keys).toContain('biovenic_veterinary_therapeutic_antibody');
         expect(biovenic?.url).toBe('https://www.biovenic.com/canine-distemper-virus-therapeutic-antibody-development');
         expect(biovenic?.authority_tier).toBe('unverified');
         expect(catalog.filter((source) => source.attribution === 'BioVenic')).toHaveLength(3);
         expect(catalog.every((source) => validatePublicSourceUrl(source.url).ok)).toBe(true);
+    });
+
+    it('adds seedable feline respiratory evidence summaries to the catalog plan', async () => {
+        const cornellRespiratory = getCuratedRagCatalog().find((source) => source.external_key === 'cornell_feline_respiratory_infections');
+        expect(cornellRespiratory).toBeTruthy();
+
+        const plan = await buildCatalogDocumentPlans({
+            definition: cornellRespiratory!,
+            now: new Date('2026-05-10T00:00:00.000Z'),
+            fetcher: async () => new Response('Remote respiratory page snapshot', { status: 200 }) as Response,
+        });
+        const evidence = plan.documents.find((entry) => entry.document.document_type === 'curated_evidence_summary');
+
+        expect(evidence).toBeTruthy();
+        expect(evidence?.document.content_text).toContain('nasal discharge');
+        expect(evidence?.document.content_text).toContain('PCR');
+        expect(evidence?.document.content_text).not.toContain('Canonical source URL');
+        expect(evidence?.document.metadata.curated_evidence_summary).toBe(true);
     });
 
     it('source cards link RAG evidence into causal memory, counterfactual review, and One Health surveillance', () => {
@@ -489,6 +511,65 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.answer).toContain('Labs - Run baseline laboratory diagnostics first');
         expect(result.answer).toContain('Imaging - Use imaging when history, exam, or labs support obstruction');
         expect(result.answer).toContain('Fecal/external tests - Add fecal, parasite, infectious, toxin, or external exposure testing');
+    });
+
+    it('builds a respiratory diagnostic workflow for feline nasal discharge and sneezing evidence', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '16161616-1616-4161-8161-161616161616',
+                    tenant_id: 'tenant_1',
+                    name: 'Cornell Feline Health Center respiratory infections',
+                    source_type: 'web',
+                    authority_tier: 'institutional',
+                    species_scope: ['feline'],
+                    medicine_domain: ['disease_reference', 'diagnostics', 'infectious_disease', 'respiratory_disease'],
+                    url: 'https://www.vet.cornell.edu/departments-centers-and-institutes/cornell-feline-health-center/health-information/respiratory-infections',
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: '17171717-1717-4171-8171-171717171717',
+                    source_id: '16161616-1616-4161-8161-161616161616',
+                    document_id: '18181818-1818-4181-8181-181818181818',
+                    chunk_index: 0,
+                    chunk_text: 'Feline upper respiratory infection signs can include nasal discharge, sneezing, conjunctivitis, oral ulcers, lethargy, anorexia, and breathing difficulty. Diagnostic steps include localizing upper versus lower respiratory disease with history and physical exam, checking ocular and oral findings, using PCR or virus isolation from clinical samples when feline herpesvirus confirmation changes isolation or treatment planning, and escalating chronic or obstructive nasal disease to imaging, rhinoscopy, biopsy, or culture.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: '18181818-1818-4181-8181-181818181818',
+                    title: 'Cornell feline respiratory infection diagnostic evidence summary',
+                    document_type: 'curated_evidence_summary',
+                    metadata: { curated_evidence_summary: true },
+                    provenance: {
+                        source_url: 'https://www.vet.cornell.edu/departments-centers-and-institutes/cornell-feline-health-center/health-information/respiratory-infections',
+                        publication_year: '2026',
+                    },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'List diagnostic steps for a cat with nasal discharge and sneezing, with citations.',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.plan.species).toBe('feline');
+        expect(result.evaluation.grounded).toBe(true);
+        expect(result.citations).toHaveLength(1);
+        expect(result.answer).toContain('Citations:');
+        expect(result.answer).toContain('History/exam - Localize upper versus lower respiratory disease');
+        expect(result.answer).toContain('Infectious testing - Use targeted infectious testing or sampling');
+        expect(result.answer).toContain('Advanced airway diagnostics - Escalate to imaging, rhinoscopy, biopsy, or deep culture');
+        expect(result.answer).not.toContain('Fecal/external tests');
     });
 });
 
