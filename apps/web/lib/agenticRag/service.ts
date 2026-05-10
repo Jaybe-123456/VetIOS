@@ -241,10 +241,12 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
     }
     const chunks = filteredChunks.slice(0, limit);
     const candidateCitations = chunks.map((chunk, index) => buildCitation(chunk, index + 1));
-    const grounded = hasHighConfidenceEvidence(candidateCitations);
-    const citations = grounded ? candidateCitations : [];
-    if (!grounded && candidateCitations.length > 0) {
-        retrievalWarnings.push(`${candidateCitations.length} retrieval candidate(s) were withheld because no high-confidence evidence met the clinical grounding threshold.`);
+    const citations = candidateCitations
+        .filter((citation) => isAcceptedGroundingCitation(citation, input.question, plan))
+        .map((citation, index) => ({ ...citation, index: index + 1 }));
+    const grounded = citations.length > 0;
+    if (candidateCitations.length > citations.length) {
+        retrievalWarnings.push(`${candidateCitations.length - citations.length} retrieval candidate(s) were withheld because they did not meet the clinical grounding threshold.`);
     }
     const integrationContexts = await buildIntegratedRagContexts(input.client, {
         tenantId: input.tenantId,
@@ -326,7 +328,7 @@ export function buildRagQueryPlan(input: {
     const species = normalizeSpecies(input.species) ?? inferSpecies(lower);
     const explicitDomainFilters = normalizeDomainFilters(input.domain);
     const inferredDomainFilters = inferDomainFilters(lower);
-    const domainFilters = explicitDomainFilters ?? [];
+    const domainFilters = explicitDomainFilters ?? inferredDomainFilters;
     const domain = (explicitDomainFilters ?? inferredDomainFilters)[0] ?? null;
     const strategy = explicit
         ?? (domain === 'drug_safety' ? 'drug_safety'
@@ -805,6 +807,18 @@ function hasHighConfidenceEvidence(citations: RagCitation[]): boolean {
     ));
 }
 
+function isAcceptedGroundingCitation(
+    citation: RagCitation,
+    question: string,
+    plan: RagQueryPlan,
+): boolean {
+    if (!isHighAuthorityTier(citation.authority_tier)) return false;
+    if (isCatalogOrSourceMetadataText(`${citation.title} ${citation.quote}`)) return false;
+    if (plan.species && hasChunkSpeciesConflict(citation.quote, plan.species)) return false;
+    if (!citationSatisfiesQuestionAnchors(citation, question, plan.species)) return false;
+    return citation.similarity >= minimumEvidenceSimilarity(citation);
+}
+
 function citationsForTerms(citations: RagCitation[], terms: string[]): RagCitation[] {
     const termSet = new Set(terms);
     return citations.filter((citation) => {
@@ -1192,13 +1206,10 @@ function hasMinimumQuestionRelevance(chunk: RagRetrievedChunk, question: string)
 
     const terms = extractRetrievalTerms(question);
     if (terms.length === 0) return chunk.similarity > 0;
-    const haystack = ` ${[
-        chunk.chunk_text,
-        chunk.source_name,
-        chunk.title,
-    ].join(' ').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+    const haystack = normalizedEvidenceHaystack(chunk);
+    if (!hasQueryAnchorCoverage(question, haystack)) return false;
     const matched = terms.filter((term) => haystack.includes(` ${term} `)).length;
-    return chunk.similarity >= 0.08 || matched >= Math.min(2, terms.length);
+    return chunk.similarity >= 0.2 || matched >= Math.min(2, terms.length);
 }
 
 function hasRequiredClinicalAnchors(chunk: RagRetrievedChunk, question: string, species: string | null): boolean {
@@ -1206,7 +1217,7 @@ function hasRequiredClinicalAnchors(chunk: RagRetrievedChunk, question: string, 
     if (anchors.length === 0) return true;
 
     const haystack = normalizedEvidenceHaystack(chunk);
-    return anchors.some((group) => group.some((term) => haystack.includes(` ${term} `)));
+    return anchorGroupsSatisfied(anchors, haystack);
 }
 
 function extractClinicalAnchorGroups(question: string, species: string | null): string[][] {
@@ -1222,6 +1233,18 @@ function extractClinicalAnchorGroups(question: string, species: string | null): 
     if (/\bdistemper\b/.test(normalized)) {
         groups.push(['distemper']);
     }
+    if (/\b(vomit|vomiting|emesis|diarrhea|diarrhoea|gastroenteritis|gastrointestinal)\b/i.test(question)) {
+        const symptomGroups: string[][] = [];
+        if (/\b(vomit|vomiting|emesis)\b/i.test(question)) {
+            symptomGroups.push(['vomit', 'vomiting', 'emesis', 'nausea', 'gastroenteritis', 'gastrointestinal']);
+        }
+        if (/\b(diarrhea|diarrhoea)\b/i.test(question)) {
+            symptomGroups.push(['diarrhea', 'diarrhoea', 'gastroenteritis', 'gastrointestinal', 'enteritis']);
+        }
+        if (symptomGroups.length > 0) {
+            groups.push(...symptomGroups);
+        }
+    }
 
     const genericAnchors = extractRetrievalTerms(question)
         .filter((term) => !genericClinicalAnchorStopwords(species).has(term));
@@ -1229,7 +1252,7 @@ function extractClinicalAnchorGroups(question: string, species: string | null): 
         groups.push([term]);
     }
 
-    return groups.slice(0, 5);
+    return groups.slice(0, 8);
 }
 
 function genericClinicalAnchorStopwords(species: string | null): Set<string> {
@@ -1268,6 +1291,48 @@ function normalizedEvidenceHaystack(chunk: RagRetrievedChunk): string {
     ].join(' ').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
 }
 
+function normalizedTextHaystack(value: string): string {
+    return ` ${value.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+}
+
+function hasQueryAnchorCoverage(question: string, normalizedHaystack: string): boolean {
+    const anchors = extractClinicalAnchorGroups(question, null);
+    if (anchors.length === 0) return true;
+    return anchorGroupsSatisfied(anchors, normalizedHaystack);
+}
+
+function anchorGroupsSatisfied(groups: string[][], normalizedHaystack: string): boolean {
+    if (groups.length === 0) return true;
+    const required = Math.min(groups.length, groups.length >= 2 ? 2 : 1);
+    const matched = groups.filter((group) => group.some((term) => normalizedHaystack.includes(` ${term} `))).length;
+    return matched >= required;
+}
+
+function citationSatisfiesQuestionAnchors(citation: RagCitation, question: string, species: string | null): boolean {
+    const haystack = normalizedTextHaystack(`${citation.title} ${citation.source_name} ${citation.quote}`);
+    const anchors = extractClinicalAnchorGroups(question, species);
+    return anchorGroupsSatisfied(anchors, haystack);
+}
+
+function hasChunkSpeciesConflict(text: string, requestedSpecies: string): boolean {
+    const haystack = normalizedTextHaystack(text);
+    const requestedAliases = speciesScopeAliases(requestedSpecies);
+    const requestedMentioned = [...requestedAliases].some((alias) => haystack.includes(` ${alias} `));
+    const conflicting = conflictingSpeciesTerms(requestedSpecies);
+    const conflictMentioned = [...conflicting].some((term) => haystack.includes(` ${term} `));
+    return conflictMentioned && !requestedMentioned;
+}
+
+function conflictingSpeciesTerms(requestedSpecies: string): Set<string> {
+    const groups: Record<string, string[]> = {
+        canine: ['feline', 'cat', 'cats', 'bovine', 'cattle', 'cow', 'cows', 'equine', 'horse', 'horses', 'swine', 'porcine', 'pig', 'pigs', 'ovine', 'sheep', 'caprine', 'goat', 'goats'],
+        feline: ['canine', 'dog', 'dogs', 'bovine', 'cattle', 'cow', 'cows', 'equine', 'horse', 'horses', 'swine', 'porcine', 'pig', 'pigs', 'ovine', 'sheep', 'caprine', 'goat', 'goats'],
+        bovine: ['canine', 'dog', 'dogs', 'feline', 'cat', 'cats', 'equine', 'horse', 'horses'],
+        equine: ['canine', 'dog', 'dogs', 'feline', 'cat', 'cats', 'bovine', 'cattle', 'cow', 'cows'],
+    };
+    return new Set(groups[requestedSpecies] ?? []);
+}
+
 function isClinicalSpecificQuestion(question: string): boolean {
     return /\b(criteria|diagnos|infection|infectious|virus|viral|disease|syndrome|workup|treatment|dose|prognosis)\b/i.test(question);
 }
@@ -1276,8 +1341,11 @@ function isCatalogOrSourceMetadataChunk(chunk: RagRetrievedChunk): boolean {
     const documentType = String(chunk.metadata.document_type ?? '').toLowerCase();
     if (documentType === 'source_card') return true;
 
-    const text = `${chunk.title} ${chunk.chunk_text}`.toLowerCase();
-    return /is registered in vetios as|canonical source url|retrieval use:|safety boundary:|species scope:|medicine domains:/.test(text);
+    return isCatalogOrSourceMetadataText(`${chunk.title} ${chunk.chunk_text}`);
+}
+
+function isCatalogOrSourceMetadataText(text: string): boolean {
+    return /is registered in vetios as|canonical source url|retrieval use:|safety boundary:|species scope:|medicine domains:/i.test(text);
 }
 
 function isHighAuthorityTier(tier: RagAuthorityTier): boolean {

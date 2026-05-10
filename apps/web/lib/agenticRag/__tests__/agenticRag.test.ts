@@ -323,6 +323,173 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.retrieval_stats.withheld_citations).toBe(1);
         expect(result.evaluation.warnings).toContain('Retrieved candidates were not accepted as grounding citations because they did not meet the clinical evidence threshold.');
     });
+
+    it('does not ground canine vomiting and diarrhea diagnostics from source cards, off-species, or unverified snippets', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '88888888-8888-4888-8888-888888888888',
+                    tenant_id: 'tenant_1',
+                    name: 'Merck Veterinary Manual',
+                    source_type: 'textbook',
+                    authority_tier: 'institutional',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['disease_reference', 'diagnostics'],
+                    url: 'https://www.merckvetmanual.com/en-us/veterinary-topics',
+                    status: 'active',
+                },
+                {
+                    id: '99999999-9999-4999-8999-999999999999',
+                    tenant_id: 'tenant_1',
+                    name: 'IRIS kidney disease guidelines',
+                    source_type: 'guideline',
+                    authority_tier: 'specialist_guideline',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['clinical_guideline', 'diagnostics'],
+                    url: 'https://www.iris-kidney.com/iris-guidelines-1',
+                    status: 'active',
+                },
+                {
+                    id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                    tenant_id: 'tenant_1',
+                    name: 'BioVenic animal health biotechnology platform',
+                    source_type: 'web',
+                    authority_tier: 'unverified',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['diagnostics'],
+                    url: 'https://www.biovenic.com/',
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                    source_id: '88888888-8888-4888-8888-888888888888',
+                    document_id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+                    chunk_index: 0,
+                    chunk_text: 'Merck Veterinary Manual is registered in VetIOS as institutional textbook evidence for vomiting and diarrhea diagnostics. Canonical source URL: https://www.merckvetmanual.com/en-us/veterinary-topics Species scope: canine, feline. Medicine domains: disease_reference, diagnostics.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+                {
+                    id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+                    source_id: '99999999-9999-4999-8999-999999999999',
+                    document_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+                    chunk_index: 0,
+                    chunk_text: 'Cats with chronic kidney disease may require treatment for vomiting, decreased appetite, nausea, weight loss, and muscle loss during IRIS staging review.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+                {
+                    id: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+                    source_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                    document_id: '12121212-1212-4121-8121-121212121212',
+                    chunk_index: 0,
+                    chunk_text: 'Animal digestion and absorption solution, canine nutrition and metabolism solution, feline calicivirus infection, and porcine epidemic diarrhea disease commercial services.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+                    title: 'Merck Veterinary Manual VetIOS source card',
+                    document_type: 'source_card',
+                    metadata: { source_card: true },
+                    provenance: { source_url: 'https://www.merckvetmanual.com/en-us/veterinary-topics' },
+                },
+                {
+                    id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+                    title: 'IRIS kidney disease guidelines',
+                    document_type: 'web_snapshot',
+                    metadata: {},
+                    provenance: { source_url: 'https://www.iris-kidney.com/iris-guidelines-1' },
+                },
+                {
+                    id: '12121212-1212-4121-8121-121212121212',
+                    title: 'BioVenic animal health biotechnology platform',
+                    document_type: 'web_snapshot',
+                    metadata: {},
+                    provenance: { source_url: 'https://www.biovenic.com/' },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What evidence is indexed for canine vomiting and diarrhea diagnostics?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.plan.species).toBe('canine');
+        expect(result.citations).toEqual([]);
+        expect(result.answer).toContain('No direct evidence available');
+        expect(result.evaluation.grounded).toBe(false);
+        expect(result.retrieval_stats.total_citations).toBe(0);
+    });
+
+    it('builds a citation-first canine GI diagnostic workflow when matching evidence is indexed', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '13131313-1313-4131-8131-131313131313',
+                    tenant_id: 'tenant_1',
+                    name: 'VetIOS canine gastroenteritis diagnostic guideline',
+                    source_type: 'guideline',
+                    authority_tier: 'specialist_guideline',
+                    species_scope: ['canine'],
+                    medicine_domain: ['clinical_guideline', 'diagnostics'],
+                    url: 'https://vetios.test/guidelines/canine-gastroenteritis',
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: '14141414-1414-4141-8141-141414141414',
+                    source_id: '13131313-1313-4131-8131-131313131313',
+                    document_id: '15151515-1515-4151-8151-151515151515',
+                    chunk_index: 0,
+                    chunk_text: 'Canine patients with acute vomiting and diarrhea should receive hydration assessment, CBC, serum chemistry, electrolyte review, and urinalysis. Fecal flotation, Giardia testing, and canine parvovirus antigen testing are recommended when exposure, age, vaccination, or hemorrhagic diarrhea risk factors are present. Abdominal radiographs or ultrasound are used when foreign body, obstruction, abdominal pain, or systemic disease is suspected.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: '15151515-1515-4151-8151-151515151515',
+                    title: 'Canine gastroenteritis diagnostic workflow',
+                    document_type: 'clinical_guideline',
+                    metadata: {},
+                    provenance: {
+                        source_url: 'https://vetios.test/guidelines/canine-gastroenteritis',
+                        publication_year: '2026',
+                    },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What evidence-based diagnostics should I follow for a dog presenting with acute vomiting and diarrhea?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.plan.species).toBe('canine');
+        expect(result.evaluation.grounded).toBe(true);
+        expect(result.citations).toHaveLength(1);
+        expect(result.answer).toContain('Citations:');
+        expect(result.answer).toContain('[VetIOS canine gastroenteritis diagnostic guideline, 2026, https://vetios.test/guidelines/canine-gastroenteritis]');
+        expect(result.answer).toContain('Concise diagnostic workflow:');
+        expect(result.answer).toContain('Labs - Run baseline laboratory diagnostics first');
+        expect(result.answer).toContain('Imaging - Use imaging when history, exam, or labs support obstruction');
+        expect(result.answer).toContain('Fecal/external tests - Add fecal, parasite, infectious, toxin, or external exposure testing');
+    });
 });
 
 function restoreEnv(key: string, value: string | undefined): void {
