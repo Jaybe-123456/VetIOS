@@ -249,6 +249,36 @@ paths:
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
+  /api/index_source:
+    post:
+      operationId: indexSourceBundle
+      summary: Bulk index a veterinary evidence source bundle
+      description: Accepts the VetIOS index_source payload shape and indexes multiple evidence documents into the tenant RAG corpus.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexSourceBundleRequest'
+      responses:
+        '201':
+          description: Source bundle indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexSourceBundleResponse'
+        '207':
+          description: Source bundle partially indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexSourceBundleResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
   /api/rag/query:
     post:
       operationId: queryRagEvidence
@@ -584,6 +614,99 @@ components:
           nullable: true
         deterministic_embeddings:
           type: boolean
+        request_id:
+          type: string
+    IndexSourceBundleRequest:
+      type: object
+      required: [source_name, documents]
+      properties:
+        source_name:
+          type: string
+        source_type:
+          type: string
+          example: guideline
+        authority:
+          type: string
+          example: specialist_guideline
+        species_scope:
+          type: array
+          items:
+            type: string
+          example: [canine, feline]
+        domain_scope:
+          type: array
+          items:
+            type: string
+          example: [clinical_guideline, diagnostics]
+        url:
+          type: string
+          nullable: true
+        license:
+          type: string
+          nullable: true
+        attribution:
+          type: string
+          nullable: true
+        documents:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [title]
+            properties:
+              title:
+                type: string
+              text:
+                type: string
+              content_text:
+                type: string
+              url:
+                type: string
+                nullable: true
+              species:
+                type: array
+                items:
+                  type: string
+              domain:
+                type: array
+                items:
+                  type: string
+              authority:
+                type: string
+              source_type:
+                type: string
+              document_type:
+                type: string
+              fetch_url:
+                type: boolean
+              metadata:
+                type: object
+                additionalProperties: true
+    IndexSourceBundleResponse:
+      type: object
+      properties:
+        source_name:
+          type: string
+        documents_attempted:
+          type: integer
+        documents_indexed:
+          type: integer
+        chunks_indexed:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/RagDocumentIngestResponse'
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              title:
+                type: string
+              message:
+                type: string
         request_id:
           type: string
     RagQueryRequest:

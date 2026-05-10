@@ -3,6 +3,7 @@ import { buildCatalogDocumentPlans } from '../catalogConnectors';
 import { chunkRagDocument, normalizeRagContent } from '../chunking';
 import { buildRagClosedLoopLearningSystem } from '../closedLoop';
 import { answerRagQuery, buildRagQueryPlan } from '../service';
+import { buildIndexSourceBundleJobs } from '../sourceBundle';
 import { validatePublicSourceUrl } from '../sourcePolicy';
 import { buildCuratedSourceCard, getCuratedRagCatalog } from '../sourceCatalog';
 import {
@@ -137,6 +138,43 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(evidence?.document.content_text?.toLowerCase()).toContain('abdominal ultrasound');
         expect(evidence?.document.content_text).not.toContain('Canonical source URL');
         expect(evidence?.document.metadata.evidence_topics).toContain('canine pancreatitis');
+    });
+
+    it('maps bulk index_source payloads into reusable RAG document jobs', () => {
+        const jobs = buildIndexSourceBundleJobs({
+            source_name: 'VetIOS clinical guideline source',
+            source_type: 'guideline',
+            authority: 'specialist_guideline',
+            species_scope: ['canine', 'feline'],
+            domain_scope: ['clinical_guideline', 'diagnostics'],
+            documents: [
+                {
+                    title: 'Acute Vomiting and Diarrhea Diagnostic Guidelines - VIN',
+                    text: 'For dogs presenting with acute vomiting and diarrhea, initial diagnostics include CBC, serum chemistry, fecal analysis, and abdominal imaging.',
+                    species: ['canine'],
+                    domain: ['clinical_guideline', 'diagnostics'],
+                    authority: 'specialist_guideline',
+                    url: 'https://www.vin.com/acute-vomiting-diarrhea-guideline',
+                },
+                {
+                    title: 'Merck Veterinary Manual: Canine Gastroenteritis',
+                    text: 'Canine gastroenteritis diagnostic evidence includes patient history, physical exam, baseline laboratory testing, and imaging when obstruction is a concern.',
+                    species: ['canine'],
+                    domain: ['clinical_guideline', 'diagnostics'],
+                    authority: 'institutional',
+                    url: 'https://www.merckvetmanual.com/en-us/veterinary-topics',
+                },
+            ],
+        });
+
+        expect(jobs).toHaveLength(2);
+        expect(jobs[0].source.name).toBe('VetIOS clinical guideline source');
+        expect(jobs[0].source.species_scope).toEqual(['canine', 'feline']);
+        expect(jobs[0].source.medicine_domain).toEqual(['clinical_guideline', 'diagnostics']);
+        expect(jobs[0].document.content_text).toContain('acute vomiting and diarrhea');
+        expect(jobs[0].document.content_url).toBe('https://www.vin.com/acute-vomiting-diarrhea-guideline');
+        expect(jobs[0].document.metadata.document_species).toEqual(['canine']);
+        expect(jobs[0].document.metadata.document_domains).toEqual(['clinical_guideline', 'diagnostics']);
     });
 
     it('source cards link RAG evidence into causal memory, counterfactual review, and One Health surveillance', () => {
@@ -542,6 +580,61 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.answer).toContain('Labs - Run baseline laboratory diagnostics first');
         expect(result.answer).toContain('Imaging - Use imaging when history, exam, or labs support obstruction');
         expect(result.answer).toContain('Fecal/external tests - Add fecal, parasite, infectious, toxin, or external exposure testing');
+    });
+
+    it('uses document provenance URLs for citations when a bulk source has no single canonical URL', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '25252525-2525-4252-8252-252525252525',
+                    tenant_id: 'tenant_1',
+                    name: 'VetIOS clinical guideline source',
+                    source_type: 'guideline',
+                    authority_tier: 'specialist_guideline',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['clinical_guideline', 'diagnostics'],
+                    url: null,
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: '26262626-2626-4262-8262-262626262626',
+                    source_id: '25252525-2525-4252-8252-252525252525',
+                    document_id: '27272727-2727-4272-8272-272727272727',
+                    chunk_index: 0,
+                    chunk_text: 'For dogs presenting with acute vomiting and diarrhea, initial diagnostics include CBC, serum chemistry, fecal analysis, and abdominal imaging.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: '27272727-2727-4272-8272-272727272727',
+                    title: 'Acute Vomiting and Diarrhea Diagnostic Guidelines - VIN',
+                    document_type: 'guideline',
+                    metadata: {},
+                    provenance: {
+                        content_url: 'https://www.vin.com/acute-vomiting-diarrhea-guideline',
+                        publication_year: '2026',
+                    },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What evidence-based diagnostics should I follow for a dog presenting with acute vomiting and diarrhea?',
+            species: 'canine',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.evaluation.grounded).toBe(true);
+        expect(result.citations[0].url).toBe('https://www.vin.com/acute-vomiting-diarrhea-guideline');
+        expect(result.answer).toContain('[VetIOS clinical guideline source, 2026, https://www.vin.com/acute-vomiting-diarrhea-guideline]');
     });
 
     it('builds a pancreatitis-specific canine diagnostic workflow from lab and imaging evidence', async () => {

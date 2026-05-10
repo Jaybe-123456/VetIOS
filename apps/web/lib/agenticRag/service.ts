@@ -782,12 +782,26 @@ function buildCitation(chunk: RagRetrievedChunk, index: number): RagCitation {
         source_name: chunk.source_name,
         source_type: chunk.source_type,
         authority_tier: chunk.authority_tier,
-        url: chunk.url,
+        url: inferCitationUrl(chunk),
         year: inferCitationYear(chunk),
         quote: buildQuote(chunk.chunk_text),
         similarity: Number(chunk.similarity.toFixed(4)),
         provenance: chunk.provenance,
     };
+}
+
+function inferCitationUrl(chunk: RagRetrievedChunk): string | null {
+    const candidates = [
+        chunk.provenance.source_url,
+        chunk.provenance.content_url,
+        chunk.provenance.document_url,
+        chunk.url,
+    ];
+    for (const candidate of candidates) {
+        const url = normalizeOptional(candidate);
+        if (url?.startsWith('https://')) return url;
+    }
+    return null;
 }
 
 function synthesizeExtractiveAnswer(input: {
