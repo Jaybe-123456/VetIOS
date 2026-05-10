@@ -19,6 +19,7 @@ import { checkOrigin, buildCorsHeaders } from '@/lib/protection/originGuard';
 import { parseAskVetIOSQuery } from '@vetios/ask-vetios';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/service';
+import { buildHeuristicResponse as buildAskVetiosHeuristicResponse, type AskVetiosHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -69,8 +70,12 @@ export async function POST(req: Request) {
 
     // ── Heuristic fallback (dev / test) ──
     if (shouldUseAiHeuristicFallback()) {
-        const heuristicBody = buildHeuristicResponse(message);
-        const queryHistoryId = await logAskVetiosQuery(message, heuristicBody, startTime).catch(() => null);
+        const agenticRagResult = await resolveAskVetiosAgenticRag(message, 1_100);
+        const heuristicBody = attachAgenticRagToHeuristicResponse(
+            buildAskVetiosHeuristicResponse(message),
+            agenticRagResult,
+        );
+        const queryHistoryId = await logAskVetiosQuery(message, heuristicBody as unknown as Record<string, unknown>, startTime).catch(() => null);
         const fp = generateFingerprint({ tenantId: 'vetios-platform', requestId, endpoint: auditCtx.endpoint, issuedAt: startTime });
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, fingerprint: fp, mode: heuristicBody.mode, metadata: { heuristic: true }, timestamp: new Date().toISOString() });
         const res = NextResponse.json(attachResponseFingerprint({ ...heuristicBody, query_history_id: queryHistoryId } as Record<string, unknown>, fp), { status: 200 });
@@ -100,21 +105,7 @@ export async function POST(req: Request) {
                 ragContextBlock = similar.retrievalSummary;
             }
         } catch { /* RAG non-critical */ }
-        let agenticRagResult: Awaited<ReturnType<typeof answerRagQuery>> | null = null;
-        try {
-            agenticRagResult = await Promise.race([
-                answerRagQuery({
-                    tenantId: process.env.VETIOS_PUBLIC_RAG_TENANT_ID || 'public',
-                    actorKind: 'ask_vetios',
-                    client: getSupabaseServer(),
-                    question: message,
-                    limit: 4,
-                } satisfies AnswerRagQueryInput),
-                new Promise<never>((_, reject) =>
-                    setTimeout(() => reject(new Error('AGENTIC_RAG_TIMEOUT')), 1_100),
-                ),
-            ]);
-        } catch { /* Document RAG is non-critical for public chat availability */ }
+        const agenticRagResult = await resolveAskVetiosAgenticRag(message, 1_100);
         const agenticRagContextBlock = agenticRagResult?.citations.length
             ? formatAgenticRagPromptBlock(agenticRagResult)
             : '';
@@ -170,8 +161,8 @@ export async function POST(req: Request) {
 
     } catch (error) {
         // Surface fallback on AI failure — still better than a 500
-        const fallback = buildHeuristicResponse(message);
-        const queryHistoryId = await logAskVetiosQuery(message, fallback, startTime).catch(() => null);
+        const fallback = buildAskVetiosHeuristicResponse(message);
+        const queryHistoryId = await logAskVetiosQuery(message, fallback as unknown as Record<string, unknown>, startTime).catch(() => null);
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, metadata: { fallback: true, error: error instanceof Error ? error.message : 'Unknown' }, timestamp: new Date().toISOString() });
         const res = NextResponse.json({ ...fallback, query_history_id: queryHistoryId, _fallback: true }, { status: 200 });
         return withAskVetiosHeaders(res, requestId, startTime);
@@ -185,6 +176,38 @@ function withAskVetiosHeaders(res: NextResponse, requestId: string, startTime: n
 }
 
 // ── Response normaliser ────────────────────────────────────────────────────
+
+async function resolveAskVetiosAgenticRag(
+    message: string,
+    timeoutMs: number,
+): Promise<Awaited<ReturnType<typeof answerRagQuery>> | null> {
+    try {
+        return await Promise.race([
+            answerRagQuery({
+                tenantId: process.env.VETIOS_PUBLIC_RAG_TENANT_ID || 'public',
+                actorKind: 'ask_vetios',
+                client: getSupabaseServer(),
+                question: message,
+                limit: 4,
+            } satisfies AnswerRagQueryInput),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('AGENTIC_RAG_TIMEOUT')), timeoutMs),
+            ),
+        ]);
+    } catch {
+        return null;
+    }
+}
+
+function attachAgenticRagToHeuristicResponse(
+    response: AskVetiosHeuristicResponse,
+    agenticRagResult: Awaited<ReturnType<typeof answerRagQuery>> | null,
+): AskVetiosHeuristicResponse {
+    return {
+        ...response,
+        metadata: buildAskVetiosMetadata(response.metadata as Record<string, unknown> | null, agenticRagResult),
+    };
+}
 
 function buildEnsembleResponse(
     data: Record<string, unknown>,
@@ -327,49 +350,4 @@ function inferResponseSections(response: Record<string, unknown>, queryType: str
     if (queryType === 'research') sections.add('research_sources');
     if (response.mode === 'clinical') sections.add('diagnosis_support');
     return Array.from(sections);
-}
-
-function buildHeuristicResponse(message: string) {
-    const lower = message.toLowerCase();
-
-    const educationalKeywords = ['what are', 'what is', 'explain', 'describe', 'how does', 'pathogenesis', 'mechanism',
-        'epidemiology', 'classification', 'structure', 'treatment of', 'prevention of', 'vaccine', 'overview of'];
-    const isEducational = educationalKeywords.some((k) => lower.includes(k));
-
-    const clinicalKeywords = ['vomit', 'lethargy', 'anorexia', 'appetite', 'diarrhea', 'discharge',
-        'seizure', 'cough', 'fever', 'limp', 'lame', 'drink', 'urinat', 'weight loss', 'mass', 'lump'];
-    const isClinical = clinicalKeywords.some((k) => lower.includes(k));
-
-    if (isEducational) {
-        return {
-            mode: 'educational',
-            topic: 'Veterinary Knowledge Query',
-            content: `## Temporarily Unavailable\n\nThe VetIOS intelligence gateway is experiencing a transient issue. Your query has been logged and will be retried automatically.\n\nPlease try again in a moment.`,
-            metadata: null,
-        };
-    }
-
-    if (isClinical) {
-        return {
-            mode: 'clinical',
-            content: 'Clinical signals detected. Running heuristic differential protocol.',
-            metadata: {
-                diagnosis_ranked: [
-                    { name: 'Acute Gastroenteritis', probability: 0.42, reasoning: 'Most common presentation for GI signs' },
-                    { name: 'Systemic Infectious Disease', probability: 0.28, reasoning: 'Lethargy with multi-system involvement' },
-                    { name: 'Metabolic Disorder', probability: 0.18, reasoning: 'Chronic progression pattern' },
-                ],
-                urgency_level: 'moderate',
-                recommended_tests: ['Complete Blood Count (CBC)', 'Chemistry Panel', 'Urinalysis', 'Abdominal Radiographs'],
-                red_flags: [],
-                explanation: 'Heuristic mode active. Connect AI provider for precision differential ranking.',
-            }
-        };
-    }
-
-    return {
-        mode: 'general',
-        content: "Hello — I'm VetIOS, your veterinary intelligence assistant. I can answer clinical questions, explain veterinary conditions in depth, or help you navigate the platform. What would you like to explore?",
-        metadata: null,
-    };
 }

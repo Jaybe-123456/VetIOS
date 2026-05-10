@@ -7,6 +7,7 @@ import { GitBranch, Download } from 'lucide-react';
 interface RankedDiagnosis {
     name: string;
     confidence: number;
+    probability?: number;
     reasoning?: string;
 }
 
@@ -32,9 +33,15 @@ interface DriftPoint {
     label: string;
     trigger: string;
     diagnoses: RankedDiagnosis[];
+    signature: CaseSignature;
 }
 
 const LINE_COLORS = ['#00FF88', '#35D8FF', '#FF9F43', '#B05CFF', '#FFD84D'];
+
+interface CaseSignature {
+    species: string | null;
+    domain: string | null;
+}
 
 function summarizePrompt(prompt: string) {
     const compact = prompt.replace(/\s+/g, ' ').trim();
@@ -45,19 +52,70 @@ function summarizePrompt(prompt: string) {
 function buildDriftPoints(messages: ConversationMessage[], messageTimestamp: number, messageId: string): DriftPoint[] {
     const scopedMessages = messages.filter((message) => message.timestamp < messageTimestamp || message.id === messageId);
 
-    return scopedMessages.flatMap((message, index) => {
+    const points = scopedMessages.flatMap((message, index) => {
         if (message.role !== 'assistant' || message.metadata?.mode !== 'clinical' || !message.metadata.diagnosis_ranked?.length) {
             return [];
         }
 
         const previousUser = [...scopedMessages.slice(0, index)].reverse().find((entry) => entry.role === 'user');
+        const trigger = previousUser ? summarizePrompt(previousUser.content) : 'Initial case framing';
+        const diagnoses = normalizeRankedDiagnoses(message.metadata.diagnosis_ranked);
         return [{
             turn: index + 1,
             label: `T${index + 1}`,
-            trigger: previousUser ? summarizePrompt(previousUser.content) : 'Initial case framing',
-            diagnoses: message.metadata.diagnosis_ranked,
+            trigger,
+            diagnoses,
+            signature: buildCaseSignature(trigger, diagnoses),
         }];
     });
+
+    const currentPoint = points.find((point) => point.turn === scopedMessages.findIndex((message) => message.id === messageId) + 1)
+        ?? points[points.length - 1];
+    if (!currentPoint) return [];
+    return points.filter((point) => point === currentPoint || sameCaseSignature(point.signature, currentPoint.signature));
+}
+
+function normalizeRankedDiagnoses(diagnoses: RankedDiagnosis[]): RankedDiagnosis[] {
+    return diagnoses.map((diagnosis) => ({
+        ...diagnosis,
+        confidence: Number.isFinite(diagnosis.confidence)
+            ? diagnosis.confidence
+            : Number.isFinite(diagnosis.probability)
+                ? Number(diagnosis.probability)
+                : 0,
+    }));
+}
+
+function buildCaseSignature(trigger: string, diagnoses: RankedDiagnosis[]): CaseSignature {
+    const text = `${trigger} ${diagnoses.map((diagnosis) => diagnosis.name).join(' ')}`.toLowerCase();
+    return {
+        species: detectCaseSpecies(text),
+        domain: detectCaseDomain(text),
+    };
+}
+
+function detectCaseSpecies(text: string): string | null {
+    if (/\b(cat|cats|kitten|feline)\b/.test(text) || /feline/.test(text)) return 'feline';
+    if (/\b(dog|dogs|puppy|canine)\b/.test(text) || /canine/.test(text)) return 'canine';
+    if (/\b(horse|horses|equine|glanders|equine influenza)\b/.test(text)) return 'equine';
+    if (/\b(cow|cattle|calf|bovine|east coast fever)\b/.test(text)) return 'bovine';
+    return null;
+}
+
+function detectCaseDomain(text: string): string | null {
+    if (/nasal|sneez|respiratory|rhinitis|sinusitis|cough|airway|herpesvirus|calicivirus|glanders|equine influenza/.test(text)) return 'respiratory';
+    if (/vomit|diarrh|gastroenteritis|abdominal|fecal|faecal/.test(text)) return 'gastrointestinal';
+    if (/east coast fever|tick|vector|hemoparasite|piroplasm/.test(text)) return 'vector_borne';
+    if (/urinary|urinat|polyuria|polydipsia/.test(text)) return 'urinary';
+    return null;
+}
+
+function sameCaseSignature(left: CaseSignature, right: CaseSignature): boolean {
+    if (left.species && right.species && left.species !== right.species) return false;
+    if (left.domain && right.domain && left.domain !== right.domain) return false;
+    if (right.species && !left.species) return false;
+    if (right.domain && !left.domain) return false;
+    return true;
 }
 
 function buildReasoningShift(previous: DriftPoint | null, current: DriftPoint, trackedDiagnoses: string[]) {
@@ -170,7 +228,7 @@ export default function DifferentialDriftPanel({
                         </h3>
                     </div>
                     <p className="max-w-2xl font-mono text-[11px] leading-relaxed text-white/58">
-                        Confidence shifts are reconstructed from this persisted chat session, so the trajectory survives reloads alongside the rest of the conversation.
+                        Confidence shifts are reconstructed only from related case turns in this chat, so older unrelated diseases do not contaminate the current trajectory.
                     </p>
                 </div>
 

@@ -12,6 +12,20 @@ export interface MessageMetadata {
     recommended_tests?: string[];
     red_flags?: string[];
     explanation?: string;
+    species?: string;
+    heuristic_domain?: string;
+    source_references?: { label: string; year?: string; url: string }[];
+    rag_citations?: Array<{
+        index: number;
+        title: string;
+        source_name: string;
+        authority_tier?: string;
+        url: string | null;
+        year: string | null;
+        quote?: string;
+    }>;
+    rag_grounded?: boolean;
+    rag_retrieval_stats?: Record<string, unknown>;
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';

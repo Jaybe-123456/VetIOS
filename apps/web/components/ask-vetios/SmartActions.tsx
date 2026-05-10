@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Activity, AlertTriangle, BookOpen,
     ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle,
-    Eye, ImageIcon, Pill, GitBranch, LibraryBig
+    Eye, ImageIcon, Pill, GitBranch, LibraryBig, ExternalLink
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MessageMetadata } from '@/store/useChatStore';
@@ -157,6 +157,20 @@ export default function SmartActions({
     const hasRankedDifferentials = (metadata.diagnosis_ranked?.length ?? 0) > 0;
     const canShowDrift = isClinical && (metadata.diagnosis_ranked?.length ?? 0) >= 2;
     const canShowSimilarCases = isClinical && hasRankedDifferentials;
+    const evidenceReferences = [
+        ...(metadata.rag_citations ?? []).map((citation) => ({
+            label: `[${citation.index}] ${citation.source_name}`,
+            year: citation.year ?? undefined,
+            url: citation.url ?? '',
+            detail: citation.title,
+        })),
+        ...(metadata.source_references ?? []).map((reference) => ({
+            label: reference.label,
+            year: reference.year,
+            url: reference.url,
+            detail: 'Heuristic reference anchor',
+        })),
+    ].filter((reference) => reference.url.length > 0);
     const scopedConversationMessages = conversationMessages.filter(
         (message) => message.timestamp < messageTimestamp || message.id === messageId,
     );
@@ -263,6 +277,30 @@ export default function SmartActions({
                                         <div className="w-1 h-1 bg-accent/40 shrink-0" />
                                         {t}
                                     </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {evidenceReferences.length > 0 && (
+                        <div className="p-3 bg-white/[0.03] border border-white/8 space-y-2">
+                            <div className="flex items-center gap-2 text-[9px] uppercase tracking-widest text-white/50">
+                                <ExternalLink className="w-3 h-3" />
+                                Evidence References
+                            </div>
+                            <div className="space-y-1.5">
+                                {evidenceReferences.slice(0, 5).map((reference, index) => (
+                                    <a
+                                        key={`${reference.url}-${index}`}
+                                        href={reference.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="block border border-white/8 bg-black/20 px-2.5 py-2 font-mono text-[10px] leading-relaxed text-white/64 transition-colors hover:border-accent/25 hover:text-accent"
+                                    >
+                                        <span className="text-white/82">{reference.label}</span>
+                                        {reference.year && <span className="text-white/36"> // {reference.year}</span>}
+                                        <span className="mt-0.5 block break-all text-white/34">{reference.url}</span>
+                                    </a>
                                 ))}
                             </div>
                         </div>
