@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { answerAssistantQuery } from '@/lib/assistant/service';
+import { buildGuideSynapseContext } from '@/lib/assistant/guideOs';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { formatZodErrors } from '@/lib/http/schemas';
 import { safeJson } from '@/lib/http/safeJson';
 import { withRequestHeaders } from '@/lib/http/requestId';
-import { resolveSessionTenant } from '@/lib/supabaseServer';
+import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -19,6 +20,38 @@ const AssistantRequestSchema = z.object({
         content: z.string().trim().min(1).max(4000),
     })).max(10).default([]),
 });
+
+export async function GET(req: Request) {
+    const guard = await apiGuard(req, {
+        maxRequests: 30,
+        windowMs: 60_000,
+        maxBodySize: 8 * 1024,
+    });
+    if (guard.blocked) return guard.response!;
+    const { requestId, startTime } = guard;
+
+    const session = await resolveSessionTenant();
+    if (!session) {
+        const response = NextResponse.json(
+            { error: 'Session expired. Sign in again to use VetIOS Guide.', request_id: requestId },
+            { status: 401 },
+        );
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
+    }
+
+    const url = new URL(req.url);
+    const pathname = url.searchParams.get('pathname') ?? '/dashboard';
+    const synapse = await buildGuideSynapseContext({
+        client: getSupabaseServer(),
+        tenantId: session.tenantId,
+        pathname,
+    });
+    const response = NextResponse.json({ synapse, request_id: requestId });
+    response.headers.set('Cache-Control', 's-maxage=10, stale-while-revalidate=20');
+    withRequestHeaders(response.headers, requestId, startTime);
+    return response;
+}
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, {
@@ -61,6 +94,11 @@ export async function POST(req: Request) {
 
     try {
         const user = (await session.supabase.auth.getUser()).data.user ?? null;
+        const synapse = await buildGuideSynapseContext({
+            client: getSupabaseServer(),
+            tenantId: session.tenantId,
+            pathname: parsed.data.pathname,
+        });
         const reply = await answerAssistantQuery({
             message: parsed.data.message,
             pathname: parsed.data.pathname,
@@ -68,10 +106,12 @@ export async function POST(req: Request) {
             conversation: parsed.data.conversation,
             tenantId: session.tenantId,
             userEmail: user?.email ?? null,
+            synapse,
         });
 
         const response = NextResponse.json({
             ...reply,
+            synapse,
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);

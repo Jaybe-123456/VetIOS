@@ -20,6 +20,23 @@ export interface AssistantRouteSummary {
     href: string;
 }
 
+export interface GuideSynapseSignal {
+    label: string;
+    value: string;
+    tone: 'accent' | 'warning' | 'danger' | 'muted';
+}
+
+export interface GuideSynapseState {
+    status: 'active' | 'degraded' | 'idle';
+    route_key: string;
+    title: string;
+    summary: string;
+    signals: GuideSynapseSignal[];
+    warnings: string[];
+    next_actions: string[];
+    generated_at: string;
+}
+
 export interface AssistantReply {
     answer: string;
     next_steps: string[];
@@ -32,4 +49,5 @@ export interface AssistantReply {
         next_module_href: string | null;
     };
     mode: 'ai' | 'fallback';
+    synapse?: GuideSynapseState;
 }

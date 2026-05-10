@@ -13,6 +13,7 @@ import type {
     AssistantAction,
     AssistantConversationMessage,
     AssistantReply,
+    GuideSynapseState,
 } from '@/lib/assistant/types';
 
 interface AssistantQueryInput {
@@ -22,6 +23,7 @@ interface AssistantQueryInput {
     conversation: AssistantConversationMessage[];
     tenantId: string;
     userEmail: string | null;
+    synapse?: GuideSynapseState;
 }
 
 interface RawAssistantPayload {
@@ -144,6 +146,7 @@ async function fetchAiAssistantReply({
                             total_modules: onboarding.totalCount,
                             next_module: onboarding.nextRoute,
                         },
+                        guide_synapse: input.synapse ?? null,
                         user_context: {
                             tenant_id: input.tenantId,
                             user_email: input.userEmail,
@@ -194,12 +197,14 @@ function buildDeterministicAssistantReply(input: AssistantQueryInput): Assistant
         targetRoute,
         intent,
         onboarding,
+        synapse: input.synapse,
     });
     const nextSteps = buildOperationalSteps({
         currentRoute,
         targetRoute,
         intent,
         onboarding,
+        synapse: input.synapse,
     });
     const suggestedActions = buildOperationalActions({
         currentRoute,
@@ -225,6 +230,7 @@ function buildDeterministicAssistantReply(input: AssistantQueryInput): Assistant
             next_module_href: onboarding.nextRoute?.href ?? null,
         },
         mode: 'fallback',
+        synapse: input.synapse,
     };
 }
 
@@ -476,11 +482,13 @@ function buildOperationalAnswer({
     targetRoute,
     intent,
     onboarding,
+    synapse,
 }: {
     currentRoute: ReturnType<typeof resolveAssistantRouteContext>;
     targetRoute: ReturnType<typeof resolveAssistantRouteContext>;
     intent: AssistantIntent;
     onboarding: ReturnType<typeof getAssistantOnboardingProgress>;
+    synapse?: GuideSynapseState;
 }): string {
     const moveToTargetPrefix = targetRoute.href !== currentRoute.href
         ? `For that job, move from ${currentRoute.title} to ${targetRoute.title}. `
@@ -502,9 +510,9 @@ function buildOperationalAnswer({
             return `${moveToTargetPrefix}Clinical Dataset is the evidence surface behind the rest of the platform. Review what cases and artifacts exist here before assuming you have enough signal for experiments, comparisons, or promotion decisions.`;
         case 'experiments':
             if (intent === 'compare') {
-                return `${moveToTargetPrefix}Experiment Track is the right place to compare runs and verify model claims. Start by selecting comparable runs, then review calibration, robustness, and comparison evidence before you treat a result as promotion-ready.`;
+                return `${moveToTargetPrefix}${withSynapseSummary('Experiment Track is the right place to compare runs and verify model claims.', synapse)} Start by selecting comparable runs, then review calibration, robustness, and comparison evidence before you treat a result as promotion-ready.`;
             }
-            return `${moveToTargetPrefix}Experiment Track is the reproducible AI research stack in VetIOS. It is where dataset versions, hyperparameters, model lineage, and comparison evidence come together so results can be rerun and defended.`;
+            return `${moveToTargetPrefix}${withSynapseSummary('Experiment Track is the reproducible AI research stack in VetIOS.', synapse)} It is where dataset versions, hyperparameters, model lineage, and comparison evidence come together so results can be rerun and defended.`;
         case 'models':
             if (intent === 'promote') {
                 return `${moveToTargetPrefix}Model Registry is where trust and promotion decisions happen. Use it to verify lineage, readiness, and governance status before a version is treated as deployable.`;
@@ -521,16 +529,23 @@ function buildOperationalAnswer({
     }
 }
 
+function withSynapseSummary(base: string, synapse?: GuideSynapseState) {
+    if (!synapse || synapse.route_key !== 'experiments') return base;
+    return `${base} GUIDE_OS is currently reading live Experiment Track context: ${synapse.summary}`;
+}
+
 function buildOperationalSteps({
     currentRoute,
     targetRoute,
     intent,
     onboarding,
+    synapse,
 }: {
     currentRoute: ReturnType<typeof resolveAssistantRouteContext>;
     targetRoute: ReturnType<typeof resolveAssistantRouteContext>;
     intent: AssistantIntent;
     onboarding: ReturnType<typeof getAssistantOnboardingProgress>;
+    synapse?: GuideSynapseState;
 }): string[] {
     const baseSteps = targetRoute.recommended_steps.slice(0, 3);
 
@@ -543,6 +558,9 @@ function buildOperationalSteps({
     }
 
     if (targetRoute.key === 'experiments') {
+        if (synapse?.route_key === 'experiments' && synapse.next_actions.length > 0) {
+            return synapse.next_actions.slice(0, 3);
+        }
         return [
             'Select a run family or a comparable run pair before interpreting anything.',
             'Review calibration, robustness, and comparison evidence instead of only looking at one headline metric.',

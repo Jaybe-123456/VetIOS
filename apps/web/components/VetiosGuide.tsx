@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
-import { Bot, ChevronRight, Compass, Loader2, Sparkles, X, Activity, Cpu, Zap, MessageSquare, ExternalLink, Maximize2 } from 'lucide-react';
+import { Bot, ChevronRight, Compass, Loader2, Sparkles, X, Activity, Cpu, Zap, MessageSquare, ExternalLink } from 'lucide-react';
 import { TerminalButton, TerminalInput } from '@/components/ui/terminal';
 import {
     getAssistantOnboardingProgress,
@@ -12,6 +11,7 @@ import type {
     AssistantAction,
     AssistantConversationMessage,
     AssistantReply,
+    GuideSynapseState,
 } from '@/lib/assistant/types';
 
 const STORAGE_KEY = 'vetios.guide.visited-paths';
@@ -23,6 +23,7 @@ interface GuideMessage {
     nextSteps?: string[];
     actions?: AssistantAction[];
     mode?: AssistantReply['mode'];
+    synapse?: GuideSynapseState;
 }
 
 interface VetiosGuideProps {
@@ -65,16 +66,30 @@ function AIStatusIndicator({ active }: { active: boolean }) {
 // ── Main Component ───────────────────────────────────────────────────────────
 
 export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
-    const pathname = usePathname() ?? '/dashboard';
-    const router = useRouter();
+    const [currentPathname, setCurrentPathname] = useState('/dashboard');
+    const [standaloneContextPathname, setStandaloneContextPathname] = useState<string | null>(null);
+    const pathname = standaloneContextPathname ?? currentPathname;
     const routeContext = resolveAssistantRouteContext(pathname);
     const [isOpen, setIsOpen] = useState(false);
     const [draft, setDraft] = useState('');
     const [loading, setLoading] = useState(false);
     const [messages, setMessages] = useState<GuideMessage[]>([]);
     const [visitedPaths, setVisitedPaths] = useState<string[]>([]);
+    const [synapse, setSynapse] = useState<GuideSynapseState | null>(null);
     const [errorMessage, setErrorMessage] = useState<string | null>(null);
     const scrollRef = useRef<HTMLDivElement | null>(null);
+
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const updatePathname = () => setCurrentPathname(window.location.pathname || '/dashboard');
+        updatePathname();
+        const interval = window.setInterval(updatePathname, 1000);
+        window.addEventListener('popstate', updatePathname);
+        return () => {
+            window.clearInterval(interval);
+            window.removeEventListener('popstate', updatePathname);
+        };
+    }, []);
 
     useEffect(() => {
         if (typeof window === 'undefined') return;
@@ -86,10 +101,43 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
     }, [pathname]);
 
     useEffect(() => {
+        if (!standalone || typeof window === 'undefined') return;
+        const context = new URLSearchParams(window.location.search).get('context');
+        if (context?.startsWith('/')) {
+            setStandaloneContextPathname(context);
+        }
+    }, [standalone]);
+
+    useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
     }, [messages, loading, isOpen, standalone]);
+
+    useEffect(() => {
+        if (!standalone && !isOpen) return;
+        let cancelled = false;
+
+        async function loadSynapse() {
+            try {
+                const response = await fetch(`/api/assistant?pathname=${encodeURIComponent(pathname)}`, {
+                    cache: 'no-store',
+                    credentials: 'same-origin',
+                });
+                const result = await response.json() as { synapse?: GuideSynapseState };
+                if (!cancelled && response.ok && result.synapse) {
+                    setSynapse(result.synapse);
+                }
+            } catch {
+                if (!cancelled) setSynapse(null);
+            }
+        }
+
+        void loadSynapse();
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen, pathname, standalone]);
 
     const onboarding = getAssistantOnboardingProgress(visitedPaths);
     const progressPercent = onboarding.totalCount > 0
@@ -97,6 +145,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
         : 0;
     const latestAssistantMessage = [...messages].reverse().find((m) => m.role === 'assistant') ?? null;
     const activeMode = latestAssistantMessage?.mode ?? 'fallback';
+    const activeSynapse = latestAssistantMessage?.synapse ?? synapse;
     const welcomeMessage = buildWelcomeMessage(routeContext, onboarding);
 
     async function handleSubmit(promptOverride?: string) {
@@ -129,10 +178,13 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
             const result = await response.json() as (AssistantReply & { error?: string });
             if (!response.ok) {
                 if (response.status === 401) {
-                    router.push(`/login?next=${encodeURIComponent(pathname)}`);
+                    window.location.href = `/login?next=${encodeURIComponent(pathname)}`;
                     return;
                 }
                 throw new Error(result.error ?? 'Unable to reach VetIOS Guide.');
+            }
+            if (result.synapse) {
+                setSynapse(result.synapse);
             }
 
             setMessages((curr) => [
@@ -144,6 +196,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
                     nextSteps: result.next_steps,
                     actions: result.suggested_actions,
                     mode: result.mode,
+                    synapse: result.synapse,
                 },
             ]);
         } catch (error) {
@@ -167,7 +220,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
     function handleAction(action: AssistantAction) {
         if (action.type === 'navigate' && action.href) {
             if (!standalone) setIsOpen(false);
-            router.push(action.href);
+            window.location.href = action.href;
             return;
         }
         if (action.type === 'prompt' && action.prompt) {
@@ -200,7 +253,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
                                 {standalone && <span className="text-[8px] sm:text-[10px] bg-accent/20 px-1 py-0.5 rounded-sm">EXPANDED</span>}
                             </div>
                             <div className="flex items-center gap-2 sm:gap-3 mt-1 sm:mt-1.5">
-                                <AIStatusIndicator active={activeMode === 'ai'} />
+                                <AIStatusIndicator active={activeMode === 'ai' || activeSynapse?.status === 'active' || activeSynapse?.status === 'degraded'} />
                                 <span className="font-mono text-[8px] sm:text-[9px] text-muted tracking-widest uppercase truncate max-w-[100px] sm:max-w-[140px]">
                                     {routeContext.title}
                                 </span>
@@ -211,7 +264,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
                         {!standalone && (
                             <button
                                 type="button"
-                                onClick={() => window.open('/guide', '_blank')}
+                                onClick={() => window.open(`/guide?context=${encodeURIComponent(pathname)}`, '_blank')}
                                 title="Open in new tab"
                                 className="p-1.5 sm:p-2 text-muted hover:text-accent transition-colors"
                             >
@@ -243,6 +296,43 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
                             </div>
                         </div>
                     </GlassTile>
+
+                    {activeSynapse && (
+                        <GlassTile title="Synapse_Core">
+                            <div className="mb-3 flex items-center justify-between gap-3">
+                                <span className={`font-mono text-[9px] uppercase tracking-[0.2em] ${synapseStatusClass(activeSynapse.status)}`}>
+                                    {activeSynapse.status}
+                                </span>
+                                <span className="font-mono text-[8px] uppercase tracking-widest text-muted">
+                                    {activeSynapse.route_key}
+                                </span>
+                            </div>
+                            <p className="font-mono text-[10px] leading-relaxed text-foreground/85">{activeSynapse.summary}</p>
+                            <div className="mt-3 grid grid-cols-2 gap-2">
+                                {activeSynapse.signals.slice(0, 6).map((signal) => (
+                                    <div key={`${signal.label}-${signal.value}`} className="border border-accent/10 bg-black/20 px-2 py-2">
+                                        <div className="font-mono text-[7px] uppercase tracking-widest text-muted">{signal.label}</div>
+                                        <div className={`mt-1 font-mono text-[10px] font-bold ${synapseSignalClass(signal.tone)}`}>{signal.value}</div>
+                                    </div>
+                                ))}
+                            </div>
+                            {activeSynapse.warnings.length > 0 && (
+                                <div className="mt-3 border border-warning/30 bg-warning/10 p-2 font-mono text-[8px] uppercase tracking-wider text-warning">
+                                    {activeSynapse.warnings[0]}
+                                </div>
+                            )}
+                            {activeSynapse.next_actions.length > 0 && (
+                                <div className="mt-3 space-y-2">
+                                    {activeSynapse.next_actions.slice(0, 3).map((action) => (
+                                        <div key={action} className="flex gap-2 font-mono text-[8px] uppercase tracking-wider text-muted">
+                                            <div className="mt-1 h-1 w-1 shrink-0 rounded-full bg-accent" />
+                                            <span>{action}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </GlassTile>
+                    )}
 
                     <GlassTile title="Onboarding_Flow">
                         <div className="flex items-center justify-between mb-2">
@@ -414,7 +504,7 @@ export default function VetiosGuide({ standalone = false }: VetiosGuideProps) {
     if (standalone) {
         return (
             <div className="h-[100dvh] w-full bg-background p-2 sm:p-4 lg:p-8 flex flex-col overflow-hidden">
-                <style jsx global>{`
+                <style>{`
                     @keyframes progress-flow {
                         0% { transform: translateX(-100%); }
                         100% { transform: translateX(300%); }
@@ -504,6 +594,19 @@ function safeParseVisitedPaths(raw: string | null): string[] {
 
 function dedupePaths(paths: string[]): string[] {
     return Array.from(new Set(paths));
+}
+
+function synapseStatusClass(status: GuideSynapseState['status']) {
+    if (status === 'active') return 'text-accent';
+    if (status === 'degraded') return 'text-warning';
+    return 'text-muted';
+}
+
+function synapseSignalClass(tone: GuideSynapseState['signals'][number]['tone']) {
+    if (tone === 'accent') return 'text-accent';
+    if (tone === 'warning') return 'text-warning';
+    if (tone === 'danger') return 'text-danger';
+    return 'text-muted';
 }
 
 function makeMessageId(prefix: string): string {
