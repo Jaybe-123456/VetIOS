@@ -111,6 +111,167 @@ paths:
                 $ref: '#/components/schemas/EvaluationResponse'
         '401':
           $ref: '#/components/responses/Error'
+  /api/rag/catalog:
+    get:
+      operationId: getRagCatalog
+      summary: List the curated veterinary and medical RAG catalog
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Catalog and readiness returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RagCatalogResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: seedRagCatalog
+      summary: Seed or refresh curated RAG sources for the tenant
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force_refresh:
+                  type: boolean
+                  default: false
+      responses:
+        '200':
+          description: Catalog seed completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RagCatalogRunResponse'
+        '207':
+          description: Catalog seed completed with connector warnings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RagCatalogRunResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+  /api/rag/sources:
+    get:
+      operationId: listRagSources
+      summary: List tenant RAG sources
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Source list returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sources:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RagSource'
+                  request_id:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: createRagSource
+      summary: Register a RAG source
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RagSourceInput'
+      responses:
+        '201':
+          description: Source created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  source:
+                    $ref: '#/components/schemas/RagSource'
+                  request_id:
+                    type: string
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+  /api/rag/documents:
+    get:
+      operationId: listRagDocuments
+      summary: List indexed RAG documents
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Document list returned
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/RagDocument'
+                  request_id:
+                    type: string
+        '401':
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: ingestRagDocument
+      summary: Ingest source text into the RAG corpus
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RagDocumentIngestRequest'
+      responses:
+        '201':
+          description: Document indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RagDocumentIngestResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
+  /api/rag/query:
+    post:
+      operationId: queryRagEvidence
+      summary: Retrieve citation-first evidence for a clinical question
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RagQueryRequest'
+      responses:
+        '200':
+          description: Evidence answer returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RagQueryResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
   /api/health:
     get:
       operationId: getHealth
@@ -155,6 +316,277 @@ components:
         error:
           type: string
         detail:
+          type: string
+    RagSource:
+      type: object
+      required: [id, name, source_type, authority_tier, species_scope, medicine_domain, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        external_key:
+          type: string
+          nullable: true
+        name:
+          type: string
+        source_type:
+          type: string
+          enum: [guideline, journal, textbook, drug_label, lab_reference, clinical_protocol, client_handout, dataset, web, file, other]
+        authority_tier:
+          type: string
+          enum: [peer_reviewed, specialist_guideline, regulatory, institutional, clinic_local, unverified]
+        species_scope:
+          type: array
+          items:
+            type: string
+        medicine_domain:
+          type: array
+          items:
+            type: string
+        url:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, paused, quarantined]
+    RagSourceInput:
+      type: object
+      required: [name]
+      properties:
+        external_key:
+          type: string
+        name:
+          type: string
+        source_type:
+          type: string
+        authority_tier:
+          type: string
+        species_scope:
+          type: array
+          items:
+            type: string
+        medicine_domain:
+          type: array
+          items:
+            type: string
+        url:
+          type: string
+          nullable: true
+        license:
+          type: string
+          nullable: true
+        attribution:
+          type: string
+          nullable: true
+    RagDocument:
+      type: object
+      required: [id, source_id, title, ingestion_status, content_length]
+      properties:
+        id:
+          type: string
+          format: uuid
+        source_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        document_type:
+          type: string
+        content_length:
+          type: integer
+        ingestion_status:
+          type: string
+          enum: [pending, indexed, failed, quarantined]
+        indexed_at:
+          type: string
+          nullable: true
+    RagReadiness:
+      type: object
+      required: [sources, documents, chunks, high_authority_sources, stale_documents, ready, warnings]
+      properties:
+        sources:
+          type: integer
+        documents:
+          type: integer
+        chunks:
+          type: integer
+        high_authority_sources:
+          type: integer
+        stale_documents:
+          type: integer
+        last_refreshed_at:
+          type: string
+          nullable: true
+        ready:
+          type: boolean
+        warnings:
+          type: array
+          items:
+            type: string
+    RagCatalogResponse:
+      type: object
+      properties:
+        catalog:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        readiness:
+          $ref: '#/components/schemas/RagReadiness'
+        request_id:
+          type: string
+    RagCatalogRunResponse:
+      type: object
+      properties:
+        run_id:
+          type: string
+          nullable: true
+        run_mode:
+          type: string
+          enum: [catalog_seed, catalog_refresh]
+        sources_attempted:
+          type: integer
+        sources_indexed:
+          type: integer
+        documents_indexed:
+          type: integer
+        chunks_indexed:
+          type: integer
+        readiness:
+          $ref: '#/components/schemas/RagReadiness'
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              source:
+                type: string
+              message:
+                type: string
+        request_id:
+          type: string
+    RagDocumentIngestRequest:
+      type: object
+      required: [source, document]
+      properties:
+        source:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            external_key:
+              type: string
+            name:
+              type: string
+            source_type:
+              type: string
+            authority_tier:
+              type: string
+            species_scope:
+              type: array
+              items:
+                type: string
+            medicine_domain:
+              type: array
+              items:
+                type: string
+            url:
+              type: string
+              nullable: true
+            license:
+              type: string
+              nullable: true
+            attribution:
+              type: string
+              nullable: true
+        document:
+          type: object
+          required: [title]
+          properties:
+            title:
+              type: string
+            document_type:
+              type: string
+              default: text
+            language:
+              type: string
+              default: en
+            content_text:
+              type: string
+            content_url:
+              type: string
+            fetch_url:
+              type: boolean
+              default: false
+            metadata:
+              type: object
+              additionalProperties: true
+    RagDocumentIngestResponse:
+      type: object
+      properties:
+        source:
+          $ref: '#/components/schemas/RagSource'
+        document:
+          $ref: '#/components/schemas/RagDocument'
+        chunks_indexed:
+          type: integer
+        embedding_model:
+          type: string
+          nullable: true
+        deterministic_embeddings:
+          type: boolean
+        request_id:
+          type: string
+    RagQueryRequest:
+      type: object
+      required: [question]
+      properties:
+        question:
+          type: string
+        source_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+        species:
+          type: string
+          nullable: true
+        domain:
+          type: string
+          nullable: true
+        strategy:
+          type: string
+          enum: [hybrid, vector, lexical, clinical_guideline, drug_safety, lab_reference]
+          nullable: true
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 8
+          default: 6
+    RagQueryResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+        answer_mode:
+          type: string
+          enum: [extractive]
+        citations:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        retrieval_stats:
+          type: object
+          additionalProperties: true
+        evaluation:
+          type: object
+          additionalProperties: true
+        query_id:
+          type: string
+          nullable: true
+        request_id:
           type: string
     Differential:
       type: object

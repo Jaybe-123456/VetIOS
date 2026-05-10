@@ -17,6 +17,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const SourceSchema = z.object({
+    external_key: z.string().trim().min(1).max(120).optional(),
     name: z.string().trim().min(1).max(240),
     source_type: z.string().trim().min(1).max(80).default('other'),
     authority_tier: z.string().trim().min(1).max(80).default('unverified'),
@@ -26,6 +27,7 @@ const SourceSchema = z.object({
     license: z.string().trim().max(240).optional().nullable(),
     attribution: z.string().trim().max(500).optional().nullable(),
     ingestion_policy: z.record(z.string(), z.unknown()).default({}),
+    refresh_policy: z.record(z.string(), z.unknown()).default({}),
 });
 
 export async function GET(req: Request) {
@@ -73,6 +75,7 @@ export async function POST(req: Request) {
         .from('rag_sources')
         .insert({
             tenant_id: auth.actor.tenantId,
+            external_key: parsed.data.external_key ?? null,
             name: parsed.data.name,
             source_type: normalizeRagSourceType(parsed.data.source_type),
             authority_tier: normalizeAuthorityTier(parsed.data.authority_tier),
@@ -85,6 +88,7 @@ export async function POST(req: Request) {
                 trusted_public_source: url.trusted,
                 ...parsed.data.ingestion_policy,
             },
+            refresh_policy: parsed.data.refresh_policy,
             status: 'active',
         })
         .select('*')

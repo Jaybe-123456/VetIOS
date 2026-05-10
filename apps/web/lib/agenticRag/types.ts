@@ -24,6 +24,7 @@ export type RagRetrievalStrategy = 'hybrid' | 'vector' | 'lexical' | 'clinical_g
 export interface RagSourceRecord {
     id: string;
     tenant_id: string;
+    external_key: string | null;
     name: string;
     source_type: RagSourceType;
     authority_tier: RagAuthorityTier;
@@ -33,6 +34,10 @@ export interface RagSourceRecord {
     license: string | null;
     attribution: string | null;
     ingestion_policy: Record<string, unknown>;
+    refresh_policy: Record<string, unknown>;
+    quality_score: number;
+    last_refreshed_at: string | null;
+    next_refresh_at: string | null;
     status: 'active' | 'paused' | 'quarantined';
     created_at: string;
     updated_at: string;
@@ -49,6 +54,9 @@ export interface RagDocumentRecord {
     content_length: number;
     metadata: Record<string, unknown>;
     provenance: Record<string, unknown>;
+    auto_indexed: boolean;
+    refresh_status: 'current' | 'stale' | 'failed';
+    source_fetched_at: string | null;
     ingestion_status: 'pending' | 'indexed' | 'failed' | 'quarantined';
     error_message: string | null;
     indexed_at: string | null;
@@ -129,6 +137,20 @@ export interface RagAnswerResult {
         citation_coverage: number;
         unsupported_claims: number;
         warnings: string[];
+        causal_memory_linked?: boolean;
+        counterfactual_reasoning_linked?: boolean;
+        one_health_surveillance_linked?: boolean;
     };
     query_id: string | null;
+}
+
+export interface RagReadinessSummary {
+    sources: number;
+    documents: number;
+    chunks: number;
+    high_authority_sources: number;
+    stale_documents: number;
+    last_refreshed_at: string | null;
+    ready: boolean;
+    warnings: string[];
 }

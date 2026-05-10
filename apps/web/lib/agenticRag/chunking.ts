@@ -19,7 +19,7 @@ const DEFAULT_OVERLAP_TOKENS = 60;
 const DEFAULT_MAX_CHUNKS = 80;
 
 export function normalizeRagContent(input: string): string {
-    return input
+    return decodeCommonHtmlEntities(input)
         .replace(/<script[\s\S]*?<\/script>/gi, ' ')
         .replace(/<style[\s\S]*?<\/style>/gi, ' ')
         .replace(/<[^>]+>/g, ' ')
@@ -159,4 +159,15 @@ function splitLongParagraph(paragraph: string, maxTokens: number): string[] {
 function clampInt(value: number, min: number, max: number): number {
     const parsed = Number.isFinite(value) ? Math.round(value) : min;
     return Math.min(Math.max(parsed, min), max);
+}
+
+function decodeCommonHtmlEntities(value: string): string {
+    return value
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/&quot;/gi, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&#x27;/gi, "'");
 }

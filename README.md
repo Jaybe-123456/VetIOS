@@ -21,6 +21,7 @@ VetIOS is a simulation-first, inference-driven platform for structured clinical 
 - [Architecture](#architecture)
 - [Data Flywheel](#data-flywheel)
 - [Core API](#core-api)
+- [Agentic RAG](#agentic-rag)
 - [Monorepo Map](#monorepo-map)
 - [Tech Stack](#tech-stack)
 - [Quick Start](#quick-start)
@@ -212,6 +213,20 @@ Typical response fields:
 ```
 
 For the broader API contract, see [`openapi.yaml`](openapi.yaml) and [`apps/web/public/api-spec/openapi-v1.yaml`](apps/web/public/api-spec/openapi-v1.yaml).
+
+## Agentic RAG
+
+VetIOS includes a tenant-scoped Agentic RAG service for veterinary and medical evidence ingestion. The service registers high-authority sources, chunks and embeds documents, supports hybrid retrieval, and returns extractive answers with citations and safety warnings.
+
+Core routes:
+
+- `GET|POST /api/rag/catalog` reads or seeds the curated source catalog.
+- `GET|POST /api/rag/sources` lists or registers source metadata.
+- `GET|POST /api/rag/documents` lists or indexes evidence documents.
+- `POST /api/rag/query` retrieves cited evidence for a clinical question.
+- `GET|POST /api/cron/rag-refresh` refreshes due catalog sources through cron.
+
+The curated catalog covers AVMA, AAHA, WSAVA, ACVIM, AAFP, CAPC, ESCCAP, IRIS, Merck Veterinary Manual, Cornell Feline Health Center, Veterinary Partner VIN, WOAH, CDC, USDA APHIS, FDA Animal Drugs, DailyMed, PubMed, PubMed Central Open Access, NCBI Bookshelf, and explicitly low-trust BioVenic commercial discovery sources. See [`docs/agentic-rag-service.md`](docs/agentic-rag-service.md) for the schema, environment, and safety boundaries.
 
 ## Monorepo Map
 

@@ -69,6 +69,10 @@
       "schedule": "0 */4 * * *"
     },
     {
+      "path": "/api/cron/rag-refresh",
+      "schedule": "0 3 * * *"
+    },
+    {
       "path": "/api/cron/active-learning-sweep",
       "schedule": "0 8 * * *"
     },

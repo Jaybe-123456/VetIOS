@@ -23,6 +23,7 @@ const MAX_CITATIONS = 8;
 
 export interface RagSourceInput {
     id?: string;
+    external_key?: string;
     name?: string;
     source_type?: string;
     authority_tier?: string;
@@ -32,6 +33,7 @@ export interface RagSourceInput {
     license?: string | null;
     attribution?: string | null;
     ingestion_policy?: Record<string, unknown>;
+    refresh_policy?: Record<string, unknown>;
 }
 
 export interface IngestRagDocumentInput {
@@ -47,6 +49,8 @@ export interface IngestRagDocumentInput {
         content_url?: string;
         fetch_url?: boolean;
         metadata?: Record<string, unknown>;
+        auto_indexed?: boolean;
+        source_fetched_at?: string;
     };
     chunking?: RagChunkingOptions;
 }
@@ -134,6 +138,8 @@ export async function ingestRagDocument(input: IngestRagDocumentInput): Promise<
             content_sha256: contentSha,
             indexed_by: 'vetios_agentic_rag',
         },
+        autoIndexed: input.document.auto_indexed ?? false,
+        sourceFetchedAt: input.document.source_fetched_at ?? null,
     });
 
     await input.client
@@ -217,6 +223,12 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
     const citations = chunks.map((chunk, index) => buildCitation(chunk, index + 1));
     const answer = synthesizeExtractiveAnswer(input.question, citations);
     const warnings = buildRagWarnings(citations);
+    const integrationContexts = await buildIntegratedRagContexts(input.client, {
+        tenantId: input.tenantId,
+        question: input.question,
+        species: plan.species,
+        domain: plan.domain,
+    });
     const retrievalStats = {
         strategy: plan.strategy,
         vector_hits: vectorRows.length,
@@ -230,6 +242,9 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         citation_coverage: citations.length > 0 ? 1 : 0,
         unsupported_claims: 0,
         warnings,
+        causal_memory_linked: integrationContexts.causal_memory.linked,
+        counterfactual_reasoning_linked: integrationContexts.counterfactual.linked,
+        one_health_surveillance_linked: integrationContexts.one_health.linked,
     };
 
     const queryId = await logRagQuery(input.client, {
@@ -241,6 +256,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         citations,
         retrievalStats,
         evaluation,
+        integrationContexts,
     }).catch(() => null);
 
     return {
@@ -297,10 +313,48 @@ async function resolveRagSource(input: IngestRagDocumentInput): Promise<RagSourc
     const sourceUrl = validatePublicSourceUrl(input.source.url);
     if (!sourceUrl.ok) throw new Error(sourceUrl.error);
     const name = normalizeRequired(input.source.name, 'source.name');
+
+    const externalKey = normalizeExternalKey(input.source.external_key);
+    const existing = await findExistingSource(input.client, input.tenantId, {
+        externalKey,
+        url: sourceUrl.url,
+        name,
+    });
+    if (existing) {
+        const { data, error } = await input.client
+            .from('rag_sources')
+            .update({
+                external_key: externalKey ?? existing.external_key,
+                name,
+                source_type: normalizeRagSourceType(input.source.source_type),
+                authority_tier: normalizeAuthorityTier(input.source.authority_tier),
+                species_scope: normalizeStringList(input.source.species_scope),
+                medicine_domain: normalizeStringList(input.source.medicine_domain),
+                url: sourceUrl.url,
+                license: normalizeOptional(input.source.license),
+                attribution: normalizeOptional(input.source.attribution),
+                ingestion_policy: {
+                    trusted_public_source: sourceUrl.trusted,
+                    ...(input.source.ingestion_policy ?? {}),
+                },
+                refresh_policy: input.source.refresh_policy ?? existing.refresh_policy,
+                status: 'active',
+                updated_at: new Date().toISOString(),
+            })
+            .eq('tenant_id', input.tenantId)
+            .eq('id', existing.id)
+            .select('*')
+            .single();
+
+        if (error || !data) throw new Error(`Failed to update RAG source: ${error?.message ?? 'Unknown error'}`);
+        return mapSource(data as Record<string, unknown>);
+    }
+
     const { data, error } = await input.client
         .from('rag_sources')
         .insert({
             tenant_id: input.tenantId,
+            external_key: externalKey,
             name,
             source_type: normalizeRagSourceType(input.source.source_type),
             authority_tier: normalizeAuthorityTier(input.source.authority_tier),
@@ -313,6 +367,7 @@ async function resolveRagSource(input: IngestRagDocumentInput): Promise<RagSourc
                 trusted_public_source: sourceUrl.trusted,
                 ...(input.source.ingestion_policy ?? {}),
             },
+            refresh_policy: input.source.refresh_policy ?? {},
             status: 'active',
         })
         .select('*')
@@ -320,6 +375,45 @@ async function resolveRagSource(input: IngestRagDocumentInput): Promise<RagSourc
 
     if (error || !data) throw new Error(`Failed to create RAG source: ${error?.message ?? 'Unknown error'}`);
     return mapSource(data as Record<string, unknown>);
+}
+
+async function findExistingSource(client: SupabaseClient, tenantId: string, input: {
+    externalKey: string | null;
+    url: string | null;
+    name: string;
+}): Promise<RagSourceRecord | null> {
+    if (input.externalKey) {
+        const { data, error } = await client
+            .from('rag_sources')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .eq('external_key', input.externalKey)
+            .maybeSingle();
+        if (error) throw new Error(`Failed to find RAG source: ${error.message}`);
+        if (data) return mapSource(data as Record<string, unknown>);
+    }
+
+    if (input.url) {
+        const { data, error } = await client
+            .from('rag_sources')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .eq('url', input.url)
+            .limit(1)
+            .maybeSingle();
+        if (error) throw new Error(`Failed to find RAG source by URL: ${error.message}`);
+        if (data) return mapSource(data as Record<string, unknown>);
+    }
+
+    const { data, error } = await client
+        .from('rag_sources')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('name', input.name)
+        .limit(1)
+        .maybeSingle();
+    if (error) throw new Error(`Failed to find RAG source by name: ${error.message}`);
+    return data ? mapSource(data as Record<string, unknown>) : null;
 }
 
 async function resolveDocumentContent(document: IngestRagDocumentInput['document']): Promise<string> {
@@ -378,6 +472,8 @@ async function upsertRagDocument(client: SupabaseClient, input: {
     contentLength: number;
     metadata: Record<string, unknown>;
     provenance: Record<string, unknown>;
+    autoIndexed: boolean;
+    sourceFetchedAt: string | null;
 }): Promise<RagDocumentRecord> {
     const { data, error } = await client
         .from('rag_documents')
@@ -391,6 +487,9 @@ async function upsertRagDocument(client: SupabaseClient, input: {
             content_length: input.contentLength,
             metadata: input.metadata,
             provenance: input.provenance,
+            auto_indexed: input.autoIndexed,
+            refresh_status: 'current',
+            source_fetched_at: input.sourceFetchedAt,
             ingestion_status: 'pending',
             updated_at: new Date().toISOString(),
         }, { onConflict: 'tenant_id,source_id,content_sha256' })
@@ -508,6 +607,68 @@ function buildRagWarnings(citations: RagCitation[]): string[] {
     return warnings;
 }
 
+async function buildIntegratedRagContexts(client: SupabaseClient, input: {
+    tenantId: string;
+    question: string;
+    species: string | null;
+    domain: string | null;
+}): Promise<{
+    causal_memory: Record<string, unknown> & { linked: boolean };
+    counterfactual: Record<string, unknown> & { linked: boolean };
+    one_health: Record<string, unknown> & { linked: boolean };
+}> {
+    const uuidTenant = isUuid(input.tenantId);
+    const [causalObservations, livingCases, counterfactualSessions, oneHealthSignals, zoonoticAlerts] = await Promise.all([
+        safeTenantCount(client, 'causal_observations', input.tenantId, input.species),
+        safeTenantCount(client, 'living_case_nodes', input.tenantId, input.species),
+        uuidTenant ? safeTenantCount(client, 'counterfactual_diagnostic_sessions', input.tenantId, input.species) : Promise.resolve(0),
+        uuidTenant ? safeTenantCount(client, 'one_health_signals', input.tenantId, input.species) : Promise.resolve(0),
+        uuidTenant ? safeTenantCount(client, 'zoonotic_bridge_alerts', input.tenantId, null) : Promise.resolve(0),
+    ]);
+
+    return {
+        causal_memory: {
+            linked: causalObservations + livingCases > 0,
+            observations: causalObservations,
+            living_case_nodes: livingCases,
+            query_species: input.species,
+            query_domain: input.domain,
+            memory_role: 'calibration_and_outcome_alignment',
+        },
+        counterfactual: {
+            linked: counterfactualSessions > 0,
+            diagnostic_sessions: counterfactualSessions,
+            query_species: input.species,
+            challenger_role: 'load_bearing_finding_and_differential_stability_review',
+        },
+        one_health: {
+            linked: oneHealthSignals + zoonoticAlerts > 0 || input.domain === 'one_health' || /zoonot|outbreak|surveillance|one health/i.test(input.question),
+            signals: oneHealthSignals,
+            zoonotic_bridge_alerts: zoonoticAlerts,
+            surveillance_role: 'cross_species_and_public_health_context',
+        },
+    };
+}
+
+async function safeTenantCount(
+    client: SupabaseClient,
+    table: string,
+    tenantId: string,
+    species: string | null,
+): Promise<number> {
+    try {
+        let query = client
+            .from(table)
+            .select('id', { count: 'exact', head: true })
+            .eq('tenant_id', tenantId);
+        if (species) query = query.eq('species', species);
+        const { count } = await query;
+        return count ?? 0;
+    } catch {
+        return 0;
+    }
+}
+
 async function logRagQuery(client: SupabaseClient, input: {
     tenantId: string;
     actorKind: string;
@@ -517,6 +678,11 @@ async function logRagQuery(client: SupabaseClient, input: {
     citations: RagCitation[];
     retrievalStats: Record<string, unknown>;
     evaluation: Record<string, unknown>;
+    integrationContexts: {
+        causal_memory: Record<string, unknown>;
+        counterfactual: Record<string, unknown>;
+        one_health: Record<string, unknown>;
+    };
 }): Promise<string | null> {
     const { data, error } = await client
         .from('rag_queries')
@@ -531,6 +697,9 @@ async function logRagQuery(client: SupabaseClient, input: {
             citations: input.citations,
             retrieval_stats: input.retrievalStats,
             evaluation: input.evaluation,
+            causal_memory_context: input.integrationContexts.causal_memory,
+            counterfactual_context: input.integrationContexts.counterfactual,
+            one_health_context: input.integrationContexts.one_health,
         })
         .select('id')
         .single();
@@ -543,6 +712,7 @@ function mapSource(row: Record<string, unknown>): RagSourceRecord {
     return {
         id: String(row.id),
         tenant_id: String(row.tenant_id),
+        external_key: normalizeOptional(row.external_key),
         name: String(row.name),
         source_type: normalizeRagSourceType(String(row.source_type)),
         authority_tier: normalizeAuthorityTier(String(row.authority_tier)),
@@ -552,6 +722,10 @@ function mapSource(row: Record<string, unknown>): RagSourceRecord {
         license: normalizeOptional(row.license),
         attribution: normalizeOptional(row.attribution),
         ingestion_policy: asRecord(row.ingestion_policy),
+        refresh_policy: asRecord(row.refresh_policy),
+        quality_score: Number(row.quality_score ?? 0),
+        last_refreshed_at: normalizeOptional(row.last_refreshed_at),
+        next_refresh_at: normalizeOptional(row.next_refresh_at),
         status: row.status === 'paused' || row.status === 'quarantined' ? row.status : 'active',
         created_at: String(row.created_at),
         updated_at: String(row.updated_at),
@@ -560,6 +734,7 @@ function mapSource(row: Record<string, unknown>): RagSourceRecord {
 
 function mapDocument(row: Record<string, unknown>): RagDocumentRecord {
     const status = String(row.ingestion_status);
+    const refreshStatus = String(row.refresh_status);
     return {
         id: String(row.id),
         tenant_id: String(row.tenant_id),
@@ -571,6 +746,9 @@ function mapDocument(row: Record<string, unknown>): RagDocumentRecord {
         content_length: Number(row.content_length ?? 0),
         metadata: asRecord(row.metadata),
         provenance: asRecord(row.provenance),
+        auto_indexed: row.auto_indexed === true,
+        refresh_status: refreshStatus === 'stale' || refreshStatus === 'failed' ? refreshStatus : 'current',
+        source_fetched_at: normalizeOptional(row.source_fetched_at),
         ingestion_status: status === 'pending' || status === 'failed' || status === 'quarantined' ? status : 'indexed',
         error_message: normalizeOptional(row.error_message),
         indexed_at: normalizeOptional(row.indexed_at),
@@ -672,6 +850,12 @@ function normalizeRequired(value: unknown, field: string): string {
 function normalizeText(value: unknown, fallback: string): string {
     const normalized = normalizeOptional(value);
     return normalized ?? fallback;
+}
+
+function normalizeExternalKey(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+    return normalized.length > 0 && normalized.length <= 120 ? normalized : null;
 }
 
 function normalizeOptional(value: unknown): string | null {

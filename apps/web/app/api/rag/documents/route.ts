@@ -14,6 +14,7 @@ export const maxDuration = 60;
 const RequestSchema = z.object({
     source: z.object({
         id: z.string().uuid().optional(),
+        external_key: z.string().trim().min(1).max(120).optional(),
         name: z.string().trim().min(1).max(240).optional(),
         source_type: z.string().trim().max(80).optional(),
         authority_tier: z.string().trim().max(80).optional(),
@@ -23,6 +24,7 @@ const RequestSchema = z.object({
         license: z.string().trim().max(240).optional().nullable(),
         attribution: z.string().trim().max(500).optional().nullable(),
         ingestion_policy: z.record(z.string(), z.unknown()).optional(),
+        refresh_policy: z.record(z.string(), z.unknown()).optional(),
     }).refine((value) => value.id || value.name, {
         message: 'source.id or source.name is required.',
     }),

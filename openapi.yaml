@@ -83,6 +83,62 @@ paths:
                 tenant_id: { type: string, nullable: true }
       responses:
         '200': { description: Backfill result, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/rag/catalog:
+    get:
+      summary: List curated veterinary and medical RAG sources plus readiness
+      responses:
+        '200': { description: RAG catalog, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+    post:
+      summary: Seed or refresh curated Agentic RAG sources for a tenant
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force_refresh: { type: boolean, default: false }
+      responses:
+        '200': { description: Catalog seed result, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+        '207': { description: Catalog seed result with connector warnings, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/rag/sources:
+    get:
+      summary: List tenant RAG sources
+      responses:
+        '200': { description: RAG source list, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+    post:
+      summary: Register a tenant RAG source
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '201': { description: RAG source created, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/rag/documents:
+    get:
+      summary: List indexed RAG documents
+      responses:
+        '200': { description: RAG document list, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+    post:
+      summary: Ingest a veterinary or medical evidence document
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '201': { description: RAG document indexed, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/rag/query:
+    post:
+      summary: Retrieve citation-first RAG evidence for a clinical question
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [question], properties: { question: { type: string } }, additionalProperties: true }
+      responses:
+        '200': { description: RAG answer, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
   /api/datasets/stats:
     get:
       summary: Fetch live dataset row count
