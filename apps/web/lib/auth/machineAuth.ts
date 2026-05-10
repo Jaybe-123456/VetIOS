@@ -10,6 +10,8 @@ export const MACHINE_CREDENTIAL_SCOPES = [
     'simulation:write',
     'evaluation:write',
     'evaluation:read',
+    'rag:read',
+    'rag:write',
     'signals:ingest',
     'signals:connect',
     'signals:read',

@@ -18,6 +18,7 @@ const ONBOARDING_ROUTE_ORDER: OnboardingRouteDefinition[] = [
     { title: 'Dashboard', href: '/dashboard' },
     { title: 'Inference Console', href: '/inference' },
     { title: 'Clinical Dataset', href: '/dataset' },
+    { title: 'Agentic RAG', href: '/rag' },
     { title: 'Experiment Track', href: '/experiments' },
     { title: 'Model Registry', href: '/models' },
     { title: 'Telemetry', href: '/telemetry' },
@@ -143,6 +144,30 @@ const ASSISTANT_ROUTE_CONTEXTS: AssistantRouteContext[] = [
             { type: 'prompt', label: 'Explain Dataset Workflow', description: 'Get a new-user overview of dataset curation.', prompt: 'Explain how dataset review feeds experiments and models.' },
             { type: 'navigate', label: 'Open Experiments', description: 'Turn dataset versions into tracked runs.', href: '/experiments' },
             { type: 'navigate', label: 'Open Models', description: 'Review promoted artifacts that came from those runs.', href: '/models' },
+        ],
+    },
+    {
+        key: 'rag',
+        title: 'Agentic RAG',
+        href: '/rag',
+        summary: 'Agentic RAG is the evidence indexing and retrieval service for veterinary and medical documents, returning citation-first answers grounded in tenant-controlled sources.',
+        matchers: ['/rag'],
+        keywords: ['rag', 'retrieval', 'agentic rag', 'citations', 'documents', 'sources', 'index', 'guidelines', 'evidence'],
+        primary_goal: 'Index trusted veterinary and medical sources and answer questions with verifiable citations.',
+        recommended_steps: [
+            'Register a source with authority tier, species scope, domain, and provenance URL before indexing text.',
+            'Index extracted guideline, paper, drug label, protocol, or lab reference text into chunks with embeddings.',
+            'Query the corpus and inspect citations before using evidence in clinical workflows.',
+        ],
+        starter_prompts: [
+            'Explain how Agentic RAG should be used safely in VetIOS.',
+            'What makes a source trustworthy enough to index?',
+            'How do citations flow into Ask VetIOS and inference support?',
+        ],
+        suggested_actions: [
+            { type: 'prompt', label: 'Explain RAG Safety', description: 'Understand citation-first retrieval boundaries.', prompt: 'Explain how Agentic RAG avoids unsupported veterinary claims.' },
+            { type: 'navigate', label: 'Open Ask VetIOS', description: 'Use indexed evidence in veterinary Q&A workflows.', href: '/ask-vetios' },
+            { type: 'navigate', label: 'Open Dataset', description: 'Review clinical case evidence alongside documents.', href: '/dataset' },
         ],
     },
     {

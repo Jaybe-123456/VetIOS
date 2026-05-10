@@ -14,6 +14,7 @@ import {
     Activity,
     Settings,
     Cpu,
+    BookOpenCheck,
     X
 } from 'lucide-react';
 
@@ -24,6 +25,7 @@ const navItems = [
     { name: 'Outcome Learning',  href: '/outcome',      icon: GraduationCap   },
     { name: 'Adversarial Sim',   href: '/simulate',     icon: ShieldAlert     },
     { name: 'Clinical Dataset',  href: '/dataset',      icon: Database        },
+    { name: 'Agentic RAG',       href: '/rag',          icon: BookOpenCheck   },
     { name: 'Experiment Track',  href: '/experiments',  icon: FlaskConical    },
     { name: 'Model Registry',    href: '/models',       icon: Cpu             },
     { name: 'Telemetry',         href: '/telemetry',    icon: Activity        },

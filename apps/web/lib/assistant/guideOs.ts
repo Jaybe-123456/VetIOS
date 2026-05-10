@@ -235,6 +235,19 @@ function routeSynapseProfile(routeKey: string): {
                     'Use Experiment Track once the dataset slice is ready to evaluate.',
                 ],
             };
+        case 'rag':
+            return {
+                mode: 'Evidence retrieval',
+                featureSet: 'Cited documents',
+                guardrail: 'Citations required',
+                guardrailTone: 'warning',
+                summary: 'It can guide source registration, document indexing, retrieval strategy, and citation inspection for veterinary and medical evidence.',
+                warnings: ['GUIDE_OS should not treat uncited RAG output as clinical fact; every generated answer must be traceable to indexed source passages.'],
+                nextActions: [
+                    'Register source provenance and authority tier before indexing text.',
+                    'Query indexed evidence and inspect citations before using claims downstream.',
+                ],
+            };
         case 'models':
             return {
                 mode: 'Governance',

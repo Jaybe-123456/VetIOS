@@ -537,6 +537,7 @@ function resolveExplicitRouteMatch(query: string) {
         { pattern: /outcome|ground truth|actual diagnosis/, key: 'outcome-learning' },
         { pattern: /simulate|simulation|adversarial/, key: 'simulate' },
         { pattern: /dataset|data|artifact|record/, key: 'dataset' },
+        { pattern: /rag|retrieval|citation|indexed evidence|documents|sources/, key: 'rag' },
         { pattern: /experiment|compare runs|run comparison|reproduc|benchmark/, key: 'experiments' },
         { pattern: /model registry|model version|promotion|registry/, key: 'models' },
         { pattern: /telemetry|latency|drift|observer|logs/, key: 'telemetry' },
@@ -583,6 +584,8 @@ function buildOperationalAnswer({
             return `${moveToTargetPrefix}Adversarial Sim is for controlled failure exploration. Use it when you want to see how a model behaves under contradiction, stress, or unusual edge conditions before trusting it in deployment or promotion decisions.`;
         case 'dataset':
             return `${moveToTargetPrefix}Clinical Dataset is the evidence surface behind the rest of the platform. Review what cases and artifacts exist here before assuming you have enough signal for experiments, comparisons, or promotion decisions.`;
+        case 'rag':
+            return `${moveToTargetPrefix}Agentic RAG is the citation-first document evidence layer. Use it to register trusted veterinary and medical sources, index extracted text, and retrieve answers that stay tied to source passages instead of unsupported model memory.`;
         case 'experiments':
             if (intent === 'compare') {
                 return `${moveToTargetPrefix}${withSynapseSummary('Experiment Track is the right place to compare runs and verify model claims.', synapse)} Start by selecting comparable runs, then review calibration, robustness, and comparison evidence before you treat a result as promotion-ready.`;
@@ -648,6 +651,14 @@ function buildOperationalSteps({
             'Trace the artifact back to the experiment that produced it.',
             'Review governance and readiness signals before treating the version as trusted.',
             'Use Telemetry if you need to confirm how the version behaves under real operational load.',
+        ];
+    }
+
+    if (targetRoute.key === 'rag') {
+        return [
+            'Register source provenance, authority tier, species scope, and medicine domain before indexing.',
+            'Index extracted source text and confirm chunks were created with embeddings.',
+            'Run a query and inspect citations before using evidence in Ask VetIOS, inference, or treatment workflows.',
         ];
     }
 
@@ -721,6 +732,15 @@ function buildOperationalActions({
             label: 'Read Telemetry',
             description: 'Translate telemetry panels into plain language.',
             prompt: 'Explain how to read the key telemetry panels as a new operator.',
+        });
+    }
+
+    if (targetRoute.key === 'rag') {
+        actions.push({
+            type: 'prompt',
+            label: 'RAG Safety',
+            description: 'Ask for the safe citation-first workflow.',
+            prompt: 'Show me the safe Agentic RAG workflow for veterinary evidence.',
         });
     }
 

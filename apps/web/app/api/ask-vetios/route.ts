@@ -18,6 +18,7 @@ import { getPopulationSignalService } from '@/lib/populationSignal/populationSig
 import { checkOrigin, buildCorsHeaders } from '@/lib/protection/originGuard';
 import { parseAskVetIOSQuery } from '@vetios/ask-vetios';
 import { getSupabaseServer } from '@/lib/supabaseServer';
+import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/service';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -99,6 +100,24 @@ export async function POST(req: Request) {
                 ragContextBlock = similar.retrievalSummary;
             }
         } catch { /* RAG non-critical */ }
+        let agenticRagResult: Awaited<ReturnType<typeof answerRagQuery>> | null = null;
+        try {
+            agenticRagResult = await Promise.race([
+                answerRagQuery({
+                    tenantId: process.env.VETIOS_PUBLIC_RAG_TENANT_ID || 'public',
+                    actorKind: 'ask_vetios',
+                    client: getSupabaseServer(),
+                    question: message,
+                    limit: 4,
+                } satisfies AnswerRagQueryInput),
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('AGENTIC_RAG_TIMEOUT')), 1_100),
+                ),
+            ]);
+        } catch { /* Document RAG is non-critical for public chat availability */ }
+        const agenticRagContextBlock = agenticRagResult?.citations.length
+            ? formatAgenticRagPromptBlock(agenticRagResult)
+            : '';
         // ─────────────────────────────────────────────────────────────────────
 
         const inferenceResult = await runInference({
@@ -110,6 +129,9 @@ export async function POST(req: Request) {
                 ...(ragContextBlock ? {
                     rag_context: ragContextBlock,
                 } : {}),
+                ...(agenticRagContextBlock ? {
+                    agentic_rag_context: agenticRagContextBlock,
+                } : {}),
             }
         }, {
             signal: AbortSignal.timeout(ASK_VETIOS_INFERENCE_TIMEOUT_MS),
@@ -119,16 +141,19 @@ export async function POST(req: Request) {
         if (output.parse_error) {
             throw new Error(`AI generated invalid JSON: ${inferenceResult.raw_content}`);
         }
-        const response = buildEnsembleResponse(output, inferenceResult.ensemble_metadata);
+        const response = buildEnsembleResponse(output, inferenceResult.ensemble_metadata, agenticRagResult);
         const queryHistoryId = await logAskVetiosQuery(message, response, startTime).catch(() => null);
         const responseWithHistory = queryHistoryId ? { ...response, query_history_id: queryHistoryId } : response;
         const res = NextResponse.json(responseWithHistory, { status: 200 });
         withAskVetiosHeaders(res, requestId, startTime);
 
         // ── Passive population signal ingestion (fire-and-forget) ──
-        if (responseWithHistory.mode === 'clinical' && responseWithHistory.metadata?.diagnosis_ranked?.[0]?.name) {
-            const topDiagnosis = responseWithHistory.metadata.diagnosis_ranked[0].name as string;
-            const topConfidence = (responseWithHistory.metadata.diagnosis_ranked[0].confidence as number) ?? 0.5;
+        const diagnosisRanked = Array.isArray(responseWithHistory.metadata?.diagnosis_ranked)
+            ? responseWithHistory.metadata.diagnosis_ranked as Array<{ name?: unknown; confidence?: unknown }>
+            : [];
+        if (responseWithHistory.mode === 'clinical' && typeof diagnosisRanked[0]?.name === 'string') {
+            const topDiagnosis = diagnosisRanked[0].name;
+            const topConfidence = typeof diagnosisRanked[0].confidence === 'number' ? diagnosisRanked[0].confidence : 0.5;
             const species = (output.species as string) ?? 'unknown';
             const region = (output.region as string) ?? 'unknown';
             void getPopulationSignalService().ingestSignal({
@@ -161,7 +186,11 @@ function withAskVetiosHeaders(res: NextResponse, requestId: string, startTime: n
 
 // ── Response normaliser ────────────────────────────────────────────────────
 
-function buildEnsembleResponse(data: Record<string, unknown>, _ensembleMetadata: unknown) {
+function buildEnsembleResponse(
+    data: Record<string, unknown>,
+    _ensembleMetadata: unknown,
+    agenticRagResult?: Awaited<ReturnType<typeof answerRagQuery>> | null,
+) {
     const mode = (data.mode as string) || 'general';
 
     // 'operational' is a legacy mode — if the content is veterinary, treat as educational
@@ -176,7 +205,7 @@ function buildEnsembleResponse(data: Record<string, unknown>, _ensembleMetadata:
                 mode: 'educational',
                 topic: extractTopic(data),
                 content: answer,
-                metadata: null,
+                metadata: buildAskVetiosMetadata(null, agenticRagResult),
             };
         }
 
@@ -184,7 +213,7 @@ function buildEnsembleResponse(data: Record<string, unknown>, _ensembleMetadata:
         return {
             mode: 'general',
             content: 'I can help you navigate VetIOS or answer any veterinary question. What would you like to know?',
-            metadata: null,
+            metadata: buildAskVetiosMetadata(null, agenticRagResult),
         };
     }
 
@@ -193,22 +222,50 @@ function buildEnsembleResponse(data: Record<string, unknown>, _ensembleMetadata:
         return {
             mode: 'clinical',
             content: (data.summary as string) || (diagnosis.analysis as string) || 'Clinical assessment complete.',
-            metadata: {
+            metadata: buildAskVetiosMetadata({
                 diagnosis_ranked: (data.diagnosis_ranked as Array<{name: string; confidence: number; reasoning: string}>) ||
                     (diagnosis.top_differentials as Array<{name: string; confidence: number; reasoning: string}>) || [],
                 urgency_level: (data.urgency_level as string) || 'low',
                 recommended_tests: (data.recommended_tests as string[]) || [],
                 red_flags: (data.red_flags as string[]) || [],
                 explanation: (data.explanation as string) || '',
-            },
+            }, agenticRagResult),
         };
     }
 
     return {
         mode: 'general',
         content: (data.answer as string) || (data.content as string) || 'How can I assist you today?',
-        metadata: null,
+        metadata: buildAskVetiosMetadata(null, agenticRagResult),
     };
+}
+
+function buildAskVetiosMetadata(
+    base: Record<string, unknown> | null,
+    agenticRagResult?: Awaited<ReturnType<typeof answerRagQuery>> | null,
+) {
+    if (!agenticRagResult?.citations.length) {
+        return base;
+    }
+    return {
+        ...(base ?? {}),
+        rag_citations: agenticRagResult.citations,
+        rag_retrieval_stats: agenticRagResult.retrieval_stats,
+        rag_grounded: agenticRagResult.evaluation.grounded,
+    };
+}
+
+function formatAgenticRagPromptBlock(result: Awaited<ReturnType<typeof answerRagQuery>>): string {
+    const lines = [
+        '=== VetIOS AGENTIC DOCUMENT RAG CONTEXT ===',
+        'Use only these cited passages for document-grounded claims. Do not invent citations.',
+    ];
+    for (const citation of result.citations.slice(0, 4)) {
+        lines.push(`[${citation.index}] ${citation.title} // ${citation.source_name} // ${citation.authority_tier}`);
+        lines.push(citation.quote);
+    }
+    lines.push('=== END AGENTIC DOCUMENT RAG CONTEXT ===');
+    return lines.join('\n');
 }
 
 function extractTopic(data: Record<string, unknown>): string {
