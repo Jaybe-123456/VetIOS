@@ -44,6 +44,29 @@ export interface IndexSourceBundleResult {
     errors: Array<{ title: string; message: string }>;
 }
 
+export interface IndexSourceDatasetInput {
+    dataset_name?: string;
+    sources: IndexSourceBundleInput[];
+}
+
+export interface IndexSourceDatasetPlan {
+    dataset_name: string;
+    sources_attempted: number;
+    documents_attempted: number;
+    jobs: Array<IndexSourceBundleJob & { source_name: string }>;
+}
+
+export interface IndexSourceDatasetResult {
+    dataset_name: string;
+    sources_attempted: number;
+    sources_indexed: number;
+    documents_attempted: number;
+    documents_indexed: number;
+    chunks_indexed: number;
+    results: IndexSourceBundleResult[];
+    errors: Array<{ source_name: string; title?: string; message: string }>;
+}
+
 export async function ingestIndexSourceBundle(input: {
     client: SupabaseClient;
     tenantId: string;
@@ -76,6 +99,45 @@ export async function ingestIndexSourceBundle(input: {
         source_name: input.bundle.source_name,
         documents_attempted: jobs.length,
         documents_indexed: results.length,
+        chunks_indexed: results.reduce((sum, result) => sum + result.chunks_indexed, 0),
+        results,
+        errors,
+    };
+}
+
+export async function ingestIndexSourceDataset(input: {
+    client: SupabaseClient;
+    tenantId: string;
+    actorLabel: string | null;
+    dataset: IndexSourceDatasetInput;
+}): Promise<IndexSourceDatasetResult> {
+    const datasetName = normalizeDatasetName(input.dataset.dataset_name);
+    const results: IndexSourceBundleResult[] = [];
+    const errors: Array<{ source_name: string; title?: string; message: string }> = [];
+
+    for (const bundle of input.dataset.sources) {
+        const result = await ingestIndexSourceBundle({
+            client: input.client,
+            tenantId: input.tenantId,
+            actorLabel: input.actorLabel,
+            bundle,
+        });
+        results.push(result);
+        for (const error of result.errors) {
+            errors.push({
+                source_name: bundle.source_name,
+                title: error.title,
+                message: error.message,
+            });
+        }
+    }
+
+    return {
+        dataset_name: datasetName,
+        sources_attempted: input.dataset.sources.length,
+        sources_indexed: results.filter((result) => result.documents_indexed > 0).length,
+        documents_attempted: results.reduce((sum, result) => sum + result.documents_attempted, 0),
+        documents_indexed: results.reduce((sum, result) => sum + result.documents_indexed, 0),
         chunks_indexed: results.reduce((sum, result) => sum + result.chunks_indexed, 0),
         results,
         errors,
@@ -149,6 +211,22 @@ export function buildIndexSourceBundleJobs(bundle: IndexSourceBundleInput): Inde
     });
 }
 
+export function buildIndexSourceDatasetPlan(dataset: IndexSourceDatasetInput): IndexSourceDatasetPlan {
+    const jobs = dataset.sources.flatMap((source) => (
+        buildIndexSourceBundleJobs(source).map((job) => ({
+            ...job,
+            source_name: source.source_name,
+        }))
+    ));
+
+    return {
+        dataset_name: normalizeDatasetName(dataset.dataset_name),
+        sources_attempted: dataset.sources.length,
+        documents_attempted: jobs.length,
+        jobs,
+    };
+}
+
 function unionStringLists(groups: string[][]): string[] {
     return normalizeStringList(groups.flat()).slice(0, 24);
 }
@@ -163,4 +241,9 @@ function normalizeStringList(values: string[]): string[] {
 
 function normalizeExternalKey(value: string): string {
     return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 120) || 'indexed_source';
+}
+
+function normalizeDatasetName(value: string | undefined): string {
+    const normalized = value?.trim();
+    return normalized && normalized.length <= 160 ? normalized : 'VetIOS veterinary evidence training corpus';
 }

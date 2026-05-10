@@ -3,7 +3,7 @@ import { buildCatalogDocumentPlans } from '../catalogConnectors';
 import { chunkRagDocument, normalizeRagContent } from '../chunking';
 import { buildRagClosedLoopLearningSystem } from '../closedLoop';
 import { answerRagQuery, buildRagQueryPlan } from '../service';
-import { buildIndexSourceBundleJobs } from '../sourceBundle';
+import { buildIndexSourceBundleJobs, buildIndexSourceDatasetPlan } from '../sourceBundle';
 import { validatePublicSourceUrl } from '../sourcePolicy';
 import { buildCuratedSourceCard, getCuratedRagCatalog } from '../sourceCatalog';
 import {
@@ -175,6 +175,63 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(jobs[0].document.content_url).toBe('https://www.vin.com/acute-vomiting-diarrhea-guideline');
         expect(jobs[0].document.metadata.document_species).toEqual(['canine']);
         expect(jobs[0].document.metadata.document_domains).toEqual(['clinical_guideline', 'diagnostics']);
+    });
+
+    it('plans multi-source veterinary training corpus ingestion runs', () => {
+        const plan = buildIndexSourceDatasetPlan({
+            dataset_name: 'VetIOS companion animal diagnostics corpus',
+            sources: [
+                {
+                    source_name: 'VetIOS canine diagnostics source',
+                    source_type: 'guideline',
+                    authority: 'specialist_guideline',
+                    species_scope: ['canine'],
+                    domain_scope: ['clinical_guideline', 'diagnostics'],
+                    documents: [
+                        {
+                            title: 'Canine vomiting diarrhea diagnostic evidence',
+                            text: 'Dogs with acute vomiting and diarrhea should receive CBC, serum chemistry, fecal analysis, and abdominal imaging when obstruction is possible.',
+                            species: ['canine'],
+                            domain: ['clinical_guideline', 'diagnostics'],
+                            url: 'https://example.org/canine-gi',
+                        },
+                        {
+                            title: 'Canine pancreatitis diagnostic evidence',
+                            text: 'Dogs with suspected pancreatitis require integrated clinical signs, pancreatic lipase, CBC, chemistry, electrolytes, and abdominal ultrasound.',
+                            species: ['canine'],
+                            domain: ['diagnostics', 'lab_reference', 'imaging', 'pancreatitis'],
+                            url: 'https://example.org/canine-pancreatitis',
+                        },
+                    ],
+                },
+                {
+                    source_name: 'VetIOS feline diagnostics source',
+                    source_type: 'guideline',
+                    authority: 'specialist_guideline',
+                    species_scope: ['feline'],
+                    domain_scope: ['clinical_guideline', 'diagnostics'],
+                    documents: [
+                        {
+                            title: 'Feline respiratory diagnostic evidence',
+                            text: 'Cats with nasal discharge and sneezing need history, physical exam, ocular and oral evaluation, infectious testing when confirmation changes management, and imaging for chronic unilateral disease.',
+                            species: ['feline'],
+                            domain: ['clinical_guideline', 'diagnostics', 'respiratory_disease'],
+                            url: 'https://example.org/feline-respiratory',
+                        },
+                    ],
+                },
+            ],
+        });
+
+        expect(plan.dataset_name).toBe('VetIOS companion animal diagnostics corpus');
+        expect(plan.sources_attempted).toBe(2);
+        expect(plan.documents_attempted).toBe(3);
+        expect(plan.jobs.map((job) => job.source_name)).toEqual([
+            'VetIOS canine diagnostics source',
+            'VetIOS canine diagnostics source',
+            'VetIOS feline diagnostics source',
+        ]);
+        expect(plan.jobs[1].source.medicine_domain).toContain('pancreatitis');
     });
 
     it('source cards link RAG evidence into causal memory, counterfactual review, and One Health surveillance', () => {

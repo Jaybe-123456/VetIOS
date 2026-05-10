@@ -279,6 +279,36 @@ paths:
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
+  /api/index_sources:
+    post:
+      operationId: indexSourceDataset
+      summary: Build a larger VetIOS RAG training corpus from multiple source bundles
+      description: Indexes multiple veterinary evidence source bundles into the tenant RAG corpus for citation-grounded model reasoning. Use only licensed, public-domain, owned, or otherwise authorized extracts.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexSourceDatasetRequest'
+      responses:
+        '201':
+          description: Dataset indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexSourceDatasetResponse'
+        '207':
+          description: Dataset partially indexed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexSourceDatasetResponse'
+        '400':
+          $ref: '#/components/responses/Error'
+        '401':
+          $ref: '#/components/responses/Error'
   /api/rag/query:
     post:
       operationId: queryRagEvidence
@@ -703,6 +733,51 @@ components:
           items:
             type: object
             properties:
+              title:
+                type: string
+              message:
+                type: string
+        request_id:
+          type: string
+    IndexSourceDatasetRequest:
+      type: object
+      required: [sources]
+      properties:
+        dataset_name:
+          type: string
+          example: VetIOS veterinary evidence training corpus
+        sources:
+          type: array
+          minItems: 1
+          maxItems: 25
+          items:
+            $ref: '#/components/schemas/IndexSourceBundleRequest'
+    IndexSourceDatasetResponse:
+      type: object
+      properties:
+        dataset_name:
+          type: string
+        sources_attempted:
+          type: integer
+        sources_indexed:
+          type: integer
+        documents_attempted:
+          type: integer
+        documents_indexed:
+          type: integer
+        chunks_indexed:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/IndexSourceBundleResponse'
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              source_name:
+                type: string
               title:
                 type: string
               message:
