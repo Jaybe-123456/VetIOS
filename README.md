@@ -224,9 +224,10 @@ Core routes:
 - `GET|POST /api/rag/sources` lists or registers source metadata.
 - `GET|POST /api/rag/documents` lists or indexes evidence documents.
 - `POST /api/rag/query` retrieves cited evidence for a clinical question.
+- `GET /api/rag/closed-loop` reports corpus readiness, closed-loop learning status, and self-protection posture.
 - `GET|POST /api/cron/rag-refresh` refreshes due catalog sources through cron.
 
-The curated catalog covers AVMA, AAHA, WSAVA, ACVIM, AAFP, CAPC, ESCCAP, IRIS, Merck Veterinary Manual, Cornell Feline Health Center, Veterinary Partner VIN, WOAH, CDC, USDA APHIS, FDA Animal Drugs, DailyMed, PubMed, PubMed Central Open Access, NCBI Bookshelf, and explicitly low-trust BioVenic commercial discovery sources. See [`docs/agentic-rag-service.md`](docs/agentic-rag-service.md) for the schema, environment, and safety boundaries.
+The curated catalog covers AVMA, AAHA, WSAVA, ACVIM, AAFP, CAPC, ESCCAP, IRIS, Merck Veterinary Manual, Cornell Feline Health Center, Veterinary Partner VIN, WOAH, CDC, USDA APHIS, FDA Animal Drugs, DailyMed, PubMed, PubMed Central Open Access, NCBI Bookshelf, and explicitly low-trust BioVenic commercial discovery sources. See [`docs/agentic-rag-service.md`](docs/agentic-rag-service.md) for the schema, environment, and safety boundaries, and [`docs/closed-loop-rag-learning-and-self-protection.md`](docs/closed-loop-rag-learning-and-self-protection.md) for the closed-loop and clone-defense model.
 
 ## Monorepo Map
 

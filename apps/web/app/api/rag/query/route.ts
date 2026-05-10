@@ -21,7 +21,7 @@ const QuerySchema = z.object({
 });
 
 export async function POST(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 64 * 1024 });
+    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 64 * 1024, selfProtection: true });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 

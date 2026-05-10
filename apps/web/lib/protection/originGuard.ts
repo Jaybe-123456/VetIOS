@@ -14,6 +14,7 @@
  */
 
 import { NextResponse } from 'next/server';
+import { getConfiguredSiteOrigin } from '@/lib/site';
 
 const AUTHORISED_ORIGINS: ReadonlySet<string> = new Set([
     'https://www.vetios.tech',
@@ -29,6 +30,38 @@ const DEV_ORIGINS: ReadonlySet<string> = new Set([
     'http://localhost:3001',
     'http://127.0.0.1:3000',
 ]);
+
+export function getAuthorisedOriginList(): string[] {
+    const configured = getConfiguredSiteOrigin();
+    const envOrigins = (process.env.VETIOS_ALLOWED_ORIGINS ?? '')
+        .split(',')
+        .map((origin) => normalizeOrigin(origin))
+        .filter((origin): origin is string => Boolean(origin));
+
+    return [...new Set([
+        ...AUTHORISED_ORIGINS,
+        ...envOrigins,
+        ...(configured ? [configured] : []),
+    ])];
+}
+
+export function isAuthorisedOrigin(origin: string | null): boolean {
+    if (!origin) {
+        return true;
+    }
+
+    const normalized = normalizeOrigin(origin);
+    if (!normalized) {
+        return false;
+    }
+
+    const isDev = process.env.NODE_ENV === 'development' || process.env.VETIOS_DEV_BYPASS === 'true';
+    return (
+        getAuthorisedOriginList().includes(normalized) ||
+        normalized.endsWith(AUTHORISED_PREVIEW_SUFFIX) ||
+        (isDev && DEV_ORIGINS.has(normalized))
+    );
+}
 
 export interface OriginGuardResult {
     allowed: boolean;
@@ -55,13 +88,7 @@ export function checkOrigin(req: Request, requestId: string): OriginGuardResult 
         return { allowed: true, origin: null, response: null };
     }
 
-    const isDev = process.env.NODE_ENV === 'development' || process.env.VETIOS_DEV_BYPASS === 'true';
-
-    if (
-        AUTHORISED_ORIGINS.has(origin) ||
-        origin.endsWith(AUTHORISED_PREVIEW_SUFFIX) ||
-        (isDev && DEV_ORIGINS.has(origin))
-    ) {
+    if (isAuthorisedOrigin(origin)) {
         return { allowed: true, origin, response: null };
     }
 
@@ -92,11 +119,8 @@ export function checkOrigin(req: Request, requestId: string): OriginGuardResult 
  * Build CORS headers for allowed origins.
  */
 export function buildCorsHeaders(origin: string | null): Record<string, string> {
-    const allowedOrigin = origin && (
-        AUTHORISED_ORIGINS.has(origin) ||
-        origin.endsWith(AUTHORISED_PREVIEW_SUFFIX) ||
-        (process.env.NODE_ENV === 'development' && DEV_ORIGINS.has(origin))
-    ) ? origin : 'https://vetios.tech';
+    const normalized = normalizeOrigin(origin);
+    const allowedOrigin = normalized && isAuthorisedOrigin(normalized) ? normalized : 'https://vetios.tech';
 
     return {
         'Access-Control-Allow-Origin':  allowedOrigin,
@@ -105,4 +129,17 @@ export function buildCorsHeaders(origin: string | null): Record<string, string> 
         'Access-Control-Max-Age':       '86400',
         'Vary':                         'Origin',
     };
+}
+
+function normalizeOrigin(value: string | null | undefined): string | null {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+        return null;
+    }
+
+    try {
+        return new URL(trimmed).origin;
+    } catch {
+        return null;
+    }
 }

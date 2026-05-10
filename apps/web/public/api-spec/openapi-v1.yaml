@@ -272,6 +272,23 @@ paths:
           $ref: '#/components/responses/Error'
         '401':
           $ref: '#/components/responses/Error'
+  /api/rag/closed-loop:
+    get:
+      operationId: getRagClosedLoop
+      summary: Report RAG closed-loop readiness and VetIOS self-protection posture
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Closed-loop and self-protection status returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RagClosedLoopResponse'
+        '401':
+          $ref: '#/components/responses/Error'
+        '403':
+          $ref: '#/components/responses/Error'
   /api/health:
     get:
       operationId: getHealth
@@ -433,6 +450,37 @@ components:
             additionalProperties: true
         readiness:
           $ref: '#/components/schemas/RagReadiness'
+        request_id:
+          type: string
+    RagClosedLoopResponse:
+      type: object
+      properties:
+        closed_loop:
+          type: object
+          additionalProperties: true
+          properties:
+            system_id:
+              type: string
+              enum: [vetios_agentic_rag_closed_loop]
+            closed_loop_ready:
+              type: boolean
+            clinical_reasoning_infrastructure:
+              type: string
+              enum: [ready, needs_evidence]
+            diagnostic_intelligence_pipelines:
+              type: string
+              enum: [ready, needs_evidence]
+            learning_mode:
+              type: string
+              enum: [evidence_grounded_human_gated]
+            corpus:
+              $ref: '#/components/schemas/RagReadiness'
+        self_protection:
+          type: object
+          additionalProperties: true
+        request_assessment:
+          type: object
+          additionalProperties: true
         request_id:
           type: string
     RagCatalogRunResponse:

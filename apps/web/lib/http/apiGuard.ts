@@ -12,6 +12,8 @@
 
 import { NextResponse } from 'next/server';
 import { createHash } from 'crypto';
+import { writeSelfProtectionEvent } from '@/lib/protection/securityEventLog';
+import { assessVetiosSelfProtectionRequest } from '@/lib/protection/selfProtection';
 import { getRequestId } from './requestId';
 
 // ── Configuration ────────────────────────────────────────────────────────────
@@ -77,6 +79,11 @@ export interface GuardOptions {
     windowMs?: number;
     /** Max request body size in bytes (default: 128KB) */
     maxBodySize?: number;
+    /** Run VetIOS origin/clone self-protection before the route handler. */
+    selfProtection?: boolean | {
+        enforceOrigin?: boolean;
+        requireClientAttestation?: boolean;
+    };
 }
 
 export interface GuardResult {
@@ -124,6 +131,34 @@ export async function apiGuard(
     }
 
     // ── Content-Length check ──
+    // VetIOS self-protection check
+    if (options.selfProtection) {
+        const protectionOptions = typeof options.selfProtection === 'object' ? options.selfProtection : {};
+        const protection = assessVetiosSelfProtectionRequest(req, protectionOptions);
+        if (protection.blocked) {
+            writeSelfProtectionEvent({
+                req,
+                requestId,
+                assessment: protection,
+                eventType: 'self_protection_blocked',
+            });
+            const res = NextResponse.json(
+                {
+                    error: 'Forbidden',
+                    code: 'VETIOS_SELF_PROTECTION_BLOCKED',
+                    request_id: requestId,
+                    risk_level: protection.risk_level,
+                },
+                { status: 403 },
+            );
+            for (const [name, value] of Object.entries(protection.protection_headers)) {
+                res.headers.set(name, value);
+            }
+            res.headers.set('x-request-id', requestId);
+            return { blocked: true, response: res, requestId, startTime };
+        }
+    }
+
     const contentLength = req.headers.get('content-length');
     if (contentLength && parseInt(contentLength, 10) > maxBodySize) {
         const res = NextResponse.json(

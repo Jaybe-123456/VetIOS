@@ -11,6 +11,7 @@ VetIOS Agentic RAG provides tenant-scoped ingestion, chunking, embedding, retrie
 - `GET /api/rag/documents` lists indexed tenant documents.
 - `POST /api/rag/documents` indexes pasted text or a safe public HTTPS text/HTML source.
 - `POST /api/rag/query` runs hybrid/vector/lexical retrieval and returns extractive, citation-first answers.
+- `GET /api/rag/closed-loop` returns corpus readiness, closed-loop learning status, and VetIOS self-protection posture.
 - `GET|POST /api/cron/rag-refresh` refreshes due curated catalog entries for `VETIOS_PUBLIC_RAG_TENANT_ID` or `x-vetios-tenant-id`.
 
 Machine credentials need `rag:read` for list/query routes and `rag:write` for source, document, and catalog ingestion.
@@ -41,6 +42,20 @@ The Supabase migrations add:
 
 Retrieval uses `match_rag_chunks` for vector search and `search_rag_chunks_lexical` for lexical search, then reranks by source authority plus similarity.
 
+## Closed-Loop Learning Contract
+
+With the seeded corpus state you reported on May 10, 2026 - `23` sources, `41` indexed documents, `126` chunks, `20` high-authority sources, and `0` stale documents - VetIOS has enough indexed evidence for the RAG evidence loop to be considered ready.
+
+That loop is intentionally human-gated:
+
+- Source registration feeds authority-tiered `rag_sources`.
+- Document ingestion feeds hashed `rag_documents` and provenance-preserving `rag_chunks`.
+- Retrieval feeds citation-first clinical answers, refusal states, query stats, causal memory, counterfactual review, and One Health context.
+- Diagnostic misses, retrieval gaps, clinician feedback, and outcomes feed active-learning candidates.
+- No clinical behavior, source tier, prompt, or model promotion is automatic. Promotion requires citations, counterfactual review, clinician/steward approval, and an audit trace.
+
+This means the veterinary and medical source datasets can serve as clinical reasoning infrastructure and diagnostic intelligence pipeline inputs without allowing unsupported self-training or silent source promotion.
+
 Apply the schema before pressing **Seed Catalog**:
 
 ```bash
@@ -65,6 +80,11 @@ VETIOS_NCBI_TOOL=vetios_agentic_rag
 VETIOS_NCBI_EMAIL=
 VETIOS_NCBI_API_KEY=
 CRON_SECRET=replace-with-32-char-random-hex
+VETIOS_ALLOWED_ORIGINS=https://www.vetios.tech,https://vetios.tech,https://app.vetios.tech
+VETIOS_CLIENT_ATTESTATION_SECRET=replace-with-32-char-random-hex
+VETIOS_PROTECTION_REPORT_ONLY=true
+VETIOS_STRICT_ORIGIN_GUARD=false
+VETIOS_STRICT_CLIENT_ATTESTATION=false
 ```
 
 `VETIOS_NCBI_EMAIL` and `VETIOS_NCBI_API_KEY` are optional but recommended for accountable NCBI API usage.
@@ -75,3 +95,4 @@ CRON_SECRET=replace-with-32-char-random-hex
 - Source cards preserve source authority and safety boundaries so unverified or human-medical material cannot be silently promoted to clinical protocol status.
 - Answers are extractive and citation-first. If no indexed evidence is retrieved, VetIOS refuses to generate unsupported clinical claims.
 - Causal memory, counterfactual review, and One Health context are logged with each query when matching tenant tables are available.
+- Self-protection reports or blocks clone-like origins, host mismatches, uncredentialed automation, invalid client attestations, and suspicious browser request patterns.

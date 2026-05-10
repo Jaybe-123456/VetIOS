@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { buildCatalogDocumentPlans } from '../catalogConnectors';
 import { chunkRagDocument, normalizeRagContent } from '../chunking';
+import { buildRagClosedLoopLearningSystem } from '../closedLoop';
 import { buildRagQueryPlan } from '../service';
 import { validatePublicSourceUrl } from '../sourcePolicy';
 import { buildCuratedSourceCard, getCuratedRagCatalog } from '../sourceCatalog';
+import {
+    assessVetiosSelfProtectionRequest,
+    createClientAttestation,
+    verifyClientAttestation,
+} from '../../protection/selfProtection';
 
 describe('VetIOS Agentic RAG service primitives', () => {
     it('normalizes and chunks veterinary source text with stable metadata', () => {
@@ -80,6 +86,83 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(card).toContain('One Health surveillance');
     });
 
+    it('confirms indexed veterinary and medical evidence as a human-gated closed learning loop', () => {
+        const loop = buildRagClosedLoopLearningSystem({
+            sources: 23,
+            documents: 41,
+            chunks: 126,
+            high_authority_sources: 20,
+            stale_documents: 0,
+            last_refreshed_at: '2026-05-10T09:20:26.000Z',
+            ready: true,
+            warnings: [],
+        });
+
+        expect(loop.closed_loop_ready).toBe(true);
+        expect(loop.clinical_reasoning_infrastructure).toBe('ready');
+        expect(loop.diagnostic_intelligence_pipelines).toBe('ready');
+        expect(loop.learning_mode).toBe('evidence_grounded_human_gated');
+        expect(loop.promotion_policy.autonomous_model_promotion).toBe(false);
+        expect(loop.stages.map((stage) => stage.id)).toContain('human_gated_learning');
+    });
+
+    it('signs client attestations and flags cloned browser origins', () => {
+        const previousSecret = process.env.VETIOS_CLIENT_ATTESTATION_SECRET;
+        const previousOrigins = process.env.VETIOS_ALLOWED_ORIGINS;
+        const previousStrictOrigin = process.env.VETIOS_STRICT_ORIGIN_GUARD;
+        const secret = '0123456789abcdef0123456789abcdef';
+
+        process.env.VETIOS_CLIENT_ATTESTATION_SECRET = secret;
+        process.env.VETIOS_ALLOWED_ORIGINS = 'https://app.vetios.tech';
+        process.env.VETIOS_STRICT_ORIGIN_GUARD = 'true';
+
+        try {
+            const token = createClientAttestation({
+                origin: 'https://app.vetios.tech',
+                path: '/api/rag/query',
+                method: 'POST',
+                issuedAtMs: 1_700_000_000_000,
+                nonce: 'unit-test',
+                secret,
+            });
+            expect(verifyClientAttestation(token, {
+                origin: 'https://app.vetios.tech',
+                path: '/api/rag/query',
+                method: 'POST',
+                nowMs: 1_700_000_010_000,
+                secret,
+            }).ok).toBe(true);
+            expect(verifyClientAttestation(token, {
+                origin: 'https://clone.example',
+                path: '/api/rag/query',
+                method: 'POST',
+                nowMs: 1_700_000_010_000,
+                secret,
+            }).reason).toBe('attestation_origin_mismatch');
+
+            const clonedRequest = new Request('https://api.vetios.tech/api/rag/query', {
+                method: 'POST',
+                headers: {
+                    origin: 'https://clone.example',
+                    host: 'api.vetios.tech',
+                    'user-agent': 'Mozilla/5.0',
+                },
+            });
+            const assessment = assessVetiosSelfProtectionRequest(clonedRequest, {
+                enforceOrigin: true,
+                nowMs: 1_700_000_010_000,
+            });
+
+            expect(assessment.allowed).toBe(false);
+            expect(assessment.clone_suspected).toBe(true);
+            expect(assessment.signals.map((signal) => signal.id)).toContain('origin_not_authorised');
+        } finally {
+            restoreEnv('VETIOS_CLIENT_ATTESTATION_SECRET', previousSecret);
+            restoreEnv('VETIOS_ALLOWED_ORIGINS', previousOrigins);
+            restoreEnv('VETIOS_STRICT_ORIGIN_GUARD', previousStrictOrigin);
+        }
+    });
+
     it('builds source-card and NCBI literature ingestion plans without full-text scraping', async () => {
         const pubmed = getCuratedRagCatalog().find((source) => source.external_key === 'pubmed_literature_index');
         expect(pubmed).toBeTruthy();
@@ -125,3 +208,11 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(plan.documents.map((entry) => entry.document.content_text).join('\n')).toContain('https://pubmed.ncbi.nlm.nih.gov/12345/');
     });
 });
+
+function restoreEnv(key: string, value: string | undefined): void {
+    if (value === undefined) {
+        delete process.env[key];
+        return;
+    }
+    process.env[key] = value;
+}

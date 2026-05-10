@@ -17,7 +17,7 @@ const SeedSchema = z.object({
 });
 
 export async function GET(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
+    const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000, selfProtection: true });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
@@ -36,7 +36,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 6, windowMs: 60_000, maxBodySize: 16 * 1024 });
+    const guard = await apiGuard(req, { maxRequests: 6, windowMs: 60_000, maxBodySize: 16 * 1024, selfProtection: true });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 

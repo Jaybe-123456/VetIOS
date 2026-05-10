@@ -139,6 +139,12 @@ paths:
             schema: { type: object, required: [question], properties: { question: { type: string } }, additionalProperties: true }
       responses:
         '200': { description: RAG answer, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+  /api/rag/closed-loop:
+    get:
+      summary: Report Agentic RAG closed-loop readiness and VetIOS self-protection posture
+      responses:
+        '200': { description: Closed-loop and self-protection status, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
+        '403': { description: Self-protection block, content: { application/json: { schema: { $ref: '#/components/schemas/ApiEnvelope' } } } }
   /api/datasets/stats:
     get:
       summary: Fetch live dataset row count
