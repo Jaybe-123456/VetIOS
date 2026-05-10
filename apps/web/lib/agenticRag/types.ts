@@ -89,9 +89,19 @@ export interface RagCitation {
     source_type: RagSourceType;
     authority_tier: RagAuthorityTier;
     url: string | null;
+    year: string | null;
     quote: string;
     similarity: number;
     provenance: Record<string, unknown>;
+}
+
+export interface RagDiagnosticRecommendation {
+    rank: number;
+    workflow_step: 'labs' | 'imaging' | 'fecal_external_tests';
+    recommendation: string;
+    confidence: 'high' | 'medium' | 'low';
+    citation_indexes: number[];
+    rationale: string;
 }
 
 export interface RagRetrievedChunk {
@@ -115,8 +125,11 @@ export interface RagQueryPlan {
     strategy: RagRetrievalStrategy;
     species: string | null;
     domain: string | null;
+    domain_filters: string[];
     requireCitations: boolean;
     safetyBoundary: 'clinical_decision_support' | 'general_knowledge';
+    speciesFilterRequired: boolean;
+    retrievalOrder: 'semantic_first_then_hybrid';
 }
 
 export interface RagAnswerResult {
@@ -132,12 +145,17 @@ export interface RagAnswerResult {
         total_citations: number;
         top_authority_tier: RagAuthorityTier | null;
         retrieval_time_ms: number;
+        semantic_first: boolean;
+        species_filtered_hits?: number;
     };
     evaluation: {
         grounded: boolean;
         citation_coverage: number;
         unsupported_claims: number;
         warnings: string[];
+        top_recommendations?: RagDiagnosticRecommendation[];
+        causal_memory_triggered?: boolean;
+        counterfactual_reasoning_triggered?: boolean;
         causal_memory_linked?: boolean;
         counterfactual_reasoning_linked?: boolean;
         one_health_surveillance_linked?: boolean;

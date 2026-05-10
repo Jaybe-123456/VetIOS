@@ -11,6 +11,7 @@ import type {
     RagAnswerResult,
     RagAuthorityTier,
     RagCitation,
+    RagDiagnosticRecommendation,
     RagDocumentRecord,
     RagQueryPlan,
     RagRetrievedChunk,
@@ -214,6 +215,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
     });
 
     const sourceIds = input.sourceIds?.filter(isUuid).slice(0, 20) ?? [];
+    const sourceMap = await loadRagSourceMap(input.client, input.tenantId);
     const vectorRows = plan.strategy === 'lexical'
         ? []
         : await retrieveVectorChunks(input, plan, sourceIds, limit).catch((error) => {
@@ -232,16 +234,33 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
             retrievalWarnings.push(`Direct lexical fallback unavailable: ${error instanceof Error ? error.message : 'unknown error'}.`);
             return [];
         });
-    const chunks = mergeRetrievedChunks(vectorRows, [...lexicalRows, ...fallbackLexicalRows]).slice(0, limit);
+    const mergedChunks = mergeRetrievedChunks(vectorRows, [...lexicalRows, ...fallbackLexicalRows]);
+    const filteredChunks = filterRetrievedEvidence(mergedChunks, sourceMap, plan, input.question);
+    if (mergedChunks.length > filteredChunks.length) {
+        retrievalWarnings.push(`${mergedChunks.length - filteredChunks.length} retrieval hit(s) were removed by species, domain, or relevance filters.`);
+    }
+    const chunks = filteredChunks.slice(0, limit);
     const citations = chunks.map((chunk, index) => buildCitation(chunk, index + 1));
-    const answer = synthesizeExtractiveAnswer(input.question, citations);
-    const warnings = [...buildRagWarnings(citations), ...retrievalWarnings];
     const integrationContexts = await buildIntegratedRagContexts(input.client, {
         tenantId: input.tenantId,
         question: input.question,
         species: plan.species,
         domain: plan.domain,
     });
+    const recommendations = buildEvidenceBackedRecommendations({
+        question: input.question,
+        species: plan.species,
+        citations,
+    });
+    const answer = synthesizeExtractiveAnswer({
+        question: input.question,
+        species: plan.species,
+        domain: plan.domain,
+        citations,
+        recommendations,
+        integrationContexts,
+    });
+    const warnings = [...buildRagWarnings(citations), ...retrievalWarnings];
     const retrievalStats = {
         strategy: plan.strategy,
         vector_hits: vectorRows.length,
@@ -250,12 +269,17 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         total_citations: citations.length,
         top_authority_tier: citations[0]?.authority_tier ?? null,
         retrieval_time_ms: Date.now() - start,
+        semantic_first: plan.retrievalOrder === 'semantic_first_then_hybrid',
+        species_filtered_hits: mergedChunks.length - filteredChunks.length,
     };
     const evaluation = {
-        grounded: citations.length > 0,
-        citation_coverage: citations.length > 0 ? 1 : 0,
+        grounded: hasHighConfidenceEvidence(citations),
+        citation_coverage: hasHighConfidenceEvidence(citations) ? 1 : 0,
         unsupported_claims: 0,
         warnings,
+        top_recommendations: recommendations,
+        causal_memory_triggered: true,
+        counterfactual_reasoning_triggered: true,
         causal_memory_linked: integrationContexts.causal_memory.linked,
         counterfactual_reasoning_linked: integrationContexts.counterfactual.linked,
         one_health_surveillance_linked: integrationContexts.one_health.linked,
@@ -293,10 +317,12 @@ export function buildRagQueryPlan(input: {
     const lower = input.question.toLowerCase();
     const explicit = normalizeStrategy(input.strategy);
     const species = normalizeSpecies(input.species) ?? inferSpecies(lower);
-    const domain = normalizeDomain(input.domain) ?? inferDomain(lower);
+    const domainFilters = normalizeDomainFilters(input.domain) ?? inferDomainFilters(lower);
+    const domain = domainFilters[0] ?? null;
     const strategy = explicit
         ?? (domain === 'drug_safety' ? 'drug_safety'
             : domain === 'lab_reference' ? 'lab_reference'
+                : domainFilters.includes('clinical_guideline') ? 'clinical_guideline'
                 : /guideline|consensus|standard|protocol/.test(lower) ? 'clinical_guideline'
                     : 'hybrid');
 
@@ -304,10 +330,13 @@ export function buildRagQueryPlan(input: {
         strategy,
         species,
         domain,
+        domain_filters: domainFilters,
         requireCitations: true,
         safetyBoundary: /diagnos|treat|dose|therapy|prognos|case|patient/.test(lower)
             ? 'clinical_decision_support'
             : 'general_knowledge',
+        speciesFilterRequired: Boolean(species),
+        retrievalOrder: 'semantic_first_then_hybrid',
     };
 }
 
@@ -528,7 +557,7 @@ async function retrieveVectorChunks(
         filter_tenant: input.tenantId,
         filter_source_ids: sourceIds.length > 0 ? sourceIds : null,
         filter_species: plan.species,
-        filter_domain: plan.domain,
+        filter_domain: rpcDomainFilter(plan),
     });
     if (error) throw new Error(error.message);
     const rows = Array.isArray(data) ? data as Record<string, unknown>[] : [];
@@ -547,7 +576,7 @@ async function retrieveLexicalChunks(
         filter_tenant: input.tenantId,
         filter_source_ids: sourceIds.length > 0 ? sourceIds : null,
         filter_species: plan.species,
-        filter_domain: plan.domain,
+        filter_domain: rpcDomainFilter(plan),
     });
     if (error) throw new Error(error.message);
     const rows = Array.isArray(data) ? data as Record<string, unknown>[] : [];
@@ -564,8 +593,8 @@ async function retrieveDirectLexicalChunks(
     const allowedSources = sources.filter((source) => (
         source.status === 'active'
         && (sourceIds.length === 0 || sourceIds.includes(source.id))
-        && sourceMatchesFilter(source.species_scope, plan.species)
-        && sourceMatchesFilter(source.medicine_domain, plan.domain)
+        && sourceMatchesRequestedSpecies(source.species_scope, plan.species)
+        && sourceMatchesDomain(source.medicine_domain, plan)
     ));
     if (allowedSources.length === 0) return [];
 
@@ -609,10 +638,7 @@ async function retrieveDirectLexicalChunks(
             return mapDirectRetrievedChunk(row, source, document, score);
         })
         .filter((row): row is RagRetrievedChunk => row !== null)
-        .sort((left, right) => (
-            (authorityWeight(right.authority_tier) + right.similarity)
-            - (authorityWeight(left.authority_tier) + left.similarity)
-        ));
+        .sort((left, right) => evidenceRankScore(right) - evidenceRankScore(left));
 
     return scored.slice(0, limit);
 }
@@ -621,15 +647,36 @@ function mergeRetrievedChunks(vectorRows: RagRetrievedChunk[], lexicalRows: RagR
     const byId = new Map<string, RagRetrievedChunk>();
     for (const row of [...vectorRows, ...lexicalRows]) {
         const existing = byId.get(row.chunk_id);
-        if (!existing || authorityWeight(row.authority_tier) + row.similarity > authorityWeight(existing.authority_tier) + existing.similarity) {
+        if (!existing || evidenceRankScore(row) > evidenceRankScore(existing)) {
             byId.set(row.chunk_id, row);
         }
     }
 
-    return [...byId.values()].sort((left, right) => (
-        (authorityWeight(right.authority_tier) + right.similarity)
-        - (authorityWeight(left.authority_tier) + left.similarity)
-    ));
+    return [...byId.values()].sort((left, right) => evidenceRankScore(right) - evidenceRankScore(left));
+}
+
+async function loadRagSourceMap(client: SupabaseClient, tenantId: string): Promise<Map<string, RagSourceRecord>> {
+    const sources = await listRagSources(client, tenantId);
+    return new Map(sources.map((source) => [source.id, source]));
+}
+
+function filterRetrievedEvidence(
+    chunks: RagRetrievedChunk[],
+    sourceMap: Map<string, RagSourceRecord>,
+    plan: RagQueryPlan,
+    question: string,
+): RagRetrievedChunk[] {
+    return chunks.filter((chunk) => {
+        const source = sourceMap.get(chunk.source_id);
+        if (!source) return false;
+        if (!sourceMatchesRequestedSpecies(source.species_scope, plan.species)) return false;
+        if (!sourceMatchesDomain(source.medicine_domain, plan)) return false;
+        return hasMinimumQuestionRelevance(chunk, question);
+    });
+}
+
+function rpcDomainFilter(plan: RagQueryPlan): string | null {
+    return plan.domain_filters.length === 1 ? plan.domain_filters[0] : null;
 }
 
 function buildCitation(chunk: RagRetrievedChunk, index: number): RagCitation {
@@ -643,31 +690,143 @@ function buildCitation(chunk: RagRetrievedChunk, index: number): RagCitation {
         source_type: chunk.source_type,
         authority_tier: chunk.authority_tier,
         url: chunk.url,
+        year: inferCitationYear(chunk),
         quote: buildQuote(chunk.chunk_text),
         similarity: Number(chunk.similarity.toFixed(4)),
         provenance: chunk.provenance,
     };
 }
 
-function synthesizeExtractiveAnswer(question: string, citations: RagCitation[]): string {
-    if (citations.length === 0) {
-        return [
-            'I could not find indexed VetIOS RAG evidence for this question.',
-            'No clinical or medical claim is being generated because the answer would be unsupported.',
-            'Index a guideline, paper, protocol, lab reference, or formulary document first, then rerun the query.',
-        ].join(' ');
+function synthesizeExtractiveAnswer(input: {
+    question: string;
+    species: string | null;
+    domain: string | null;
+    citations: RagCitation[];
+    recommendations: RagDiagnosticRecommendation[];
+    integrationContexts: {
+        causal_memory: Record<string, unknown> & { linked: boolean };
+        counterfactual: Record<string, unknown> & { linked: boolean };
+        one_health: Record<string, unknown> & { linked: boolean };
+    };
+}): string {
+    if (!hasHighConfidenceEvidence(input.citations)) {
+        return 'No direct evidence available — consult licensed veterinary guidance.';
     }
 
-    const claims = citations.slice(0, 4).map((citation) => {
-        const sentence = selectBestSentence(citation.quote, question);
-        return `${sentence} [${citation.index}]`;
-    });
+    const citationLines = input.citations.slice(0, 6).map((citation) => (
+        `${citation.index}. [${formatCitationReference(citation)}] ${selectBestSentence(citation.quote, input.question)}`
+    ));
+    const recommendationLines = input.recommendations.map((recommendation) => (
+        `${recommendation.rank}. ${formatWorkflowStep(recommendation.workflow_step)} - ${recommendation.recommendation} Confidence: ${recommendation.confidence}. Evidence: ${formatCitationIndexes(recommendation.citation_indexes)}.`
+    ));
+    const speciesNote = input.species
+        ? `Species-specific note: evidence was filtered to sources matching ${input.species}.`
+        : 'Species-specific note: no species filter was supplied, so use only after matching the patient species.';
 
     return [
-        `I found ${citations.length} indexed evidence passage(s) and can answer only from those cited sources.`,
-        ...claims,
+        'Citations:',
+        ...citationLines,
+        'Concise diagnostic workflow:',
+        ...recommendationLines,
+        speciesNote,
+        `Causal Memory: triggered (${input.integrationContexts.causal_memory.linked ? 'tenant memory linked' : 'no tenant memory match'}).`,
+        `Counterfactual review: triggered (${input.integrationContexts.counterfactual.linked ? 'tenant sessions linked' : 'no tenant session match'}).`,
         'Use this as clinical decision support; final diagnosis, treatment, and dosing decisions require licensed veterinary judgment.',
-    ].join(' ');
+    ].join('\n');
+}
+
+function buildEvidenceBackedRecommendations(input: {
+    question: string;
+    species: string | null;
+    citations: RagCitation[];
+}): RagDiagnosticRecommendation[] {
+    if (!hasHighConfidenceEvidence(input.citations)) {
+        return [];
+    }
+
+    const workflow: Array<{
+        step: RagDiagnosticRecommendation['workflow_step'];
+        label: string;
+        terms: string[];
+        fallback: string;
+    }> = [
+        {
+            step: 'labs',
+            label: 'Run baseline laboratory diagnostics first',
+            terms: ['cbc', 'chemistry', 'electrolyte', 'pcv', 'packed', 'solids', 'urinalysis', 'leukopenia', 'blood', 'lab', 'hydration'],
+            fallback: 'Use the cited evidence to prioritize baseline laboratory assessment before narrowing the differential list.',
+        },
+        {
+            step: 'imaging',
+            label: 'Use imaging when history, exam, or labs support obstruction, foreign body, mass, or systemic disease',
+            terms: ['radiograph', 'ultrasound', 'imaging', 'foreign', 'obstruction', 'mass', 'abdominal', 'thoracic'],
+            fallback: 'Use the cited evidence to decide whether imaging is needed after initial laboratory triage.',
+        },
+        {
+            step: 'fecal_external_tests',
+            label: 'Add fecal, parasite, infectious, toxin, or external exposure testing when signs and risk factors align',
+            terms: ['fecal', 'parasite', 'giardia', 'parvo', 'parvovirus', 'elisa', 'antigen', 'pcr', 'toxin', 'infectious', 'tick', 'external'],
+            fallback: 'Use the cited evidence to select fecal, infectious, parasite, toxin, or exposure tests that match the presentation.',
+        },
+    ];
+
+    return workflow.map((entry, index) => {
+        const matched = citationsForTerms(input.citations, entry.terms);
+        const citations = matched.length > 0 ? matched : input.citations.slice(0, 2);
+        const confidence = recommendationConfidence(citations);
+        return {
+            rank: index + 1,
+            workflow_step: entry.step,
+            recommendation: matched.length > 0 ? entry.label : entry.fallback,
+            confidence,
+            citation_indexes: citations.map((citation) => citation.index),
+            rationale: citations
+                .map((citation) => selectBestSentence(citation.quote, input.question))
+                .join(' '),
+        };
+    });
+}
+
+function hasHighConfidenceEvidence(citations: RagCitation[]): boolean {
+    return citations.some((citation) => (
+        isHighAuthorityTier(citation.authority_tier)
+        && citation.similarity >= minimumEvidenceSimilarity(citation)
+    ));
+}
+
+function citationsForTerms(citations: RagCitation[], terms: string[]): RagCitation[] {
+    const termSet = new Set(terms);
+    return citations.filter((citation) => {
+        const haystack = `${citation.quote} ${citation.title} ${citation.source_name}`.toLowerCase();
+        return [...termSet].some((term) => haystack.includes(term));
+    }).slice(0, 3);
+}
+
+function recommendationConfidence(citations: RagCitation[]): RagDiagnosticRecommendation['confidence'] {
+    if (citations.some((citation) => isHighAuthorityTier(citation.authority_tier) && citation.similarity >= 0.55)) {
+        return 'high';
+    }
+    if (citations.some((citation) => isHighAuthorityTier(citation.authority_tier))) {
+        return 'medium';
+    }
+    return 'low';
+}
+
+function formatWorkflowStep(step: RagDiagnosticRecommendation['workflow_step']): string {
+    switch (step) {
+        case 'labs': return 'Labs';
+        case 'imaging': return 'Imaging';
+        case 'fecal_external_tests': return 'Fecal/external tests';
+        default: return step;
+    }
+}
+
+function formatCitationIndexes(indexes: number[]): string {
+    return indexes.length > 0 ? indexes.map((index) => `[${index}]`).join(', ') : 'none';
+}
+
+function formatCitationReference(citation: RagCitation): string {
+    return `${citation.source_name}, ${citation.year ?? 'n.d.'}, ${citation.url ?? 'no URL'}`;
 }
 
 function buildRagWarnings(citations: RagCitation[]): string[] {
@@ -848,7 +1007,10 @@ function mapRetrievedChunk(row: Record<string, unknown>, mode: 'vector' | 'lexic
         chunk_index: Number(row.chunk_index ?? 0),
         chunk_text: String(row.chunk_text ?? ''),
         similarity: Number(row.similarity ?? 0) + (mode === 'lexical' ? 0.03 : 0),
-        metadata: asRecord(row.metadata),
+        metadata: {
+            ...asRecord(row.metadata),
+            retrieval_mode: mode,
+        },
         provenance: asRecord(row.provenance),
         created_at: String(row.created_at),
     };
@@ -872,7 +1034,10 @@ function mapDirectRetrievedChunk(
         chunk_index: Number(row.chunk_index ?? 0),
         chunk_text: String(row.chunk_text ?? ''),
         similarity: score,
-        metadata: asRecord(row.metadata),
+        metadata: {
+            ...asRecord(row.metadata),
+            retrieval_mode: 'direct_lexical',
+        },
         provenance: asRecord(document.provenance),
         created_at: String(row.created_at),
     };
@@ -901,18 +1066,25 @@ function inferSpecies(lower: string): string | null {
     return match;
 }
 
-function normalizeDomain(value: string | null | undefined): string | null {
-    const normalized = value?.trim().toLowerCase().replace(/\s+/g, '_');
-    return normalized && /^[a-z0-9_-]{2,80}$/.test(normalized) ? normalized : null;
+function normalizeDomainFilters(value: string | null | undefined): string[] | null {
+    const raw = value?.trim();
+    if (!raw) return null;
+    const filters = raw
+        .split(/[,;|]+/)
+        .map((entry) => entry.trim().toLowerCase().replace(/\s+/g, '_'))
+        .filter((entry) => /^[a-z0-9_-]{2,80}$/.test(entry));
+    return filters.length > 0 ? [...new Set(filters)] : null;
 }
 
-function inferDomain(lower: string): string | null {
-    if (/dose|drug|interaction|contraindication|formulary|withdrawal|adverse/.test(lower)) return 'drug_safety';
-    if (/cbc|chemistry|urinalysis|lab|reference range|diagnostic panel|biomarker/.test(lower)) return 'lab_reference';
-    if (/vaccine|infectious|zoonotic|biosecurity|isolation/.test(lower)) return 'infectious_disease';
-    if (/cardio|heart|arrhythmia|murmur/.test(lower)) return 'cardiology';
-    if (/kidney|renal|creatinine|bun|iris/.test(lower)) return 'nephrology';
-    return null;
+function inferDomainFilters(lower: string): string[] {
+    if (/dose|drug|interaction|contraindication|formulary|withdrawal|adverse/.test(lower)) return ['drug_safety'];
+    if (/cbc|chemistry|urinalysis|lab|reference range|diagnostic panel|biomarker/.test(lower)) return ['lab_reference', 'diagnostics'];
+    if (/diagnos|vomit|diarrhea|diarrhoea|workup|differential|test/.test(lower)) return ['diagnostics', 'clinical_guideline'];
+    if (/guideline|consensus|standard|protocol/.test(lower)) return ['clinical_guideline'];
+    if (/vaccine|infectious|zoonotic|biosecurity|isolation/.test(lower)) return ['infectious_disease', 'clinical_guideline'];
+    if (/cardio|heart|arrhythmia|murmur/.test(lower)) return ['cardiology'];
+    if (/kidney|renal|creatinine|bun|iris/.test(lower)) return ['nephrology', 'clinical_guideline'];
+    return [];
 }
 
 function buildQuote(text: string): string {
@@ -934,17 +1106,106 @@ function selectBestSentence(text: string, question: string): string {
 
 function authorityWeight(tier: RagAuthorityTier): number {
     switch (tier) {
-        case 'specialist_guideline': return 0.18;
-        case 'peer_reviewed': return 0.16;
-        case 'regulatory': return 0.14;
-        case 'institutional': return 0.1;
+        case 'specialist_guideline': return 0.28;
+        case 'institutional': return 0.22;
+        case 'peer_reviewed': return 0.18;
+        case 'regulatory': return 0.16;
         case 'clinic_local': return 0.04;
-        default: return 0;
+        default: return -0.08;
     }
 }
 
-function sourceMatchesFilter(values: string[], filter: string | null): boolean {
-    return !filter || values.length === 0 || values.includes(filter);
+function evidenceRankScore(chunk: RagRetrievedChunk): number {
+    return chunk.similarity
+        + authorityWeight(chunk.authority_tier)
+        + highAuthoritySourceBoost(chunk)
+        + retrievalModeBoost(chunk);
+}
+
+function highAuthoritySourceBoost(chunk: RagRetrievedChunk): number {
+    const value = `${chunk.source_name} ${chunk.url ?? ''}`.toLowerCase();
+    if (/merck|merckvetmanual|acvim|wsava/.test(value)) return 0.16;
+    return 0;
+}
+
+function retrievalModeBoost(chunk: RagRetrievedChunk): number {
+    const mode = String(chunk.metadata.retrieval_mode ?? '');
+    if (mode === 'vector') return 0.08;
+    if (mode === 'lexical') return 0.03;
+    return 0;
+}
+
+function sourceMatchesRequestedSpecies(values: string[], species: string | null): boolean {
+    if (!species) return true;
+    if (values.length === 0) return false;
+    const aliases = speciesScopeAliases(species);
+    return values.some((value) => aliases.has(value));
+}
+
+function sourceMatchesDomain(values: string[], plan: RagQueryPlan): boolean {
+    if (plan.domain_filters.length === 0) return true;
+    return values.some((value) => plan.domain_filters.includes(value));
+}
+
+function speciesScopeAliases(species: string): Set<string> {
+    const aliases = new Set([species]);
+    if (species === 'canine') {
+        aliases.add('dog');
+        aliases.add('small_animal');
+        aliases.add('companion_animal');
+    }
+    if (species === 'feline') {
+        aliases.add('cat');
+        aliases.add('small_animal');
+        aliases.add('companion_animal');
+    }
+    if (species === 'bovine' || species === 'ovine' || species === 'caprine' || species === 'swine') {
+        aliases.add('large_animal');
+        aliases.add('livestock');
+        aliases.add('farm_animal');
+    }
+    return aliases;
+}
+
+function hasMinimumQuestionRelevance(chunk: RagRetrievedChunk, question: string): boolean {
+    const mode = String(chunk.metadata.retrieval_mode ?? '');
+    if (mode === 'vector') return chunk.similarity >= 0.64;
+
+    const terms = extractRetrievalTerms(question);
+    if (terms.length === 0) return chunk.similarity > 0;
+    const haystack = ` ${[
+        chunk.chunk_text,
+        chunk.source_name,
+        chunk.title,
+    ].join(' ').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+    const matched = terms.filter((term) => haystack.includes(` ${term} `)).length;
+    return chunk.similarity >= 0.08 || matched >= Math.min(2, terms.length);
+}
+
+function isHighAuthorityTier(tier: RagAuthorityTier): boolean {
+    return tier === 'specialist_guideline'
+        || tier === 'institutional'
+        || tier === 'peer_reviewed'
+        || tier === 'regulatory';
+}
+
+function minimumEvidenceSimilarity(citation: RagCitation): number {
+    return citation.authority_tier === 'specialist_guideline' || citation.authority_tier === 'institutional'
+        ? 0.05
+        : 0.1;
+}
+
+function inferCitationYear(chunk: RagRetrievedChunk): string | null {
+    const candidate = [
+        chunk.provenance.source_fetched_at,
+        chunk.provenance.publication_year,
+        chunk.provenance.pubdate,
+        chunk.provenance.year,
+        chunk.created_at,
+    ]
+        .map((value) => String(value ?? ''))
+        .find((value) => /\b(19|20)\d{2}\b/.test(value));
+    return candidate?.match(/\b(19|20)\d{2}\b/)?.[0] ?? null;
 }
 
 function scoreDirectLexicalMatch(question: string, haystack: string): number {

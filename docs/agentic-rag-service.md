@@ -96,3 +96,15 @@ VETIOS_STRICT_CLIENT_ATTESTATION=false
 - Answers are extractive and citation-first. If no indexed evidence is retrieved, VetIOS refuses to generate unsupported clinical claims.
 - Causal memory, counterfactual review, and One Health context are logged with each query when matching tenant tables are available.
 - Self-protection reports or blocks clone-like origins, host mismatches, uncredentialed automation, invalid client attestations, and suspicious browser request patterns.
+
+## Clinical Retrieval Policy
+
+Clinical RAG queries now follow a stricter diagnostic policy:
+
+- Requested species are mandatory retrieval filters. If the query asks for `canine`, species-mismatched sources are removed after retrieval even if the database search function returns them.
+- Multi-domain requests such as `clinical_guideline, diagnostics` are parsed as allowlists and applied after semantic/lexical retrieval.
+- Semantic/vector retrieval runs first, then lexical and direct lexical matches are merged for hybrid coverage.
+- Authority ranking prioritizes `specialist_guideline` and `institutional` sources, with explicit boosts for Merck Veterinary Manual, ACVIM, and WSAVA.
+- Causal Memory and Counterfactual review are triggered for diagnostic pathway context and logged with the query.
+- The answer shape is citation-first, then concise workflow in this order: labs, imaging, fecal/external tests. Each recommendation carries a confidence level.
+- If the retrieved evidence is not high confidence, VetIOS returns: `No direct evidence available — consult licensed veterinary guidance.`

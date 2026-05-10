@@ -49,6 +49,16 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(buildRagQueryPlan({ question: 'What is the meloxicam dose contraindication in feline CKD?' }).strategy).toBe('drug_safety');
         expect(buildRagQueryPlan({ question: 'How should I interpret CBC leukopenia in canine parvovirus?' }).strategy).toBe('lab_reference');
         expect(buildRagQueryPlan({ question: 'Show the WSAVA guideline for vaccination.' }).strategy).toBe('clinical_guideline');
+
+        const diagnosticPlan = buildRagQueryPlan({
+            question: 'What diagnostics are supported for canine vomiting and diarrhea?',
+            species: 'canine',
+            domain: 'clinical_guideline, diagnostics',
+        });
+        expect(diagnosticPlan.species).toBe('canine');
+        expect(diagnosticPlan.domain_filters).toEqual(['clinical_guideline', 'diagnostics']);
+        expect(diagnosticPlan.speciesFilterRequired).toBe(true);
+        expect(diagnosticPlan.retrievalOrder).toBe('semantic_first_then_hybrid');
     });
 
     it('ships a curated global veterinary and medical source catalog with explicit trust tiers', () => {
