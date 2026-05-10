@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildCatalogDocumentPlans } from '../catalogConnectors';
 import { chunkRagDocument, normalizeRagContent } from '../chunking';
 import { buildRagClosedLoopLearningSystem } from '../closedLoop';
-import { buildRagQueryPlan } from '../service';
+import { answerRagQuery, buildRagQueryPlan } from '../service';
 import { validatePublicSourceUrl } from '../sourcePolicy';
 import { buildCuratedSourceCard, getCuratedRagCatalog } from '../sourceCatalog';
 import {
@@ -217,6 +217,59 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(plan.documents.map((entry) => entry.document.content_text).join('\n')).toContain('Veterinary diagnostic accuracy study');
         expect(plan.documents.map((entry) => entry.document.content_text).join('\n')).toContain('https://pubmed.ncbi.nlm.nih.gov/12345/');
     });
+
+    it('refuses disease-specific diagnostic answers when only generic guideline metadata is indexed', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '11111111-1111-4111-8111-111111111111',
+                    tenant_id: 'tenant_1',
+                    name: 'WSAVA global veterinary guidelines',
+                    source_type: 'guideline',
+                    authority_tier: 'specialist_guideline',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['clinical_guideline', 'diagnostics'],
+                    url: 'https://wsava.org/global-guidelines/',
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: '22222222-2222-4222-8222-222222222222',
+                    source_id: '11111111-1111-4111-8111-111111111111',
+                    document_id: '33333333-3333-4333-8333-333333333333',
+                    chunk_index: 0,
+                    chunk_text: 'WSAVA global veterinary guidelines is registered in VetIOS as specialist guideline evidence. Canonical source URL: https://wsava.org/global-guidelines/ Species scope: canine, feline. Medicine domains: clinical_guideline, diagnostics.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: '33333333-3333-4333-8333-333333333333',
+                    title: 'WSAVA global veterinary guidelines VetIOS source card',
+                    document_type: 'source_card',
+                    metadata: { source_card: true },
+                    provenance: { source_url: 'https://wsava.org/global-guidelines/' },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What are the diagnostic criteria for Feline Panleukopenia Virus infection, supported by references?',
+            species: 'feline',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.citations).toEqual([]);
+        expect(result.answer).toBe('No direct evidence available — consult licensed veterinary guidance.');
+        expect(result.evaluation.grounded).toBe(false);
+        expect(result.evaluation.warnings).toContain('No indexed evidence was retrieved.');
+    });
 });
 
 function restoreEnv(key: string, value: string | undefined): void {
@@ -225,4 +278,62 @@ function restoreEnv(key: string, value: string | undefined): void {
         return;
     }
     process.env[key] = value;
+}
+
+function createRagFakeClient(data: {
+    sources: Array<Record<string, unknown>>;
+    chunks: Array<Record<string, unknown>>;
+    documents: Array<Record<string, unknown>>;
+}): any {
+    return {
+        rpc: async () => ({ data: [], error: null }),
+        from: (table: string) => createFakeQuery(table, data),
+    };
+}
+
+function createFakeQuery(table: string, fixture: {
+    sources: Array<Record<string, unknown>>;
+    chunks: Array<Record<string, unknown>>;
+    documents: Array<Record<string, unknown>>;
+}): any {
+    let selectedHead = false;
+    let inserted = false;
+    const query: any = {
+        select: (_columns?: string, options?: { head?: boolean }) => {
+            selectedHead = options?.head === true;
+            return query;
+        },
+        eq: () => query,
+        in: () => query,
+        order: () => query,
+        limit: () => Promise.resolve(resolveFakeResult(table, fixture, selectedHead, inserted)),
+        maybeSingle: () => Promise.resolve({ data: null, error: null }),
+        single: () => Promise.resolve({ data: { id: '44444444-4444-4444-8444-444444444444' }, error: null }),
+        insert: () => {
+            inserted = true;
+            return query;
+        },
+        then: (resolve: (value: unknown) => void, reject: (reason?: unknown) => void) => (
+            Promise.resolve(resolveFakeResult(table, fixture, selectedHead, inserted)).then(resolve, reject)
+        ),
+    };
+    return query;
+}
+
+function resolveFakeResult(
+    table: string,
+    fixture: {
+        sources: Array<Record<string, unknown>>;
+        chunks: Array<Record<string, unknown>>;
+        documents: Array<Record<string, unknown>>;
+    },
+    head: boolean,
+    inserted: boolean,
+): { data: unknown; error: null; count?: number } {
+    if (head) return { data: null, error: null, count: 0 };
+    if (inserted) return { data: { id: '44444444-4444-4444-8444-444444444444' }, error: null };
+    if (table === 'rag_sources') return { data: fixture.sources, error: null };
+    if (table === 'rag_chunks') return { data: fixture.chunks, error: null };
+    if (table === 'rag_documents') return { data: fixture.documents, error: null };
+    return { data: [], error: null };
 }

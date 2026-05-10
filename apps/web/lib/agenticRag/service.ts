@@ -317,8 +317,10 @@ export function buildRagQueryPlan(input: {
     const lower = input.question.toLowerCase();
     const explicit = normalizeStrategy(input.strategy);
     const species = normalizeSpecies(input.species) ?? inferSpecies(lower);
-    const domainFilters = normalizeDomainFilters(input.domain) ?? inferDomainFilters(lower);
-    const domain = domainFilters[0] ?? null;
+    const explicitDomainFilters = normalizeDomainFilters(input.domain);
+    const inferredDomainFilters = inferDomainFilters(lower);
+    const domainFilters = explicitDomainFilters ?? [];
+    const domain = (explicitDomainFilters ?? inferredDomainFilters)[0] ?? null;
     const strategy = explicit
         ?? (domain === 'drug_safety' ? 'drug_safety'
             : domain === 'lab_reference' ? 'lab_reference'
@@ -613,7 +615,7 @@ async function retrieveDirectLexicalChunks(
     const documentIds = [...new Set(chunkRows.map((row) => String(row.document_id)).filter(Boolean))];
     const { data: documentData, error: documentError } = await input.client
         .from('rag_documents')
-        .select('id, title, provenance')
+        .select('id, title, document_type, metadata, provenance')
         .eq('tenant_id', input.tenantId)
         .in('id', documentIds);
     if (documentError) throw new Error(documentError.message);
@@ -671,6 +673,8 @@ function filterRetrievedEvidence(
         if (!source) return false;
         if (!sourceMatchesRequestedSpecies(source.species_scope, plan.species)) return false;
         if (!sourceMatchesDomain(source.medicine_domain, plan)) return false;
+        if (isClinicalSpecificQuestion(question) && isCatalogOrSourceMetadataChunk(chunk)) return false;
+        if (!hasRequiredClinicalAnchors(chunk, question, plan.species)) return false;
         return hasMinimumQuestionRelevance(chunk, question);
     });
 }
@@ -1036,6 +1040,7 @@ function mapDirectRetrievedChunk(
         similarity: score,
         metadata: {
             ...asRecord(row.metadata),
+            document_type: normalizeOptional(document.document_type) ?? null,
             retrieval_mode: 'direct_lexical',
         },
         provenance: asRecord(document.provenance),
@@ -1119,7 +1124,8 @@ function evidenceRankScore(chunk: RagRetrievedChunk): number {
     return chunk.similarity
         + authorityWeight(chunk.authority_tier)
         + highAuthoritySourceBoost(chunk)
-        + retrievalModeBoost(chunk);
+        + retrievalModeBoost(chunk)
+        - sourceMetadataPenalty(chunk);
 }
 
 function highAuthoritySourceBoost(chunk: RagRetrievedChunk): number {
@@ -1133,6 +1139,10 @@ function retrievalModeBoost(chunk: RagRetrievedChunk): number {
     if (mode === 'vector') return 0.08;
     if (mode === 'lexical') return 0.03;
     return 0;
+}
+
+function sourceMetadataPenalty(chunk: RagRetrievedChunk): number {
+    return isCatalogOrSourceMetadataChunk(chunk) ? 0.3 : 0;
 }
 
 function sourceMatchesRequestedSpecies(values: string[], species: string | null): boolean {
@@ -1180,6 +1190,85 @@ function hasMinimumQuestionRelevance(chunk: RagRetrievedChunk, question: string)
     ].join(' ').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
     const matched = terms.filter((term) => haystack.includes(` ${term} `)).length;
     return chunk.similarity >= 0.08 || matched >= Math.min(2, terms.length);
+}
+
+function hasRequiredClinicalAnchors(chunk: RagRetrievedChunk, question: string, species: string | null): boolean {
+    const anchors = extractClinicalAnchorGroups(question, species);
+    if (anchors.length === 0) return true;
+
+    const haystack = normalizedEvidenceHaystack(chunk);
+    return anchors.some((group) => group.some((term) => haystack.includes(` ${term} `)));
+}
+
+function extractClinicalAnchorGroups(question: string, species: string | null): string[][] {
+    const normalized = question.toLowerCase();
+    const groups: string[][] = [];
+
+    if (/\b(fpv|panleukopenia|feline panleukopenia|feline parvovirus)\b/i.test(question)) {
+        groups.push(['fpv', 'panleukopenia', 'parvovirus']);
+    }
+    if (/\b(cpv|canine parvovirus|parvo)\b/i.test(question)) {
+        groups.push(['cpv', 'parvo', 'parvovirus']);
+    }
+    if (/\bdistemper\b/.test(normalized)) {
+        groups.push(['distemper']);
+    }
+
+    const genericAnchors = extractRetrievalTerms(question)
+        .filter((term) => !genericClinicalAnchorStopwords(species).has(term));
+    for (const term of genericAnchors) {
+        groups.push([term]);
+    }
+
+    return groups.slice(0, 5);
+}
+
+function genericClinicalAnchorStopwords(species: string | null): Set<string> {
+    const values = [
+        'clinical',
+        'criterion',
+        'criteria',
+        'diagnostic',
+        'diagnostics',
+        'diagnose',
+        'diagnosis',
+        'disease',
+        'evidence',
+        'guidance',
+        'guideline',
+        'guidelines',
+        'infection',
+        'infections',
+        'reference',
+        'references',
+        'supported',
+        'virus',
+        'viral',
+    ];
+    if (species) {
+        values.push(...speciesScopeAliases(species));
+    }
+    return new Set(values);
+}
+
+function normalizedEvidenceHaystack(chunk: RagRetrievedChunk): string {
+    return ` ${[
+        chunk.chunk_text,
+        chunk.source_name,
+        chunk.title,
+    ].join(' ').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+}
+
+function isClinicalSpecificQuestion(question: string): boolean {
+    return /\b(criteria|diagnos|infection|infectious|virus|viral|disease|syndrome|workup|treatment|dose|prognosis)\b/i.test(question);
+}
+
+function isCatalogOrSourceMetadataChunk(chunk: RagRetrievedChunk): boolean {
+    const documentType = String(chunk.metadata.document_type ?? '').toLowerCase();
+    if (documentType === 'source_card') return true;
+
+    const text = `${chunk.title} ${chunk.chunk_text}`.toLowerCase();
+    return /is registered in vetios as|canonical source url|retrieval use:|safety boundary:|species scope:|medicine domains:/.test(text);
 }
 
 function isHighAuthorityTier(tier: RagAuthorityTier): boolean {
@@ -1236,6 +1325,29 @@ function extractRetrievalTerms(value: string): string[] {
         'that',
         'this',
         'about',
+        'criteria',
+        'criterion',
+        'clinical',
+        'diagnose',
+        'diagnoses',
+        'diagnosis',
+        'diagnostic',
+        'diagnostics',
+        'disease',
+        'guidance',
+        'guideline',
+        'guidelines',
+        'infection',
+        'infections',
+        'reference',
+        'references',
+        'supported',
+        'virus',
+        'viral',
+        'feline',
+        'canine',
+        'equine',
+        'bovine',
         'into',
         'does',
         'have',
