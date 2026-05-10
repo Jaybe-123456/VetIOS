@@ -205,6 +205,7 @@ export async function ingestRagDocument(input: IngestRagDocumentInput): Promise<
 export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAnswerResult> {
     const start = Date.now();
     const limit = Math.min(Math.max(input.limit ?? 8, 1), MAX_CITATIONS);
+    const retrievalWarnings: string[] = [];
     const plan = buildRagQueryPlan({
         question: input.question,
         species: input.species ?? null,
@@ -215,14 +216,26 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
     const sourceIds = input.sourceIds?.filter(isUuid).slice(0, 20) ?? [];
     const vectorRows = plan.strategy === 'lexical'
         ? []
-        : await retrieveVectorChunks(input, plan, sourceIds, limit).catch(() => []);
+        : await retrieveVectorChunks(input, plan, sourceIds, limit).catch((error) => {
+            retrievalWarnings.push(`Vector retrieval unavailable: ${error instanceof Error ? error.message : 'unknown error'}.`);
+            return [];
+        });
     const lexicalRows = plan.strategy === 'vector'
         ? []
-        : await retrieveLexicalChunks(input, plan, sourceIds, limit).catch(() => []);
-    const chunks = mergeRetrievedChunks(vectorRows, lexicalRows).slice(0, limit);
+        : await retrieveLexicalChunks(input, plan, sourceIds, limit).catch((error) => {
+            retrievalWarnings.push(`Lexical retrieval unavailable: ${error instanceof Error ? error.message : 'unknown error'}.`);
+            return [];
+        });
+    const fallbackLexicalRows = plan.strategy === 'vector' || lexicalRows.length > 0
+        ? []
+        : await retrieveDirectLexicalChunks(input, plan, sourceIds, limit).catch((error) => {
+            retrievalWarnings.push(`Direct lexical fallback unavailable: ${error instanceof Error ? error.message : 'unknown error'}.`);
+            return [];
+        });
+    const chunks = mergeRetrievedChunks(vectorRows, [...lexicalRows, ...fallbackLexicalRows]).slice(0, limit);
     const citations = chunks.map((chunk, index) => buildCitation(chunk, index + 1));
     const answer = synthesizeExtractiveAnswer(input.question, citations);
-    const warnings = buildRagWarnings(citations);
+    const warnings = [...buildRagWarnings(citations), ...retrievalWarnings];
     const integrationContexts = await buildIntegratedRagContexts(input.client, {
         tenantId: input.tenantId,
         question: input.question,
@@ -233,6 +246,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         strategy: plan.strategy,
         vector_hits: vectorRows.length,
         lexical_hits: lexicalRows.length,
+        direct_lexical_hits: fallbackLexicalRows.length,
         total_citations: citations.length,
         top_authority_tier: citations[0]?.authority_tier ?? null,
         retrieval_time_ms: Date.now() - start,
@@ -540,6 +554,69 @@ async function retrieveLexicalChunks(
     return rows.map((row) => mapRetrievedChunk(row, 'lexical'));
 }
 
+async function retrieveDirectLexicalChunks(
+    input: AnswerRagQueryInput,
+    plan: RagQueryPlan,
+    sourceIds: string[],
+    limit: number,
+): Promise<RagRetrievedChunk[]> {
+    const sources = await listRagSources(input.client, input.tenantId);
+    const allowedSources = sources.filter((source) => (
+        source.status === 'active'
+        && (sourceIds.length === 0 || sourceIds.includes(source.id))
+        && sourceMatchesFilter(source.species_scope, plan.species)
+        && sourceMatchesFilter(source.medicine_domain, plan.domain)
+    ));
+    if (allowedSources.length === 0) return [];
+
+    const sourceMap = new Map(allowedSources.map((source) => [source.id, source]));
+    const { data: chunkData, error: chunkError } = await input.client
+        .from('rag_chunks')
+        .select('id, tenant_id, source_id, document_id, chunk_index, chunk_text, metadata, created_at')
+        .eq('tenant_id', input.tenantId)
+        .in('source_id', allowedSources.map((source) => source.id))
+        .limit(750);
+    if (chunkError) throw new Error(chunkError.message);
+
+    const chunkRows = (chunkData ?? []) as Record<string, unknown>[];
+    if (chunkRows.length === 0) return [];
+
+    const documentIds = [...new Set(chunkRows.map((row) => String(row.document_id)).filter(Boolean))];
+    const { data: documentData, error: documentError } = await input.client
+        .from('rag_documents')
+        .select('id, title, provenance')
+        .eq('tenant_id', input.tenantId)
+        .in('id', documentIds);
+    if (documentError) throw new Error(documentError.message);
+
+    const documentMap = new Map((documentData ?? []).map((row) => [
+        String((row as Record<string, unknown>).id),
+        row as Record<string, unknown>,
+    ]));
+    const scored = chunkRows
+        .map((row) => {
+            const source = sourceMap.get(String(row.source_id));
+            const document = documentMap.get(String(row.document_id));
+            if (!source || !document) return null;
+            const score = scoreDirectLexicalMatch(input.question, [
+                String(row.chunk_text ?? ''),
+                source.name,
+                String(document.title ?? ''),
+                source.species_scope.join(' '),
+                source.medicine_domain.join(' '),
+            ].join(' '));
+            if (score <= 0) return null;
+            return mapDirectRetrievedChunk(row, source, document, score);
+        })
+        .filter((row): row is RagRetrievedChunk => row !== null)
+        .sort((left, right) => (
+            (authorityWeight(right.authority_tier) + right.similarity)
+            - (authorityWeight(left.authority_tier) + left.similarity)
+        ));
+
+    return scored.slice(0, limit);
+}
+
 function mergeRetrievedChunks(vectorRows: RagRetrievedChunk[], lexicalRows: RagRetrievedChunk[]): RagRetrievedChunk[] {
     const byId = new Map<string, RagRetrievedChunk>();
     for (const row of [...vectorRows, ...lexicalRows]) {
@@ -597,6 +674,7 @@ function buildRagWarnings(citations: RagCitation[]): string[] {
     const warnings: string[] = [];
     if (citations.length === 0) {
         warnings.push('No indexed evidence was retrieved.');
+        return warnings;
     }
     if (citations.some((citation) => citation.authority_tier === 'unverified')) {
         warnings.push('At least one citation comes from an unverified source tier.');
@@ -776,6 +854,30 @@ function mapRetrievedChunk(row: Record<string, unknown>, mode: 'vector' | 'lexic
     };
 }
 
+function mapDirectRetrievedChunk(
+    row: Record<string, unknown>,
+    source: RagSourceRecord,
+    document: Record<string, unknown>,
+    score: number,
+): RagRetrievedChunk {
+    return {
+        chunk_id: String(row.id),
+        document_id: String(row.document_id),
+        source_id: source.id,
+        source_name: source.name,
+        source_type: source.source_type,
+        authority_tier: source.authority_tier,
+        title: String(document.title ?? 'Indexed RAG document'),
+        url: source.url,
+        chunk_index: Number(row.chunk_index ?? 0),
+        chunk_text: String(row.chunk_text ?? ''),
+        similarity: score,
+        metadata: asRecord(row.metadata),
+        provenance: asRecord(document.provenance),
+        created_at: String(row.created_at),
+    };
+}
+
 function normalizeStrategy(value: string | null | undefined): RagQueryPlan['strategy'] | null {
     const allowed: RagQueryPlan['strategy'][] = ['hybrid', 'vector', 'lexical', 'clinical_guideline', 'drug_safety', 'lab_reference'];
     return allowed.includes(value as RagQueryPlan['strategy']) ? value as RagQueryPlan['strategy'] : null;
@@ -839,6 +941,59 @@ function authorityWeight(tier: RagAuthorityTier): number {
         case 'clinic_local': return 0.04;
         default: return 0;
     }
+}
+
+function sourceMatchesFilter(values: string[], filter: string | null): boolean {
+    return !filter || values.length === 0 || values.includes(filter);
+}
+
+function scoreDirectLexicalMatch(question: string, haystack: string): number {
+    const terms = extractRetrievalTerms(question);
+    if (terms.length === 0) return 0;
+    const normalizedHaystack = ` ${haystack.toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `;
+    const matched = terms.filter((term) => normalizedHaystack.includes(` ${term} `));
+    if (matched.length === 0) return 0;
+
+    const coverage = matched.length / terms.length;
+    const phraseBoost = buildQuestionPhrases(question)
+        .filter((phrase) => normalizedHaystack.includes(` ${phrase} `))
+        .length * 0.05;
+    return Math.min(1, Number((coverage + phraseBoost + 0.03).toFixed(4)));
+}
+
+function extractRetrievalTerms(value: string): string[] {
+    const stopwords = new Set([
+        'what',
+        'which',
+        'when',
+        'where',
+        'evidence',
+        'indexed',
+        'show',
+        'with',
+        'from',
+        'that',
+        'this',
+        'about',
+        'into',
+        'does',
+        'have',
+        'should',
+    ]);
+    return [...new Set(value
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((term) => term.length > 3 && !stopwords.has(term)))];
+}
+
+function buildQuestionPhrases(value: string): string[] {
+    const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const words = normalized.split(/\s+/).filter((word) => word.length > 3);
+    const phrases: string[] = [];
+    for (let index = 0; index < words.length - 1; index += 1) {
+        phrases.push(`${words[index]} ${words[index + 1]}`);
+    }
+    return phrases;
 }
 
 function normalizeRequired(value: unknown, field: string): string {

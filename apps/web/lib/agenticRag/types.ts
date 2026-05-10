@@ -128,6 +128,7 @@ export interface RagAnswerResult {
         strategy: RagRetrievalStrategy;
         vector_hits: number;
         lexical_hits: number;
+        direct_lexical_hits?: number;
         total_citations: number;
         top_authority_tier: RagAuthorityTier | null;
         retrieval_time_ms: number;

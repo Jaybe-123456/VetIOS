@@ -61,6 +61,7 @@ interface RagQueryResult {
         strategy: string;
         vector_hits: number;
         lexical_hits: number;
+        direct_lexical_hits?: number;
         total_citations: number;
         retrieval_time_ms: number;
     };
@@ -389,6 +390,7 @@ export default function AgenticRagClient() {
                                 <DataRow label="Latency" value={`${queryResult.retrieval_stats.retrieval_time_ms}ms`} />
                                 <DataRow label="Vector Hits" value={queryResult.retrieval_stats.vector_hits} />
                                 <DataRow label="Lexical Hits" value={queryResult.retrieval_stats.lexical_hits} />
+                                <DataRow label="Direct Lexical" value={queryResult.retrieval_stats.direct_lexical_hits ?? 0} />
                                 <DataRow label="Causal Memory" value={queryResult.evaluation.causal_memory_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.causal_memory_linked ? 'accent' : undefined} />
                                 <DataRow label="Counterfactual" value={queryResult.evaluation.counterfactual_reasoning_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.counterfactual_reasoning_linked ? 'accent' : undefined} />
                                 <DataRow label="One Health" value={queryResult.evaluation.one_health_surveillance_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.one_health_surveillance_linked ? 'accent' : undefined} />
