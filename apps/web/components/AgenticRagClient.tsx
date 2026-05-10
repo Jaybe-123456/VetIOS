@@ -62,6 +62,7 @@ interface RagQueryResult {
         vector_hits: number;
         lexical_hits: number;
         direct_lexical_hits?: number;
+        catalog_fallback_hits?: number;
         candidate_citations?: number;
         withheld_citations?: number;
         total_citations: number;
@@ -393,6 +394,7 @@ export default function AgenticRagClient() {
                                 <DataRow label="Vector Hits" value={queryResult.retrieval_stats.vector_hits} />
                                 <DataRow label="Lexical Hits" value={queryResult.retrieval_stats.lexical_hits} />
                                 <DataRow label="Direct Lexical" value={queryResult.retrieval_stats.direct_lexical_hits ?? 0} />
+                                <DataRow label="Catalog Fallback" value={queryResult.retrieval_stats.catalog_fallback_hits ?? 0} tone={(queryResult.retrieval_stats.catalog_fallback_hits ?? 0) > 0 ? 'accent' : undefined} />
                                 <DataRow label="Candidates" value={queryResult.retrieval_stats.candidate_citations ?? queryResult.retrieval_stats.total_citations} />
                                 <DataRow label="Withheld" value={queryResult.retrieval_stats.withheld_citations ?? 0} />
                                 <DataRow label="Causal Memory" value={queryResult.evaluation.causal_memory_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.causal_memory_linked ? 'accent' : undefined} />

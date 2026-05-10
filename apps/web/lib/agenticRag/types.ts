@@ -155,6 +155,7 @@ export interface RagAnswerResult {
         species_filtered_hits?: number;
         candidate_citations?: number;
         withheld_citations?: number;
+        catalog_fallback_hits?: number;
     };
     evaluation: {
         grounded: boolean;

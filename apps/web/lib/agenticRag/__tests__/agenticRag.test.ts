@@ -632,6 +632,32 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.answer).not.toContain('Fecal/external tests');
     });
 
+    it('uses curated catalog evidence summaries when tenant pancreatitis chunks are not seeded yet', async () => {
+        const client = createRagFakeClient({
+            sources: [],
+            chunks: [],
+            documents: [],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'Evidence for early detection of acute pancreatitis in dogs, including lab and imaging markers?',
+            species: 'canine',
+            domain: 'diagnostics,lab_reference,imaging,pancreatitis',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.evaluation.grounded).toBe(true);
+        expect(result.retrieval_stats.catalog_fallback_hits).toBeGreaterThan(0);
+        expect(result.citations.map((citation) => citation.source_name)).toContain('Merck Veterinary Manual pancreatitis in dogs and cats');
+        expect(result.answer).toContain('Labs - Use pancreas-specific lipase testing with CBC, chemistry, electrolytes');
+        expect(result.answer).toContain('Imaging - Use abdominal ultrasound to support pancreatitis');
+        expect(result.evaluation.warnings.some((warning) => warning.includes('built-in curated catalog evidence summaries'))).toBe(true);
+    });
+
     it('builds a respiratory diagnostic workflow for feline nasal discharge and sneezing evidence', async () => {
         const client = createRagFakeClient({
             sources: [

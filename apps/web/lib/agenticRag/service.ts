@@ -7,6 +7,7 @@ import {
     normalizeStringList,
     validatePublicSourceUrl,
 } from './sourcePolicy';
+import { getCuratedRagCatalog } from './sourceCatalog';
 import type {
     RagAnswerResult,
     RagAuthorityTier,
@@ -243,7 +244,15 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
     if (mergedChunks.length > filteredChunks.length) {
         retrievalWarnings.push(`${mergedChunks.length - filteredChunks.length} retrieval hit(s) were removed by species, domain, or relevance filters.`);
     }
-    const chunks = filteredChunks.slice(0, limit);
+    const catalogFallbackRows = filteredChunks.length > 0
+        ? []
+        : retrieveCuratedCatalogEvidenceChunks(input.question, plan, limit);
+    if (catalogFallbackRows.length > 0) {
+        retrievalWarnings.push('Tenant corpus had no matching indexed chunks, so VetIOS used built-in curated catalog evidence summaries. Run Seed/Refresh Catalog to persist these summaries into the retrieval corpus.');
+    }
+    const chunks = [...filteredChunks, ...catalogFallbackRows]
+        .sort((left, right) => evidenceRankScore(right) - evidenceRankScore(left))
+        .slice(0, limit);
     const candidateCitations = chunks.map((chunk, index) => buildCitation(chunk, index + 1));
     const citations = candidateCitations
         .filter((citation) => isAcceptedGroundingCitation(citation, input.question, plan))
@@ -284,6 +293,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         species_filtered_hits: mergedChunks.length - filteredChunks.length,
         candidate_citations: candidateCitations.length,
         withheld_citations: candidateCitations.length - citations.length,
+        catalog_fallback_hits: catalogFallbackRows.length,
     };
     const evaluation = {
         grounded,
@@ -656,6 +666,72 @@ async function retrieveDirectLexicalChunks(
         .sort((left, right) => evidenceRankScore(right) - evidenceRankScore(left));
 
     return scored.slice(0, limit);
+}
+
+function retrieveCuratedCatalogEvidenceChunks(
+    question: string,
+    plan: RagQueryPlan,
+    limit: number,
+): RagRetrievedChunk[] {
+    if (!shouldUseCuratedCatalogFallback(question)) return [];
+
+    return getCuratedRagCatalog()
+        .flatMap((definition) => {
+            if (!sourceMatchesRequestedSpecies(definition.species_scope, plan.species)) return [];
+            if (!sourceMatchesDomain(definition.medicine_domain, plan)) return [];
+
+            return (definition.evidence_summaries ?? []).map((summary, index) => {
+                const score = scoreDirectLexicalMatch(question, [
+                    summary.title,
+                    summary.summary,
+                    summary.topics.join(' '),
+                    definition.name,
+                    definition.species_scope.join(' '),
+                    definition.medicine_domain.join(' '),
+                ].join(' '));
+                if (score <= 0) return null;
+
+                const hash = contentHash(`${definition.external_key}:${index}:${summary.summary}`).slice(0, 24);
+                const chunk: RagRetrievedChunk = {
+                    chunk_id: `catalog-${hash}`,
+                    document_id: `catalog-doc-${hash}`,
+                    source_id: `catalog-source-${definition.external_key}`,
+                    source_name: definition.name,
+                    source_type: definition.source_type,
+                    authority_tier: definition.authority_tier,
+                    title: summary.title,
+                    url: definition.url,
+                    chunk_index: index,
+                    chunk_text: summary.summary,
+                    similarity: score,
+                    metadata: {
+                        document_type: 'curated_evidence_summary',
+                        retrieval_mode: 'catalog_evidence_summary',
+                        catalog_fallback: true,
+                        evidence_topics: summary.topics,
+                    },
+                    provenance: {
+                        source_url: definition.url,
+                        publication_year: summary.source_year ?? null,
+                        source_catalog_version: '2026-05-10',
+                    },
+                    created_at: new Date().toISOString(),
+                };
+
+                if (!hasRequiredClinicalAnchors(chunk, question, plan.species)) return null;
+                if (!hasMinimumQuestionRelevance(chunk, question)) return null;
+                return chunk;
+            });
+        })
+        .filter((chunk): chunk is RagRetrievedChunk => chunk !== null)
+        .sort((left, right) => evidenceRankScore(right) - evidenceRankScore(left))
+        .slice(0, limit);
+}
+
+function shouldUseCuratedCatalogFallback(question: string): boolean {
+    return isPancreatitisDiagnosticQuestion(question)
+        || isRespiratoryDiagnosticQuestion(question)
+        || /\b(fpv|panleukopenia|feline panleukopenia|feline parvovirus|cpv|canine parvovirus|parvo|distemper)\b/i.test(question);
 }
 
 function mergeRetrievedChunks(vectorRows: RagRetrievedChunk[], lexicalRows: RagRetrievedChunk[]): RagRetrievedChunk[] {
