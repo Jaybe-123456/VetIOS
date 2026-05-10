@@ -21,7 +21,6 @@
 
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { getVKG } from '@/lib/vkg/veterinaryKnowledgeGraph';
-import { runInference } from '@/lib/vetios-inference';
 import { buildTelemetryInferenceSignature } from '@/lib/moat/telemetryInference';
 
 // ─── Types ───────────────────────────────────────────────────
@@ -426,6 +425,7 @@ export class WearableSignalProcessor {
     });
     if (inputSignature.symptoms.length === 0) return null;
     const model = process.env.AI_PROVIDER_DEFAULT_MODEL ?? 'gpt-4o-mini';
+    const { runInference } = await import('@/lib/vetios-inference');
     const inference = await runInference({
       tenantId: reading.tenantId,
       requestId: `wearable_${Date.now()}`,

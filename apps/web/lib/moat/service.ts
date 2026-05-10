@@ -9,7 +9,6 @@ import { authorizeCronRequest } from '@/lib/http/cronAuth';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { createOutboxEvent } from '@/lib/outbox/outbox-service';
-import { runInference } from '@/lib/vetios-inference';
 import { matchesOptionalFilter, summarizeAdverseSignals } from '@/lib/moat/pharmaAdr';
 import { buildLabOrderPayload, shouldAutoOrderLabs, type LabPanelRecommendation } from '@/lib/moat/labOrdering';
 import { scoreTelemedicineSymptoms } from '@/lib/moat/telemedicineScoring';
@@ -1673,6 +1672,7 @@ async function maybeRunTelemetryInference(
     });
     if (inputSignature.symptoms.length === 0) return null;
 
+    const { runInference } = await import('@/lib/vetios-inference');
     const inference = await runInference({
         tenantId: input.tenant_id,
         requestId,

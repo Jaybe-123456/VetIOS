@@ -3,9 +3,7 @@
 import type { Dispatch, ReactNode, SetStateAction, ChangeEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import DebugToolsPanel from '@/components/DebugToolsPanel';
-import GovernanceAuditPanel from '@/components/GovernanceAuditPanel';
-import TenantRateLimitPanel from '@/components/TenantRateLimitPanel';
+import dynamic from 'next/dynamic';
 import {
     ConsoleCard,
     Container,
@@ -41,6 +39,16 @@ import {
     ArrowRight,
 } from 'lucide-react';
 
+const DebugToolsPanel = dynamic(() => import('@/components/DebugToolsPanel'), {
+    loading: () => <PanelLoading label="Debug tools" />,
+});
+const GovernanceAuditPanel = dynamic(() => import('@/components/GovernanceAuditPanel'), {
+    loading: () => <PanelLoading label="Governance audit" />,
+});
+const TenantRateLimitPanel = dynamic(() => import('@/components/TenantRateLimitPanel'), {
+    loading: () => <PanelLoading label="Rate limits" />,
+});
+
 type ControlPlaneTab =
     | 'profile'
     | 'access'
@@ -75,6 +83,14 @@ const SIMULATION_TARGETS = [
     { id: 'simulation_cluster', label: 'Simulation Cluster' },
     { id: 'control_plane', label: 'Control Plane' },
 ] as const;
+
+function PanelLoading({ label }: { label: string }) {
+    return (
+        <ConsoleCard title={label}>
+            <div className="font-mono text-xs text-[hsl(0_0%_70%)]">Loading...</div>
+        </ConsoleCard>
+    );
+}
 
 export default function SettingsControlPlaneClient() {
     const [activeTab, setActiveTab] = useState<ControlPlaneTab>('profile');

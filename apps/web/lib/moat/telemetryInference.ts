@@ -43,7 +43,8 @@ export function mapTelemetryAnomaliesToSymptoms(anomalies: TelemetryAnomalySigna
 
 export function shouldTriggerTelemetryInference(anomalies: TelemetryAnomalySignal[]) {
     if (anomalies.length === 0) return false;
-    return anomalies.some((anomaly) => ['critical', 'severe'].includes(anomaly.severity) || anomaly.metric_type !== 'activity_score');
+    if (anomalies.some((anomaly) => ['critical', 'severe'].includes(anomaly.severity))) return true;
+    return anomalies.filter((anomaly) => anomaly.metric_type !== 'activity_score').length >= 2;
 }
 
 export function buildTelemetryInferenceSignature(input: {

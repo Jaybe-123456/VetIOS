@@ -24,6 +24,17 @@ describe('telemetry inference helpers', () => {
         ])).toBe(false);
     });
 
+    it('defers isolated moderate vital anomalies but triggers multi-vital drift', () => {
+        expect(shouldTriggerTelemetryInference([
+            { metric_type: 'temperature_c', anomaly_type: 'high', severity: 'moderate' },
+        ])).toBe(false);
+
+        expect(shouldTriggerTelemetryInference([
+            { metric_type: 'temperature_c', anomaly_type: 'high', severity: 'moderate' },
+            { metric_type: 'heart_rate_bpm', anomaly_type: 'high', severity: 'moderate' },
+        ])).toBe(true);
+    });
+
     it('builds an inference signature with passive telemetry provenance', () => {
         const signature = buildTelemetryInferenceSignature({
             tenantId: 'tenant-1',
