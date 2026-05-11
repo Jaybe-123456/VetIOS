@@ -122,6 +122,41 @@ export function buildUploadedDocumentAnalysisResponse(input: {
     };
 }
 
+export function buildUploadedDocumentQuestionResponse(input: {
+    contexts: UploadedDocumentContext[];
+    query: string;
+    sessionId: string | null;
+    queryId: string;
+    startedAt: number;
+}): AskVetiosContractResponse {
+    const selected = selectRelevantUploadedChunks(input.contexts, input.query, 8);
+    const combinedText = selected.map(({ chunk }) => chunk.chunk_text).join('\n\n');
+    const signals = extractClinicalSignals(combinedText);
+    const differentials = inferDocumentDifferentials(combinedText, selected.map(({ context, chunk }) => citationFor(context, chunk.chunk_index)));
+    const emergency = hasEmergencySignal(combinedText);
+
+    return {
+        session_id: input.sessionId ?? 'sessionless',
+        query_id: input.queryId,
+        narrative: buildQuestionNarrative(input.query, selected, signals, emergency),
+        differentials,
+        recommended_diagnostics: buildDocumentDiagnosticGaps(combinedText),
+        recommended_treatments: [],
+        flags: {
+            low_confidence_hypotheses: differentials.filter((entry) => entry.confidence < 0.3).map((entry) => entry.diagnosis),
+            unsourced_priors: [],
+            requires_specialist_review: emergency || differentials.some((entry) => entry.confidence < 0.5),
+            emergency_flag: emergency,
+        },
+        rag_chunks_used: selected.length,
+        video_segments_referenced: 0,
+        response_latency_ms: Math.max(1, Date.now() - input.startedAt),
+        model_version: 'ask-vetios-v2-uploaded-document-question',
+        clinical_signs: [...new Set(signals.findings)],
+        document_tables: buildDocumentTables(input.contexts, signals, differentials),
+    };
+}
+
 function buildNarrative(
     contexts: UploadedDocumentContext[],
     selected: Array<{ context: UploadedDocumentContext; chunk: UploadedDocumentContext['chunks'][number] }>,
@@ -168,6 +203,87 @@ function buildNarrative(
     }
 
     return lines.join('\n');
+}
+
+function buildQuestionNarrative(
+    query: string,
+    selected: Array<{ context: UploadedDocumentContext; chunk: UploadedDocumentContext['chunks'][number]; score: number }>,
+    signals: ReturnType<typeof extractClinicalSignals>,
+    emergency: boolean,
+): string {
+    const lines: string[] = [
+        emergency
+            ? 'EMERGENCY FLAG DETECTED: the uploaded document contains time-critical language in the retrieved evidence. Immediate clinician review is required.'
+            : 'Uploaded document question answered from indexed source chunks.',
+        '',
+        `Question: ${query}`,
+        '',
+        'Best matching uploaded evidence:',
+    ];
+
+    for (const { context, chunk } of selected) {
+        lines.push(
+            '',
+            `Chunk ${chunk.chunk_index + 1} - ${chunk.heading ?? context.title}`,
+            trimChunkForAnswer(chunk.chunk_text),
+            `Source: ${citationFor(context, chunk.chunk_index)}`,
+        );
+    }
+
+    lines.push(
+        '',
+        'Extracted clinical signals from retrieved evidence:',
+        `- Species/signalment mentions: ${signals.signalment.join('; ') || 'not explicitly detected in retrieved text'}`,
+        `- Clinical signs/findings: ${signals.findings.join('; ') || 'not explicitly detected in retrieved text'}`,
+        `- Diagnostic/lab/imaging mentions: ${signals.diagnostics.join('; ') || 'not explicitly detected in retrieved text'}`,
+        `- Treatment/outcome mentions: ${signals.treatments.join('; ') || 'not explicitly detected in retrieved text'}`,
+        '',
+        'Reasoning boundary:',
+        '- This answer is extractive and limited to the uploaded document chunks shown above.',
+        '- If a requested fact is not visible in the cited chunks, treat it as not found in the indexed document, not as clinically absent.',
+    );
+
+    return lines.join('\n');
+}
+
+function selectRelevantUploadedChunks(
+    contexts: UploadedDocumentContext[],
+    query: string,
+    limit: number,
+): Array<{ context: UploadedDocumentContext; chunk: UploadedDocumentContext['chunks'][number]; score: number }> {
+    const terms = tokenizeQuery(query);
+    const candidates = contexts.flatMap((context) => (
+        context.chunks.map((chunk) => {
+            const haystack = `${chunk.heading ?? ''} ${chunk.chunk_text}`.toLowerCase();
+            const score = terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
+            return { context, chunk, score };
+        })
+    ));
+
+    const ranked = candidates
+        .sort((left, right) => right.score - left.score || left.chunk.chunk_index - right.chunk.chunk_index)
+        .slice(0, limit);
+
+    return ranked.some((entry) => entry.score > 0)
+        ? ranked
+        : candidates.slice(0, limit);
+}
+
+function tokenizeQuery(query: string): string[] {
+    const stopWords = new Set([
+        'about', 'after', 'again', 'also', 'and', 'any', 'are', 'ask', 'can', 'could',
+        'did', 'does', 'for', 'from', 'give', 'has', 'have', 'how', 'into', 'the',
+        'this', 'that', 'was', 'what', 'when', 'where', 'which', 'with', 'you',
+    ]);
+    return [...new Set(query.toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((term) => term.length >= 3 && !stopWords.has(term)))]
+        .slice(0, 24);
+}
+
+function trimChunkForAnswer(text: string): string {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    return normalized.length > 1200 ? `${normalized.slice(0, 1200)}...` : normalized;
 }
 
 function extractClinicalSignals(text: string) {

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/service';
 import {
     buildUploadedDocumentAnalysisResponse,
+    buildUploadedDocumentQuestionResponse,
     loadUploadedDocumentContexts,
     shouldUseDirectDocumentAnalysis,
 } from '@/lib/askVetios/documentAnalysis';
@@ -42,20 +43,34 @@ export async function POST(req: Request) {
     }
 
     const queryId = randomUUID();
-    if (shouldUseDirectDocumentAnalysis(parsed.data.query, parsed.data.upload_ids)) {
+    if (parsed.data.upload_ids.length > 0) {
         const contexts = await loadUploadedDocumentContexts({
             client: getSupabaseServer(),
             uploadIds: parsed.data.upload_ids,
         });
         if (contexts.length > 0) {
-            const response = buildUploadedDocumentAnalysisResponse({
-                contexts,
-                sessionId: parsed.data.session_id ?? null,
-                queryId,
-                startedAt: startTime,
-            });
+            const response = shouldUseDirectDocumentAnalysis(parsed.data.query, parsed.data.upload_ids)
+                ? buildUploadedDocumentAnalysisResponse({
+                    contexts,
+                    sessionId: parsed.data.session_id ?? null,
+                    queryId,
+                    startedAt: startTime,
+                })
+                : buildUploadedDocumentQuestionResponse({
+                    contexts,
+                    query: parsed.data.query,
+                    sessionId: parsed.data.session_id ?? null,
+                    queryId,
+                    startedAt: startTime,
+                });
             return withHeaders(NextResponse.json({ ...response, request_id: requestId }), requestId, startTime);
         }
+
+        return withHeaders(NextResponse.json({
+            error: 'uploaded_document_not_indexed',
+            reason: 'The uploaded file was validated, but no indexed document chunks are available for this upload ID yet. Re-upload the document or wait for indexing to finish before asking document-specific questions.',
+            request_id: requestId,
+        }, { status: 409 }), requestId, startTime);
     }
 
     const heuristic = buildHeuristicResponse(parsed.data.query);

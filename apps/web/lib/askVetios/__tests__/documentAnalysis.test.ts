@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildUploadedDocumentAnalysisResponse, shouldUseDirectDocumentAnalysis } from '../documentAnalysis';
+import {
+    buildUploadedDocumentAnalysisResponse,
+    buildUploadedDocumentQuestionResponse,
+    shouldUseDirectDocumentAnalysis,
+} from '../documentAnalysis';
 
 describe('uploaded document analysis contract', () => {
     it('detects direct analysis intent only when uploads are present', () => {
@@ -48,5 +52,39 @@ describe('uploaded document analysis contract', () => {
             'Extracted Clinical Signals',
             'Differential Reasoning',
         ]);
+    });
+
+    it('answers arbitrary uploaded-document questions from indexed chunks', () => {
+        const response = buildUploadedDocumentQuestionResponse({
+            sessionId: 'chat-2',
+            queryId: 'query-2',
+            query: 'What does the document say about bats and rabies?',
+            startedAt: Date.now() - 8,
+            contexts: [
+                {
+                    upload_id: 'b'.repeat(64),
+                    document_id: 'doc-2',
+                    title: 'rodents-bats.pptx',
+                    source_name: 'Ask Vetios uploads',
+                    chunks: [
+                        {
+                            chunk_index: 0,
+                            heading: 'Rodents',
+                            chunk_text: 'Rodent lecture content describing lymphocytic choriomeningitis.',
+                        },
+                        {
+                            chunk_index: 1,
+                            heading: 'Bats',
+                            chunk_text: 'Bat rabies exposure is a zoonotic risk and requires public health reporting.',
+                        },
+                    ],
+                },
+            ],
+        });
+
+        expect(response.model_version).toBe('ask-vetios-v2-uploaded-document-question');
+        expect(response.narrative).toContain('Bat rabies exposure');
+        expect(response.narrative).toContain('upload://rodents-bats.pptx#chunk-2');
+        expect(response.rag_chunks_used).toBe(2);
     });
 });
