@@ -136,6 +136,19 @@ describe('Ask Vetios UploadSecurityGate', () => {
         expect(result.ok).toBe(true);
     });
 
+    it('allows PPTX packages only when they look like PowerPoint OpenXML and have no macros', () => {
+        const fakePptx = Buffer.from('PK\x03\x04[Content_Types].xml ppt/slides/slide1.xml rodent zoonosis lecture', 'latin1');
+        const result = gate.validate({
+            fileName: 'rodents-and-bats.pptx',
+            declaredMime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            sizeBytes: fakePptx.length,
+            buffer: fakePptx,
+        });
+
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.sourceType).toBe('pptx');
+    });
+
     it('rejects DOCX packages containing macro signatures', () => {
         const fakeDocx = Buffer.from('PK\x03\x04[Content_Types].xml word/document.xml vbaProject.bin', 'latin1');
         const result = gate.validate({
@@ -143,6 +156,51 @@ describe('Ask Vetios UploadSecurityGate', () => {
             declaredMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
             sizeBytes: fakeDocx.length,
             buffer: fakeDocx,
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('EMBEDDED_SCRIPT');
+    });
+
+    it('rejects PPTX packages containing macro signatures', () => {
+        const fakePptx = Buffer.from('PK\x03\x04[Content_Types].xml ppt/slides/slide1.xml ppt/vbaProject.bin', 'latin1');
+        const result = gate.validate({
+            fileName: 'macro.pptx',
+            declaredMime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            sizeBytes: fakePptx.length,
+            buffer: fakePptx,
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('EMBEDDED_SCRIPT');
+    });
+
+    it('allows legacy PPT files when they have Office compound magic and no macro markers', () => {
+        const fakePpt = Buffer.concat([
+            Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+            Buffer.from('PowerPoint Document clinical rodent disease lecture', 'latin1'),
+        ]);
+        const result = gate.validate({
+            fileName: 'lecture.ppt',
+            declaredMime: 'application/vnd.ms-powerpoint',
+            sizeBytes: fakePpt.length,
+            buffer: fakePpt,
+        });
+
+        expect(result.ok).toBe(true);
+        if (result.ok) expect(result.sourceType).toBe('ppt');
+    });
+
+    it('rejects legacy PPT files containing macro markers', () => {
+        const fakePpt = Buffer.concat([
+            Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+            Buffer.from('PowerPoint Document clinical lecture _VBA_PROJECT', 'latin1'),
+        ]);
+        const result = gate.validate({
+            fileName: 'macro.ppt',
+            declaredMime: 'application/vnd.ms-powerpoint',
+            sizeBytes: fakePpt.length,
+            buffer: fakePpt,
         });
 
         expect(result.ok).toBe(false);

@@ -59,7 +59,7 @@ type UploadResponse = {
     file_name?: string;
 };
 
-const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['pdf', 'docx', 'txt', 'md', 'csv', 'xlsx', 'json']);
+const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['pdf', 'docx', 'ppt', 'pptx', 'txt', 'md', 'csv', 'xlsx', 'json']);
 const MAX_DOCUMENT_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 export default function AskVetIOSPage() {
@@ -106,7 +106,7 @@ export default function AskVetIOSPage() {
 
         try {
             const activeUploads = chatUploads[activeChatId] ?? [];
-            if (activeUploads.length > 0 && isUploadedDocumentQuestion(content)) {
+            if (activeUploads.length > 0) {
                 const queryResponse = await fetch('/api/ask-vetios/query', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -177,7 +177,7 @@ export default function AskVetIOSPage() {
         if (!DOCUMENT_UPLOAD_EXTENSIONS.has(extension)) {
             addMessage(activeChatId, {
                 role: 'assistant',
-                content: 'This command upload path currently accepts document and lab files: PDF, DOCX, TXT, MD, CSV, XLSX, or JSON. Images and video are handled by the dedicated multimodal processors.',
+                content: 'This command upload path currently accepts document and lab files: PDF, DOCX, PPT, PPTX, TXT, MD, CSV, XLSX, or JSON. Images and video are handled by the dedicated multimodal processors.',
                 metadata: { mode: 'general' },
             });
             return;
@@ -200,10 +200,9 @@ export default function AskVetIOSPage() {
             return;
         }
 
-        const analysisPrompt = buildDocumentAnalysisPrompt(file.name);
         addMessage(activeChatId, {
             role: 'user',
-            content: `Uploaded document: ${file.name}\n\n${analysisPrompt}`,
+            content: `Uploaded document: ${file.name}`,
         });
         setUploading(true);
         setLoading(true);
@@ -231,31 +230,25 @@ export default function AskVetIOSPage() {
                 [activeChatId]: [...(current[activeChatId] ?? []), upload],
             }));
 
-            const queryResponse = await fetch('/api/ask-vetios/query', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    session_id: activeChatId,
-                    query: analysisPrompt,
-                    upload_ids: [upload.upload_id],
-                    domain: 'clinical_document,diagnostics,lab_reference',
-                }),
-            });
-            const analysis = await queryResponse.json() as AskVetiosContractResponse;
-            if (!queryResponse.ok || analysis.error) {
-                throw new Error(analysis.reason || analysis.error || 'Document analysis failed.');
-            }
-
             addMessage(activeChatId, {
                 role: 'assistant',
-                content: formatDocumentAnalysis(file.name, upload, analysis),
-                metadata: buildDocumentAnalysisMetadata(analysis, upload),
+                content: buildDocumentReadyMessage(file.name, upload),
+                metadata: {
+                    mode: 'clinical',
+                    topic: 'Uploaded Document Ready',
+                    rag_grounded: true,
+                    rag_retrieval_stats: {
+                        upload_status: upload.status,
+                        chunks_indexed: upload.chunks_indexed,
+                        source_type: upload.source_type,
+                    },
+                },
             });
         } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Document analysis failed.';
+            const msg = err instanceof Error ? err.message : 'Document upload failed.';
             addMessage(activeChatId, {
                 role: 'assistant',
-                content: `Document analysis could not complete.\n\nReason: ${msg}`,
+                content: `Document upload could not complete.\n\nReason: ${msg}`,
                 metadata: { mode: 'general' },
             });
         } finally {
@@ -472,10 +465,6 @@ return (
     );
 }
 
-function isUploadedDocumentQuestion(content: string): boolean {
-    return /\b(uploaded|document|file|pdf|docx|spreadsheet|csv|analy[sz]e|review|summari[sz]e|extract|all information|what does it say|this case|clinical signs?|findings?|diagnostics?|differentials?|labs?|values?|treatments?|outcomes?|sources?|citations?|tables?)\b/i.test(content);
-}
-
 function buildDocumentAnalysisMetadata(analysis: AskVetiosContractResponse, upload: UploadResponse) {
     return {
         mode: 'clinical' as const,
@@ -500,13 +489,19 @@ function buildDocumentAnalysisMetadata(analysis: AskVetiosContractResponse, uplo
     };
 }
 
-function buildDocumentAnalysisPrompt(fileName: string): string {
+function buildDocumentReadyMessage(fileName: string, upload: UploadResponse): string {
     return [
-        `Analyze the uploaded clinical document "${fileName}" in full detail.`,
-        'Extract all clinically relevant information from the indexed source.',
-        'Provide complete source-grounded reasoning: case facts, signalment if present, clinical findings, lab or imaging values, differential implications, contradictions, missing diagnostics, safety flags, and recommended next steps.',
-        'Cite the uploaded source evidence and clearly label uncertainty. Do not invent facts that are not present in the uploaded document.',
-    ].join(' ');
+        '# Uploaded Document Ready',
+        '',
+        '| Field | Value |',
+        '| --- | --- |',
+        `| File | ${escapeTableCell(fileName)} |`,
+        `| Source type | ${escapeTableCell(upload.source_type ?? 'document')} |`,
+        `| Indexed chunks | ${upload.chunks_indexed ?? 0} |`,
+        `| Extracted characters | ${upload.extracted_characters ?? 0} |`,
+        '',
+        'Ask any question about this document, or type `analyze in full` for the complete source-grounded clinical extraction.',
+    ].join('\n');
 }
 
 function formatDocumentAnalysis(

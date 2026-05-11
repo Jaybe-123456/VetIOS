@@ -27,7 +27,7 @@ export interface ClinicalUploadIngestionResult {
     extracted_characters: number;
 }
 
-const TEXT_INDEXABLE_TYPES = new Set(['txt', 'md', 'csv', 'json', 'pdf', 'docx', 'xlsx']);
+const TEXT_INDEXABLE_TYPES = new Set(['txt', 'md', 'csv', 'json', 'pdf', 'docx', 'ppt', 'pptx', 'xlsx']);
 
 export async function ingestClinicalUploadToRag(
     input: ClinicalUploadIngestionInput,
@@ -126,6 +126,10 @@ export function extractClinicalUploadText(input: {
             return extractPdfText(input.buffer);
         case 'docx':
             return extractDocxText(input.buffer);
+        case 'ppt':
+            return extractPptText(input.buffer);
+        case 'pptx':
+            return extractPptxText(input.buffer);
         case 'xlsx':
             return extractXlsxText(input.buffer);
         default:
@@ -198,6 +202,43 @@ function extractDocxText(buffer: Buffer): { text: string; method: string; reason
         text,
         method: 'docx_openxml',
         reason: text.length > 0 ? null : 'DOCX package did not contain readable document XML.',
+    };
+}
+
+function extractPptxText(buffer: Buffer): { text: string; method: string; reason: string | null } {
+    const files = readZipEntries(buffer);
+    const xmlNames = [
+        ...[...files.keys()].filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).sort(),
+        ...[...files.keys()].filter((name) => /^ppt\/notesSlides\/notesSlide\d+\.xml$/.test(name)).sort(),
+    ];
+    const text = xmlNames
+        .map((name) => files.get(name))
+        .filter((value): value is Buffer => Boolean(value))
+        .map((value) => xmlToText(value.toString('utf8')))
+        .filter(Boolean)
+        .join('\n\n');
+
+    return {
+        text,
+        method: 'pptx_openxml',
+        reason: text.length > 0 ? null : 'PPTX package did not contain readable slide XML.',
+    };
+}
+
+function extractPptText(buffer: Buffer): { text: string; method: string; reason: string | null } {
+    const text = buffer
+        .toString('latin1')
+        .split(/[^\x20-\x7e]+/)
+        .map((part) => part.replace(/\s+/g, ' ').trim())
+        .filter((part) => part.length >= 4 && /[A-Za-z]{3}/.test(part))
+        .filter((part) => !/^(PowerPoint Document|Current User|DocumentSummaryInformation|SummaryInformation)$/i.test(part))
+        .slice(0, 1200)
+        .join('\n');
+
+    return {
+        text,
+        method: 'ppt_printable_text_fallback',
+        reason: text.length > 0 ? null : 'PPT file did not expose readable printable text.',
     };
 }
 

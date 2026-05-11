@@ -62,7 +62,7 @@ export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabl
           ref={fileInputRef}
           type="file"
           className="hidden"
-          accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json"
+          accept=".pdf,.docx,.ppt,.pptx,.txt,.md,.csv,.xlsx,.json"
           onChange={handleFileChange}
         />
         <button

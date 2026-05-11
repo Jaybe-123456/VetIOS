@@ -51,6 +51,30 @@ describe('Ask Vetios clinical upload text extraction', () => {
         expect(extracted.method).toBe('xlsx_openxml');
         expect(extracted.text).toContain('Analyte, WBC, Result, 18.2');
     });
+
+    it('extracts PPTX slide and note text', () => {
+        const pptx = makeZip({
+            'ppt/slides/slide1.xml': '<p:sld><p:txBody><a:p><a:r><a:t>Rodent zoonosis overview: lymphocytic choriomeningitis.</a:t></a:r></a:p></p:txBody></p:sld>',
+            'ppt/notesSlides/notesSlide1.xml': '<p:notes><a:t>Bat rabies safety note.</a:t></p:notes>',
+        });
+        const extracted = extractClinicalUploadText({ sourceType: 'pptx', buffer: pptx });
+
+        expect(extracted.method).toBe('pptx_openxml');
+        expect(extracted.text).toContain('Rodent zoonosis overview');
+        expect(extracted.text).toContain('Bat rabies safety note');
+    });
+
+    it('extracts printable text from legacy PPT files', () => {
+        const ppt = Buffer.concat([
+            Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+            Buffer.from('\0\0Diseases of rodents and bats\0\0Rabies exposure and zoonotic risk\0', 'latin1'),
+        ]);
+        const extracted = extractClinicalUploadText({ sourceType: 'ppt', buffer: ppt });
+
+        expect(extracted.method).toBe('ppt_printable_text_fallback');
+        expect(extracted.text).toContain('Diseases of rodents and bats');
+        expect(extracted.text).toContain('zoonotic risk');
+    });
 });
 
 function makeZip(files: Record<string, string>): Buffer {

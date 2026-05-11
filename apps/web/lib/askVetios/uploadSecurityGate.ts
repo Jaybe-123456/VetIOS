@@ -13,6 +13,8 @@ export type UploadSourceType =
     | 'video'
     | 'pdf'
     | 'docx'
+    | 'ppt'
+    | 'pptx'
     | 'txt'
     | 'md'
     | 'csv'
@@ -56,6 +58,8 @@ const MIME_TYPES = {
     webm: 'video/webm',
     pdf: 'application/pdf',
     docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ppt: 'application/vnd.ms-powerpoint',
+    pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
     txt: 'text/plain',
     md: 'text/markdown',
     csv: 'text/csv',
@@ -93,6 +97,8 @@ const SIZE_LIMITS = {
     video: 500 * 1024 * 1024,
     pdf: 50 * 1024 * 1024,
     docx: 50 * 1024 * 1024,
+    ppt: 50 * 1024 * 1024,
+    pptx: 50 * 1024 * 1024,
     txt: 10 * 1024 * 1024,
     md: 10 * 1024 * 1024,
     csv: 10 * 1024 * 1024,
@@ -119,6 +125,15 @@ const OPENXML_ACTIVE_CONTENT_MARKERS = [
     'macros/',
     'word/embeddings/',
     'xl/embeddings/',
+    'ppt/vbaProject.bin',
+    'ppt/embeddings/',
+    'ppt/activeX/',
+];
+
+const LEGACY_OFFICE_ACTIVE_CONTENT_MARKERS = [
+    '_VBA_PROJECT',
+    'VBA',
+    'Macros',
 ];
 
 const ARCHIVE_SIGNATURES = [
@@ -133,6 +148,7 @@ const ARCHIVE_SIGNATURES = [
 
 const EXECUTABLE_SIGNATURE = bytes(0x4d, 0x5a);
 const ZIP_PREFIX = bytes(0x50, 0x4b);
+const OLE_COMPOUND_SIGNATURE = bytes(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1);
 
 export class UploadSecurityGate {
     validate(input: UploadSecurityGateInput): UploadSecurityGateResult {
@@ -218,6 +234,10 @@ function resolveSourceType(mime: string): UploadSourceType | null {
             return 'pdf';
         case MIME_TYPES.docx:
             return 'docx';
+        case MIME_TYPES.ppt:
+            return 'ppt';
+        case MIME_TYPES.pptx:
+            return 'pptx';
         case MIME_TYPES.txt:
             return 'txt';
         case MIME_TYPES.md:
@@ -253,6 +273,7 @@ function detectMime(buffer: Buffer, declaredMime: string): string {
     if (startsWith(buffer, bytes(0x49, 0x44, 0x33)) || startsWith(buffer, bytes(0xff, 0xfb))) return MIME_TYPES.mp3;
     if (startsWith(buffer, Buffer.from('RIFF', 'ascii')) && buffer.subarray(8, 12).equals(Buffer.from('WAVE', 'ascii'))) return MIME_TYPES.wav;
     if (buffer.length > 132 && buffer.subarray(128, 132).equals(Buffer.from('DICM', 'ascii'))) return MIME_TYPES.dicom;
+    if (startsWith(buffer, OLE_COMPOUND_SIGNATURE)) return declaredMime;
     if (startsWith(buffer, ZIP_PREFIX)) return declaredMime;
     return declaredMime;
 }
@@ -260,6 +281,8 @@ function detectMime(buffer: Buffer, declaredMime: string): string {
 function magicBytesMatch(buffer: Buffer, sourceType: UploadSourceType, declaredMime: string): boolean {
     if (sourceType === 'pdf') return startsWith(buffer, Buffer.from('%PDF', 'ascii'));
     if (sourceType === 'docx') return isOpenXmlPackage(buffer, 'word/');
+    if (sourceType === 'pptx') return isOpenXmlPackage(buffer, 'ppt/');
+    if (sourceType === 'ppt') return isLegacyPowerPoint(buffer);
     if (sourceType === 'xlsx') return isOpenXmlPackage(buffer, 'xl/');
     if (sourceType === 'image') return imageMagicMatches(buffer, declaredMime);
     if (sourceType === 'video') return videoMagicMatches(buffer, declaredMime);
@@ -275,9 +298,13 @@ function detectEmbeddedActiveContent(buffer: Buffer, sourceType: UploadSourceTyp
         const marker = PDF_SCRIPT_MARKERS.find((entry) => latin.includes(entry));
         return marker ? `PDF contains active content marker ${marker}` : null;
     }
-    if (sourceType === 'docx' || sourceType === 'xlsx') {
+    if (sourceType === 'docx' || sourceType === 'xlsx' || sourceType === 'pptx') {
         const marker = OPENXML_ACTIVE_CONTENT_MARKERS.find((entry) => latin.includes(entry));
         return marker ? `OpenXML document contains active content marker ${marker}` : null;
+    }
+    if (sourceType === 'ppt') {
+        const marker = LEGACY_OFFICE_ACTIVE_CONTENT_MARKERS.find((entry) => latin.includes(entry));
+        return marker ? `Legacy PowerPoint contains active content marker ${marker}` : null;
     }
     return null;
 }
@@ -379,13 +406,17 @@ function isRawArchiveMime(mime: string): boolean {
 }
 
 function isOpenXml(sourceType: UploadSourceType): boolean {
-    return sourceType === 'docx' || sourceType === 'xlsx';
+    return sourceType === 'docx' || sourceType === 'xlsx' || sourceType === 'pptx';
 }
 
-function isOpenXmlPackage(buffer: Buffer, requiredPath: 'word/' | 'xl/'): boolean {
+function isOpenXmlPackage(buffer: Buffer, requiredPath: 'word/' | 'xl/' | 'ppt/'): boolean {
     if (!startsWith(buffer, ZIP_PREFIX)) return false;
     const latin = buffer.toString('latin1');
     return latin.includes('[Content_Types].xml') && latin.includes(requiredPath);
+}
+
+function isLegacyPowerPoint(buffer: Buffer): boolean {
+    return startsWith(buffer, OLE_COMPOUND_SIGNATURE) && buffer.toString('latin1').includes('PowerPoint Document');
 }
 
 function imageMagicMatches(buffer: Buffer, declaredMime: string): boolean {
