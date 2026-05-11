@@ -14,6 +14,47 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
 
+type AskVetiosContractResponse = {
+    narrative?: string;
+    differentials?: Array<{
+        rank: number;
+        diagnosis: string;
+        confidence: number;
+        supporting_evidence?: string[];
+        contradicting_evidence?: string[];
+        source_attribution?: string[];
+    }>;
+    recommended_diagnostics?: string[];
+    recommended_treatments?: string[];
+    flags?: {
+        low_confidence_hypotheses?: string[];
+        unsourced_priors?: string[];
+        requires_specialist_review?: boolean;
+        emergency_flag?: boolean;
+    };
+    rag_chunks_used?: number;
+    response_latency_ms?: number;
+    model_version?: string;
+    error?: string;
+    reason?: string;
+};
+
+type UploadResponse = {
+    upload_id?: string;
+    status?: string;
+    source_type?: string;
+    detected_mime?: string;
+    rag_document_id?: string | null;
+    chunks_indexed?: number;
+    extracted_characters?: number;
+    processing_note?: string | null;
+    error?: string;
+    reason?: string;
+};
+
+const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['pdf', 'docx', 'txt', 'md', 'csv', 'xlsx', 'json']);
+const MAX_DOCUMENT_UPLOAD_BYTES = 50 * 1024 * 1024;
+
 export default function AskVetIOSPage() {
     const {
     createChat, activeChatId, addMessage, setLoading, isLoading,
@@ -21,6 +62,7 @@ export default function AskVetIOSPage() {
 } = useChatStore();
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [uploading, setUploading] = useState(false);
 
     // Auto-create first chat
     useEffect(() => {
@@ -92,6 +134,106 @@ export default function AskVetIOSPage() {
     const handleFollowUp = useCallback((prompt: string) => {
         void sendMessage(prompt);
     }, [sendMessage]);
+
+    const handleUploadFile = useCallback(async (file: File) => {
+        if (!activeChatId || uploading) return;
+
+        const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+        if (!DOCUMENT_UPLOAD_EXTENSIONS.has(extension)) {
+            addMessage(activeChatId, {
+                role: 'assistant',
+                content: 'This command upload path currently accepts document and lab files: PDF, DOCX, TXT, MD, CSV, XLSX, or JSON. Images and video are handled by the dedicated multimodal processors.',
+                metadata: { mode: 'general' },
+            });
+            return;
+        }
+        if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) {
+            addMessage(activeChatId, {
+                role: 'assistant',
+                content: 'Upload rejected before transfer: document files must be 50 MB or smaller.',
+                metadata: { mode: 'general' },
+            });
+            return;
+        }
+        if (!incrementUsage()) {
+            addMessage(activeChatId, { role: 'user', content: `Upload document for analysis: ${file.name}` });
+            addMessage(activeChatId, {
+                role: 'assistant',
+                content: "Free tier usage limit reached (40/40). Intelligence access will refresh in 6 hours. Upgrade to Premium for unmetered access.",
+                metadata: { mode: 'operational' },
+            });
+            return;
+        }
+
+        const analysisPrompt = buildDocumentAnalysisPrompt(file.name);
+        addMessage(activeChatId, {
+            role: 'user',
+            content: `Uploaded document: ${file.name}\n\n${analysisPrompt}`,
+        });
+        setUploading(true);
+        setLoading(true);
+
+        try {
+            const form = new FormData();
+            form.append('file', file);
+            form.append('session_id', activeChatId);
+            form.append('domain', 'clinical_document,diagnostics,lab_reference');
+
+            const uploadResponse = await fetch('/api/ask-vetios/upload', {
+                method: 'POST',
+                body: form,
+            });
+            const upload = await uploadResponse.json() as UploadResponse;
+            if (!uploadResponse.ok || upload.error || !upload.upload_id) {
+                throw new Error(upload.reason || upload.error || 'Upload failed security validation.');
+            }
+            if ((upload.chunks_indexed ?? 0) <= 0) {
+                throw new Error(upload.processing_note || 'The file passed security validation, but no extractable text was indexed.');
+            }
+
+            const queryResponse = await fetch('/api/ask-vetios/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: activeChatId,
+                    query: analysisPrompt,
+                    upload_ids: [upload.upload_id],
+                    domain: 'clinical_document,diagnostics,lab_reference',
+                }),
+            });
+            const analysis = await queryResponse.json() as AskVetiosContractResponse;
+            if (!queryResponse.ok || analysis.error) {
+                throw new Error(analysis.reason || analysis.error || 'Document analysis failed.');
+            }
+
+            addMessage(activeChatId, {
+                role: 'assistant',
+                content: formatDocumentAnalysis(file.name, upload, analysis),
+                metadata: {
+                    mode: 'clinical',
+                    topic: 'Uploaded Document Analysis',
+                    rag_grounded: (analysis.rag_chunks_used ?? 0) > 0,
+                    rag_retrieval_stats: {
+                        rag_chunks_used: analysis.rag_chunks_used ?? 0,
+                        response_latency_ms: analysis.response_latency_ms,
+                        model_version: analysis.model_version,
+                        upload_status: upload.status,
+                        chunks_indexed: upload.chunks_indexed,
+                    },
+                },
+            });
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Document analysis failed.';
+            addMessage(activeChatId, {
+                role: 'assistant',
+                content: `Document analysis could not complete.\n\nReason: ${msg}`,
+                metadata: { mode: 'general' },
+            });
+        } finally {
+            setUploading(false);
+            setLoading(false);
+        }
+    }, [activeChatId, uploading, addMessage, setLoading, incrementUsage]);
 
     const activeChat = chats.find(c => c.id === activeChatId);
 
@@ -280,7 +422,12 @@ return (
 
                     {/* Input */}
                     <div className="shrink-0 border-t-2 border-accent/20 bg-[#060606] relative z-10">
-                        <ChatInput onSend={sendMessage} disabled={isLoading} />
+                        <ChatInput
+                            onSend={sendMessage}
+                            onUploadFile={handleUploadFile}
+                            disabled={isLoading}
+                            uploadDisabled={uploading}
+                        />
                     </div>
                 </div>
             </div>
@@ -294,4 +441,64 @@ return (
             `}</style>
         </div>
     );
+}
+
+function buildDocumentAnalysisPrompt(fileName: string): string {
+    return [
+        `Analyze the uploaded clinical document "${fileName}" in full detail.`,
+        'Extract all clinically relevant information from the indexed source.',
+        'Provide complete source-grounded reasoning: case facts, signalment if present, clinical findings, lab or imaging values, differential implications, contradictions, missing diagnostics, safety flags, and recommended next steps.',
+        'Cite the uploaded source evidence and clearly label uncertainty. Do not invent facts that are not present in the uploaded document.',
+    ].join(' ');
+}
+
+function formatDocumentAnalysis(
+    fileName: string,
+    upload: UploadResponse,
+    analysis: AskVetiosContractResponse,
+): string {
+    const lines = [
+        `# Uploaded Document Analysis`,
+        ``,
+        `File: ${fileName}`,
+        `Indexed chunks: ${upload.chunks_indexed ?? 0}`,
+        `Extracted characters: ${upload.extracted_characters ?? 0}`,
+        `RAG chunks used: ${analysis.rag_chunks_used ?? 0}`,
+        ``,
+        `## Full Reasoning`,
+        analysis.narrative?.trim() || 'No narrative was returned.',
+    ];
+
+    if (analysis.differentials?.length) {
+        lines.push('', '## Differential Reasoning');
+        for (const differential of analysis.differentials) {
+            lines.push(
+                `${differential.rank}. ${differential.diagnosis} (${Math.round(differential.confidence * 100)}%)`,
+                `Supporting evidence: ${(differential.supporting_evidence ?? []).join('; ') || 'None supplied'}`,
+                `Contradicting evidence: ${(differential.contradicting_evidence ?? []).join('; ') || 'None supplied'}`,
+                `Sources: ${(differential.source_attribution ?? []).join('; ') || 'model_prior'}`,
+            );
+        }
+    }
+
+    if (analysis.recommended_diagnostics?.length) {
+        lines.push('', '## Recommended Diagnostics', ...analysis.recommended_diagnostics.map((item) => `- ${item}`));
+    }
+    if (analysis.recommended_treatments?.length) {
+        lines.push('', '## Recommended Treatments', ...analysis.recommended_treatments.map((item) => `- ${item}`));
+    }
+
+    const flags = analysis.flags;
+    if (flags) {
+        lines.push(
+            '',
+            '## Safety And Uncertainty Flags',
+            `- Emergency flag: ${flags.emergency_flag ? 'yes' : 'no'}`,
+            `- Specialist review: ${flags.requires_specialist_review ? 'yes' : 'no'}`,
+            `- Low-confidence hypotheses: ${(flags.low_confidence_hypotheses ?? []).join(', ') || 'none'}`,
+            `- Unsourced priors: ${(flags.unsourced_priors ?? []).join(', ') || 'none'}`,
+        );
+    }
+
+    return lines.join('\n');
 }

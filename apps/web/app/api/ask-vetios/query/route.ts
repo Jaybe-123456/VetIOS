@@ -2,6 +2,11 @@ import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/service';
+import {
+    buildUploadedDocumentAnalysisResponse,
+    loadUploadedDocumentContexts,
+    shouldUseDirectDocumentAnalysis,
+} from '@/lib/askVetios/documentAnalysis';
 import { buildHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
 import { buildAskVetiosContractResponse } from '@/lib/askVetios/responseContract';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -37,6 +42,22 @@ export async function POST(req: Request) {
     }
 
     const queryId = randomUUID();
+    if (shouldUseDirectDocumentAnalysis(parsed.data.query, parsed.data.upload_ids)) {
+        const contexts = await loadUploadedDocumentContexts({
+            client: getSupabaseServer(),
+            uploadIds: parsed.data.upload_ids,
+        });
+        if (contexts.length > 0) {
+            const response = buildUploadedDocumentAnalysisResponse({
+                contexts,
+                sessionId: parsed.data.session_id ?? null,
+                queryId,
+                startedAt: startTime,
+            });
+            return withHeaders(NextResponse.json({ ...response, request_id: requestId }), requestId, startTime);
+        }
+    }
+
     const heuristic = buildHeuristicResponse(parsed.data.query);
     const sourceIds = await resolveQuerySourceIds(parsed.data.source_ids, parsed.data.upload_ids);
     const rag = await resolveQueryRag({

@@ -1,18 +1,20 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Send, Terminal } from 'lucide-react';
+import { Loader2, Plus, Send, Terminal } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface ChatInputProps {
   onSend: (message: string) => void;
+  onUploadFile?: (file: File) => void;
   disabled?: boolean;
+  uploadDisabled?: boolean;
 }
 
-export default function ChatInput({ onSend, disabled }: ChatInputProps) {
+export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabled }: ChatInputProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -26,6 +28,14 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
+    }
+  };
+
+  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (file && onUploadFile && !disabled && !uploadDisabled) {
+      onUploadFile(file);
     }
   };
 
@@ -48,6 +58,28 @@ export default function ChatInput({ onSend, disabled }: ChatInputProps) {
         onSubmit={handleSubmit}
         className="relative max-w-4xl mx-auto flex items-end gap-2"
       >
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.json"
+          onChange={handleFileChange}
+        />
+        <button
+          type="button"
+          disabled={disabled || uploadDisabled || !onUploadFile}
+          title="Upload clinical file"
+          onClick={() => fileInputRef.current?.click()}
+          className={cn(
+            "w-12 h-12 shrink-0 flex items-center justify-center rounded-xl border-2 transition-all duration-300",
+            disabled || uploadDisabled || !onUploadFile
+              ? "bg-white/[0.02] border-white/8 text-white/20 cursor-not-allowed"
+              : "bg-accent/5 border-accent/25 text-accent hover:bg-accent/10 hover:border-accent/60 active:scale-95"
+          )}
+        >
+          {uploadDisabled ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+        </button>
+
         <div className="relative flex-1 group">
           {/* Ambient glow — larger and brighter at rest so it's always visible */}
           <div className="absolute -inset-1 bg-accent/10 blur-lg rounded-2xl group-focus-within:bg-accent/20 transition-all duration-500 pointer-events-none" />

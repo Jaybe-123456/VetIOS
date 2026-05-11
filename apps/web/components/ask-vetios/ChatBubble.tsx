@@ -162,12 +162,12 @@ export default function ChatBubble({ message, conversationMessages, onFollowUp }
                 </div>
 
                 {/* Message body */}
-                {isEducational
+                {isAssistant
                     ? <MarkdownContent content={message.content} />
                     : (
                         <p className={cn(
-                            'font-mono text-sm leading-relaxed tracking-tight',
-                            isAssistant ? 'text-white/85' : 'text-white/65',
+                            'font-mono text-sm leading-relaxed tracking-tight whitespace-pre-wrap',
+                            'text-white/65',
                         )}>
                             {message.content}
                         </p>
