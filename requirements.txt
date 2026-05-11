@@ -2,3 +2,10 @@ unsloth
 torch
 transformers
 datasets
+trl
+peft
+accelerate
+bitsandbytes
+pypdf
+openpyxl
+gdown

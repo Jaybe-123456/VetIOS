@@ -1,6 +1,17 @@
 raw_data/
 parsed_text/
 structured_cases/
+datasets/clinical_cases.jsonl
+datasets/clinical_cases.csv
+datasets/synthetic_*.jsonl
+datasets/synthetic_*.manifest.json
+datasets/prepared/
+datasets/prepared_*/
+datasets/drive_audit/
+datasets/*.private.jsonl
+datasets/*.private.csv
+evaluation/eval_cases.jsonl
+evaluation/*.private.jsonl
 checkpoints/
 final_model/
 evaluation/results.json

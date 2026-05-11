@@ -1,0 +1,134 @@
+import { describe, expect, it } from 'vitest';
+import { UploadSecurityGate } from '../uploadSecurityGate';
+
+const gate = new UploadSecurityGate();
+
+describe('Ask Vetios UploadSecurityGate', () => {
+    it('accepts a plain text clinical note', () => {
+        const result = gate.validate({
+            fileName: 'case-note.txt',
+            declaredMime: 'text/plain',
+            sizeBytes: 31,
+            buffer: Buffer.from('cat respiratory case note\nWBC 18'),
+        });
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.sourceType).toBe('txt');
+            expect(result.contentHash).toHaveLength(64);
+        }
+    });
+
+    it('rejects blocked archive MIME types', () => {
+        const result = gate.validate({
+            fileName: 'bundle.zip',
+            declaredMime: 'application/zip',
+            sizeBytes: 4,
+            buffer: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('BLOCKED_MIME');
+    });
+
+    it('rejects modality-specific oversized files', () => {
+        const result = gate.validate({
+            fileName: 'large.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: 51 * 1024 * 1024,
+            buffer: Buffer.from('%PDF-1.7\n'),
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('SIZE_EXCEEDED');
+    });
+
+    it('rejects files whose magic bytes do not match the declared MIME', () => {
+        const result = gate.validate({
+            fileName: 'not-a-pdf.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: 18,
+            buffer: Buffer.from('plain text content'),
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('MAGIC_BYTE_MISMATCH');
+    });
+
+    it('rejects archive signatures hidden behind an allowed text MIME', () => {
+        const result = gate.validate({
+            fileName: 'notes.txt',
+            declaredMime: 'text/plain',
+            sizeBytes: 10,
+            buffer: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x00, 0x00]),
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('ARCHIVE_DETECTED');
+    });
+
+    it('rejects active content in PDFs', () => {
+        const result = gate.validate({
+            fileName: 'report.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: 34,
+            buffer: Buffer.from('%PDF-1.7\n1 0 obj\n/JavaScript\nendobj'),
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('EMBEDDED_SCRIPT');
+    });
+
+    it('rejects polyglot PDF uploads with embedded ZIP signatures', () => {
+        const result = gate.validate({
+            fileName: 'polyglot.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: 30,
+            buffer: Buffer.concat([
+                Buffer.from('%PDF-1.7\nclinical report\n'),
+                Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+            ]),
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('POLYGLOT_DETECTED');
+    });
+
+    it('rejects previously flagged content hashes', () => {
+        const result = gate.validate({
+            fileName: 'case-note.txt',
+            declaredMime: 'text/plain',
+            sizeBytes: 18,
+            buffer: Buffer.from('safe looking note'),
+            knownFlaggedHash: true,
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('FLAGGED_HASH');
+    });
+
+    it('allows DOCX packages only when they look like Word OpenXML and have no macros', () => {
+        const fakeDocx = Buffer.from('PK\x03\x04[Content_Types].xml word/document.xml clinical text', 'latin1');
+        const result = gate.validate({
+            fileName: 'report.docx',
+            declaredMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            sizeBytes: fakeDocx.length,
+            buffer: fakeDocx,
+        });
+
+        expect(result.ok).toBe(true);
+    });
+
+    it('rejects DOCX packages containing macro signatures', () => {
+        const fakeDocx = Buffer.from('PK\x03\x04[Content_Types].xml word/document.xml vbaProject.bin', 'latin1');
+        const result = gate.validate({
+            fileName: 'report.docx',
+            declaredMime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            sizeBytes: fakeDocx.length,
+            buffer: fakeDocx,
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.violationType).toBe('EMBEDDED_SCRIPT');
+    });
+});
