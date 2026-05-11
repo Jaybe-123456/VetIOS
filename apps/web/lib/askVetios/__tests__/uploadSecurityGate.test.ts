@@ -80,18 +80,35 @@ describe('Ask Vetios UploadSecurityGate', () => {
     });
 
     it('rejects polyglot PDF uploads with embedded ZIP signatures', () => {
+        const zipHeader = buildZipLocalHeader('payload.txt');
         const result = gate.validate({
             fileName: 'polyglot.pdf',
             declaredMime: 'application/pdf',
-            sizeBytes: 30,
+            sizeBytes: 30 + zipHeader.length,
             buffer: Buffer.concat([
                 Buffer.from('%PDF-1.7\nclinical report\n'),
-                Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+                zipHeader,
             ]),
         });
 
         expect(result.ok).toBe(false);
         if (!result.ok) expect(result.violationType).toBe('POLYGLOT_DETECTED');
+    });
+
+    it('does not reject incidental archive-like bytes inside PDF streams', () => {
+        const pdf = Buffer.concat([
+            Buffer.from('%PDF-1.7\n1 0 obj\nstream\nclinical text '),
+            Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0x00, 0x11, 0x22, 0x1f, 0x8b, 0x02, 0xe0]),
+            Buffer.from('\nendstream\nendobj\n%%EOF'),
+        ]);
+        const result = gate.validate({
+            fileName: 'lecture.pdf',
+            declaredMime: 'application/pdf',
+            sizeBytes: pdf.length,
+            buffer: pdf,
+        });
+
+        expect(result.ok).toBe(true);
     });
 
     it('rejects previously flagged content hashes', () => {
@@ -132,3 +149,15 @@ describe('Ask Vetios UploadSecurityGate', () => {
         if (!result.ok) expect(result.violationType).toBe('EMBEDDED_SCRIPT');
     });
 });
+
+function buildZipLocalHeader(fileName: string): Buffer {
+    const name = Buffer.from(fileName, 'utf8');
+    const header = Buffer.alloc(30);
+    header.writeUInt32LE(0x04034b50, 0);
+    header.writeUInt16LE(20, 4);
+    header.writeUInt16LE(0, 6);
+    header.writeUInt16LE(0, 8);
+    header.writeUInt16LE(name.length, 26);
+    header.writeUInt16LE(0, 28);
+    return Buffer.concat([header, name, Buffer.from('payload')]);
+}

@@ -125,6 +125,7 @@ const ARCHIVE_SIGNATURES = [
     { name: 'zip', bytes: bytes(0x50, 0x4b, 0x03, 0x04) },
     { name: 'zip_empty', bytes: bytes(0x50, 0x4b, 0x05, 0x06) },
     { name: 'zip_spanned', bytes: bytes(0x50, 0x4b, 0x07, 0x08) },
+    { name: 'zip_central_directory', bytes: bytes(0x50, 0x4b, 0x01, 0x02) },
     { name: 'rar', bytes: bytes(0x52, 0x61, 0x72, 0x21, 0x1a, 0x07) },
     { name: '7z', bytes: bytes(0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c) },
     { name: 'gzip', bytes: bytes(0x1f, 0x8b) },
@@ -282,16 +283,90 @@ function detectEmbeddedActiveContent(buffer: Buffer, sourceType: UploadSourceTyp
 }
 
 function detectPolyglot(buffer: Buffer, sourceType: UploadSourceType): boolean {
-    if (findSignature(buffer, EXECUTABLE_SIGNATURE, 1) >= 0) return true;
+    if (hasEmbeddedExecutable(buffer)) return true;
 
     for (const signature of ARCHIVE_SIGNATURES) {
-        const offset = findSignature(buffer, signature.bytes, 1);
-        if (offset < 0) continue;
         if (isOpenXml(sourceType) && signature.name.startsWith('zip')) continue;
-        return true;
+        if (hasEmbeddedArchive(buffer, signature.name, signature.bytes)) return true;
     }
 
-    if (!isOpenXml(sourceType) && findSignature(buffer, ZIP_PREFIX, 1) >= 0) return true;
+    return false;
+}
+
+function hasEmbeddedArchive(buffer: Buffer, name: string, signature: Buffer): boolean {
+    let offset = findSignature(buffer, signature, 1);
+    while (offset >= 0) {
+        if (isPlausibleArchiveAt(buffer, name, offset)) return true;
+        offset = findSignature(buffer, signature, offset + 1);
+    }
+    return false;
+}
+
+function isPlausibleArchiveAt(buffer: Buffer, name: string, offset: number): boolean {
+    if (name === 'zip') return isPlausibleZipLocalHeader(buffer, offset);
+    if (name === 'zip_central_directory') return isPlausibleZipCentralDirectory(buffer, offset);
+    if (name === 'zip_empty') return isPlausibleZipEndOfCentralDirectory(buffer, offset);
+    if (name === 'zip_spanned') return offset + 16 <= buffer.length;
+    if (name === 'gzip') return isPlausibleGzipHeader(buffer, offset);
+    return offset + 16 <= buffer.length;
+}
+
+function isPlausibleZipLocalHeader(buffer: Buffer, offset: number): boolean {
+    if (offset + 30 > buffer.length) return false;
+    const compressionMethod = buffer.readUInt16LE(offset + 8);
+    const fileNameLength = buffer.readUInt16LE(offset + 26);
+    const extraFieldLength = buffer.readUInt16LE(offset + 28);
+    const headerEnd = offset + 30 + fileNameLength + extraFieldLength;
+    if (![0, 8, 9, 12, 14, 98].includes(compressionMethod)) return false;
+    if (fileNameLength < 1 || fileNameLength > 512 || headerEnd > buffer.length) return false;
+    return isPrintableZipName(buffer.subarray(offset + 30, offset + 30 + fileNameLength));
+}
+
+function isPlausibleZipCentralDirectory(buffer: Buffer, offset: number): boolean {
+    if (offset + 46 > buffer.length) return false;
+    const fileNameLength = buffer.readUInt16LE(offset + 28);
+    const extraFieldLength = buffer.readUInt16LE(offset + 30);
+    const commentLength = buffer.readUInt16LE(offset + 32);
+    const headerEnd = offset + 46 + fileNameLength + extraFieldLength + commentLength;
+    if (fileNameLength < 1 || fileNameLength > 512 || headerEnd > buffer.length) return false;
+    return isPrintableZipName(buffer.subarray(offset + 46, offset + 46 + fileNameLength));
+}
+
+function isPlausibleZipEndOfCentralDirectory(buffer: Buffer, offset: number): boolean {
+    if (offset + 22 > buffer.length) return false;
+    const commentLength = buffer.readUInt16LE(offset + 20);
+    return offset + 22 + commentLength <= buffer.length;
+}
+
+function isPrintableZipName(value: Buffer): boolean {
+    if (value.includes(0)) return false;
+    const text = value.toString('utf8').trim();
+    return text.length > 0 && /^[\x20-\x7e]+$/.test(text);
+}
+
+function isPlausibleGzipHeader(buffer: Buffer, offset: number): boolean {
+    if (offset + 10 > buffer.length) return false;
+    const compressionMethod = buffer[offset + 2];
+    const flags = buffer[offset + 3];
+    return compressionMethod === 0x08 && (flags & 0xe0) === 0;
+}
+
+function hasEmbeddedExecutable(buffer: Buffer): boolean {
+    let offset = findSignature(buffer, EXECUTABLE_SIGNATURE, 1);
+    while (offset >= 0) {
+        if (offset + 64 <= buffer.length) {
+            const peOffset = buffer.readUInt32LE(offset + 0x3c);
+            const peSignatureOffset = offset + peOffset;
+            if (
+                peOffset >= 64
+                && peSignatureOffset + 4 <= buffer.length
+                && buffer.subarray(peSignatureOffset, peSignatureOffset + 4).equals(Buffer.from('PE\0\0', 'ascii'))
+            ) {
+                return true;
+            }
+        }
+        offset = findSignature(buffer, EXECUTABLE_SIGNATURE, offset + 1);
+    }
     return false;
 }
 
