@@ -311,6 +311,42 @@ export default function SmartActions({
                             {metadata.explanation}
                         </p>
                     )}
+
+                    {metadata.document_tables && metadata.document_tables.length > 0 && (
+                        <div className="space-y-3">
+                            {metadata.document_tables.map((table) => (
+                                <div key={table.title} className="overflow-hidden border border-white/10 bg-white/[0.02]">
+                                    <div className="border-b border-white/8 px-3 py-2 font-mono text-[9px] uppercase tracking-[0.18em] text-accent/80">
+                                        {table.title}
+                                    </div>
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full min-w-[520px] border-collapse text-left font-mono text-[11px]">
+                                            <thead>
+                                                <tr className="bg-black/30 text-white/46">
+                                                    {table.columns.map((column) => (
+                                                        <th key={column} className="border-b border-white/8 px-3 py-2 font-normal uppercase tracking-[0.12em]">
+                                                            {column}
+                                                        </th>
+                                                    ))}
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {table.rows.map((row, rowIndex) => (
+                                                    <tr key={`${table.title}-${rowIndex}`} className="border-b border-white/[0.04] last:border-b-0">
+                                                        {row.map((cell, cellIndex) => (
+                                                            <td key={`${table.title}-${rowIndex}-${cellIndex}`} className="px-3 py-2 align-top text-white/70">
+                                                                {cell}
+                                                            </td>
+                                                        ))}
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </>
             )}
 
@@ -421,7 +457,11 @@ export default function SmartActions({
 
                 {activePanel === 'visualAtlas' && isClinical && (
                     <Panel key="visualAtlas" title="Clinical Signs Atlas" icon={Eye} onClose={() => setActivePanel(null)}>
-                        <ClinicalSignsAtlas messageContent={messageContent} queryText={currentUserPrompt} />
+                        <ClinicalSignsAtlas
+                            messageContent={messageContent}
+                            queryText={currentUserPrompt}
+                            clinicalSigns={metadata.clinical_signs}
+                        />
                     </Panel>
                 )}
 

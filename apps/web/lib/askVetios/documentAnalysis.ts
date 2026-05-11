@@ -98,6 +98,7 @@ export function buildUploadedDocumentAnalysisResponse(input: {
     const signals = extractClinicalSignals(combinedText);
     const differentials = inferDocumentDifferentials(combinedText, selected.map(({ context, chunk }) => citationFor(context, chunk.chunk_index)));
     const emergency = hasEmergencySignal(combinedText);
+    const clinicalSigns = [...new Set(signals.findings)];
 
     return {
         session_id: input.sessionId ?? 'sessionless',
@@ -116,6 +117,8 @@ export function buildUploadedDocumentAnalysisResponse(input: {
         video_segments_referenced: 0,
         response_latency_ms: Math.max(1, Date.now() - input.startedAt),
         model_version: 'ask-vetios-v2-uploaded-document-analysis',
+        clinical_signs: clinicalSigns,
+        document_tables: buildDocumentTables(input.contexts, signals, differentials),
     };
 }
 
@@ -177,7 +180,8 @@ function extractClinicalSignals(text: string) {
         findings: collectMatches(lower, [
             'vomiting', 'diarrhea', 'diarrhoea', 'anorexia', 'lethargy', 'fever', 'cough',
             'dyspnea', 'respiratory distress', 'nasal discharge', 'sneezing', 'seizure',
-            'collapse', 'abdominal pain', 'dehydration', 'jaundice', 'icterus',
+            'collapse', 'abdominal pain', 'dehydration', 'jaundice', 'icterus', 'tachypnea',
+            'weight loss', 'pale mucous membranes', 'pale gums', 'polyuria', 'polydipsia',
         ]),
         diagnostics: collectMatches(lower, [
             'cbc', 'chemistry', 'wbc', 'neutrophil', 'platelet', 'creatinine', 'bun',
@@ -243,4 +247,42 @@ function collectMatches(text: string, terms: string[]): string[] {
 
 function citationFor(context: UploadedDocumentContext, chunkIndex: number): string {
     return `upload://${context.title}#chunk-${chunkIndex + 1}`;
+}
+
+function buildDocumentTables(
+    contexts: UploadedDocumentContext[],
+    signals: ReturnType<typeof extractClinicalSignals>,
+    differentials: AskVetiosContractResponse['differentials'],
+): AskVetiosContractResponse['document_tables'] {
+    return [
+        {
+            title: 'Source Inventory',
+            columns: ['Document', 'Chunks', 'Source'],
+            rows: contexts.map((context) => [
+                context.title,
+                String(context.chunks.length),
+                context.source_name,
+            ]),
+        },
+        {
+            title: 'Extracted Clinical Signals',
+            columns: ['Category', 'Detected Values'],
+            rows: [
+                ['Species / signalment', signals.signalment.join(', ') || 'Not detected'],
+                ['Clinical signs / findings', signals.findings.join(', ') || 'Not detected'],
+                ['Diagnostics / labs / imaging', signals.diagnostics.join(', ') || 'Not detected'],
+                ['Treatments / outcomes', signals.treatments.join(', ') || 'Not detected'],
+            ],
+        },
+        {
+            title: 'Differential Reasoning',
+            columns: ['Rank', 'Differential', 'Confidence', 'Evidence'],
+            rows: differentials.map((entry) => [
+                String(entry.rank),
+                entry.diagnosis,
+                `${Math.round(entry.confidence * 100)}%`,
+                entry.supporting_evidence.join('; '),
+            ]),
+        },
+    ].filter((table) => table.rows.length > 0);
 }

@@ -5,12 +5,13 @@ import { Eye, Flame } from 'lucide-react';
 import { detectSpeciesFromTexts, type VetiosSpecies } from '@/lib/askVetios/context';
 
 type Species = VetiosSpecies;
-type BodySystem = 'neurological' | 'gi' | 'respiratory' | 'dermatological' | 'musculoskeletal';
+type BodySystem = 'neurological' | 'gi' | 'respiratory' | 'dermatological' | 'musculoskeletal' | 'systemic' | 'urinary';
 type RegionKey = 'head' | 'thorax' | 'abdomen' | 'forelimb' | 'hindlimb' | 'spine' | 'skin';
 
 interface ClinicalSignsAtlasProps {
     messageContent: string;
     queryText?: string;
+    clinicalSigns?: string[];
 }
 
 interface AtlasSignDefinition {
@@ -38,6 +39,8 @@ const SYSTEM_STYLES: Record<BodySystem, { color: string; label: string }> = {
     respiratory: { color: '#35D8FF', label: 'Respiratory' },
     dermatological: { color: '#FFD84D', label: 'Dermatological' },
     musculoskeletal: { color: '#00FF88', label: 'Musculoskeletal' },
+    systemic: { color: '#FF5C8A', label: 'Systemic' },
+    urinary: { color: '#6EA8FF', label: 'Urinary' },
 };
 
 const SIGN_CATALOG: AtlasSignDefinition[] = [
@@ -54,7 +57,7 @@ const SIGN_CATALOG: AtlasSignDefinition[] = [
         label: 'Diarrhea',
         system: 'gi',
         region: 'abdomen',
-        patterns: [/\bdiarrh(?:ea|eic)\b/i, /\bloose stool\b/i],
+        patterns: [/\bdiarrh(?:ea|oea|eic|oeic)\b/i, /\bloose stool\b/i],
         explanation: 'Enterocyte injury, malabsorption, secretion, or dysbiosis can accelerate fluid-rich intestinal transit.',
     },
     {
@@ -86,7 +89,7 @@ const SIGN_CATALOG: AtlasSignDefinition[] = [
         label: 'Dyspnea',
         system: 'respiratory',
         region: 'thorax',
-        patterns: [/\bdyspn(?:ea|eic)\b/i, /\blabou?red breathing\b/i, /\brespiratory distress\b/i],
+        patterns: [/\bdyspn(?:ea|oea|eic|oeic)\b/i, /\blabou?red breathing\b/i, /\brespiratory distress\b/i, /\bincreased respiratory effort\b/i],
         explanation: 'Impaired gas exchange or airway restriction increases respiratory effort and recruitment.',
     },
     {
@@ -98,11 +101,19 @@ const SIGN_CATALOG: AtlasSignDefinition[] = [
         explanation: 'Inflammation of upper airway mucosa increases secretions and exudative drainage.',
     },
     {
+        id: 'sneezing',
+        label: 'Sneezing',
+        system: 'respiratory',
+        region: 'head',
+        patterns: [/\bsneez(?:e|es|ing)\b/i],
+        explanation: 'Upper airway irritation stimulates trigeminal afferents and explosive expiratory clearing.',
+    },
+    {
         id: 'tachypnea',
         label: 'Tachypnea',
         system: 'respiratory',
         region: 'thorax',
-        patterns: [/\btachypn(?:ea|eic)\b/i, /\bincreased respiratory rate\b/i],
+        patterns: [/\btachypn(?:ea|oea|eic|oeic)\b/i, /\bincreased respiratory rate\b/i],
         explanation: 'Compensatory respiratory drive rises in response to hypoxemia, acidosis, or thoracic pain.',
     },
     {
@@ -193,6 +204,70 @@ const SIGN_CATALOG: AtlasSignDefinition[] = [
         patterns: [/\bparesis\b/i, /\bweakness\b/i],
         explanation: 'Motor unit weakness or spinal pathway injury reduces force generation and limb support.',
     },
+    {
+        id: 'dehydration',
+        label: 'Dehydration',
+        system: 'systemic',
+        region: 'abdomen',
+        patterns: [/\bdehydration\b/i, /\bdehydrated\b/i],
+        explanation: 'Fluid deficit reduces circulating volume and can amplify renal, GI, and perfusion abnormalities.',
+    },
+    {
+        id: 'lethargy',
+        label: 'Lethargy',
+        system: 'systemic',
+        region: 'spine',
+        patterns: [/\blethargy\b/i, /\blethargic\b/i, /\bdepressed mentation\b/i, /\bobtunded\b/i],
+        explanation: 'Systemic inflammation, metabolic derangement, pain, or hypoperfusion can depress activity.',
+    },
+    {
+        id: 'fever',
+        label: 'Fever',
+        system: 'systemic',
+        region: 'thorax',
+        patterns: [/\bfever\b/i, /\bpyrexia\b/i],
+        explanation: 'Pyrogen-driven hypothalamic reset raises body temperature during inflammatory or infectious states.',
+    },
+    {
+        id: 'collapse',
+        label: 'Collapse',
+        system: 'systemic',
+        region: 'spine',
+        patterns: [/\bcollapse(?:d)?\b/i, /\bsyncope\b/i],
+        explanation: 'Collapse can reflect perfusion failure, arrhythmia, neurologic events, shock, or profound weakness.',
+    },
+    {
+        id: 'jaundice',
+        label: 'Jaundice / Icterus',
+        system: 'systemic',
+        region: 'skin',
+        patterns: [/\bjaundice\b/i, /\bicterus\b/i, /\bicteric\b/i],
+        explanation: 'Bilirubin accumulation causes visible mucosal or skin discoloration from hepatic, biliary, or hemolytic disease.',
+    },
+    {
+        id: 'weight-loss',
+        label: 'Weight Loss',
+        system: 'systemic',
+        region: 'abdomen',
+        patterns: [/\bweight loss\b/i, /\blosing weight\b/i, /\bcachexia\b/i],
+        explanation: 'Negative energy balance from chronic inflammation, malabsorption, endocrine disease, or neoplasia reduces body condition.',
+    },
+    {
+        id: 'pale-mucous-membranes',
+        label: 'Pale Mucous Membranes',
+        system: 'systemic',
+        region: 'head',
+        patterns: [/\bpale (?:mucous )?membranes\b/i, /\bpale gums\b/i, /\bpallor\b/i],
+        explanation: 'Reduced perfusion or anemia can make visible mucous membranes appear pale.',
+    },
+    {
+        id: 'pupd',
+        label: 'PU/PD',
+        system: 'urinary',
+        region: 'abdomen',
+        patterns: [/\bpu\/pd\b/i, /\bpolyuria\b/i, /\bpolydipsia\b/i, /\bincreased drinking\b/i, /\bincreased urination\b/i],
+        explanation: 'Altered renal concentrating ability, endocrine disease, or osmotic diuresis can increase thirst and urination.',
+    },
 ];
 
 const QUADRUPED_POINTS: Record<RegionKey, MarkerPoint> = {
@@ -229,16 +304,18 @@ function inferSeverity(snippet: string): 1 | 2 | 3 {
     return 1;
 }
 
-function extractSigns(content: string): AtlasSign[] {
+function extractSigns(content: string, explicitSigns: string[] = []): AtlasSign[] {
     const seen = new Set<string>();
     const results: AtlasSign[] = [];
+    const explicitContent = explicitSigns.join('. ');
+    const searchContent = [content, explicitContent].filter(Boolean).join('\n');
 
     for (const sign of SIGN_CATALOG) {
         for (const pattern of sign.patterns) {
-            const match = content.match(pattern);
+            const match = searchContent.match(pattern);
             if (!match || seen.has(sign.id)) continue;
             seen.add(sign.id);
-            const snippet = extractSnippet(content, match);
+            const snippet = extractSnippet(searchContent, match);
             results.push({
                 ...sign,
                 severity: inferSeverity(snippet),
@@ -334,7 +411,7 @@ function getSilhouette(species: Species) {
     }
 }
 
-export default function ClinicalSignsAtlas({ messageContent, queryText }: ClinicalSignsAtlasProps) {
+export default function ClinicalSignsAtlas({ messageContent, queryText, clinicalSigns = [] }: ClinicalSignsAtlasProps) {
     const species = useMemo(
         () => {
             const detected = detectSpeciesFromTexts([queryText, messageContent]);
@@ -342,7 +419,7 @@ export default function ClinicalSignsAtlas({ messageContent, queryText }: Clinic
         },
         [messageContent, queryText],
     );
-    const signs = useMemo(() => extractSigns(messageContent), [messageContent]);
+    const signs = useMemo(() => extractSigns(messageContent, clinicalSigns), [messageContent, clinicalSigns]);
     const silhouette = useMemo(() => getSilhouette(species), [species]);
     const [heatmapMode, setHeatmapMode] = useState(false);
     const [selectedSignId, setSelectedSignId] = useState<string | null>(signs[0]?.id ?? null);

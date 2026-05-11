@@ -26,6 +26,12 @@ export interface MessageMetadata {
     }>;
     rag_grounded?: boolean;
     rag_retrieval_stats?: Record<string, unknown>;
+    clinical_signs?: string[];
+    document_tables?: Array<{
+        title: string;
+        columns: string[];
+        rows: string[][];
+    }>;
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';

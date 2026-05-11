@@ -51,10 +51,21 @@ function MarkdownContent({ content }: { content: string }) {
         listType = null;
     };
 
-    for (const raw of lines) {
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+        const raw = lines[lineIndex];
         const line = raw.trimEnd();
 
-        if (/^#{1}\s/.test(line)) {
+        if (isTableHeader(line, lines[lineIndex + 1] ?? '')) {
+            flushList();
+            const tableLines = [line];
+            lineIndex += 2;
+            while (lineIndex < lines.length && lines[lineIndex].includes('|')) {
+                tableLines.push(lines[lineIndex].trimEnd());
+                lineIndex += 1;
+            }
+            lineIndex -= 1;
+            elements.push(renderMarkdownTable(tableLines, key++));
+        } else if (/^#{1}\s/.test(line)) {
             flushList();
             elements.push(<h1 key={key++} className="font-mono text-base font-bold text-white uppercase tracking-widest mt-5 mb-2 border-b border-accent/20 pb-1.5">{line.replace(/^#+\s/, '')}</h1>);
         } else if (/^#{2}\s/.test(line)) {
@@ -87,6 +98,48 @@ function MarkdownContent({ content }: { content: string }) {
     }
     flushList();
     return <div className="space-y-0.5">{elements}</div>;
+}
+
+function isTableHeader(line: string, nextLine: string): boolean {
+    return line.includes('|') && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(nextLine);
+}
+
+function parseTableRow(line: string): string[] {
+    return line
+        .replace(/^\s*\|/, '')
+        .replace(/\|\s*$/, '')
+        .split('|')
+        .map((cell) => cell.trim());
+}
+
+function renderMarkdownTable(tableLines: string[], key: number): React.ReactNode {
+    const headers = parseTableRow(tableLines[0] ?? '');
+    const rows = tableLines.slice(1).map(parseTableRow);
+
+    return (
+        <div key={key} className="my-3 overflow-x-auto border border-white/10 bg-black/20">
+            <table className="w-full min-w-[520px] border-collapse text-left font-mono text-[11px]">
+                <thead>
+                    <tr className="bg-white/[0.04] text-accent/80">
+                        {headers.map((header, index) => (
+                            <th key={`${header}-${index}`} className="border-b border-white/10 px-3 py-2 font-normal uppercase tracking-[0.12em]"
+                                dangerouslySetInnerHTML={{ __html: inlineFormat(header) }} />
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.map((row, rowIndex) => (
+                        <tr key={rowIndex} className="border-b border-white/[0.05] last:border-b-0">
+                            {headers.map((_header, cellIndex) => (
+                                <td key={`${rowIndex}-${cellIndex}`} className="px-3 py-2 align-top text-white/72"
+                                    dangerouslySetInnerHTML={{ __html: inlineFormat(row[cellIndex] ?? '') }} />
+                            ))}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
 }
 
 function inlineFormat(text: string): string {

@@ -42,5 +42,11 @@ describe('uploaded document analysis contract', () => {
         expect(response.narrative).toContain('upload://canine-case.pdf#chunk-1');
         expect(response.differentials.map((entry) => entry.diagnosis)).toContain('Pancreatitis or pancreatic injury');
         expect(response.recommended_diagnostics).toContain('Urinalysis not clearly present in indexed text; add when renal, endocrine, urinary, or hydration questions remain.');
+        expect(response.clinical_signs).toEqual(expect.arrayContaining(['vomiting', 'diarrhea', 'abdominal pain', 'dehydration']));
+        expect(response.document_tables?.map((table) => table.title)).toEqual([
+            'Source Inventory',
+            'Extracted Clinical Signals',
+            'Differential Reasoning',
+        ]);
     });
 });

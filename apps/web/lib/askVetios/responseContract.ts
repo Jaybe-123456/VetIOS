@@ -25,6 +25,12 @@ export interface AskVetiosContractResponse {
     video_segments_referenced: number;
     response_latency_ms: number;
     model_version: string;
+    clinical_signs?: string[];
+    document_tables?: Array<{
+        title: string;
+        columns: string[];
+        rows: string[][];
+    }>;
 }
 
 export function buildAskVetiosContractResponse(input: {

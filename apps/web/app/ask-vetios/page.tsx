@@ -35,6 +35,12 @@ type AskVetiosContractResponse = {
     rag_chunks_used?: number;
     response_latency_ms?: number;
     model_version?: string;
+    clinical_signs?: string[];
+    document_tables?: Array<{
+        title: string;
+        columns: string[];
+        rows: string[][];
+    }>;
     error?: string;
     reason?: string;
 };
@@ -50,6 +56,7 @@ type UploadResponse = {
     processing_note?: string | null;
     error?: string;
     reason?: string;
+    file_name?: string;
 };
 
 const DOCUMENT_UPLOAD_EXTENSIONS = new Set(['pdf', 'docx', 'txt', 'md', 'csv', 'xlsx', 'json']);
@@ -63,6 +70,7 @@ export default function AskVetIOSPage() {
 
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
+    const [chatUploads, setChatUploads] = useState<Record<string, UploadResponse[]>>({});
 
     // Auto-create first chat
     useEffect(() => {
@@ -97,6 +105,33 @@ export default function AskVetIOSPage() {
         setLoading(true);
 
         try {
+            const activeUploads = chatUploads[activeChatId] ?? [];
+            if (activeUploads.length > 0 && isUploadedDocumentQuestion(content)) {
+                const queryResponse = await fetch('/api/ask-vetios/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session_id: activeChatId,
+                        query: content,
+                        upload_ids: activeUploads
+                            .map((upload) => upload.upload_id)
+                            .filter((value): value is string => Boolean(value)),
+                        domain: 'clinical_document,diagnostics,lab_reference',
+                    }),
+                });
+                const analysis = await queryResponse.json() as AskVetiosContractResponse;
+                if (!queryResponse.ok || analysis.error) {
+                    throw new Error(analysis.reason || analysis.error || 'Uploaded document analysis failed.');
+                }
+                const latestUpload = activeUploads[activeUploads.length - 1] ?? {};
+                addMessage(activeChatId, {
+                    role: 'assistant',
+                    content: formatDocumentAnalysis(latestUpload.file_name ?? 'uploaded document', latestUpload, analysis),
+                    metadata: buildDocumentAnalysisMetadata(analysis, latestUpload),
+                });
+                return;
+            }
+
             const response = await fetch('/api/ask-vetios', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -129,7 +164,7 @@ export default function AskVetIOSPage() {
         } finally {
             setLoading(false);
         }
-    }, [activeChatId, chats, addMessage, setLoading, incrementUsage]);
+    }, [activeChatId, chats, chatUploads, addMessage, setLoading, incrementUsage]);
 
     const handleFollowUp = useCallback((prompt: string) => {
         void sendMessage(prompt);
@@ -187,9 +222,14 @@ export default function AskVetIOSPage() {
             if (!uploadResponse.ok || upload.error || !upload.upload_id) {
                 throw new Error(upload.reason || upload.error || 'Upload failed security validation.');
             }
+            upload.file_name = file.name;
             if ((upload.chunks_indexed ?? 0) <= 0) {
                 throw new Error(upload.processing_note || 'The file passed security validation, but no extractable text was indexed.');
             }
+            setChatUploads((current) => ({
+                ...current,
+                [activeChatId]: [...(current[activeChatId] ?? []), upload],
+            }));
 
             const queryResponse = await fetch('/api/ask-vetios/query', {
                 method: 'POST',
@@ -209,18 +249,7 @@ export default function AskVetIOSPage() {
             addMessage(activeChatId, {
                 role: 'assistant',
                 content: formatDocumentAnalysis(file.name, upload, analysis),
-                metadata: {
-                    mode: 'clinical',
-                    topic: 'Uploaded Document Analysis',
-                    rag_grounded: (analysis.rag_chunks_used ?? 0) > 0,
-                    rag_retrieval_stats: {
-                        rag_chunks_used: analysis.rag_chunks_used ?? 0,
-                        response_latency_ms: analysis.response_latency_ms,
-                        model_version: analysis.model_version,
-                        upload_status: upload.status,
-                        chunks_indexed: upload.chunks_indexed,
-                    },
-                },
+                metadata: buildDocumentAnalysisMetadata(analysis, upload),
             });
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'Document analysis failed.';
@@ -443,6 +472,34 @@ return (
     );
 }
 
+function isUploadedDocumentQuestion(content: string): boolean {
+    return /\b(uploaded|document|file|pdf|docx|spreadsheet|csv|analy[sz]e|review|summari[sz]e|extract|all information|what does it say|this case|clinical signs?|findings?|diagnostics?|differentials?|labs?|values?|treatments?|outcomes?|sources?|citations?|tables?)\b/i.test(content);
+}
+
+function buildDocumentAnalysisMetadata(analysis: AskVetiosContractResponse, upload: UploadResponse) {
+    return {
+        mode: 'clinical' as const,
+        topic: 'Uploaded Document Analysis',
+        diagnosis_ranked: (analysis.differentials ?? []).map((entry) => ({
+            name: entry.diagnosis,
+            confidence: entry.confidence,
+            reasoning: (entry.supporting_evidence ?? []).join('; ') || 'Extracted from uploaded document evidence.',
+        })),
+        recommended_tests: analysis.recommended_diagnostics ?? [],
+        red_flags: analysis.flags?.emergency_flag ? ['Emergency flag detected in uploaded document analysis.'] : [],
+        rag_grounded: (analysis.rag_chunks_used ?? 0) > 0,
+        clinical_signs: analysis.clinical_signs ?? [],
+        document_tables: analysis.document_tables ?? [],
+        rag_retrieval_stats: {
+            rag_chunks_used: analysis.rag_chunks_used ?? 0,
+            response_latency_ms: analysis.response_latency_ms,
+            model_version: analysis.model_version,
+            upload_status: upload.status,
+            chunks_indexed: upload.chunks_indexed,
+        },
+    };
+}
+
 function buildDocumentAnalysisPrompt(fileName: string): string {
     return [
         `Analyze the uploaded clinical document "${fileName}" in full detail.`,
@@ -460,23 +517,22 @@ function formatDocumentAnalysis(
     const lines = [
         `# Uploaded Document Analysis`,
         ``,
-        `File: ${fileName}`,
-        `Indexed chunks: ${upload.chunks_indexed ?? 0}`,
-        `Extracted characters: ${upload.extracted_characters ?? 0}`,
-        `RAG chunks used: ${analysis.rag_chunks_used ?? 0}`,
+        `| Field | Value |`,
+        `| --- | --- |`,
+        `| File | ${fileName} |`,
+        `| Indexed chunks | ${upload.chunks_indexed ?? 0} |`,
+        `| Extracted characters | ${upload.extracted_characters ?? 0} |`,
+        `| RAG chunks used | ${analysis.rag_chunks_used ?? 0} |`,
         ``,
         `## Full Reasoning`,
         analysis.narrative?.trim() || 'No narrative was returned.',
     ];
 
     if (analysis.differentials?.length) {
-        lines.push('', '## Differential Reasoning');
+        lines.push('', '## Differential Reasoning', '| Rank | Differential | Confidence | Supporting Evidence | Contradictions | Sources |', '| --- | --- | --- | --- | --- | --- |');
         for (const differential of analysis.differentials) {
             lines.push(
-                `${differential.rank}. ${differential.diagnosis} (${Math.round(differential.confidence * 100)}%)`,
-                `Supporting evidence: ${(differential.supporting_evidence ?? []).join('; ') || 'None supplied'}`,
-                `Contradicting evidence: ${(differential.contradicting_evidence ?? []).join('; ') || 'None supplied'}`,
-                `Sources: ${(differential.source_attribution ?? []).join('; ') || 'model_prior'}`,
+                `| ${differential.rank} | ${escapeTableCell(differential.diagnosis)} | ${Math.round(differential.confidence * 100)}% | ${escapeTableCell((differential.supporting_evidence ?? []).join('; ') || 'None supplied')} | ${escapeTableCell((differential.contradicting_evidence ?? []).join('; ') || 'None supplied')} | ${escapeTableCell((differential.source_attribution ?? []).join('; ') || 'model_prior')} |`,
             );
         }
     }
@@ -493,12 +549,18 @@ function formatDocumentAnalysis(
         lines.push(
             '',
             '## Safety And Uncertainty Flags',
-            `- Emergency flag: ${flags.emergency_flag ? 'yes' : 'no'}`,
-            `- Specialist review: ${flags.requires_specialist_review ? 'yes' : 'no'}`,
-            `- Low-confidence hypotheses: ${(flags.low_confidence_hypotheses ?? []).join(', ') || 'none'}`,
-            `- Unsourced priors: ${(flags.unsourced_priors ?? []).join(', ') || 'none'}`,
+            `| Flag | Value |`,
+            `| --- | --- |`,
+            `| Emergency flag | ${flags.emergency_flag ? 'yes' : 'no'} |`,
+            `| Specialist review | ${flags.requires_specialist_review ? 'yes' : 'no'} |`,
+            `| Low-confidence hypotheses | ${escapeTableCell((flags.low_confidence_hypotheses ?? []).join(', ') || 'none')} |`,
+            `| Unsourced priors | ${escapeTableCell((flags.unsourced_priors ?? []).join(', ') || 'none')} |`,
         );
     }
 
     return lines.join('\n');
+}
+
+function escapeTableCell(value: string): string {
+    return value.replace(/\|/g, '/').replace(/\n+/g, ' ').trim();
 }
