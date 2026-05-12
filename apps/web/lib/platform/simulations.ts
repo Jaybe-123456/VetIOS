@@ -1197,6 +1197,7 @@ async function runLoadSimulation(
                     flywheelError: null,
                     inferenceEventId: null,
                     outcomeId: null,
+                    persistenceError: null,
                     modelVersion: loadModelVersion,
                     scenarioPayload: {
                         input: {
