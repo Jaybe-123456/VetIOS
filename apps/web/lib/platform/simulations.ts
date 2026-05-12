@@ -119,6 +119,11 @@ type SimulationJobState = {
     lastProgressAtMs: number;
 };
 
+type SimulationExecutionOptions = {
+    maxWorkItems?: number;
+    emitStartedWebhook?: boolean;
+};
+
 type ListSimulationsInput = {
     tenantId: string;
     mode?: CanonicalSimulationMode | null;
@@ -935,6 +940,7 @@ async function ensureSimulationWorker(
         return;
     }
 
+    const runInlineSlice = !shouldLaunchSimulationWorkerImmediately();
     const existingJob = getSimulationJobStore().get(input.simulationId);
     if (existingJob && !isSimulationWorkerStale(row, existingJob)) {
         return;
@@ -953,11 +959,42 @@ async function ensureSimulationWorker(
     }
 
     const record = normalizeSimulationRecord(row) as unknown as SimulationRecord;
+    const canonicalMode = normalizeSimulationMode(readText((record as unknown as Record<string, unknown>).mode) ?? 'load');
     getSimulationJobStore().set(record.id, {
         cancelled: false,
         startedAtMs: Date.parse(record.started_at ?? record.created_at ?? new Date().toISOString()) || Date.now(),
         lastProgressAtMs: 0,
     });
+
+    if (runInlineSlice) {
+        try {
+            await executeSimulation(client, buildSystemSimulationActor(record), record, {
+                maxWorkItems: resolveSimulationWorkerSliceLimit(canonicalMode),
+                emitStartedWebhook: false,
+            });
+        } catch (simulationError) {
+            const message = simulationError instanceof Error ? simulationError.message : 'Simulation failed.';
+            await appendSimulationEvent(client, {
+                simulation_id: record.id,
+                tenant_id: record.tenant_id,
+                event_type: 'error',
+                payload: { message },
+            }).catch(() => undefined);
+            await finalizeSimulation(client, record, {
+                status: 'failed',
+                results: {
+                    ...(asRecord((record as unknown as Record<string, unknown>).results)),
+                    status: 'failed',
+                    error_message: message,
+                },
+                errorMessage: message,
+                failureStack: simulationError instanceof Error ? simulationError.stack ?? null : null,
+            }).catch(() => undefined);
+        } finally {
+            getSimulationJobStore().delete(record.id);
+        }
+        return;
+    }
 
     void executeSimulation(client, buildSystemSimulationActor(record), record).catch(async (simulationError) => {
         const message = simulationError instanceof Error ? simulationError.message : 'Simulation failed.';
@@ -985,6 +1022,7 @@ async function executeSimulation(
     client: SupabaseClient,
     actor: PlatformActor,
     record: SimulationRecord,
+    options: SimulationExecutionOptions = {},
 ) {
     const canonicalMode = normalizeSimulationMode(readText((record as unknown as Record<string, unknown>).mode) ?? 'load');
     const heartbeatIntervalMs = readHeartbeatIntervalMs();
@@ -997,18 +1035,20 @@ async function executeSimulation(
     try {
         await sendSimulationHeartbeat(client, record).catch(() => undefined);
 
-        await dispatchWebhookEvent(client, {
-            tenantId: record.tenant_id,
-            eventType: 'pipeline.started',
-            payload: {
-                simulation_id: record.id,
-                scenario_name: readText((record as unknown as Record<string, unknown>).scenario_name) ?? `${canonicalMode}_simulation`,
-                mode: canonicalMode,
-            },
-        }).catch(() => undefined);
+        if (options.emitStartedWebhook !== false) {
+            await dispatchWebhookEvent(client, {
+                tenantId: record.tenant_id,
+                eventType: 'pipeline.started',
+                payload: {
+                    simulation_id: record.id,
+                    scenario_name: readText((record as unknown as Record<string, unknown>).scenario_name) ?? `${canonicalMode}_simulation`,
+                    mode: canonicalMode,
+                },
+            }).catch(() => undefined);
+        }
 
         if (canonicalMode === 'adversarial') {
-            await runAdversarialSimulation(client, actor, record);
+            await runAdversarialSimulation(client, actor, record, options);
             return;
         }
 
@@ -1017,7 +1057,7 @@ async function executeSimulation(
             return;
         }
 
-        await runLoadSimulation(client, actor, record);
+        await runLoadSimulation(client, actor, record, options);
     } finally {
         clearInterval(heartbeatTimer);
     }
@@ -1027,6 +1067,7 @@ async function runLoadSimulation(
     client: SupabaseClient,
     actor: PlatformActor,
     record: SimulationRecord,
+    options: SimulationExecutionOptions = {},
 ) {
     const config = asRecord((record as unknown as Record<string, unknown>).config);
     const modelVersion = readText(config.model_version);
@@ -1094,16 +1135,18 @@ async function runLoadSimulation(
     const pendingRequests = cases
         .map((currentCase, index) => ({ currentCase, index }))
         .filter(({ index }) => !completedRequestNumbers.has(index + 1));
+    const workLimit = clampInteger(options.maxWorkItems, 1, Math.max(1, pendingRequests.length), pendingRequests.length);
+    const pendingBatch = pendingRequests.slice(0, workLimit);
     const maxConcurrency = resolveLoadSimulationConcurrency(config, {
         agentCount,
         ratePerSecond,
-        pending: pendingRequests.length,
+        pending: pendingBatch.length,
     });
     let cursor = 0;
 
     async function executeNextRequest() {
-        while (cursor < pendingRequests.length) {
-            const next = pendingRequests[cursor];
+        while (cursor < pendingBatch.length) {
+            const next = pendingBatch[cursor];
             cursor += 1;
             if (!next) return;
 
@@ -1222,8 +1265,20 @@ async function runLoadSimulation(
     }
 
     await Promise.all(
-        Array.from({ length: Math.min(maxConcurrency, pendingRequests.length) }, () => executeNextRequest()),
+        Array.from({ length: Math.min(maxConcurrency, pendingBatch.length) }, () => executeNextRequest()),
     );
+
+    if (completed < total) {
+        await maybeEmitLoadProgress(client, record, {
+            completed,
+            total,
+            errors,
+            latencies,
+            startedAtMs: getSimulationJobStore().get(record.id)?.startedAtMs ?? Date.now(),
+            final: true,
+        });
+        return;
+    }
 
     await maybeEmitLoadProgress(client, record, {
         completed,
@@ -1295,6 +1350,7 @@ async function runAdversarialSimulation(
     client: SupabaseClient,
     actor: PlatformActor,
     record: SimulationRecord,
+    options: SimulationExecutionOptions = {},
 ) {
     const config = asRecord((record as unknown as Record<string, unknown>).config);
     const modelVersion = readText(config.model_version);
@@ -1466,11 +1522,13 @@ async function runAdversarialSimulation(
 
     let completedPrompts = promptIndex;
     let promptCursor = 0;
-    const maxConcurrency = Math.min(DEFAULT_ADVERSARIAL_MAX_CONCURRENCY, Math.max(1, pendingPrompts.length));
+    const workLimit = clampInteger(options.maxWorkItems, 1, Math.max(1, pendingPrompts.length), pendingPrompts.length);
+    const pendingBatch = pendingPrompts.slice(0, workLimit);
+    const maxConcurrency = Math.min(DEFAULT_ADVERSARIAL_MAX_CONCURRENCY, Math.max(1, pendingBatch.length));
 
     async function executeNextPrompt() {
-        while (promptCursor < pendingPrompts.length) {
-            const task = pendingPrompts[promptCursor];
+        while (promptCursor < pendingBatch.length) {
+            const task = pendingBatch[promptCursor];
             promptCursor += 1;
             if (!task) return;
 
@@ -1580,6 +1638,15 @@ async function runAdversarialSimulation(
     );
 
     const finalResults = buildAdversarialResults(categoryTotals, totalPrompts);
+    if (completedPrompts < totalPrompts) {
+        await updateSimulationRecord(client, record, {
+            completed: completedPrompts,
+            total: totalPrompts,
+            results: finalResults,
+        });
+        return;
+    }
+
     const categoryBreakdown = asArray(finalResults.categories);
     const failedThreshold = categoryBreakdown.some((entry) => (readNumber(asRecord(entry).pass_rate) ?? 0) < 60);
     const status: SimulationStatus = failedThreshold ? 'failed' : 'complete';
@@ -4278,6 +4345,12 @@ function shouldLaunchSimulationWorkerImmediately() {
     if (process.env.VETIOS_SIMULATION_INLINE_WORKER === 'true') return true;
     if (process.env.VETIOS_SIMULATION_INLINE_WORKER === 'false') return false;
     return process.env.VERCEL !== '1';
+}
+
+function resolveSimulationWorkerSliceLimit(mode: CanonicalSimulationMode) {
+    if (mode === 'load') return DEFAULT_LOAD_MAX_CONCURRENCY;
+    if (mode === 'adversarial') return DEFAULT_ADVERSARIAL_MAX_CONCURRENCY;
+    return Number.MAX_SAFE_INTEGER;
 }
 
 function readWatchdogTimeoutBufferSeconds() {

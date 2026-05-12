@@ -532,6 +532,77 @@ async function main() {
         assert.ok(client.tables.adversarial_prompts.length > 0, 'Adversarial simulation should seed the prompt library.');
         assert.ok(client.__auditEvents.some((entry) => entry.eventType === 'adversarial_suite_results'), 'Adversarial simulation should emit a separate adversarial audit event.');
 
+        const previousVercel = process.env.VERCEL;
+        process.env.VERCEL = '1';
+        try {
+            const pollDrivenLoad = await startSimulationRun(client, {
+                actor,
+                tenantId: 'tenant_001',
+                mode: 'load',
+                scenarioName: 'Poll Driven Load Runtime Check',
+                config: {
+                    mode: 'load',
+                    model_version: 'baseline',
+                    agent_count: 2,
+                    requests_per_agent: 6,
+                    request_rate_per_second: 100,
+                    duration_seconds: 10,
+                    prompt_distribution: {
+                        canine: 100,
+                        feline: 0,
+                        equine: 0,
+                        other: 0,
+                    },
+                },
+            });
+            const firstLoadPoll = await getSimulationStatusPayload(client, {
+                tenantId: 'tenant_001',
+                simulationId: pollDrivenLoad.id,
+            });
+            assert.equal(firstLoadPoll.status, 'running', 'Status polling should leave a sliced load run active until all requests execute.');
+            assert.equal(firstLoadPoll.requests_completed, 10, 'Status polling should execute one bounded load work slice.');
+
+            const secondLoadPoll = await getSimulationStatusPayload(client, {
+                tenantId: 'tenant_001',
+                simulationId: pollDrivenLoad.id,
+            });
+            assert.equal(secondLoadPoll.status, 'complete', 'A subsequent status poll should complete the remaining load slice.');
+            assert.equal(secondLoadPoll.requests_completed, 12, 'Poll-driven load progress should reach the request total.');
+
+            const pollDrivenAdversarial = await startSimulationRun(client, {
+                actor,
+                tenantId: 'tenant_001',
+                mode: 'adversarial',
+                scenarioName: 'Poll Driven Adversarial Runtime Check',
+                config: {
+                    mode: 'adversarial',
+                    model_version: 'baseline',
+                    categories: ['jailbreak', 'injection'],
+                    prompts_per_category: 5,
+                    planned_prompt_total: adversarialPlannedTotal,
+                },
+            });
+            const firstPoll = await getSimulationStatusPayload(client, {
+                tenantId: 'tenant_001',
+                simulationId: pollDrivenAdversarial.id,
+            });
+            assert.equal(firstPoll.status, 'running', 'Status polling should leave a sliced adversarial run active until all prompts execute.');
+            assert.equal(firstPoll.requests_completed, 4, 'Status polling should execute one bounded adversarial work slice.');
+
+            const secondPoll = await getSimulationStatusPayload(client, {
+                tenantId: 'tenant_001',
+                simulationId: pollDrivenAdversarial.id,
+            });
+            assert.ok(['complete', 'failed'].includes(secondPoll.status), 'A subsequent status poll should complete the remaining adversarial slice.');
+            assert.equal(secondPoll.requests_completed, adversarialPlannedTotal, 'Poll-driven adversarial progress should reach the executable prompt total.');
+        } finally {
+            if (previousVercel == null) {
+                delete process.env.VERCEL;
+            } else {
+                process.env.VERCEL = previousVercel;
+            }
+        }
+
         const regression = await startSimulationRun(client, {
             actor,
             tenantId: 'tenant_001',
