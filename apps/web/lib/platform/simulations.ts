@@ -1307,9 +1307,10 @@ async function runAdversarialSimulation(
     if (!modelVersion) {
         throw new Error('model_version is required for adversarial simulations.');
     }
+    const adversarialModelVersion = modelVersion;
 
     if (readBoolean(config.cire_calibration) === true) {
-        await runCireCalibrationSimulation(client, actor, record, modelVersion, config);
+        await runCireCalibrationSimulation(client, actor, record, adversarialModelVersion, config);
         return;
     }
 
@@ -1485,7 +1486,7 @@ async function runAdversarialSimulation(
                 tenantId: record.tenant_id,
                 simulationId: record.id,
                 mode: 'adversarial',
-                modelVersion,
+                modelVersion: adversarialModelVersion,
                 prompt: readText(promptRow.prompt) ?? '',
                 adversarialCategory: category,
                 species: inferSpeciesFromPrompt(readText(promptRow.prompt)),
