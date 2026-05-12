@@ -357,6 +357,17 @@ class FakeSupabaseClient {
                     model_version: 'baseline',
                     created_at: '2026-04-07T00:00:00.000Z',
                 },
+                {
+                    id: 'evt_history_only',
+                    tenant_id: 'tenant_001',
+                    status: 'completed',
+                    model_name: 'History Only Model',
+                    model_version: 'history-only-model',
+                    input_signature: { metadata: { raw_note: 'model availability probe' } },
+                    simulation_id: 'seed_model_probe',
+                    is_synthetic: true,
+                    created_at: '2026-04-06T00:00:00.000Z',
+                },
             ],
             evaluations: [
                 { tenant_id: 'tenant_001', inference_event_id: 'evt1', score: 0.83 },
@@ -427,13 +438,23 @@ async function main() {
     const generatedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vetios-simulation-runtime-'));
 
     try {
-        const { startSimulationRun } = compileSimulationModule(generatedDir);
+        const { assertSimulationModelExists, startSimulationRun } = compileSimulationModule(generatedDir);
         const client = new FakeSupabaseClient();
         const actor = {
             userId: 'user_001',
             role: 'developer',
             tenantId: 'tenant_001',
         };
+
+        await assert.doesNotReject(
+            () => assertSimulationModelExists(client, 'tenant_001', 'history-only-model'),
+            'Simulation model validation should accept inference-history model versions shown in the UI.',
+        );
+        await assert.rejects(
+            () => assertSimulationModelExists(client, 'tenant_001', 'unknown-model'),
+            /Model version unknown-model was not found/,
+            'Simulation model validation should still reject unknown model versions.',
+        );
 
         const scenarioLoad = await startSimulationRun(client, {
             actor,

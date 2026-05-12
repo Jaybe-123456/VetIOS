@@ -5,7 +5,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
 import { PlatformAuthError } from '@/lib/platform/tenantContext';
-import { countInferenceEventsForScope, getActiveModelVersion, resolveSimulationModelSafetyClass, startSimulationRun } from '@/lib/platform/simulations';
+import { assertSimulationModelExists, countInferenceEventsForScope, getActiveModelVersion, resolveSimulationModelSafetyClass, startSimulationRun } from '@/lib/platform/simulations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -64,17 +64,9 @@ export async function POST(req: Request) {
             throw new PlatformAuthError(400, 'invalid_candidate', 'candidate_model must differ from the baseline_model.');
         }
 
-        const { data: modelRows, error: modelError } = await supabase
-            .from('model_registry')
-            .select('model_version')
-            .eq('tenant_id', tenantId)
-            .eq('model_version', candidateModel);
-        if (modelError) {
-            throw new Error(modelError.message);
-        }
-        if ((modelRows ?? []).length === 0) {
-            throw new PlatformAuthError(404, 'model_not_found', `Candidate model ${candidateModel} was not found in model_registry.`);
-        }
+        await assertSimulationModelExists(supabase, tenantId, candidateModel).catch(() => {
+            throw new PlatformAuthError(404, 'model_not_found', `Candidate model ${candidateModel} was not found in the simulation registry or inference history.`);
+        });
         const safetyClass = await resolveSimulationModelSafetyClass(supabase, tenantId, candidateModel);
         if (safetyClass === 'archived' && body.confirm_archived_run !== true) {
             throw new PlatformAuthError(422, 'ARCHIVED_MODEL', `Model ${candidateModel} is archived. Results from this run will not enter the calibration pipeline. Pass confirm_archived_run: true to proceed.`);

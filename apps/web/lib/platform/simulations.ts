@@ -146,6 +146,8 @@ const DEFAULT_REGRESSION_REPLAY_COUNT = 50;
 const DEFAULT_ADVERSARIAL_PROMPTS_PER_CATEGORY = 5;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 const DEFAULT_WATCHDOG_TIMEOUT_BUFFER_S = 120;
+const DEFAULT_WORKER_STALE_MS = 20_000;
+const DEFAULT_LOAD_MAX_CONCURRENCY = 10;
 const MODEL_SAFETY_CLASSES: Record<string, ModelSafetyClass> = {
     diag_smoke_v1: 'production',
     'diag_large_v11.0.0': 'production',
@@ -302,11 +304,14 @@ export async function startSimulationRun(
     }
 
     const record = data as SimulationRecord;
-    getSimulationJobStore().set(record.id, {
-        cancelled: false,
-        startedAtMs: Date.now(),
-        lastProgressAtMs: 0,
-    });
+    const launchWorkerImmediately = shouldLaunchSimulationWorkerImmediately();
+    if (launchWorkerImmediately) {
+        getSimulationJobStore().set(record.id, {
+            cancelled: false,
+            startedAtMs: Date.now(),
+            lastProgressAtMs: 0,
+        });
+    }
 
     await appendSimulationEvent(client, {
         simulation_id: record.id,
@@ -336,46 +341,48 @@ export async function startSimulationRun(
         },
     }).catch(() => undefined);
 
-    void executeSimulation(client, input.actor, record).catch(async (simulationError) => {
-        const message = simulationError instanceof Error ? simulationError.message : 'Simulation failed.';
-        console.error('[platform] simulation run failed:', simulationError);
-        await appendSimulationEvent(client, {
-            simulation_id: record.id,
-            tenant_id: record.tenant_id,
-            event_type: 'error',
-            payload: { message },
-        }).catch(() => undefined);
-        await finalizeSimulation(client, record, {
-            status: 'failed',
-            results: {
-                ...(asRecord((record as unknown as Record<string, unknown>).results)),
-                status: 'failed',
-                error_message: message,
-            },
-            errorMessage: message,
-            failureStack: simulationError instanceof Error ? simulationError.stack ?? null : null,
-        }).catch(() => undefined);
-        await writeSimulationAuditEvent(client, {
-            tenantId: record.tenant_id,
-            actor: input.actor.userId,
-            eventType: 'simulation_complete',
-            simulationId: record.id,
-            payload: {
-                status: 'failed',
-                error_message: message,
-            },
-        }).catch(() => undefined);
-        await dispatchWebhookEvent(client, {
-            tenantId: record.tenant_id,
-            eventType: 'pipeline.failed',
-            payload: {
+    if (launchWorkerImmediately) {
+        void executeSimulation(client, input.actor, record).catch(async (simulationError) => {
+            const message = simulationError instanceof Error ? simulationError.message : 'Simulation failed.';
+            console.error('[platform] simulation run failed:', simulationError);
+            await appendSimulationEvent(client, {
                 simulation_id: record.id,
-                scenario_name: readText((record as unknown as Record<string, unknown>).scenario_name) ?? input.scenarioName,
-                error: message,
-            },
-        }).catch(() => undefined);
-        getSimulationJobStore().delete(record.id);
-    });
+                tenant_id: record.tenant_id,
+                event_type: 'error',
+                payload: { message },
+            }).catch(() => undefined);
+            await finalizeSimulation(client, record, {
+                status: 'failed',
+                results: {
+                    ...(asRecord((record as unknown as Record<string, unknown>).results)),
+                    status: 'failed',
+                    error_message: message,
+                },
+                errorMessage: message,
+                failureStack: simulationError instanceof Error ? simulationError.stack ?? null : null,
+            }).catch(() => undefined);
+            await writeSimulationAuditEvent(client, {
+                tenantId: record.tenant_id,
+                actor: input.actor.userId,
+                eventType: 'simulation_complete',
+                simulationId: record.id,
+                payload: {
+                    status: 'failed',
+                    error_message: message,
+                },
+            }).catch(() => undefined);
+            await dispatchWebhookEvent(client, {
+                tenantId: record.tenant_id,
+                eventType: 'pipeline.failed',
+                payload: {
+                    simulation_id: record.id,
+                    scenario_name: readText((record as unknown as Record<string, unknown>).scenario_name) ?? input.scenarioName,
+                    error: message,
+                },
+            }).catch(() => undefined);
+            getSimulationJobStore().delete(record.id);
+        });
+    }
 
     return record;
 }
@@ -885,10 +892,6 @@ async function ensureSimulationWorker(
         simulationId: string;
     },
 ) {
-    if (getSimulationJobStore().has(input.simulationId)) {
-        return;
-    }
-
     const simulations = await listRows(client, 'simulations');
     const row = simulations.find((entry) =>
         readText(entry.id) === input.simulationId
@@ -901,7 +904,25 @@ async function ensureSimulationWorker(
 
     const status = normalizeStatusForResponse(readText(row.status));
     if (status !== 'running') {
+        getSimulationJobStore().delete(input.simulationId);
         return;
+    }
+
+    const existingJob = getSimulationJobStore().get(input.simulationId);
+    if (existingJob && !isSimulationWorkerStale(row, existingJob)) {
+        return;
+    }
+    if (existingJob) {
+        getSimulationJobStore().delete(input.simulationId);
+        await appendSimulationEvent(client, {
+            simulation_id: input.simulationId,
+            tenant_id: input.tenantId,
+            event_type: 'worker_restarted',
+            payload: {
+                reason: 'stale_worker_heartbeat',
+                heartbeat_at: readText(row.heartbeat_at),
+            },
+        }).catch(() => undefined);
     }
 
     const record = normalizeSimulationRecord(row) as unknown as SimulationRecord;
@@ -991,6 +1012,7 @@ async function runLoadSimulation(
     if (!modelVersion) {
         throw new Error('model_version is required for load simulations.');
     }
+    const loadModelVersion = modelVersion;
 
     const cases = buildSyntheticLoadCases(config, total, record.id);
     const existingRequestEvents = await listSimulationEventsFor(client, record.tenant_id, record.id, 'request_complete');
@@ -1042,81 +1064,148 @@ async function runLoadSimulation(
         },
     });
 
-    for (let index = 0; index < cases.length; index += 1) {
-        if (completedRequestNumbers.has(index + 1)) {
-            continue;
-        }
-        assertSimulationActive(record.id);
-        const currentCase = cases[index];
-        const agentIndex = Math.floor(index / requestsPerAgent);
-        const requestIndex = index % requestsPerAgent;
-        const inference = await runInferenceInternal(client, {
-            actor,
-            tenantId: record.tenant_id,
-            simulationId: record.id,
-            mode: 'load',
-            modelVersion,
-            prompt: currentCase.prompt,
-            species: currentCase.species,
-            breed: currentCase.breed,
-            ageYears: currentCase.ageYears,
-            weightKg: currentCase.weightKg,
-            agentIndex,
-            requestIndex,
-            persistInference: true,
-        });
+    const pendingRequests = cases
+        .map((currentCase, index) => ({ currentCase, index }))
+        .filter(({ index }) => !completedRequestNumbers.has(index + 1));
+    const maxConcurrency = resolveLoadSimulationConcurrency(config, {
+        agentCount,
+        ratePerSecond,
+        pending: pendingRequests.length,
+    });
+    let cursor = 0;
 
-        completed += 1;
-        latencies.push(inference.inferenceLatencyMs);
-        if (inference.status >= 400 || inference.blocked) {
-            errors += 1;
-        }
-        if (inference.outcomeId) {
-            outcomesCreated += 1;
-        }
-        if (inference.evaluation?.id || inference.evaluation != null) {
-            evaluationsTriggered += 1;
-        }
+    async function executeNextRequest() {
+        while (cursor < pendingRequests.length) {
+            const next = pendingRequests[cursor];
+            cursor += 1;
+            if (!next) return;
 
-        await appendSimulationEvent(client, {
-            simulation_id: record.id,
-            tenant_id: record.tenant_id,
-            event_type: 'request_complete',
-            payload: {
-                request_n: index + 1,
-                latency_ms: inference.inferenceLatencyMs,
-                success: inference.status < 400 && !inference.blocked,
-                blocked: inference.blocked,
+            const { currentCase, index } = next;
+            const requestNumber = index + 1;
+            if (completedRequestNumbers.has(requestNumber)) {
+                continue;
+            }
+
+            assertSimulationActive(record.id);
+            const agentIndex = Math.floor(index / requestsPerAgent);
+            const requestIndex = index % requestsPerAgent;
+            const requestStartedAt = Date.now();
+            let inference: InternalInferenceResult;
+
+            try {
+                inference = await runInferenceInternal(client, {
+                    actor,
+                    tenantId: record.tenant_id,
+                    simulationId: record.id,
+                    mode: 'load',
+                    modelVersion: loadModelVersion,
+                    prompt: currentCase.prompt,
+                    species: currentCase.species,
+                    breed: currentCase.breed,
+                    ageYears: currentCase.ageYears,
+                    weightKg: currentCase.weightKg,
+                    agentIndex,
+                    requestIndex,
+                    persistInference: true,
+                });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : 'Inference request failed.';
+                inference = {
+                    status: 500,
+                    blocked: false,
+                    flagged: false,
+                    reason: message,
+                    prediction: {
+                        error: message,
+                        model_version: loadModelVersion,
+                    },
+                    evaluation: null,
+                    inferenceLatencyMs: Math.max(1, Date.now() - requestStartedAt),
+                    confidenceScore: 0,
+                    contradictionAnalysis: {},
+                    flywheelError: null,
+                    inferenceEventId: null,
+                    outcomeId: null,
+                    modelVersion: loadModelVersion,
+                    scenarioPayload: {
+                        input: {
+                            prompt: currentCase.prompt,
+                            species: currentCase.species,
+                            breed: currentCase.breed,
+                            age_years: currentCase.ageYears,
+                            weight_kg: currentCase.weightKg,
+                        },
+                        error: message,
+                    },
+                };
+            }
+
+            completed += 1;
+            completedRequestNumbers.add(requestNumber);
+            latencies.push(inference.inferenceLatencyMs);
+            if (inference.status >= 400 || inference.blocked) {
+                errors += 1;
+            }
+            if (inference.outcomeId) {
+                outcomesCreated += 1;
+            }
+            if (inference.evaluation?.id || inference.evaluation != null) {
+                evaluationsTriggered += 1;
+            }
+
+            await appendSimulationEvent(client, {
+                simulation_id: record.id,
+                tenant_id: record.tenant_id,
+                event_type: 'request_complete',
+                payload: {
+                    request_n: requestNumber,
+                    latency_ms: inference.inferenceLatencyMs,
+                    success: inference.status < 400 && !inference.blocked,
+                    blocked: inference.blocked,
+                    species: currentCase.species,
+                    model_version: loadModelVersion,
+                    evaluation_score: inference.evaluation?.score ?? null,
+                    inference_event_id: inference.inferenceEventId,
+                    outcome_id: inference.outcomeId,
+                },
+                simulation_run_id: record.id,
+                agent_index: agentIndex,
+                request_index: requestIndex,
                 species: currentCase.species,
-                model_version: modelVersion,
-                evaluation_score: inference.evaluation?.score ?? null,
+                scenario_payload: inference.scenarioPayload,
+                response_status: inference.status,
+                response_body: inference.prediction,
+                latency_ms: inference.inferenceLatencyMs,
                 inference_event_id: inference.inferenceEventId,
-                outcome_id: inference.outcomeId,
-            },
-            simulation_run_id: record.id,
-            agent_index: agentIndex,
-            request_index: requestIndex,
-            species: currentCase.species,
-            scenario_payload: inference.scenarioPayload,
-            response_status: inference.status,
-            response_body: inference.prediction,
-            latency_ms: inference.inferenceLatencyMs,
-            inference_event_id: inference.inferenceEventId,
-            success: inference.status < 400 && !inference.blocked,
-            failure_reason: inference.status < 400 && !inference.blocked ? null : inference.reason ?? 'inference_failed',
-        });
+                success: inference.status < 400 && !inference.blocked,
+                failure_reason: inference.status < 400 && !inference.blocked ? null : inference.reason ?? 'inference_failed',
+            });
 
-        await maybeEmitLoadProgress(client, record, {
-            completed,
-            total,
-            errors,
-            latencies,
-            startedAtMs: getSimulationJobStore().get(record.id)?.startedAtMs ?? Date.now(),
-            final: index === cases.length - 1,
-        });
+            await maybeEmitLoadProgress(client, record, {
+                completed,
+                total,
+                errors,
+                latencies,
+                startedAtMs: getSimulationJobStore().get(record.id)?.startedAtMs ?? Date.now(),
+                final: false,
+            });
 
-        await wait(Math.max(10, Math.round(1000 / ratePerSecond)));
+            await wait(Math.max(10, Math.round(1000 / ratePerSecond)));
+        }
     }
+
+    await Promise.all(
+        Array.from({ length: Math.min(maxConcurrency, pendingRequests.length) }, () => executeNextRequest()),
+    );
+
+    await maybeEmitLoadProgress(client, record, {
+        completed,
+        total,
+        errors,
+        latencies,
+        startedAtMs: getSimulationJobStore().get(record.id)?.startedAtMs ?? Date.now(),
+        final: true,
+    });
 
     const durationActualSeconds = secondsSince(getSimulationJobStore().get(record.id)?.startedAtMs ?? Date.now());
     const successRate = total > 0 ? ((total - errors) / total) * 100 : 0;
@@ -1723,7 +1812,7 @@ async function runRegressionSimulation(
     if (candidateModel === baselineModel) {
         throw new Error('candidate_model must differ from the production baseline.');
     }
-    await assertModelExists(client, record.tenant_id, candidateModel);
+    await assertSimulationModelExists(client, record.tenant_id, candidateModel);
 
     const fixtureCount = await maybeRunRegressionFixtureSimulation(client, actor, record, {
         candidateModel,
@@ -2466,13 +2555,13 @@ export async function runInferenceInternal(
         };
     }
 
-async function assertModelExists(
+export async function assertSimulationModelExists(
     client: SupabaseClient,
     tenantId: string,
     modelVersion: string,
 ) {
-    const registryRows = await listRows(client, 'model_registry');
-    const inferenceRows = await listRows(client, 'ai_inference_events');
+    const registryRows = await listRows(client, 'model_registry').catch(() => []);
+    const inferenceRows = await listRows(client, 'ai_inference_events').catch(() => []);
     const exists = registryRows.some((row) =>
         readText(row.model_version) === modelVersion
         && readText(row.tenant_id) === tenantId,
@@ -3375,7 +3464,7 @@ async function finalizeSimulation(
         ?? readNumber(input.results.total_replayed)
         ?? readNumber((record as unknown as Record<string, unknown>).total)
         ?? 0;
-    const requestsCompleted = summaryMetrics.successCount
+    const requestsCompleted = summaryMetrics.total
         ?? readNumber(input.results.completed)
         ?? readNumber(input.results.passed)
         ?? readNumber(input.results.total_replayed)
@@ -3389,7 +3478,7 @@ async function finalizeSimulation(
         ...input.results,
         ...(summaryMetrics.total != null ? {
             requests_total: summaryMetrics.total,
-            requests_completed: summaryMetrics.successCount,
+            requests_completed: summaryMetrics.total,
             requests_failed: summaryMetrics.failureCount,
             mean_latency_ms: summaryMetrics.meanLatencyMs,
             p50_latency_ms: summaryMetrics.p50LatencyMs,
@@ -3827,7 +3916,7 @@ async function resolveSimulationProviderModel(
     tenantId: string,
     modelVersion: string,
 ) {
-    const registryRows = await listRows(client, 'model_registry');
+    const registryRows = await listRows(client, 'model_registry').catch(() => []);
     const registryRow = registryRows.find((row) =>
         readText(row.tenant_id) === tenantId && readText(row.model_version) === modelVersion,
     ) ?? null;
@@ -4073,6 +4162,34 @@ function estimateSimulationDurationSeconds(
     return clampInteger(requestsTotal * 2, 10, 3600, 300);
 }
 
+function resolveLoadSimulationConcurrency(
+    config: Record<string, unknown>,
+    input: {
+        agentCount: number;
+        ratePerSecond: number;
+        pending: number;
+    },
+) {
+    const configured = readNumber(config.max_concurrency) ?? readNumber(config.concurrency);
+    const defaultLimit = Math.min(DEFAULT_LOAD_MAX_CONCURRENCY, input.agentCount, Math.ceil(input.ratePerSecond));
+    return clampInteger(
+        configured,
+        1,
+        Math.max(1, Math.min(input.pending, DEFAULT_LOAD_MAX_CONCURRENCY)),
+        Math.max(1, defaultLimit),
+    );
+}
+
+function isSimulationWorkerStale(
+    row: Record<string, unknown>,
+    job: SimulationJobState,
+) {
+    const heartbeatAtMs = readDateMs(row.heartbeat_at)
+        ?? job.lastProgressAtMs
+        ?? job.startedAtMs;
+    return Date.now() - heartbeatAtMs > readWorkerStaleMs();
+}
+
 function readHeartbeatIntervalMs() {
     return clampInteger(
         readNumber(process.env.VETIOS_SIMULATION_HEARTBEAT_INTERVAL_MS),
@@ -4080,6 +4197,21 @@ function readHeartbeatIntervalMs() {
         60_000,
         DEFAULT_HEARTBEAT_INTERVAL_MS,
     );
+}
+
+function readWorkerStaleMs() {
+    return clampInteger(
+        readNumber(process.env.VETIOS_SIMULATION_WORKER_STALE_MS),
+        15_000,
+        300_000,
+        DEFAULT_WORKER_STALE_MS,
+    );
+}
+
+function shouldLaunchSimulationWorkerImmediately() {
+    if (process.env.VETIOS_SIMULATION_INLINE_WORKER === 'true') return true;
+    if (process.env.VETIOS_SIMULATION_INLINE_WORKER === 'false') return false;
+    return process.env.VERCEL !== '1';
 }
 
 function readWatchdogTimeoutBufferSeconds() {
@@ -4116,6 +4248,13 @@ function assertSimulationActive(simulationId: string) {
 
 function secondsSince(startedAtMs: number) {
     return Math.max(0, Math.round((Date.now() - startedAtMs) / 1000));
+}
+
+function readDateMs(value: unknown) {
+    const text = readText(value);
+    if (!text) return null;
+    const parsed = Date.parse(text);
+    return Number.isFinite(parsed) ? parsed : null;
 }
 
 function clampInteger(value: number | null | undefined, min: number, max: number, fallback: number) {

@@ -5,7 +5,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
 import { PlatformAuthError } from '@/lib/platform/tenantContext';
-import { resolveSimulationModelSafetyClass, startSimulationRun } from '@/lib/platform/simulations';
+import { assertSimulationModelExists, resolveSimulationModelSafetyClass, startSimulationRun } from '@/lib/platform/simulations';
 
 const VALID_CATEGORIES = [
     'jailbreak',
@@ -62,17 +62,9 @@ export async function POST(req: Request) {
             throw new PlatformAuthError(400, 'invalid_evaluation_method', 'evaluation_method must be auto, human, or hybrid.');
         }
 
-        const { data: modelRows, error: modelError } = await supabase
-            .from('model_registry')
-            .select('model_version')
-            .eq('tenant_id', tenantId)
-            .eq('model_version', modelVersion);
-        if (modelError) {
-            throw new Error(modelError.message);
-        }
-        if ((modelRows ?? []).length === 0) {
-            throw new PlatformAuthError(404, 'model_not_found', `Model version ${modelVersion} was not found in model_registry.`);
-        }
+        await assertSimulationModelExists(supabase, tenantId, modelVersion).catch(() => {
+            throw new PlatformAuthError(404, 'model_not_found', `Model version ${modelVersion} was not found in the simulation registry or inference history.`);
+        });
         const safetyClass = await resolveSimulationModelSafetyClass(supabase, tenantId, modelVersion);
         if (safetyClass === 'archived' && body.confirm_archived_run !== true) {
             throw new PlatformAuthError(422, 'ARCHIVED_MODEL', `Model ${modelVersion} is archived. Results from this run will not enter the calibration pipeline. Pass confirm_archived_run: true to proceed.`);

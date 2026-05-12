@@ -542,7 +542,7 @@ export default function SimulationWorkbench({
             }
             setRunId(simulationId);
             appendLog(`${simulationId}:started`, 'info', `${mode.toUpperCase()} simulation started`, new Date().toISOString());
-            startProgressPolling(simulationId);
+            startProgressStream(simulationId);
             await loadSimulationHistory();
         } catch (submitError) {
             setError(submitError instanceof Error ? submitError.message : 'Failed to start simulation.');
