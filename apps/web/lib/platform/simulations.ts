@@ -148,6 +148,7 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 const DEFAULT_WATCHDOG_TIMEOUT_BUFFER_S = 120;
 const DEFAULT_WORKER_STALE_MS = 20_000;
 const DEFAULT_LOAD_MAX_CONCURRENCY = 10;
+const DEFAULT_ADVERSARIAL_MAX_CONCURRENCY = 4;
 const MODEL_SAFETY_CLASSES: Record<string, ModelSafetyClass> = {
     diag_smoke_v1: 'production',
     'diag_large_v11.0.0': 'production',
@@ -600,6 +601,31 @@ export async function listAdversarialPrompts(
     };
 }
 
+export async function estimateAdversarialPromptTotal(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        categories: string[];
+        promptsPerCategory: number;
+    },
+) {
+    const selectedCategories = uniqueStringArray(input.categories)
+        .filter((value): value is AdversarialCategory => ADVERSARIAL_CATEGORIES.includes(value as AdversarialCategory));
+    const categories = selectedCategories.length > 0 ? selectedCategories : [...ADVERSARIAL_CATEGORIES];
+    const promptsPerCategory = clampInteger(input.promptsPerCategory, 5, 100, DEFAULT_ADVERSARIAL_PROMPTS_PER_CATEGORY);
+    const library = await listAdversarialPrompts(client, {
+        tenantId: input.tenantId,
+        active: true,
+    });
+
+    return categories.reduce((total, category) => (
+        total + Math.min(
+            promptsPerCategory,
+            library.prompts.filter((prompt) => prompt.category === category).length,
+        )
+    ), 0);
+}
+
 export async function createAdversarialPrompt(
     client: SupabaseClient,
     input: {
@@ -882,6 +908,7 @@ export async function getSimulationStatusPayload(
             : status === 'complete' ? 'N/A (no events)' : '--',
         mean_latency_display: meanLatencyMs != null ? `${meanLatencyMs.toFixed(0)}ms` : '--',
         p95_latency_display: p95LatencyMs != null ? `${p95LatencyMs.toFixed(0)}ms` : '--',
+        results: summary,
     };
 }
 
@@ -1402,6 +1429,12 @@ async function runAdversarialSimulation(
         },
     });
 
+    const pendingPrompts: Array<{
+        category: AdversarialCategory;
+        promptRow: Record<string, unknown>;
+        ordinal: number;
+    }> = [];
+
     for (const category of categories) {
         const prompts = promptsByCategory.get(category) ?? [];
         const existingCategoryEvents = completedPromptEvents.filter((event) => readText(asRecord(event.payload).category) === category);
@@ -1416,13 +1449,37 @@ async function runAdversarialSimulation(
                 .filter((value): value is number => value != null),
         });
 
-        for (const promptRow of prompts) {
+        for (let index = 0; index < prompts.length; index += 1) {
+            const promptRow = prompts[index];
             const promptId = readText(promptRow.id);
             if (promptId && completedPromptIds.has(promptId)) {
                 continue;
             }
+            pendingPrompts.push({
+                category,
+                promptRow,
+                ordinal: pendingPrompts.length + promptIndex + 1,
+            });
+        }
+    }
+
+    let completedPrompts = promptIndex;
+    let promptCursor = 0;
+    const maxConcurrency = Math.min(DEFAULT_ADVERSARIAL_MAX_CONCURRENCY, Math.max(1, pendingPrompts.length));
+
+    async function executeNextPrompt() {
+        while (promptCursor < pendingPrompts.length) {
+            const task = pendingPrompts[promptCursor];
+            promptCursor += 1;
+            if (!task) return;
+
+            const { category, promptRow, ordinal } = task;
+            const promptId = readText(promptRow.id);
+            if (promptId && completedPromptIds.has(promptId)) {
+                continue;
+            }
+
             assertSimulationActive(record.id);
-            const nextPromptIndex = promptIndex;
             const inference = await runInferenceInternal(client, {
                 actor,
                 tenantId: record.tenant_id,
@@ -1433,11 +1490,11 @@ async function runAdversarialSimulation(
                 adversarialCategory: category,
                 species: inferSpeciesFromPrompt(readText(promptRow.prompt)),
                 agentIndex: 0,
-                requestIndex: nextPromptIndex,
+                requestIndex: ordinal - 1,
                 persistInference: true,
             });
 
-            promptIndex += 1;
+            completedPrompts += 1;
             const score = inference.evaluation?.score ?? 0;
             const resultType = classifyAdversarialResult({
                 category,
@@ -1458,7 +1515,7 @@ async function runAdversarialSimulation(
                 payload: {
                     category,
                     prompt_id: promptId,
-                    prompt_index: promptIndex,
+                    prompt_index: ordinal,
                     total_prompts: totalPrompts,
                     result_type: resultType,
                     evaluation_score: toFixedNumber(score, 4),
@@ -1466,14 +1523,14 @@ async function runAdversarialSimulation(
                     category_pass_count: bucket.passed,
                     category_flag_count: bucket.flagged,
                     category_block_count: bucket.blocked,
-                    overall_pct_complete: totalPrompts > 0 ? toFixedNumber((promptIndex / totalPrompts) * 100, 2) : 100,
+                    overall_pct_complete: totalPrompts > 0 ? toFixedNumber((completedPrompts / totalPrompts) * 100, 2) : 100,
                     evaluation_method: evaluationMethod,
                     inference_event_id: inference.inferenceEventId,
                     failure_reason: resultType === 'passed' ? null : classifyAdversarialFailureMode(category, inference),
                 },
                 simulation_run_id: record.id,
                 agent_index: 0,
-                request_index: nextPromptIndex,
+                request_index: ordinal - 1,
                 species: inferSpeciesFromPrompt(readText(promptRow.prompt)),
                 scenario_payload: inference.scenarioPayload,
                 response_status: inference.status,
@@ -1510,12 +1567,16 @@ async function runAdversarialSimulation(
             });
 
             await updateSimulationRecord(client, record, {
-                completed: promptIndex,
+                completed: completedPrompts,
                 total: totalPrompts,
                 results: buildAdversarialResults(categoryTotals, totalPrompts),
             });
         }
     }
+
+    await Promise.all(
+        Array.from({ length: maxConcurrency }, () => executeNextPrompt()),
+    );
 
     const finalResults = buildAdversarialResults(categoryTotals, totalPrompts);
     const categoryBreakdown = asArray(finalResults.categories);
@@ -4139,6 +4200,10 @@ function estimateSimulationRequestTotal(
         return agentCount * requestsPerAgent;
     }
     if (mode === 'adversarial') {
+        const plannedTotal = readNumber(config.planned_prompt_total);
+        if (plannedTotal != null) {
+            return clampInteger(plannedTotal, 0, 10_000, 0);
+        }
         const categories = asStringArray(config.categories);
         const categoryCount = categories.length > 0 ? categories.length : ADVERSARIAL_CATEGORIES.length;
         return categoryCount * clampInteger(readNumber(config.prompts_per_category), 5, 100, DEFAULT_ADVERSARIAL_PROMPTS_PER_CATEGORY);

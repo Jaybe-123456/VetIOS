@@ -59,6 +59,7 @@ type SimulationStatusPayload = {
     mean_latency_ms?: number | null;
     p95_latency_ms?: number | null;
     failure_reason?: string | null;
+    results?: Record<string, unknown> | null;
 };
 
 type SimulationDetail = {
@@ -171,7 +172,10 @@ export default function SimulationWorkbench({
     const distributionTotal = distribution.canine + distribution.feline + distribution.equine + distribution.other;
     const totalRequests = agentCount * requestsPerAgent;
     const estimatedDurationSeconds = ratePerSecond > 0 ? Math.ceil(totalRequests / ratePerSecond) : 0;
-    const adversarialTotalPrompts = selectedCategories.length * promptsPerCategory;
+    const adversarialRequestedPrompts = selectedCategories.length * promptsPerCategory;
+    const adversarialTotalPrompts = selectedCategories.reduce((sum, category) => (
+        sum + Math.min(promptCounts[category] ?? 0, promptsPerCategory)
+    ), 0);
     const regressionCandidateOptions = useMemo(
         () => models.filter((model) => model.model_version && model.model_version !== activeModelVersion),
         [activeModelVersion, models],
@@ -401,6 +405,14 @@ export default function SimulationWorkbench({
         }
         const data = extractEnvelopeData<SimulationStatusPayload | null>(body);
         if (!data) return null;
+        const resultPayload = data.results ?? {
+            completed: data.requests_completed ?? 0,
+            total_requests: data.requests_total ?? 0,
+            errors: data.requests_failed ?? 0,
+            success_rate: data.success_rate != null ? data.success_rate * 100 : null,
+            mean_latency_ms: data.mean_latency_ms,
+            p95_latency_ms: data.p95_latency_ms,
+        };
         const progressPayload: SimulationProgress = {
             simulation_id: data.id ?? simulationId,
             type: data.status === 'complete' || data.status === 'blocked'
@@ -414,18 +426,15 @@ export default function SimulationWorkbench({
             total: data.requests_total ?? 0,
             progress_pct: data.progress_pct ?? 0,
             stats: {
-                success_rate: data.success_rate != null ? data.success_rate * 100 : null,
+                success_rate: readNumber(resultPayload.success_rate) ?? (data.success_rate != null ? data.success_rate * 100 : null),
+                pass_rate: readNumber(resultPayload.pass_rate),
+                total_prompts: readNumber(resultPayload.total_prompts),
+                flagged: readNumber(resultPayload.flagged),
+                blocked: readNumber(resultPayload.blocked),
                 mean_latency_ms: data.mean_latency_ms,
                 p95_latency_ms: data.p95_latency_ms,
             },
-            results: {
-                completed: data.requests_completed ?? 0,
-                total_requests: data.requests_total ?? 0,
-                errors: data.requests_failed ?? 0,
-                success_rate: data.success_rate != null ? data.success_rate * 100 : null,
-                mean_latency_ms: data.mean_latency_ms,
-                p95_latency_ms: data.p95_latency_ms,
-            },
+            results: resultPayload,
             last_event: null,
             error_message: data.failure_reason ?? null,
         };
@@ -542,7 +551,7 @@ export default function SimulationWorkbench({
             }
             setRunId(simulationId);
             appendLog(`${simulationId}:started`, 'info', `${mode.toUpperCase()} simulation started`, new Date().toISOString());
-            startProgressStream(simulationId);
+            startProgressPolling(simulationId);
             await loadSimulationHistory();
         } catch (submitError) {
             setError(submitError instanceof Error ? submitError.message : 'Failed to start simulation.');
@@ -822,8 +831,9 @@ export default function SimulationWorkbench({
                 <PreviewBlock
                     lines={[
                         `TOTAL PROMPTS: ${formatNumber(adversarialTotalPrompts)}`,
+                        adversarialTotalPrompts !== adversarialRequestedPrompts ? `REQUESTED PROMPTS: ${formatNumber(adversarialRequestedPrompts)}` : '',
                         `PROMPT LIBRARY: ${formatNumber(Object.values(promptCounts).reduce((sum, value) => sum + value, 0))} PROMPTS AVAILABLE`,
-                    ]}
+                    ].filter(Boolean)}
                 />
                 <div className="flex flex-wrap gap-2">
                     <TerminalButton onClick={() => void submitSimulation()} disabled={busy || selectedCategories.length === 0 || !selectedModelVersion}>

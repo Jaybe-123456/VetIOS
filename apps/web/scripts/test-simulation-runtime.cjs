@@ -438,7 +438,12 @@ async function main() {
     const generatedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vetios-simulation-runtime-'));
 
     try {
-        const { assertSimulationModelExists, startSimulationRun } = compileSimulationModule(generatedDir);
+        const {
+            assertSimulationModelExists,
+            estimateAdversarialPromptTotal,
+            getSimulationStatusPayload,
+            startSimulationRun,
+        } = compileSimulationModule(generatedDir);
         const client = new FakeSupabaseClient();
         const actor = {
             userId: 'user_001',
@@ -489,6 +494,13 @@ async function main() {
         assert.ok(scenarioInferenceRows.every((entry) => entry.is_synthetic === true), 'Scenario load inference rows should be marked synthetic.');
         assert.ok(scenarioInferenceRows.every((entry) => typeof entry.simulation_request_index === 'number'), 'Scenario load inference rows should preserve request indexes.');
 
+        const adversarialPlannedTotal = await estimateAdversarialPromptTotal(client, {
+            tenantId: 'tenant_001',
+            categories: ['jailbreak', 'injection'],
+            promptsPerCategory: 5,
+        });
+        assert.equal(adversarialPlannedTotal, 8, 'Adversarial planning should cap each category by active prompt availability.');
+
         const adversarial = await startSimulationRun(client, {
             actor,
             tenantId: 'tenant_001',
@@ -498,10 +510,13 @@ async function main() {
                 mode: 'adversarial',
                 model_version: 'baseline',
                 categories: ['jailbreak', 'injection'],
+                prompts_per_category: 5,
+                planned_prompt_total: adversarialPlannedTotal,
             },
         });
         const adversarialDone = await waitForSimulationCompletion(client, adversarial.id);
         assert.ok(['complete', 'failed'].includes(adversarialDone.status), 'Adversarial simulation should finish with a terminal status.');
+        assert.equal(adversarialDone.total, adversarialPlannedTotal, 'Adversarial simulation should use the executable plan total, not the requested maximum.');
         assert.ok(typeof adversarialDone.summary.passed === 'number', 'Adversarial simulation should record pass counts.');
         assert.ok(typeof adversarialDone.summary.failed === 'number', 'Adversarial simulation should record failure counts.');
         assert.deepEqual(
@@ -509,6 +524,11 @@ async function main() {
             ['injection', 'jailbreak'],
             'Adversarial simulation should preserve per-category summaries.',
         );
+        const adversarialStatus = await getSimulationStatusPayload(client, {
+            tenantId: 'tenant_001',
+            simulationId: adversarial.id,
+        });
+        assert.equal(adversarialStatus.results.total_prompts, adversarialPlannedTotal, 'Adversarial polling status should include full result summary.');
         assert.ok(client.tables.adversarial_prompts.length > 0, 'Adversarial simulation should seed the prompt library.');
         assert.ok(client.__auditEvents.some((entry) => entry.eventType === 'adversarial_suite_results'), 'Adversarial simulation should emit a separate adversarial audit event.');
 
