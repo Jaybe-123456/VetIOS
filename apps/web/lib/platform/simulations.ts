@@ -109,6 +109,7 @@ type InternalInferenceResult = {
     flywheelError: string | null;
     inferenceEventId: string | null;
     outcomeId: string | null;
+    persistenceError: string | null;
     modelVersion: string;
     scenarioPayload: Record<string, unknown>;
 };
@@ -1237,6 +1238,7 @@ async function runLoadSimulation(
                     evaluation_score: inference.evaluation?.score ?? null,
                     inference_event_id: inference.inferenceEventId,
                     outcome_id: inference.outcomeId,
+                    persistence_error: inference.persistenceError,
                 },
                 simulation_run_id: record.id,
                 agent_index: agentIndex,
@@ -1585,6 +1587,7 @@ async function runAdversarialSimulation(
                     overall_pct_complete: totalPrompts > 0 ? toFixedNumber((completedPrompts / totalPrompts) * 100, 2) : 100,
                     evaluation_method: evaluationMethod,
                     inference_event_id: inference.inferenceEventId,
+                    persistence_error: inference.persistenceError,
                     failure_reason: resultType === 'passed' ? null : classifyAdversarialFailureMode(category, inference),
                 },
                 simulation_run_id: record.id,
@@ -2506,7 +2509,7 @@ export async function runInferenceInternal(
             },
             simulation: true,
             simulation_id: input.simulationId,
-        });
+        }).catch(() => undefined);
 
         return {
             status: 403,
@@ -2521,6 +2524,7 @@ export async function runInferenceInternal(
             flywheelError: null,
             inferenceEventId: null,
             outcomeId: null,
+            persistenceError: null,
             modelVersion: input.modelVersion,
             scenarioPayload: requestPayload,
         };
@@ -2543,102 +2547,102 @@ export async function runInferenceInternal(
     let inferenceEventId: string | null = null;
     let outcomeId: string | null = null;
     let flywheelError: string | null = null;
+    let persistenceError: string | null = null;
     let evaluation: { id: string | null; score: number; dataset_version: number | null } | null = null;
+    const fallbackEvaluation = () => ({
+        id: null,
+        score: input.mode === 'adversarial'
+            ? deriveAdversarialEvaluationScore({
+                category: input.adversarialCategory ?? null,
+                confidenceScore,
+                contradictionAnalysis,
+                outputPayload: prediction,
+                flagged: governanceDecision.flagged,
+            })
+            : deriveFallbackEvaluationScore(confidenceScore, contradictionAnalysis, prediction),
+        dataset_version: null,
+    });
 
     if (input.persistInference) {
-        inferenceEventId = await logInference(client, {
-            id: randomUUID(),
-            tenant_id: input.tenantId,
-            user_id: input.actor.userId,
-            source_module: 'simulation_workbench',
-            model_name: input.modelVersion,
-            model_version: input.modelVersion,
-            input_signature: asRecord(asRecord(requestPayload.input).input_signature),
-            output_payload: prediction,
-            confidence_score: confidenceScore,
-            uncertainty_metrics: asRecord(inferenceResult.uncertainty_metrics),
-            compute_profile: {
-                simulation_id: input.simulationId,
-                simulation_mode: input.mode,
-                simulation_agent_index: input.agentIndex ?? null,
-                simulation_request_index: input.requestIndex ?? null,
-            },
-            inference_latency_ms: inferenceLatencyMs,
-            blocked: false,
-            flagged: governanceDecision.flagged,
-            flag_reason: governanceDecision.reason,
-            blocked_reason: null,
-            governance_policy_id: governanceDecision.policyId,
-            orphaned: false,
-            orphaned_at: null,
-            simulation_id: input.simulationId,
-            is_synthetic: true,
-            simulation_agent_index: input.agentIndex ?? null,
-            simulation_request_index: input.requestIndex ?? null,
-        });
-
         try {
-            const flywheel = await runInferenceFlywheel(client, {
-                actor: input.actor,
-                tenantId: input.tenantId,
-                inferenceEventId,
-                modelName: input.modelVersion,
-                modelVersion: input.modelVersion,
-                outputPayload: prediction,
-                rawOutput: JSON.stringify(prediction),
-                confidenceScore,
-                latencyMs: inferenceLatencyMs,
-                tokenCountInput: estimatePayloadTokens(requestPayload),
-                tokenCountOutput: estimatePayloadTokens(prediction),
-                flagged: governanceDecision.flagged,
-                blocked: false,
-                flagReason: governanceDecision.reason,
-                pipelineId: 'simulation',
-                metadata: {
-                    source: 'simulation_workbench',
+            inferenceEventId = await logInference(client, {
+                id: randomUUID(),
+                tenant_id: input.tenantId,
+                user_id: input.actor.userId,
+                source_module: 'simulation_workbench',
+                model_name: input.modelVersion,
+                model_version: input.modelVersion,
+                input_signature: asRecord(asRecord(requestPayload.input).input_signature),
+                output_payload: prediction,
+                confidence_score: confidenceScore,
+                uncertainty_metrics: asRecord(inferenceResult.uncertainty_metrics),
+                compute_profile: {
                     simulation_id: input.simulationId,
                     simulation_mode: input.mode,
                     simulation_agent_index: input.agentIndex ?? null,
                     simulation_request_index: input.requestIndex ?? null,
-                    is_synthetic: true,
                 },
+                inference_latency_ms: inferenceLatencyMs,
+                blocked: false,
+                flagged: governanceDecision.flagged,
+                flag_reason: governanceDecision.reason,
+                blocked_reason: null,
+                governance_policy_id: governanceDecision.policyId,
+                orphaned: false,
+                orphaned_at: null,
+                simulation_id: input.simulationId,
+                is_synthetic: true,
+                simulation_agent_index: input.agentIndex ?? null,
+                simulation_request_index: input.requestIndex ?? null,
             });
-            evaluation = {
-                id: flywheel.evaluation.id,
-                score: flywheel.evaluation.score,
-                dataset_version: flywheel.evaluation.dataset_version,
-            };
-            outcomeId = flywheel.outcome.id;
         } catch (error) {
-            flywheelError = error instanceof Error ? error.message : 'Simulation flywheel processing failed.';
-            evaluation = {
-                id: null,
-                score: input.mode === 'adversarial'
-                    ? deriveAdversarialEvaluationScore({
-                        category: input.adversarialCategory ?? null,
-                        confidenceScore,
-                        contradictionAnalysis,
-                        outputPayload: prediction,
-                        flagged: governanceDecision.flagged,
-                    })
-                    : deriveFallbackEvaluationScore(confidenceScore, contradictionAnalysis, prediction),
-                dataset_version: null,
-            };
+            persistenceError = error instanceof Error ? error.message : 'Simulation inference event logging failed.';
+        }
+
+        if (inferenceEventId) {
+            try {
+                const flywheel = await runInferenceFlywheel(client, {
+                    actor: input.actor,
+                    tenantId: input.tenantId,
+                    inferenceEventId,
+                    modelName: input.modelVersion,
+                    modelVersion: input.modelVersion,
+                    outputPayload: prediction,
+                    rawOutput: JSON.stringify(prediction),
+                    confidenceScore,
+                    latencyMs: inferenceLatencyMs,
+                    tokenCountInput: estimatePayloadTokens(requestPayload),
+                    tokenCountOutput: estimatePayloadTokens(prediction),
+                    flagged: governanceDecision.flagged,
+                    blocked: false,
+                    flagReason: governanceDecision.reason,
+                    pipelineId: 'simulation',
+                    metadata: {
+                        source: 'simulation_workbench',
+                        simulation_id: input.simulationId,
+                        simulation_mode: input.mode,
+                        simulation_agent_index: input.agentIndex ?? null,
+                        simulation_request_index: input.requestIndex ?? null,
+                        is_synthetic: true,
+                    },
+                });
+                evaluation = {
+                    id: flywheel.evaluation.id,
+                    score: flywheel.evaluation.score,
+                    dataset_version: flywheel.evaluation.dataset_version,
+                };
+                outcomeId = flywheel.outcome.id;
+            } catch (error) {
+                flywheelError = error instanceof Error ? error.message : 'Simulation flywheel processing failed.';
+                evaluation = fallbackEvaluation();
+            }
+        }
+
+        if (!evaluation) {
+            evaluation = fallbackEvaluation();
         }
     } else {
-        evaluation = {
-            id: null,
-            score: input.mode === 'adversarial'
-                ? deriveAdversarialEvaluationScore({
-                    category: input.adversarialCategory ?? null,
-                    confidenceScore,
-                    contradictionAnalysis,
-                    outputPayload: prediction,
-                    flagged: governanceDecision.flagged,
-                })
-                : deriveFallbackEvaluationScore(confidenceScore, contradictionAnalysis, prediction),
-            dataset_version: null,
-        };
+        evaluation = fallbackEvaluation();
     }
 
     await recordPlatformTelemetry(client, {
@@ -2661,9 +2665,15 @@ export async function runInferenceInternal(
             species: readText(asRecord(asRecord(requestPayload.input).input_signature).species),
             prompt_length: input.prompt.length,
             flywheel_error: flywheelError,
+            persistence_error: persistenceError,
         },
         simulation: true,
         simulation_id: input.simulationId,
+    }).catch((error) => {
+        persistenceError = [
+            persistenceError,
+            error instanceof Error ? error.message : 'Simulation telemetry logging failed.',
+        ].filter(Boolean).join(' | ');
     });
 
     return {
@@ -2679,10 +2689,11 @@ export async function runInferenceInternal(
         flywheelError,
         inferenceEventId,
         outcomeId,
-            modelVersion: input.modelVersion,
-            scenarioPayload: requestPayload,
-        };
-    }
+        persistenceError,
+        modelVersion: input.modelVersion,
+        scenarioPayload: requestPayload,
+    };
+}
 
 export async function assertSimulationModelExists(
     client: SupabaseClient,

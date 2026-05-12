@@ -102,6 +102,9 @@ exports.runInferencePipeline = async function(input) {
 `);
     writeGeneratedModule(generatedDir, path.join('lib', 'logging', 'inferenceLogger.js'), `
 exports.logInference = async function(client, input) {
+    if (client.__failAiInferenceInserts) {
+        throw new Error('Failed to log inference event: canceling statement due to statement timeout');
+    }
     client.tables.ai_inference_events.push({
         id: input.id,
         tenant_id: input.tenant_id,
@@ -286,6 +289,12 @@ class FakeQuery {
 
     async _resolve() {
         if (this.insertRows) {
+            if (this.table === 'ai_inference_events' && this.client.__failAiInferenceInserts) {
+                return {
+                    data: null,
+                    error: { message: 'canceling statement due to statement timeout' },
+                };
+            }
             const inserted = this.insertRows.map((row) => ({
                 id: this.client.nextId(),
                 created_at: new Date().toISOString(),
@@ -408,6 +417,7 @@ class FakeSupabaseClient {
         };
         this.__auditEvents = [];
         this.__alerts = [];
+        this.__failAiInferenceInserts = false;
     }
 
     nextId() {
@@ -531,6 +541,32 @@ async function main() {
         assert.equal(adversarialStatus.results.total_prompts, adversarialPlannedTotal, 'Adversarial polling status should include full result summary.');
         assert.ok(client.tables.adversarial_prompts.length > 0, 'Adversarial simulation should seed the prompt library.');
         assert.ok(client.__auditEvents.some((entry) => entry.eventType === 'adversarial_suite_results'), 'Adversarial simulation should emit a separate adversarial audit event.');
+
+        const loggingTimeoutClient = new FakeSupabaseClient();
+        loggingTimeoutClient.__failAiInferenceInserts = true;
+        const loggingTimeoutRun = await startSimulationRun(loggingTimeoutClient, {
+            actor,
+            tenantId: 'tenant_001',
+            mode: 'adversarial',
+            scenarioName: 'Adversarial Logging Timeout Check',
+            config: {
+                mode: 'adversarial',
+                model_version: 'baseline',
+                categories: ['jailbreak'],
+                prompts_per_category: 5,
+            },
+        });
+        const loggingTimeoutDone = await waitForSimulationCompletion(loggingTimeoutClient, loggingTimeoutRun.id);
+        assert.ok(['complete', 'failed'].includes(loggingTimeoutDone.status), 'Adversarial simulation should finish even when inference event logging times out.');
+        assert.equal(loggingTimeoutDone.completed, loggingTimeoutDone.total, 'Logging timeouts should not prevent adversarial progress from reaching total.');
+        const timeoutPromptEvents = loggingTimeoutClient.tables.simulation_events.filter((entry) =>
+            entry.simulation_id === loggingTimeoutRun.id && entry.event_type === 'prompt_complete',
+        );
+        assert.ok(timeoutPromptEvents.length > 0, 'Logging timeout run should still persist prompt_complete events.');
+        assert.ok(
+            timeoutPromptEvents.every((entry) => String(entry.payload?.persistence_error ?? '').includes('statement timeout')),
+            'Prompt events should retain the persistence warning when inference logging times out.',
+        );
 
         const previousVercel = process.env.VERCEL;
         process.env.VERCEL = '1';

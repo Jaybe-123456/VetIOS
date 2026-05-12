@@ -8,6 +8,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 import { AI_INFERENCE_EVENTS } from '@/lib/db/schemaContracts';
 
 export interface InferenceLogInput {
@@ -51,11 +52,12 @@ export async function logInference(
     input: InferenceLogInput,
 ): Promise<string> {
     const C = AI_INFERENCE_EVENTS.COLUMNS;
+    const eventId = input.id ?? randomUUID();
 
-    const { data, error } = await client
+    const { error } = await client
         .from(AI_INFERENCE_EVENTS.TABLE)
         .insert({
-            [C.id]: input.id,
+            [C.id]: eventId,
             [C.tenant_id]: input.tenant_id,
             [C.user_id]: input.user_id ?? null,
             [C.clinic_id]: input.clinic_id ?? null,
@@ -88,13 +90,11 @@ export async function logInference(
             ...(input.is_synthetic !== undefined ? { [C.is_synthetic]: input.is_synthetic } : {}),
             ...(input.simulation_agent_index !== undefined ? { [C.simulation_agent_index]: input.simulation_agent_index } : {}),
             ...(input.simulation_request_index !== undefined ? { [C.simulation_request_index]: input.simulation_request_index } : {}),
-        })
-        .select('id')
-        .single();
+        });
 
-    if (error || !data) {
+    if (error) {
         throw new Error(`Failed to log inference event: ${error?.message ?? 'Unknown error'}`);
     }
 
-    return data.id as string;
+    return eventId;
 }
