@@ -155,6 +155,10 @@ const DEFAULT_WATCHDOG_TIMEOUT_BUFFER_S = 120;
 const DEFAULT_WORKER_STALE_MS = 20_000;
 const DEFAULT_LOAD_MAX_CONCURRENCY = 10;
 const DEFAULT_ADVERSARIAL_MAX_CONCURRENCY = 4;
+const DEFAULT_INLINE_LOAD_WORK_ITEMS = 2;
+const DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS = 1;
+const DEFAULT_SIMULATION_INFERENCE_TIMEOUT_MS = 22_000;
+const DEFAULT_SIMULATION_PERSISTENCE_TIMEOUT_MS = 4_000;
 const MODEL_SAFETY_CLASSES: Record<string, ModelSafetyClass> = {
     diag_smoke_v1: 'production',
     'diag_large_v11.0.0': 'production',
@@ -943,7 +947,7 @@ async function ensureSimulationWorker(
 
     const runInlineSlice = !shouldLaunchSimulationWorkerImmediately();
     const existingJob = getSimulationJobStore().get(input.simulationId);
-    if (existingJob && !isSimulationWorkerStale(row, existingJob)) {
+    if (!runInlineSlice && existingJob && !isSimulationWorkerStale(row, existingJob)) {
         return;
     }
     if (existingJob) {
@@ -2489,28 +2493,31 @@ export async function runInferenceInternal(
     });
 
     if (governanceDecision.decision === 'block') {
-        await recordPlatformTelemetry(client, {
-            telemetry_key: `simulation:${input.simulationId}:blocked:${randomUUID()}`,
-            inference_event_id: null,
-            tenant_id: input.tenantId,
-            pipeline_id: 'simulation',
-            model_version: input.modelVersion,
-            latency_ms: 0,
-            token_count_input: estimatePayloadTokens(requestPayload),
-            token_count_output: 0,
-            outcome_linked: false,
-            evaluation_score: null,
-            flagged: false,
-            blocked: true,
-            timestamp: new Date().toISOString(),
-            metadata: {
+        await runWithAbortTimeout(
+            readSimulationPersistenceTimeoutMs(),
+            (signal) => recordPlatformTelemetry(client, {
+                telemetry_key: `simulation:${input.simulationId}:blocked:${randomUUID()}`,
+                inference_event_id: null,
+                tenant_id: input.tenantId,
+                pipeline_id: 'simulation',
+                model_version: input.modelVersion,
+                latency_ms: 0,
+                token_count_input: estimatePayloadTokens(requestPayload),
+                token_count_output: 0,
+                outcome_linked: false,
+                evaluation_score: null,
+                flagged: false,
+                blocked: true,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                    simulation_id: input.simulationId,
+                    mode: input.mode,
+                    reason: governanceDecision.reason,
+                },
+                simulation: true,
                 simulation_id: input.simulationId,
-                mode: input.mode,
-                reason: governanceDecision.reason,
-            },
-            simulation: true,
-            simulation_id: input.simulationId,
-        }).catch(() => undefined);
+            }, { signal }),
+        ).catch(() => undefined);
 
         return {
             status: 403,
@@ -2532,11 +2539,86 @@ export async function runInferenceInternal(
     }
 
     const startedAt = Date.now();
-    const inferenceResult = await runInferencePipeline({
-        model: resolvedProviderModel,
-        rawInput: asRecord(requestPayload.input),
-        inputMode: 'json',
-    });
+    let inferenceResult: Awaited<ReturnType<typeof runInferencePipeline>>;
+    try {
+        inferenceResult = await runWithAbortTimeout(
+            readSimulationInferenceTimeoutMs(),
+            (signal) => runInferencePipeline({
+                model: resolvedProviderModel,
+                rawInput: asRecord(requestPayload.input),
+                inputMode: 'json',
+                signal,
+            }),
+        );
+    } catch (error) {
+        const inferenceLatencyMs = Math.max(1, Date.now() - startedAt);
+        const message = isAbortLikeError(error)
+            ? `Simulation inference timed out after ${readSimulationInferenceTimeoutMs()}ms.`
+            : error instanceof Error ? error.message : 'Simulation inference failed.';
+        const prediction = {
+            error: message,
+            model_version: input.modelVersion,
+            abstain_recommendation: true,
+            diagnosis: {
+                confidence_score: 0,
+                top_differentials: [],
+                analysis: 'Simulation request failed before a usable model response was returned.',
+            },
+            risk_assessment: {
+                severity_score: 0,
+                emergency_level: 'UNKNOWN',
+            },
+        };
+        const evaluation = {
+            id: null,
+            score: 0,
+            dataset_version: null,
+        };
+
+        await runWithAbortTimeout(
+            readSimulationPersistenceTimeoutMs(),
+            (signal) => recordPlatformTelemetry(client, {
+                telemetry_key: `simulation:${input.simulationId}:inference_timeout:${randomUUID()}`,
+                inference_event_id: null,
+                tenant_id: input.tenantId,
+                pipeline_id: 'simulation',
+                model_version: input.modelVersion,
+                latency_ms: inferenceLatencyMs,
+                token_count_input: estimatePayloadTokens(requestPayload),
+                token_count_output: estimatePayloadTokens(prediction),
+                outcome_linked: false,
+                evaluation_score: evaluation.score,
+                flagged: true,
+                blocked: false,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                    simulation_id: input.simulationId,
+                    simulation_mode: input.mode,
+                    failure_reason: message,
+                },
+                simulation: true,
+                simulation_id: input.simulationId,
+            }, { signal }),
+        ).catch(() => undefined);
+
+        return {
+            status: isAbortLikeError(error) ? 504 : 500,
+            blocked: false,
+            flagged: true,
+            reason: message,
+            prediction,
+            evaluation,
+            inferenceLatencyMs,
+            confidenceScore: 0,
+            contradictionAnalysis: {},
+            flywheelError: null,
+            inferenceEventId: null,
+            outcomeId: null,
+            persistenceError: null,
+            modelVersion: input.modelVersion,
+            scenarioPayload: requestPayload,
+        };
+    }
     const inferenceLatencyMs = Math.max(1, Date.now() - startedAt);
     const prediction = asRecord(inferenceResult.output_payload);
     const contradictionAnalysis = asRecord(inferenceResult.contradiction_analysis);
@@ -2566,36 +2648,40 @@ export async function runInferenceInternal(
 
     if (input.persistInference) {
         try {
-            inferenceEventId = await logInference(client, {
-                id: randomUUID(),
-                tenant_id: input.tenantId,
-                user_id: input.actor.userId,
-                source_module: 'simulation_workbench',
-                model_name: input.modelVersion,
-                model_version: input.modelVersion,
-                input_signature: asRecord(asRecord(requestPayload.input).input_signature),
-                output_payload: prediction,
-                confidence_score: confidenceScore,
-                uncertainty_metrics: asRecord(inferenceResult.uncertainty_metrics),
-                compute_profile: {
+            inferenceEventId = await runWithAbortTimeout(
+                readSimulationPersistenceTimeoutMs(),
+                (signal) => logInference(client, {
+                    id: randomUUID(),
+                    tenant_id: input.tenantId,
+                    user_id: input.actor.userId,
+                    source_module: 'simulation_workbench',
+                    model_name: input.modelVersion,
+                    model_version: input.modelVersion,
+                    input_signature: asRecord(asRecord(requestPayload.input).input_signature),
+                    output_payload: prediction,
+                    confidence_score: confidenceScore,
+                    uncertainty_metrics: asRecord(inferenceResult.uncertainty_metrics),
+                    compute_profile: {
+                        simulation_id: input.simulationId,
+                        simulation_mode: input.mode,
+                        simulation_agent_index: input.agentIndex ?? null,
+                        simulation_request_index: input.requestIndex ?? null,
+                    },
+                    inference_latency_ms: inferenceLatencyMs,
+                    blocked: false,
+                    flagged: governanceDecision.flagged,
+                    flag_reason: governanceDecision.reason,
+                    blocked_reason: null,
+                    governance_policy_id: governanceDecision.policyId,
+                    orphaned: false,
+                    orphaned_at: null,
                     simulation_id: input.simulationId,
-                    simulation_mode: input.mode,
+                    is_synthetic: true,
                     simulation_agent_index: input.agentIndex ?? null,
                     simulation_request_index: input.requestIndex ?? null,
-                },
-                inference_latency_ms: inferenceLatencyMs,
-                blocked: false,
-                flagged: governanceDecision.flagged,
-                flag_reason: governanceDecision.reason,
-                blocked_reason: null,
-                governance_policy_id: governanceDecision.policyId,
-                orphaned: false,
-                orphaned_at: null,
-                simulation_id: input.simulationId,
-                is_synthetic: true,
-                simulation_agent_index: input.agentIndex ?? null,
-                simulation_request_index: input.requestIndex ?? null,
-            });
+                    abortSignal: signal,
+                }),
+            );
         } catch (error) {
             persistenceError = error instanceof Error ? error.message : 'Simulation inference event logging failed.';
         }
@@ -2646,31 +2732,34 @@ export async function runInferenceInternal(
         evaluation = fallbackEvaluation();
     }
 
-    await recordPlatformTelemetry(client, {
-        telemetry_key: `simulation:${input.simulationId}:${randomUUID()}`,
-        inference_event_id: inferenceEventId,
-        tenant_id: input.tenantId,
-        pipeline_id: 'simulation',
-        model_version: input.modelVersion,
-        latency_ms: inferenceLatencyMs,
-        token_count_input: estimatePayloadTokens(requestPayload),
-        token_count_output: estimatePayloadTokens(prediction),
-        outcome_linked: Boolean(outcomeId),
-        evaluation_score: evaluation?.score ?? null,
-        flagged: governanceDecision.flagged,
-        blocked: false,
-        timestamp: new Date().toISOString(),
-        metadata: {
+    await runWithAbortTimeout(
+        readSimulationPersistenceTimeoutMs(),
+        (signal) => recordPlatformTelemetry(client, {
+            telemetry_key: `simulation:${input.simulationId}:${randomUUID()}`,
+            inference_event_id: inferenceEventId,
+            tenant_id: input.tenantId,
+            pipeline_id: 'simulation',
+            model_version: input.modelVersion,
+            latency_ms: inferenceLatencyMs,
+            token_count_input: estimatePayloadTokens(requestPayload),
+            token_count_output: estimatePayloadTokens(prediction),
+            outcome_linked: Boolean(outcomeId),
+            evaluation_score: evaluation?.score ?? null,
+            flagged: governanceDecision.flagged,
+            blocked: false,
+            timestamp: new Date().toISOString(),
+            metadata: {
+                simulation_id: input.simulationId,
+                simulation_mode: input.mode,
+                species: readText(asRecord(asRecord(requestPayload.input).input_signature).species),
+                prompt_length: input.prompt.length,
+                flywheel_error: flywheelError,
+                persistence_error: persistenceError,
+            },
+            simulation: true,
             simulation_id: input.simulationId,
-            simulation_mode: input.mode,
-            species: readText(asRecord(asRecord(requestPayload.input).input_signature).species),
-            prompt_length: input.prompt.length,
-            flywheel_error: flywheelError,
-            persistence_error: persistenceError,
-        },
-        simulation: true,
-        simulation_id: input.simulationId,
-    }).catch((error) => {
+        }, { signal }),
+    ).catch((error) => {
         persistenceError = [
             persistenceError,
             error instanceof Error ? error.message : 'Simulation telemetry logging failed.',
@@ -4360,9 +4449,60 @@ function shouldLaunchSimulationWorkerImmediately() {
 }
 
 function resolveSimulationWorkerSliceLimit(mode: CanonicalSimulationMode) {
-    if (mode === 'load') return DEFAULT_LOAD_MAX_CONCURRENCY;
-    if (mode === 'adversarial') return DEFAULT_ADVERSARIAL_MAX_CONCURRENCY;
+    if (mode === 'load') return DEFAULT_INLINE_LOAD_WORK_ITEMS;
+    if (mode === 'adversarial') return DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS;
     return Number.MAX_SAFE_INTEGER;
+}
+
+function readSimulationInferenceTimeoutMs() {
+    return clampInteger(
+        readNumber(process.env.VETIOS_SIMULATION_INFERENCE_TIMEOUT_MS),
+        5_000,
+        45_000,
+        DEFAULT_SIMULATION_INFERENCE_TIMEOUT_MS,
+    );
+}
+
+function readSimulationPersistenceTimeoutMs() {
+    return clampInteger(
+        readNumber(process.env.VETIOS_SIMULATION_PERSISTENCE_TIMEOUT_MS),
+        1_000,
+        10_000,
+        DEFAULT_SIMULATION_PERSISTENCE_TIMEOUT_MS,
+    );
+}
+
+async function runWithAbortTimeout<T>(
+    timeoutMs: number,
+    run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => {
+            controller.abort();
+            reject(new Error(`Operation timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
+    });
+
+    try {
+        return await Promise.race([
+            run(controller.signal),
+            timeoutPromise,
+        ]);
+    } finally {
+        if (timeout) clearTimeout(timeout);
+    }
+}
+
+function isAbortLikeError(error: unknown) {
+    if (!(error instanceof Error)) return false;
+    const message = error.message.toLowerCase();
+    return error.name === 'AbortError'
+        || message.includes('aborted')
+        || message.includes('timed out')
+        || message.includes('timeout');
 }
 
 function readWatchdogTimeoutBufferSeconds() {

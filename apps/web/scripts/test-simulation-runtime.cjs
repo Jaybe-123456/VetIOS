@@ -79,6 +79,17 @@ exports.issueInternalPlatformToken = () => {
 exports.runInferencePipeline = async function(input) {
     const rawInput = input?.rawInput?.input_signature || {};
     const note = String(rawInput?.metadata?.raw_note || '');
+    if (/timeout probe/i.test(note)) {
+        await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, 50);
+            input?.signal?.addEventListener('abort', () => {
+                clearTimeout(timer);
+                const error = new Error('The operation was aborted.');
+                error.name = 'AbortError';
+                reject(error);
+            }, { once: true });
+        });
+    }
     const contradiction = /zzqv|nonsensical|999/i.test(note) ? 0.3 : 0.05;
     const confidence = input.model === 'candidate-regressed' ? 0.45 : input.model === 'candidate-strong' ? 0.9 : 0.78;
     return {
@@ -596,14 +607,17 @@ async function main() {
                 simulationId: pollDrivenLoad.id,
             });
             assert.equal(firstLoadPoll.status, 'running', 'Status polling should leave a sliced load run active until all requests execute.');
-            assert.equal(firstLoadPoll.requests_completed, 10, 'Status polling should execute one bounded load work slice.');
+            assert.equal(firstLoadPoll.requests_completed, 2, 'Status polling should execute one bounded load work slice.');
 
-            const secondLoadPoll = await getSimulationStatusPayload(client, {
-                tenantId: 'tenant_001',
-                simulationId: pollDrivenLoad.id,
-            });
-            assert.equal(secondLoadPoll.status, 'complete', 'A subsequent status poll should complete the remaining load slice.');
-            assert.equal(secondLoadPoll.requests_completed, 12, 'Poll-driven load progress should reach the request total.');
+            let nextLoadPoll = firstLoadPoll;
+            while (nextLoadPoll.status === 'running') {
+                nextLoadPoll = await getSimulationStatusPayload(client, {
+                    tenantId: 'tenant_001',
+                    simulationId: pollDrivenLoad.id,
+                });
+            }
+            assert.equal(nextLoadPoll.status, 'complete', 'Repeated status polls should complete the remaining load slices.');
+            assert.equal(nextLoadPoll.requests_completed, 12, 'Poll-driven load progress should reach the request total.');
 
             const pollDrivenAdversarial = await startSimulationRun(client, {
                 actor,
@@ -623,14 +637,17 @@ async function main() {
                 simulationId: pollDrivenAdversarial.id,
             });
             assert.equal(firstPoll.status, 'running', 'Status polling should leave a sliced adversarial run active until all prompts execute.');
-            assert.equal(firstPoll.requests_completed, 4, 'Status polling should execute one bounded adversarial work slice.');
+            assert.equal(firstPoll.requests_completed, 1, 'Status polling should execute one bounded adversarial work slice.');
 
-            const secondPoll = await getSimulationStatusPayload(client, {
-                tenantId: 'tenant_001',
-                simulationId: pollDrivenAdversarial.id,
-            });
-            assert.ok(['complete', 'failed'].includes(secondPoll.status), 'A subsequent status poll should complete the remaining adversarial slice.');
-            assert.equal(secondPoll.requests_completed, adversarialPlannedTotal, 'Poll-driven adversarial progress should reach the executable prompt total.');
+            let nextAdversarialPoll = firstPoll;
+            while (nextAdversarialPoll.status === 'running') {
+                nextAdversarialPoll = await getSimulationStatusPayload(client, {
+                    tenantId: 'tenant_001',
+                    simulationId: pollDrivenAdversarial.id,
+                });
+            }
+            assert.ok(['complete', 'failed'].includes(nextAdversarialPoll.status), 'Repeated status polls should complete the remaining adversarial slices.');
+            assert.equal(nextAdversarialPoll.requests_completed, adversarialPlannedTotal, 'Poll-driven adversarial progress should reach the executable prompt total.');
         } finally {
             if (previousVercel == null) {
                 delete process.env.VERCEL;

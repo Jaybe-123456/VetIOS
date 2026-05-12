@@ -45,6 +45,7 @@ export interface InferenceLogInput {
     is_synthetic?: boolean;
     simulation_agent_index?: number | null;
     simulation_request_index?: number | null;
+    abortSignal?: AbortSignal;
 }
 
 export async function logInference(
@@ -54,7 +55,7 @@ export async function logInference(
     const C = AI_INFERENCE_EVENTS.COLUMNS;
     const eventId = input.id ?? randomUUID();
 
-    const { error } = await client
+    let query = client
         .from(AI_INFERENCE_EVENTS.TABLE)
         .insert({
             [C.id]: eventId,
@@ -91,6 +92,10 @@ export async function logInference(
             ...(input.simulation_agent_index !== undefined ? { [C.simulation_agent_index]: input.simulation_agent_index } : {}),
             ...(input.simulation_request_index !== undefined ? { [C.simulation_request_index]: input.simulation_request_index } : {}),
         });
+    if (input.abortSignal) {
+        query = query.abortSignal(input.abortSignal);
+    }
+    const { error } = await query;
 
     if (error) {
         throw new Error(`Failed to log inference event: ${error?.message ?? 'Unknown error'}`);

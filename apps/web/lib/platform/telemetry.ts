@@ -5,6 +5,7 @@ import type { PlatformTelemetryRecord } from '@/lib/platform/types';
 export async function recordPlatformTelemetry(
     client: SupabaseClient,
     input: PlatformTelemetryRecord,
+    options: { signal?: AbortSignal } = {},
 ): Promise<PlatformTelemetryRecord> {
     const payload = {
         telemetry_key: input.telemetry_key,
@@ -25,11 +26,14 @@ export async function recordPlatformTelemetry(
         simulation_id: input.simulation_id ?? null,
     };
 
-    const { data, error } = await client
+    let query = client
         .from('platform_telemetry')
         .upsert(payload, { onConflict: 'telemetry_key' })
-        .select('*')
-        .single();
+        .select('*');
+    if (options.signal) {
+        query = query.abortSignal(options.signal);
+    }
+    const { data, error } = await query.single();
 
     if (error || !data) {
         throw new Error(`Failed to record platform telemetry: ${error?.message ?? 'Unknown error'}`);

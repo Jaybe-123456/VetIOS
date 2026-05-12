@@ -28,6 +28,7 @@ export interface OrchestratorParams {
     tenantId?: string | null;
     patientId?: string | null;
     inferenceEventId?: string | null;
+    signal?: AbortSignal;
 }
 
 interface InferencePipelineDiagnosis {
@@ -53,7 +54,7 @@ interface InferencePipelineRisk {
     [key: string]: unknown;
 }
 
-export async function runInferencePipeline({ model, rawInput, inputMode }: OrchestratorParams) {
+export async function runInferencePipeline({ model, rawInput, inputMode, signal }: OrchestratorParams) {
     const pipelineTrace: Array<{ stage: string; status: 'completed'; detail?: string }> = [];
     let normalizedSig: Record<string, unknown>;
 
@@ -130,7 +131,7 @@ export async function runInferencePipeline({ model, rawInput, inputMode }: Orche
     const inferenceResult = await runInference({
         model,
         input_signature: normalizedSig,
-    });
+    }, { signal });
     pipelineTrace.push({ stage: 'provider_inference', status: 'completed' });
 
     const payload = inferenceResult.output_payload;
