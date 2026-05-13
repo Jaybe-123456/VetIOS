@@ -348,6 +348,9 @@ export function buildOutcomeLearningPatch(input: OutcomeLearningInput): Partial<
     const confirmedDiagnosis = readText(
         input.outcomePayload.confirmed_diagnosis ??
         input.outcomePayload.final_diagnosis ??
+        input.outcomePayload.actual_diagnosis ??
+        input.outcomePayload.actual_label ??
+        input.outcomePayload.label ??
         input.outcomePayload.diagnosis,
     );
     const primaryConditionClass = readText(

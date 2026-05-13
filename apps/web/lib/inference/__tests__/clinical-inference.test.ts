@@ -376,6 +376,10 @@ describe('clinical inference engine deep upgrade', () => {
 
     it('persists synthetic inference provenance when simulation context is supplied', async () => {
         const inserted: Array<Record<string, unknown>> = [];
+        const inferenceEventId = '11111111-1111-4111-8111-111111111111';
+        const clinicalCaseId = '33333333-3333-4333-8333-333333333333';
+        const now = '2026-05-13T00:00:00.000Z';
+        let clinicalCaseRow: Record<string, unknown> | null = null;
         const supabase = {
             from: (table: string) => {
                 if (table === 'label_calibration') {
@@ -394,10 +398,51 @@ describe('clinical inference engine deep upgrade', () => {
                             inserted.push(payload);
                             return {
                                 select: () => ({
-                                    single: () => Promise.resolve({ data: { id: '11111111-1111-4111-8111-111111111111' }, error: null }),
+                                    single: () => Promise.resolve({ data: { id: inferenceEventId }, error: null }),
                                 }),
                             };
                         },
+                    };
+                }
+
+                if (table === 'clinical_cases') {
+                    return {
+                        select: () => ({
+                            eq: () => ({
+                                eq: () => ({
+                                    maybeSingle: () => Promise.resolve({ data: clinicalCaseRow, error: null }),
+                                }),
+                            }),
+                        }),
+                        upsert: (record: Record<string, unknown>) => ({
+                            select: () => ({
+                                single: () => {
+                                    clinicalCaseRow = {
+                                        ...record,
+                                        id: clinicalCaseId,
+                                        created_at: now,
+                                        updated_at: now,
+                                    };
+                                    return Promise.resolve({ data: clinicalCaseRow, error: null });
+                                },
+                            }),
+                        }),
+                        update: (patch: Record<string, unknown>) => ({
+                            eq: () => ({
+                                eq: () => ({
+                                    select: () => ({
+                                        single: () => {
+                                            clinicalCaseRow = {
+                                                ...(clinicalCaseRow ?? {}),
+                                                ...patch,
+                                                updated_at: now,
+                                            };
+                                            return Promise.resolve({ data: clinicalCaseRow, error: null });
+                                        },
+                                    }),
+                                }),
+                            }),
+                        }),
                     };
                 }
 
@@ -426,12 +471,18 @@ describe('clinical inference engine deep upgrade', () => {
             },
         });
 
-        expect(result.inference_event_id).toBe('11111111-1111-4111-8111-111111111111');
+        expect(result.inference_event_id).toBe(inferenceEventId);
+        expect(result.clinical_case_id).toBe(clinicalCaseId);
         expect(inserted[0]).toMatchObject({
+            case_id: clinicalCaseId,
             simulation_id: '22222222-2222-4222-8222-222222222222',
             is_synthetic: true,
             simulation_request_index: 3,
             source_module: 'legacy_simulate',
+        });
+        expect(clinicalCaseRow).toMatchObject({
+            id: clinicalCaseId,
+            latest_inference_event_id: inferenceEventId,
         });
     });
 });

@@ -123,6 +123,7 @@ export async function POST(req: Request) {
             model: parsed.data.model,
             inputSignature: parsed.data.input.input_signature as InputSignature,
             persist: true,
+            userId: auth.actor.userId,
             sourceModule: simulationContext.simulationId ? 'simulation_api' : 'clinical_api',
             simulationId: simulationContext.simulationId,
             isSynthetic: simulationContext.isSynthetic,
@@ -133,6 +134,7 @@ export async function POST(req: Request) {
 
         const response = NextResponse.json({
             inference_event_id: result.inference_event_id,
+            clinical_case_id: result.clinical_case_id,
             data: {
                 ...result.data,
                 output_payload: result.output_payload,

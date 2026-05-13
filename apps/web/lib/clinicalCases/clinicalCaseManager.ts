@@ -406,6 +406,7 @@ export async function finalizeClinicalCaseAfterOutcome(
 
     return updateClinicalCaseActivity(store, clinicalCase, {
         latest_outcome_event_id: outcomeEventId,
+        ...(outcomeClosesClinicalCase(context) ? { resolved_at: context.observedAt } : {}),
     }, context, learningPatch);
 }
 
@@ -753,6 +754,20 @@ function pickExistingLearningState(clinicalCase: ClinicalCaseRecord | null): Cli
         degraded_confidence: clinicalCase?.degraded_confidence ?? null,
         differential_spread: clinicalCase?.differential_spread ?? null,
     };
+}
+
+function outcomeClosesClinicalCase(context: ClinicalCaseOutcomeContext): boolean {
+    const payload = context.outcomePayload ?? {};
+    const outcomeType = (context.outcomeType ?? '').toLowerCase();
+    return Boolean(
+        normalizeText(payload.confirmed_diagnosis) ??
+        normalizeText(payload.final_diagnosis) ??
+        normalizeText(payload.actual_diagnosis) ??
+        normalizeText(payload.label),
+    )
+        || outcomeType.includes('confirmed')
+        || outcomeType.includes('final')
+        || outcomeType.includes('resolved');
 }
 
 function chooseValidationState(

@@ -1,5 +1,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { computeCIRE, type CIRESignals, type Differential } from '@/lib/cire';
+import {
+    createSupabaseClinicalCaseStore,
+    ensureCanonicalClinicalCase,
+    finalizeClinicalCaseAfterInference,
+} from '@/lib/clinicalCases/clinicalCaseManager';
 import { runClinicalInferenceEngine } from '@/lib/inference/engine';
 import type { ClinicalInferenceEngineResult } from '@/lib/inference/engine';
 
@@ -27,6 +32,9 @@ export interface RunInferenceOptions {
     requestId: string;
     supabase: SupabaseClient;
     persist?: boolean;
+    userId?: string | null;
+    clinicId?: string | null;
+    requestedCaseId?: string | null;
     sourceModule?: string | null;
     simulationId?: string | null;
     isSynthetic?: boolean;
@@ -37,6 +45,7 @@ export interface RunInferenceOptions {
 
 export interface RunInferenceResult {
     inference_event_id: string | null;
+    clinical_case_id: string | null;
     data: {
         confidence_score: number;
         differentials: Differential[];
@@ -69,10 +78,13 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
         ?? clampProbability(clinicalOutput.confidence);
     const latencyMs = Date.now() - startTime;
     const outputPayload = buildOutputPayload(calibratedDifferentials, confidenceScore, cire, clinicalOutput);
-    const inferenceEventId = options.persist === false
+    const persistenceResult = options.persist === false
         ? null
         : await persistInferenceEvent(options.supabase, {
             tenantId: options.tenantId,
+            userId: options.userId ?? null,
+            clinicId: options.clinicId ?? null,
+            requestedCaseId: options.requestedCaseId ?? null,
             model: options.model,
             inputSignature: options.inputSignature,
             differentials: calibratedDifferentials,
@@ -89,7 +101,8 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
         });
 
     return {
-        inference_event_id: inferenceEventId,
+        inference_event_id: persistenceResult?.inferenceEventId ?? null,
+        clinical_case_id: persistenceResult?.clinicalCaseId ?? null,
         data: {
             confidence_score: confidenceScore,
             differentials: calibratedDifferentials,
@@ -188,6 +201,9 @@ async function persistInferenceEvent(
     supabase: SupabaseClient,
     input: {
         tenantId: string;
+        userId?: string | null;
+        clinicId?: string | null;
+        requestedCaseId?: string | null;
         model: InferenceModelDescriptor;
         inputSignature: InputSignature;
         differentials: Differential[];
@@ -202,7 +218,21 @@ async function persistInferenceEvent(
         simulationRequestIndex?: number | null;
         parentInferenceEventId?: string | null;
     },
-): Promise<string> {
+): Promise<{ inferenceEventId: string; clinicalCaseId: string | null }> {
+    const observedAt = new Date().toISOString();
+    const metadata = asRecord(input.inputSignature.metadata);
+    const simulationId = input.simulationId ?? readText(metadata.simulation_id);
+    const sourceModule = input.sourceModule ?? (simulationId ? 'simulation_api' : 'clinical_api');
+    const caseStore = createSupabaseClinicalCaseStore(supabase);
+    const clinicalCase = await ensureCanonicalClinicalCase(caseStore, {
+        tenantId: input.tenantId,
+        userId: input.userId ?? null,
+        clinicId: input.clinicId ?? null,
+        requestedCaseId: resolveRequestedCaseId(input.inputSignature, input.requestedCaseId),
+        sourceModule,
+        inputSignature: input.inputSignature,
+        observedAt,
+    });
     const enrichedOutputPayload: Record<string, unknown> = {
         ...input.outputPayload,
         calibration: {
@@ -218,8 +248,6 @@ async function persistInferenceEvent(
         differentials: input.differentials,
     };
 
-    const metadata = asRecord(input.inputSignature.metadata);
-    const simulationId = input.simulationId ?? readText(metadata.simulation_id);
     const isSynthetic = input.isSynthetic ?? (metadata.is_synthetic === true || Boolean(simulationId));
     const topDiagnosis = input.differentials[0]?.label ?? null;
     const contradiction = asRecord(enrichedOutputPayload.contradiction_analysis);
@@ -228,6 +256,9 @@ async function persistInferenceEvent(
 
     const payload: Record<string, unknown> = {
         tenant_id: input.tenantId,
+        user_id: input.userId ?? null,
+        clinic_id: input.clinicId ?? null,
+        case_id: clinicalCase.id,
         input_signature: input.inputSignature,
         model_name: input.model.name,
         model_version: input.model.version,
@@ -235,7 +266,7 @@ async function persistInferenceEvent(
         inference_latency_ms: input.latencyMs,
         output_payload: enrichedOutputPayload,
         uncertainty_metrics: uncertaintyMetrics,
-        source_module: input.sourceModule ?? (simulationId ? 'simulation_api' : 'clinical_api'),
+        source_module: sourceModule,
         species: readText(input.inputSignature.species),
         top_diagnosis: topDiagnosis,
         contradiction_score: contradictionScore,
@@ -252,9 +283,31 @@ async function persistInferenceEvent(
             ?? readNumber(metadata.simulation_step);
     }
 
-    return insertInferenceEvent(supabase, payload, {
+    const inferenceEventId = await insertInferenceEvent(supabase, payload, {
         requireSimulationProvenance: Boolean(simulationId),
     });
+
+    await finalizeClinicalCaseAfterInference(caseStore, clinicalCase, inferenceEventId, {
+        observedAt,
+        userId: input.userId ?? null,
+        sourceModule,
+        outputPayload: enrichedOutputPayload,
+        confidenceScore: input.confidenceScore,
+        modelVersion: input.model.version,
+        syncMode: 'live',
+    });
+
+    return { inferenceEventId, clinicalCaseId: clinicalCase.id };
+}
+
+function resolveRequestedCaseId(inputSignature: InputSignature, explicitCaseId?: string | null): string | null {
+    const metadata = asRecord(inputSignature.metadata);
+    return readText(explicitCaseId)
+        ?? readText(inputSignature.case_id)
+        ?? readText(inputSignature.clinical_case_id)
+        ?? readText(metadata.case_id)
+        ?? readText(metadata.clinical_case_id)
+        ?? readText(metadata.source_case_reference);
 }
 
 const OPTIONAL_INFERENCE_COLUMNS = [

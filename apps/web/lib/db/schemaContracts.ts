@@ -19,10 +19,19 @@ export const AI_INFERENCE_EVENTS = {
         model_version: 'model_version',           // text, NOT NULL
         input_signature: 'input_signature',       // jsonb, NOT NULL
         output_payload: 'output_payload',         // jsonb, NOT NULL
+        differentials: 'differentials',           // jsonb, NOT NULL
+        cire: 'cire',                             // jsonb, NOT NULL
         confidence_score: 'confidence_score',     // double precision, nullable
+        calibration_delta: 'calibration_delta',   // double precision, nullable
         uncertainty_metrics: 'uncertainty_metrics', // jsonb, nullable
         inference_latency_ms: 'inference_latency_ms', // integer, nullable
+        latency_ms: 'latency_ms',                 // integer, nullable
         compute_profile: 'compute_profile',       // jsonb, nullable
+        outcome_resolved: 'outcome_resolved',     // boolean, NOT NULL
+        outcome_confirmed: 'outcome_confirmed',   // boolean, NOT NULL
+        outcome_confirmed_at: 'outcome_confirmed_at', // timestamptz, nullable
+        confirmed_diagnosis: 'confirmed_diagnosis', // text, nullable
+        prediction_correct: 'prediction_correct', // boolean, nullable
         blocked: 'blocked',                       // boolean, NOT NULL
         flagged: 'flagged',                       // boolean, NOT NULL
         flag_reason: 'flag_reason',               // text, nullable
