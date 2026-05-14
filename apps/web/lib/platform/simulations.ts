@@ -155,11 +155,14 @@ const DEFAULT_WATCHDOG_TIMEOUT_BUFFER_S = 120;
 const DEFAULT_WORKER_STALE_MS = 20_000;
 const DEFAULT_LOAD_MAX_CONCURRENCY = 10;
 const DEFAULT_ADVERSARIAL_MAX_CONCURRENCY = 6;
+const DEFAULT_REGRESSION_MAX_CONCURRENCY = 8;
 const DEFAULT_INLINE_LOAD_WORK_ITEMS = 10;
 const DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS = 12;
+const DEFAULT_INLINE_REGRESSION_WORK_ITEMS = 16;
 const DEFAULT_SIMULATION_INFERENCE_TIMEOUT_MS = 15_000;
 const DEFAULT_SIMULATION_PERSISTENCE_TIMEOUT_MS = 4_000;
 const MAX_LOAD_SIMULATION_WALL_CLOCK_MS = 120_000;
+const MAX_REGRESSION_SIMULATION_WALL_CLOCK_MS = 120_000;
 const MODEL_SAFETY_CLASSES: Record<string, ModelSafetyClass> = {
     diag_smoke_v1: 'production',
     'diag_large_v11.0.0': 'production',
@@ -825,11 +828,18 @@ export async function countInferenceEventsForScope(
         actor: PlatformActor;
     },
 ) {
-    const rows = await listRows(client, 'ai_inference_events');
-    if (input.scope === 'all' && input.actor.role === 'system_admin') {
-        return rows.length;
+    let query = client
+        .from('ai_inference_events')
+        .select('id', { count: 'exact', head: true });
+    if (!(input.scope === 'all' && input.actor.role === 'system_admin')) {
+        query = query.eq('tenant_id', input.tenantId);
     }
-    return rows.filter((row) => readText(row.tenant_id) === input.tenantId).length;
+
+    const { count, error } = await query;
+    if (error) {
+        throw new Error(`Failed to count ai_inference_events: ${error.message}`);
+    }
+    return count ?? 0;
 }
 
 export async function resolveSimulationProgress(
@@ -949,9 +959,14 @@ async function ensureSimulationWorker(
     const record = normalizeSimulationRecord(row) as unknown as SimulationRecord;
     const canonicalMode = normalizeSimulationMode(readText((record as unknown as Record<string, unknown>).mode) ?? 'load');
     const completed = readNumber(row.completed) ?? readNumber(row.requests_completed) ?? readNumber(asRecord(row.results).completed) ?? 0;
-    const total = readNumber(row.total) ?? readNumber(row.requests_total) ?? readNumber(asRecord(row.results).total_requests) ?? 0;
-    if (canonicalMode === 'load' && completed < total && isLoadSimulationWallClockExpired(row)) {
-        const message = `Load simulation exceeded the ${Math.round(MAX_LOAD_SIMULATION_WALL_CLOCK_MS / 1000)}s wall-clock limit.`;
+    const total = readNumber(row.total) ?? readNumber(row.requests_total) ?? readNumber(asRecord(row.results).total_requests) ?? readNumber(asRecord(row.results).total_replayed) ?? 0;
+    const wallClockLimitMs = canonicalMode === 'load'
+        ? MAX_LOAD_SIMULATION_WALL_CLOCK_MS
+        : canonicalMode === 'regression'
+            ? MAX_REGRESSION_SIMULATION_WALL_CLOCK_MS
+            : null;
+    if (wallClockLimitMs != null && completed < total && isSimulationWallClockExpired(row, wallClockLimitMs)) {
+        const message = `${canonicalMode === 'regression' ? 'Regression' : 'Load'} simulation exceeded the ${Math.round(wallClockLimitMs / 1000)}s wall-clock limit.`;
         await appendSimulationEvent(client, {
             simulation_id: input.simulationId,
             tenant_id: input.tenantId,
@@ -970,7 +985,7 @@ async function ensureSimulationWorker(
                 completed,
                 total_requests: total,
                 error_message: message,
-                max_wall_clock_seconds: Math.round(MAX_LOAD_SIMULATION_WALL_CLOCK_MS / 1000),
+                max_wall_clock_seconds: Math.round(wallClockLimitMs / 1000),
             },
             errorMessage: message,
         }).catch(() => undefined);
@@ -1089,7 +1104,7 @@ async function executeSimulation(
         }
 
         if (canonicalMode === 'regression') {
-            await runRegressionSimulation(client, actor, record);
+            await runRegressionSimulation(client, actor, record, options);
             return;
         }
 
@@ -1973,6 +1988,7 @@ async function runRegressionSimulation(
     client: SupabaseClient,
     actor: PlatformActor,
     record: SimulationRecord,
+    options: SimulationExecutionOptions = {},
 ) {
     const config = asRecord((record as unknown as Record<string, unknown>).config);
     const baselineModel = readText(config.baseline_model) ?? await getActiveModelVersion(client, record.tenant_id);
@@ -2009,21 +2025,24 @@ async function runRegressionSimulation(
         return;
     }
 
-    const allEvents = await listRows(client, 'ai_inference_events');
     const planEvent = await findSimulationEventByType(client, record.tenant_id, record.id, 'regression_plan');
     let baselineEvents: Array<Record<string, unknown>>;
     if (planEvent) {
         const plannedEventIds = asStringArray(asRecord(planEvent.payload).baseline_event_ids);
-        const plannedLookup = new Map(allEvents.map((event) => [readText(event.id) ?? randomUUID(), event]));
+        const plannedEvents = await listInferenceEventsByIds(client, {
+            tenantId: tenantScope === 'all' ? null : record.tenant_id,
+            eventIds: plannedEventIds,
+        });
+        const plannedLookup = new Map(plannedEvents.map((event) => [readText(event.id) ?? randomUUID(), event]));
         baselineEvents = plannedEventIds
             .map((eventId) => plannedLookup.get(eventId))
             .filter((event): event is Record<string, unknown> => Boolean(event));
     } else {
-        const candidateBaselineEvents = allEvents
-            .filter((row) => tenantScope === 'all' ? true : readText(row.tenant_id) === record.tenant_id)
-            .filter((row) => readBoolean(row.is_synthetic) !== true && readText(row.simulation_id) == null)
-            .filter((row) => readText(row.status) === 'completed' || readText(row.status) == null)
-            .sort(compareCreatedDesc);
+        const candidateBaselineEvents = await listRegressionBaselineEvents(client, {
+            tenantId: record.tenant_id,
+            tenantScope,
+            limit: replayN,
+        });
         const candidateScores = await loadBaselineScores(
             client,
             tenantScope === 'all' ? null : record.tenant_id,
@@ -2056,11 +2075,7 @@ async function runRegressionSimulation(
         baselineEvents = scoredBaselineEvents;
         baselineScores = await loadBaselineScores(client, tenantScope === 'all' ? null : record.tenant_id, baselineEvents.map((row) => readText(row.id)).filter((value): value is string => Boolean(value)));
     }
-    const existingReplays = (await listRows(client, 'regression_replays'))
-        .filter((row) =>
-            readText(row.simulation_id) === record.id
-            && readText(row.tenant_id) === record.tenant_id,
-        );
+    const existingReplays = await listRegressionReplaysForSimulation(client, record.tenant_id, record.id);
     const completedReplayIds = new Set(existingReplays.map((row) => readText(row.original_event_id)).filter((value): value is string => Boolean(value)));
     let replayed = existingReplays.length;
     let regressionCount = existingReplays.filter((row) => readBoolean(row.is_regression) === true).length;
@@ -2093,7 +2108,24 @@ async function runRegressionSimulation(
         },
     });
 
-    for (const event of baselineEvents) {
+    const pendingReplays = baselineEvents
+        .map((event, index) => ({ event, index }))
+        .filter(({ event }) => {
+            const originalEventId = readText(event.id);
+            return !originalEventId || !completedReplayIds.has(originalEventId);
+        });
+    const workLimit = clampInteger(options.maxWorkItems, 1, Math.max(1, pendingReplays.length), pendingReplays.length);
+    const pendingBatch = pendingReplays.slice(0, workLimit);
+    const maxConcurrency = resolveRegressionSimulationConcurrency(config, pendingBatch.length);
+    let replayCursor = 0;
+
+    async function executeNextReplay() {
+        while (replayCursor < pendingBatch.length) {
+            const task = pendingBatch[replayCursor];
+            replayCursor += 1;
+            if (!task) return;
+
+        const { event, index } = task;
         const originalEventId = readText(event.id);
         if (originalEventId && completedReplayIds.has(originalEventId)) {
             continue;
@@ -2103,7 +2135,7 @@ async function runRegressionSimulation(
         const prompt = readText(asRecord(inputSignature.metadata).raw_note)
             ?? asStringArray(inputSignature.symptoms).join(', ')
             ?? 'Regression replay case';
-        const requestIndex = replayed;
+        const requestIndex = index;
         const candidate = await runInferenceInternal(client, {
             actor,
             tenantId: record.tenant_id,
@@ -2115,7 +2147,7 @@ async function runRegressionSimulation(
             breed: readText(inputSignature.breed),
             agentIndex: 0,
             requestIndex,
-            persistInference: true,
+            persistInference: false,
         });
 
         replayed += 1;
@@ -2202,6 +2234,34 @@ async function runRegressionSimulation(
                 threshold_pct: thresholdPct,
             },
         });
+    }
+    }
+
+    await Promise.all(
+        Array.from({ length: Math.min(maxConcurrency, pendingBatch.length) }, () => executeNextReplay()),
+    );
+
+    if (replayed < baselineEvents.length) {
+        await updateSimulationRecord(client, record, {
+            total: baselineEvents.length,
+            completed: replayed,
+            results: {
+                baseline_model: baselineModel,
+                candidate_model: candidateModel,
+                total_replayed: baselineEvents.length,
+                regression_count: regressionCount,
+                improvement_count: improvementCount,
+                neutral_count: neutralCount,
+                regression_rate: baselineEvents.length > 0 ? toFixedNumber((regressionCount / baselineEvents.length) * 100, 2) : 0,
+                baseline_mean: toFixedNumber(mean(baselineObserved) ?? 0, 4),
+                candidate_mean: toFixedNumber(mean(candidateObserved) ?? 0, 4),
+                delta: toFixedNumber((mean(candidateObserved) ?? 0) - (mean(baselineObserved) ?? 0), 4),
+                blocked: false,
+                auto_block: autoBlock,
+                threshold_pct: thresholdPct,
+            },
+        });
+        return;
     }
 
     const baselineMean = toFixedNumber(mean(baselineObserved) ?? 0, 4);
@@ -2367,7 +2427,7 @@ async function maybeRunRegressionFixtureSimulation(
             weightKg: readNumber(payload.weight_kg),
             agentIndex: 0,
             requestIndex: index,
-            persistInference: true,
+            persistInference: false,
         });
         latencies.push(inference.inferenceLatencyMs);
 
@@ -2839,15 +2899,35 @@ export async function assertSimulationModelExists(
     tenantId: string,
     modelVersion: string,
 ) {
-    const registryRows = await listRows(client, 'model_registry').catch(() => []);
-    const inferenceRows = await listRows(client, 'ai_inference_events').catch(() => []);
-    const exists = registryRows.some((row) =>
-        readText(row.model_version) === modelVersion
-        && readText(row.tenant_id) === tenantId,
-    ) || inferenceRows.some((row) =>
-        readText(row.model_version) === modelVersion
-        && readText(row.tenant_id) === tenantId,
-    );
+    let registryRows: Array<Record<string, unknown>> = [];
+    let inferenceRows: Array<Record<string, unknown>> = [];
+
+    try {
+        const { data } = await client
+            .from('model_registry')
+            .select('model_version,tenant_id')
+            .eq('tenant_id', tenantId)
+            .eq('model_version', modelVersion)
+            .limit(1);
+        registryRows = (data ?? []) as Array<Record<string, unknown>>;
+    } catch {
+        registryRows = [];
+    }
+
+    try {
+        const { data } = await client
+            .from('ai_inference_events')
+            .select('model_version,tenant_id')
+            .eq('tenant_id', tenantId)
+            .eq('model_version', modelVersion)
+            .limit(1);
+        inferenceRows = (data ?? []) as Array<Record<string, unknown>>;
+    } catch {
+        inferenceRows = [];
+    }
+
+    const exists = ((registryRows ?? []) as Array<Record<string, unknown>>).length > 0
+        || ((inferenceRows ?? []) as Array<Record<string, unknown>>).length > 0;
 
     if (!exists) {
         throw new Error(`Model version ${modelVersion} was not found.`);
@@ -3517,21 +3597,116 @@ async function loadBaselineScores(
     tenantId: string | null,
     inferenceEventIds: string[],
 ) {
-    const rows = await listRows(client, 'evaluations');
-    const filtered = rows.filter((row) => {
-        if (tenantId && readText(row.tenant_id) !== tenantId) return false;
-        return inferenceEventIds.includes(readText(row.inference_event_id) ?? '');
-    });
-
     const scores = new Map<string, number>();
-    for (const row of filtered) {
-        const inferenceEventId = readText(row.inference_event_id);
-        const score = readNumber(row.score);
-        if (inferenceEventId && score != null) {
-            scores.set(inferenceEventId, score);
+    const uniqueEventIds = uniqueStringArray(inferenceEventIds);
+    if (uniqueEventIds.length === 0) {
+        return scores;
+    }
+
+    for (const chunk of chunkArray(uniqueEventIds, 100)) {
+        let query = client
+            .from('evaluations')
+            .select('tenant_id,inference_event_id,score')
+            .in('inference_event_id', chunk);
+        if (tenantId) {
+            query = query.eq('tenant_id', tenantId);
+        }
+
+        const { data, error } = await query;
+        if (error) {
+            throw new Error(`Failed to read evaluations: ${error.message}`);
+        }
+
+        for (const row of (data ?? []) as Array<Record<string, unknown>>) {
+            const inferenceEventId = readText(row.inference_event_id);
+            const score = readNumber(row.score);
+            if (inferenceEventId && score != null) {
+                scores.set(inferenceEventId, score);
+            }
         }
     }
+
     return scores;
+}
+
+async function listInferenceEventsByIds(
+    client: SupabaseClient,
+    input: {
+        tenantId: string | null;
+        eventIds: string[];
+    },
+) {
+    const rows: Array<Record<string, unknown>> = [];
+    const uniqueEventIds = uniqueStringArray(input.eventIds);
+    if (uniqueEventIds.length === 0) {
+        return rows;
+    }
+
+    for (const chunk of chunkArray(uniqueEventIds, 100)) {
+        let query = client
+            .from('ai_inference_events')
+            .select('id,tenant_id,input_signature,created_at,simulation_id,is_synthetic')
+            .in('id', chunk);
+        if (input.tenantId) {
+            query = query.eq('tenant_id', input.tenantId);
+        }
+
+        const { data, error } = await query;
+        if (error) {
+            throw new Error(`Failed to read ai_inference_events: ${error.message}`);
+        }
+        rows.push(...((data ?? []) as Array<Record<string, unknown>>));
+    }
+
+    return rows;
+}
+
+async function listRegressionBaselineEvents(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        tenantScope: 'own' | 'all';
+        limit: number;
+    },
+) {
+    const fetchLimit = clampInteger(input.limit * 8, input.limit, 1_000, input.limit);
+    let query = client
+        .from('ai_inference_events')
+        .select('id,tenant_id,input_signature,created_at,simulation_id,is_synthetic')
+        .order('created_at', { ascending: false })
+        .limit(fetchLimit);
+    if (input.tenantScope !== 'all') {
+        query = query.eq('tenant_id', input.tenantId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+        throw new Error(`Failed to read ai_inference_events: ${error.message}`);
+    }
+
+    return ((data ?? []) as Array<Record<string, unknown>>)
+        .filter((row) => input.tenantScope === 'all' ? true : readText(row.tenant_id) === input.tenantId)
+        .filter((row) => readBoolean(row.is_synthetic) !== true && readText(row.simulation_id) == null)
+        .sort(compareCreatedDesc)
+        .slice(0, input.limit);
+}
+
+async function listRegressionReplaysForSimulation(
+    client: SupabaseClient,
+    tenantId: string,
+    simulationId: string,
+) {
+    const { data, error } = await client
+        .from('regression_replays')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('simulation_id', simulationId);
+
+    if (error) {
+        throw new Error(`Failed to read regression_replays: ${error.message}`);
+    }
+
+    return (data ?? []) as Array<Record<string, unknown>>;
 }
 
 async function blockCandidateModel(
@@ -4463,6 +4638,19 @@ function resolveLoadSimulationConcurrency(
     );
 }
 
+function resolveRegressionSimulationConcurrency(
+    config: Record<string, unknown>,
+    pending: number,
+) {
+    const configured = readNumber(config.max_concurrency) ?? readNumber(config.concurrency);
+    return clampInteger(
+        configured,
+        1,
+        Math.max(1, Math.min(pending, DEFAULT_REGRESSION_MAX_CONCURRENCY)),
+        Math.max(1, Math.min(pending, DEFAULT_REGRESSION_MAX_CONCURRENCY)),
+    );
+}
+
 function isSimulationWorkerStale(
     row: Record<string, unknown>,
     job: SimulationJobState,
@@ -4473,9 +4661,9 @@ function isSimulationWorkerStale(
     return Date.now() - heartbeatAtMs > readWorkerStaleMs();
 }
 
-function isLoadSimulationWallClockExpired(row: Record<string, unknown>) {
+function isSimulationWallClockExpired(row: Record<string, unknown>, limitMs: number) {
     const startedAtMs = readDateMs(row.started_at) ?? readDateMs(row.created_at);
-    return startedAtMs != null && Date.now() - startedAtMs > MAX_LOAD_SIMULATION_WALL_CLOCK_MS;
+    return startedAtMs != null && Date.now() - startedAtMs > limitMs;
 }
 
 function readHeartbeatIntervalMs() {
@@ -4505,6 +4693,7 @@ function shouldLaunchSimulationWorkerImmediately() {
 function resolveSimulationWorkerSliceLimit(mode: CanonicalSimulationMode) {
     if (mode === 'load') return DEFAULT_INLINE_LOAD_WORK_ITEMS;
     if (mode === 'adversarial') return DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS;
+    if (mode === 'regression') return DEFAULT_INLINE_REGRESSION_WORK_ITEMS;
     return Number.MAX_SAFE_INTEGER;
 }
 
@@ -4663,6 +4852,14 @@ function asStringArray(value: unknown) {
 
 function uniqueStringArray(values: string[]) {
     return Array.from(new Set(values));
+}
+
+function chunkArray<T>(values: T[], size: number) {
+    const chunks: T[][] = [];
+    for (let index = 0; index < values.length; index += size) {
+        chunks.push(values.slice(index, index + size));
+    }
+    return chunks;
 }
 
 function mean(values: number[]) {

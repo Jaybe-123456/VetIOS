@@ -706,6 +706,11 @@ async function main() {
         assert.equal(regressionDone.summary.blocked, true, 'Regression simulation should record blocked status in results.');
         assert.equal(candidateModel?.blocked, true, 'Regression simulation should block the candidate model in model_registry.');
         assert.equal(candidateModel?.block_reason, 'Regression simulation', 'Regression simulation should record the block reason.');
+        assert.equal(
+            client.tables.ai_inference_events.filter((entry) => entry.simulation_id === regression.id).length,
+            0,
+            'Regression replays should not write synthetic candidate calls into clinical inference history.',
+        );
         assert.ok(client.__auditEvents.length >= 1, 'Regression simulation should emit a governance audit event.');
         assert.ok(client.__alerts.some((entry) => entry.type === 'model_blocked'), 'Regression simulation should raise a model_blocked alert.');
 
