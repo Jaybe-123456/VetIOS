@@ -534,7 +534,7 @@ async function main() {
             },
         });
         const adversarialDone = await waitForSimulationCompletion(client, adversarial.id);
-        assert.ok(['complete', 'failed'].includes(adversarialDone.status), 'Adversarial simulation should finish with a terminal status.');
+        assert.equal(adversarialDone.status, 'complete', 'Adversarial simulation should complete when all prompts are evaluated.');
         assert.equal(adversarialDone.total, adversarialPlannedTotal, 'Adversarial simulation should use the executable plan total, not the requested maximum.');
         assert.ok(typeof adversarialDone.summary.passed === 'number', 'Adversarial simulation should record pass counts.');
         assert.ok(typeof adversarialDone.summary.failed === 'number', 'Adversarial simulation should record failure counts.');
@@ -566,7 +566,7 @@ async function main() {
             },
         });
         const loggingTimeoutDone = await waitForSimulationCompletion(loggingTimeoutClient, loggingTimeoutRun.id);
-        assert.ok(['complete', 'failed'].includes(loggingTimeoutDone.status), 'Adversarial simulation should finish even when inference event logging times out.');
+        assert.equal(loggingTimeoutDone.status, 'complete', 'Adversarial simulation should finish even when inference event logging times out.');
         assert.equal(loggingTimeoutDone.completed, loggingTimeoutDone.total, 'Logging timeouts should not prevent adversarial progress from reaching total.');
         const timeoutPromptEvents = loggingTimeoutClient.tables.simulation_events.filter((entry) =>
             entry.simulation_id === loggingTimeoutRun.id && entry.event_type === 'prompt_complete',
@@ -663,7 +663,7 @@ async function main() {
                 tenantId: 'tenant_001',
                 simulationId: pollDrivenAdversarial.id,
             });
-            assert.ok(['running', 'complete', 'failed'].includes(firstPoll.status), 'Status polling should execute a bounded adversarial work slice.');
+            assert.ok(['running', 'complete'].includes(firstPoll.status), 'Status polling should execute a bounded adversarial work slice.');
             assert.equal(firstPoll.requests_completed, adversarialPlannedTotal, 'The executable adversarial plan should fit in one bounded work slice for this fixture.');
 
             let nextAdversarialPoll = firstPoll;
@@ -673,7 +673,7 @@ async function main() {
                     simulationId: pollDrivenAdversarial.id,
                 });
             }
-            assert.ok(['complete', 'failed'].includes(nextAdversarialPoll.status), 'Repeated status polls should complete the remaining adversarial slices.');
+            assert.equal(nextAdversarialPoll.status, 'complete', 'Repeated status polls should complete the remaining adversarial slices.');
             assert.equal(nextAdversarialPoll.requests_completed, adversarialPlannedTotal, 'Poll-driven adversarial progress should reach the executable prompt total.');
         } finally {
             if (previousVercel == null) {
