@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 import {
     LayoutDashboard,
     MessageSquare,
+    ClipboardList,
     TerminalSquare,
     GraduationCap,
     ShieldAlert,
@@ -20,6 +21,7 @@ import {
 
 const navItems = [
     { name: 'Dashboard',         href: '/dashboard',    icon: LayoutDashboard },
+    { name: 'Clinical Cases',    href: '/cases',        icon: ClipboardList   },
     { name: 'Ask VetIOS',        href: '/ask-vetios',   icon: MessageSquare   },
     { name: 'Inference Console', href: '/inference',    icon: TerminalSquare  },
     { name: 'Outcome Learning',  href: '/outcome',      icon: GraduationCap   },

@@ -197,6 +197,30 @@ export async function POST(req: Request) {
         }
     }
 
+    const diagnosisRecord = await insertDiagnosisRecordIfPossible(supabase, {
+        tenantId,
+        userId: auth.actor.userId,
+        clinicalCaseId: caseId,
+        clinicalCase,
+        inferenceEventId: body.inference_event_id,
+        outcomeEventId: persistedOutcomeId,
+        actualLabel,
+        timestamp: body.outcome.timestamp,
+        outcomePayload,
+        inputSignature,
+    });
+
+    const caseClosure = caseId
+        ? await closeClinicalCaseIfPossible(supabase, {
+            tenantId,
+            clinicalCaseId: caseId,
+            actualLabel,
+            timestamp: body.outcome.timestamp,
+            outcomePayload,
+            diagnosisRecordId: diagnosisRecord.id,
+        })
+        : { closed: false, warning: null };
+
     const derivedUpdates = await runDerivedOutcomeUpdates(supabase, {
         tenantId,
         inferenceEventId: body.inference_event_id,
@@ -213,7 +237,16 @@ export async function POST(req: Request) {
         linked_inference_event_id: body.inference_event_id,
         calibration_delta: calibrationDelta,
         prediction_correct: predictionCorrect,
-        derived_updates: derivedUpdates,
+        diagnosis_record_id: diagnosisRecord.id,
+        derived_updates: {
+            ...derivedUpdates,
+            diagnosis_record_id: diagnosisRecord.id,
+            case_closed: caseClosure.closed,
+            warnings: [
+                ...derivedUpdates.warnings,
+                ...[diagnosisRecord.warning, caseClosure.warning].filter((entry): entry is string => Boolean(entry)),
+            ],
+        },
         request_id: requestId,
     });
 }
@@ -238,6 +271,25 @@ const OPTIONAL_INFERENCE_OUTCOME_COLUMNS = new Set([
     'prediction_correct',
 ]);
 
+const OPTIONAL_DIAGNOSIS_RECORD_COLUMNS = new Set([
+    'clinical_case_id',
+    'encounter_id',
+    'inference_event_id',
+    'outcome_event_id',
+    'diagnosis_method',
+    'clinician_notes',
+    'treatment_initiated',
+    'outcome_at_followup',
+    'created_by',
+]);
+
+const OPTIONAL_CASE_CLOSURE_COLUMNS = new Set([
+    'case_status',
+    'closed_at',
+    'case_closure_summary',
+    'treatments',
+]);
+
 async function insertOutcomeEvent(
     supabase: SupabaseClient,
     payload: Record<string, unknown>,
@@ -259,6 +311,129 @@ async function insertOutcomeEvent(
 
         nextPayload = { ...nextPayload };
         delete nextPayload[missingColumn];
+    }
+}
+
+async function insertDiagnosisRecordIfPossible(
+    supabase: SupabaseClient,
+    input: {
+        tenantId: string;
+        userId: string | null;
+        clinicalCaseId: string | null;
+        clinicalCase: ClinicalCaseRecord | null;
+        inferenceEventId: string;
+        outcomeEventId: string;
+        actualLabel: string;
+        timestamp: string;
+        outcomePayload: Record<string, unknown>;
+        inputSignature: Record<string, unknown>;
+    },
+): Promise<{ id: string | null; warning: string | null }> {
+    const metadata = asRecord(input.inputSignature.metadata);
+    const diagnosis = readText(input.outcomePayload.confirmed_diagnosis)
+        ?? readText(input.outcomePayload.actual_diagnosis)
+        ?? input.actualLabel;
+    let payload: Record<string, unknown> = {
+        tenant_id: input.tenantId,
+        clinical_case_id: readUuid(input.clinicalCaseId),
+        encounter_id: readUuid(input.clinicalCase?.encounter_id)
+            ?? readUuid(input.inputSignature.encounter_id)
+            ?? readUuid(metadata.encounter_id),
+        inference_event_id: input.inferenceEventId,
+        outcome_event_id: input.outcomeEventId,
+        confirmed_diagnosis: diagnosis,
+        diagnosis_method: normalizeDiagnosisMethod(input.outcomePayload.diagnosis_method),
+        clinician_notes: readText(input.outcomePayload.clinician_notes)
+            ?? readText(input.outcomePayload.notes),
+        treatment_initiated: readStringArray(
+            input.outcomePayload.treatment_initiated,
+            input.outcomePayload.treatments,
+            input.outcomePayload.treatment,
+            input.outcomePayload.treatment_prescribed,
+        ),
+        outcome_at_followup: readText(input.outcomePayload.outcome_at_followup),
+        created_by: readUuid(input.userId),
+        created_at: input.timestamp,
+    };
+
+    payload = Object.fromEntries(
+        Object.entries(payload).filter(([, value]) => value !== null && value !== undefined),
+    );
+
+    for (;;) {
+        const { data, error } = await supabase
+            .from('diagnosis_records')
+            .insert(payload)
+            .select('id')
+            .single();
+
+        if (!error && data?.id) {
+            return { id: String(data.id), warning: null };
+        }
+        if (!error) {
+            return { id: null, warning: 'diagnosis_records: unknown insert error' };
+        }
+        if (isMissingRelationError(error.message ?? '')) {
+            return { id: null, warning: 'diagnosis_records table is not available; apply clinician case migration' };
+        }
+
+        const missingColumn = resolveMissingColumn(error.message ?? '', payload, OPTIONAL_DIAGNOSIS_RECORD_COLUMNS);
+        if (!missingColumn) {
+            return { id: null, warning: `diagnosis_records: ${error.message}` };
+        }
+
+        payload = { ...payload };
+        delete payload[missingColumn];
+    }
+}
+
+async function closeClinicalCaseIfPossible(
+    supabase: SupabaseClient,
+    input: {
+        tenantId: string;
+        clinicalCaseId: string;
+        actualLabel: string;
+        timestamp: string;
+        outcomePayload: Record<string, unknown>;
+        diagnosisRecordId: string | null;
+    },
+): Promise<{ closed: boolean; warning: string | null }> {
+    let patch: Record<string, unknown> = {
+        case_status: 'closed',
+        closed_at: input.timestamp,
+        case_closure_summary: {
+            confirmed_diagnosis: readText(input.outcomePayload.confirmed_diagnosis) ?? input.actualLabel,
+            diagnosis_method: normalizeDiagnosisMethod(input.outcomePayload.diagnosis_method),
+            clinician_notes: readText(input.outcomePayload.clinician_notes) ?? readText(input.outcomePayload.notes),
+            outcome_at_followup: readText(input.outcomePayload.outcome_at_followup),
+            diagnosis_record_id: input.diagnosisRecordId,
+        },
+        treatments: readStringArray(
+            input.outcomePayload.treatment_initiated,
+            input.outcomePayload.treatments,
+            input.outcomePayload.treatment,
+            input.outcomePayload.treatment_prescribed,
+        ),
+    };
+
+    for (;;) {
+        const { error } = await supabase
+            .from('clinical_cases')
+            .update(patch)
+            .eq('tenant_id', input.tenantId)
+            .eq('id', input.clinicalCaseId);
+
+        if (!error) {
+            return { closed: true, warning: null };
+        }
+
+        const missingColumn = resolveMissingColumn(error.message ?? '', patch, OPTIONAL_CASE_CLOSURE_COLUMNS);
+        if (!missingColumn) {
+            return { closed: false, warning: `clinical_cases closure: ${error.message}` };
+        }
+
+        patch = { ...patch };
+        delete patch[missingColumn];
     }
 }
 
@@ -567,6 +742,13 @@ function readNumber(value: unknown): number | null {
     return null;
 }
 
+function readUuid(value: unknown): string | null {
+    const text = readText(value);
+    return text && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text)
+        ? text
+        : null;
+}
+
 function readStringArray(...values: unknown[]): string[] {
     const entries: string[] = [];
     for (const value of values) {
@@ -583,6 +765,17 @@ function readStringArray(...values: unknown[]): string[] {
     return Array.from(new Set(entries));
 }
 
+function normalizeDiagnosisMethod(value: unknown): string | null {
+    const normalized = readText(value)?.toLowerCase();
+    return normalized === 'clinical'
+        || normalized === 'lab_confirmed'
+        || normalized === 'imaging_confirmed'
+        || normalized === 'pathology'
+        || normalized === 'response_to_treatment'
+        ? normalized
+        : null;
+}
+
 function firstNonEmptyRecord(...records: Record<string, unknown>[]): Record<string, unknown> | null {
     for (const record of records) {
         if (Object.keys(record).length > 0) return record;
@@ -594,4 +787,9 @@ function isMissingColumnError(message: string): boolean {
     return message.includes('schema cache')
         || message.includes('column')
         || message.includes('Could not find the');
+}
+
+function isMissingRelationError(message: string): boolean {
+    return message.includes('relation')
+        && (message.includes('does not exist') || message.includes('schema cache'));
 }
