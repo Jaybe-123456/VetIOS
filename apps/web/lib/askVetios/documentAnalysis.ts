@@ -59,9 +59,11 @@ export async function loadUploadedDocumentContexts(input: {
     for (const chunk of chunks ?? []) {
         const documentId = String(chunk.document_id);
         const list = chunksByDocumentId.get(documentId) ?? [];
+        const chunkText = sanitizeIndexedChunkText(String(chunk.chunk_text ?? ''));
+        if (!chunkText) continue;
         list.push({
             chunk_index: Number(chunk.chunk_index ?? list.length),
-            chunk_text: String(chunk.chunk_text ?? ''),
+            chunk_text: chunkText,
             heading: typeof chunk.heading === 'string' ? chunk.heading : null,
         });
         chunksByDocumentId.set(documentId, list);
@@ -96,7 +98,10 @@ export function buildUploadedDocumentAnalysisResponse(input: {
     const selected = allChunks.slice(0, DIRECT_ANALYSIS_CHUNK_LIMIT);
     const combinedText = selected.map(({ chunk }) => chunk.chunk_text).join('\n\n');
     const signals = extractClinicalSignals(combinedText);
-    const differentials = inferDocumentDifferentials(combinedText, selected.map(({ context, chunk }) => citationFor(context, chunk.chunk_index)));
+    const shouldInferCase = shouldBuildClinicalCaseReasoning('', combinedText, signals);
+    const differentials = shouldInferCase
+        ? inferDocumentDifferentials(combinedText, selected.map(({ context, chunk }) => citationFor(context, chunk.chunk_index)))
+        : [];
     const emergency = hasEmergencySignal(combinedText);
     const clinicalSigns = [...new Set(signals.findings)];
 
@@ -105,7 +110,7 @@ export function buildUploadedDocumentAnalysisResponse(input: {
         query_id: input.queryId,
         narrative: buildNarrative(input.contexts, selected, signals, emergency, allChunks.length > selected.length),
         differentials,
-        recommended_diagnostics: buildDocumentDiagnosticGaps(combinedText),
+        recommended_diagnostics: shouldInferCase ? buildDocumentDiagnosticGaps(combinedText) : [],
         recommended_treatments: [],
         flags: {
             low_confidence_hypotheses: differentials.filter((entry) => entry.confidence < 0.3).map((entry) => entry.diagnosis),
@@ -132,7 +137,10 @@ export function buildUploadedDocumentQuestionResponse(input: {
     const selected = selectRelevantUploadedChunks(input.contexts, input.query, 8);
     const combinedText = selected.map(({ chunk }) => chunk.chunk_text).join('\n\n');
     const signals = extractClinicalSignals(combinedText);
-    const differentials = inferDocumentDifferentials(combinedText, selected.map(({ context, chunk }) => citationFor(context, chunk.chunk_index)));
+    const shouldInferCase = shouldBuildClinicalCaseReasoning(input.query, combinedText, signals);
+    const differentials = shouldInferCase
+        ? inferDocumentDifferentials(combinedText, selected.map(({ context, chunk }) => citationFor(context, chunk.chunk_index)))
+        : [];
     const emergency = hasEmergencySignal(combinedText);
 
     return {
@@ -140,7 +148,7 @@ export function buildUploadedDocumentQuestionResponse(input: {
         query_id: input.queryId,
         narrative: buildQuestionNarrative(input.query, selected, signals, emergency),
         differentials,
-        recommended_diagnostics: buildDocumentDiagnosticGaps(combinedText),
+        recommended_diagnostics: shouldInferCase ? buildDocumentDiagnosticGaps(combinedText) : [],
         recommended_treatments: [],
         flags: {
             low_confidence_hypotheses: differentials.filter((entry) => entry.confidence < 0.3).map((entry) => entry.diagnosis),
@@ -218,6 +226,9 @@ function buildQuestionNarrative(
         '',
         `Question: ${query}`,
         '',
+        'Answer synthesis:',
+        ...buildExtractiveAnswerBullets(query, selected),
+        '',
         'Best matching uploaded evidence:',
     ];
 
@@ -286,6 +297,56 @@ function trimChunkForAnswer(text: string): string {
     return normalized.length > 1200 ? `${normalized.slice(0, 1200)}...` : normalized;
 }
 
+function buildExtractiveAnswerBullets(
+    query: string,
+    selected: Array<{ context: UploadedDocumentContext; chunk: UploadedDocumentContext['chunks'][number]; score: number }>,
+): string[] {
+    const terms = tokenizeQuery(query);
+    const scored = selected.flatMap(({ context, chunk }) => (
+        splitSentences(chunk.chunk_text).map((sentence) => {
+            const lower = sentence.toLowerCase();
+            const score = terms.reduce((total, term) => total + (lower.includes(term) ? 1 : 0), 0);
+            return {
+                sentence,
+                citation: citationFor(context, chunk.chunk_index),
+                score,
+                chunkIndex: chunk.chunk_index,
+            };
+        })
+    ));
+
+    const ranked = scored
+        .filter((entry) => entry.sentence.length >= 32)
+        .sort((left, right) => right.score - left.score || left.chunkIndex - right.chunkIndex)
+        .slice(0, 6);
+
+    if (ranked.length === 0) {
+        return ['- No readable topic-specific sentence was available in the retrieved chunks.'];
+    }
+
+    return ranked.map((entry) => `- ${entry.sentence} Source: ${entry.citation}`);
+}
+
+function splitSentences(text: string): string[] {
+    return text
+        .replace(/\s+/g, ' ')
+        .split(/(?<=[.!?])\s+|(?:\n+)/)
+        .map((sentence) => sentence.trim())
+        .filter(Boolean);
+}
+
+function shouldBuildClinicalCaseReasoning(
+    query: string,
+    text: string,
+    signals: ReturnType<typeof extractClinicalSignals>,
+): boolean {
+    const queryAsksForCaseReasoning = /\b(differential|diagnos|diagnostic|diagnostics|clinical case|patient|presenting|symptom|sign|lab|imaging|treatment|prognosis|emergency|rule[- ]?out)\b/i.test(query);
+    const hasCaseLanguage = /\b(patient|case|signalment|presenting|history|physical exam|vitals?|lab results?|diagnostic results?)\b/i.test(text);
+    const hasClinicalEvidence = signals.findings.length > 0 || signals.diagnostics.length > 1;
+
+    return hasClinicalEvidence && (queryAsksForCaseReasoning || hasCaseLanguage);
+}
+
 function extractClinicalSignals(text: string) {
     const lower = text.toLowerCase();
     return {
@@ -309,6 +370,22 @@ function extractClinicalSignals(text: string) {
             'transfusion', 'steroid', 'insulin', 'outcome', 'resolved', 'improved', 'referred',
         ]),
     };
+}
+
+function sanitizeIndexedChunkText(text: string): string {
+    const normalized = text.replace(/\u0000/g, '').replace(/\s+/g, ' ').trim();
+    if (!normalized || isPdfStructuralNoise(normalized)) return '';
+    return normalized;
+}
+
+function isPdfStructuralNoise(text: string): boolean {
+    if (/^%?PDF-|^\/Linearized\b/i.test(text)) return true;
+
+    const words = text.match(/\b[A-Za-z][A-Za-z'-]{2,}\b/g) ?? [];
+    if (words.length < 8) return text.length > 0;
+
+    const syntaxMatches = text.match(/\b(?:obj|endobj|xref|startxref|stream|endstream|FlateDecode|Linearized|XRef|Catalog)\b|\/(?:Type|Filter|Length|Root|Size|Prev|Info|Pages|Resources|ObjStm)\b/g) ?? [];
+    return syntaxMatches.length / Math.max(words.length, 1) > 0.08;
 }
 
 function inferDocumentDifferentials(text: string, citations: string[]): AskVetiosContractResponse['differentials'] {

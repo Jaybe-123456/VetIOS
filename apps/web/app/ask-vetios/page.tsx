@@ -466,8 +466,9 @@ return (
 }
 
 function buildDocumentAnalysisMetadata(analysis: AskVetiosContractResponse, upload: UploadResponse) {
+    const hasClinicalDifferentials = (analysis.differentials ?? []).length > 0;
     return {
-        mode: 'clinical' as const,
+        mode: hasClinicalDifferentials ? 'clinical' as const : 'educational' as const,
         topic: 'Uploaded Document Analysis',
         diagnosis_ranked: (analysis.differentials ?? []).map((entry) => ({
             name: entry.diagnosis,

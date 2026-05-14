@@ -1,4 +1,4 @@
-import { deflateRawSync } from 'zlib';
+import { deflateRawSync, deflateSync } from 'zlib';
 import { describe, expect, it } from 'vitest';
 import { extractClinicalUploadText } from '../documentIngestion';
 
@@ -28,6 +28,31 @@ describe('Ask Vetios clinical upload text extraction', () => {
 
         expect(extracted.method).toBe('pdf_literal_text');
         expect(extracted.text).toContain('elevated cPLI');
+    });
+
+    it('extracts text from compressed PDF content streams', () => {
+        const streamText = 'BT (Assisted Reproductive Technologies include artificial insemination, embryo transfer, IVF, and cryopreservation.) Tj ET';
+        const compressed = deflateSync(Buffer.from(streamText, 'latin1'));
+        const pdf = Buffer.concat([
+            Buffer.from('%PDF-1.5\n1 0 obj\n<< /Length ', 'latin1'),
+            Buffer.from(String(compressed.length), 'latin1'),
+            Buffer.from(' /Filter /FlateDecode >>\nstream\n', 'latin1'),
+            compressed,
+            Buffer.from('\nendstream\nendobj\n%%EOF', 'latin1'),
+        ]);
+        const extracted = extractClinicalUploadText({ sourceType: 'pdf', buffer: pdf });
+
+        expect(extracted.method).toBe('pdf_flate_text');
+        expect(extracted.text).toContain('Assisted Reproductive Technologies');
+        expect(extracted.text).toContain('embryo transfer');
+    });
+
+    it('does not index PDF structural metadata as clinical document text', () => {
+        const pdf = Buffer.from('%PDF-1.7\n/Linearized 1/L 730487/O 169/E 116281/N 9/T 729818/H FCC4466CF13FB7C64642A8BCBC60E5AA /Info 166 0 R/Length 157/Prev 729819/Root 168 0 R/Size 230/Type/XRef/W endstream endobj startxref 0 %%EOF 229 0 obj /Filter/FlateDecode/I 456/L 440/Length 339/S 331 endstream endobj', 'latin1');
+        const extracted = extractClinicalUploadText({ sourceType: 'pdf', buffer: pdf });
+
+        expect(extracted.text).toBe('');
+        expect(extracted.reason).toContain('PDF text extraction produced only structural metadata');
     });
 
     it('extracts DOCX OpenXML document text', () => {

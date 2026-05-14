@@ -1,4 +1,4 @@
-import { inflateRawSync } from 'zlib';
+import { inflateRawSync, inflateSync } from 'zlib';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ingestRagDocument } from '@/lib/agenticRag/service';
 import { hashPrivacyValue, type UploadSecurityGateResult } from './uploadSecurityGate';
@@ -149,26 +149,17 @@ function extractJsonText(buffer: Buffer): string {
 
 function extractPdfText(buffer: Buffer): { text: string; method: string; reason: string | null } {
     const raw = buffer.toString('latin1');
-    const values: string[] = [];
+    const literalValues = extractPdfTextOperators(raw);
+    const flateValues = extractPdfFlateTextOperators(buffer, raw);
 
-    for (const match of raw.matchAll(/\((?:\\.|[^\\)]){2,}\)\s*Tj/g)) {
-        values.push(decodePdfLiteral(match[0].replace(/\)\s*Tj$/, '').slice(1, -1)));
+    const literalText = normalizeExtractedText(literalValues);
+    if (isReadableDocumentText(literalText)) {
+        return { text: literalText, method: 'pdf_literal_text', reason: null };
     }
 
-    for (const match of raw.matchAll(/\[([\s\S]{1,4000}?)\]\s*TJ/g)) {
-        const items = match[1] ?? '';
-        for (const item of items.matchAll(/\((?:\\.|[^\\)]){2,}\)/g)) {
-            values.push(decodePdfLiteral(item[0].slice(1, -1)));
-        }
-    }
-
-    const extracted = values
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-
-    if (extracted.length >= 32) {
-        return { text: extracted, method: 'pdf_literal_text', reason: null };
+    const flateText = normalizeExtractedText(flateValues);
+    if (isReadableDocumentText(flateText)) {
+        return { text: flateText, method: 'pdf_flate_text', reason: null };
     }
 
     const fallback = raw
@@ -178,11 +169,107 @@ function extractPdfText(buffer: Buffer): { text: string; method: string; reason:
         .slice(0, 600)
         .join('\n');
 
+    if (isReadableDocumentText(fallback)) {
+        return {
+            text: fallback,
+            method: 'pdf_printable_text_fallback',
+            reason: null,
+        };
+    }
+
     return {
-        text: fallback,
+        text: '',
         method: 'pdf_printable_text_fallback',
-        reason: fallback.length >= 32 ? null : 'PDF did not expose extractable text without an external OCR/parser.',
+        reason: fallback.length >= 32
+            ? 'PDF text extraction produced only structural metadata; upload an OCR/text PDF, DOCX, PPTX, TXT, or the source slides for reliable RAG indexing.'
+            : 'PDF did not expose extractable text without an external OCR/parser.',
     };
+}
+
+function extractPdfTextOperators(source: string): string[] {
+    const values: string[] = [];
+
+    for (const match of source.matchAll(/\((?:\\.|[^\\)]){2,}\)\s*Tj/g)) {
+        values.push(decodePdfLiteral(match[0].replace(/\)\s*Tj$/, '').slice(1, -1)));
+    }
+
+    for (const match of source.matchAll(/<([0-9a-fA-F\s]{4,})>\s*Tj/g)) {
+        values.push(decodePdfHexString(match[1] ?? ''));
+    }
+
+    for (const match of source.matchAll(/\[([\s\S]{1,4000}?)\]\s*TJ/g)) {
+        const items = match[1] ?? '';
+        for (const item of items.matchAll(/\((?:\\.|[^\\)]){2,}\)|<([0-9a-fA-F\s]{4,})>/g)) {
+            const raw = item[0];
+            values.push(raw.startsWith('<')
+                ? decodePdfHexString(raw.slice(1, -1))
+                : decodePdfLiteral(raw.slice(1, -1)));
+        }
+    }
+
+    return values;
+}
+
+function extractPdfFlateTextOperators(buffer: Buffer, raw: string): string[] {
+    const values: string[] = [];
+    const streamPattern = /stream\r?\n/g;
+    let match: RegExpExecArray | null;
+    let inspected = 0;
+
+    while ((match = streamPattern.exec(raw)) && inspected < 300) {
+        inspected += 1;
+        const header = raw.slice(Math.max(0, match.index - 900), match.index);
+        if (!/\/Filter\s*(?:\/FlateDecode|\[[^\]]*\/FlateDecode)/.test(header)) continue;
+
+        const streamStart = match.index + match[0].length;
+        const streamEnd = raw.indexOf('endstream', streamStart);
+        if (streamEnd <= streamStart) continue;
+
+        let payload = buffer.subarray(streamStart, streamEnd);
+        while (payload.length > 0 && (payload[payload.length - 1] === 0x0a || payload[payload.length - 1] === 0x0d)) {
+            payload = payload.subarray(0, payload.length - 1);
+        }
+        if (payload.length === 0 || payload.length > 5 * 1024 * 1024) continue;
+
+        const inflated = inflatePdfStream(payload);
+        if (!inflated) continue;
+        values.push(...extractPdfTextOperators(inflated.toString('latin1')));
+    }
+
+    return values;
+}
+
+function inflatePdfStream(payload: Buffer): Buffer | null {
+    try {
+        return inflateSync(payload);
+    } catch {
+        try {
+            return inflateRawSync(payload);
+        } catch {
+            return null;
+        }
+    }
+}
+
+function normalizeExtractedText(values: string[]): string {
+    return values
+        .map((value) => value.replace(/\u0000/g, '').trim())
+        .filter(Boolean)
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function isReadableDocumentText(text: string): boolean {
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    if (normalized.length < 32) return false;
+
+    const words = normalized.match(/\b[A-Za-z][A-Za-z'-]{2,}\b/g) ?? [];
+    if (words.length < 8) return false;
+
+    const syntaxMatches = normalized.match(/\b(?:obj|endobj|xref|startxref|stream|endstream|FlateDecode|Linearized|XRef|Catalog)\b|\/(?:Type|Filter|Length|Root|Size|Prev|Info|Pages|Resources|ObjStm)\b/g) ?? [];
+    const syntaxDensity = syntaxMatches.length / Math.max(words.length, 1);
+    return syntaxDensity <= 0.08 && !/^%?PDF-|^\/Linearized\b/i.test(normalized);
 }
 
 function extractDocxText(buffer: Buffer): { text: string; method: string; reason: string | null } {

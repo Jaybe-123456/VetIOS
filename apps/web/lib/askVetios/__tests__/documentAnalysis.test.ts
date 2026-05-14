@@ -87,4 +87,41 @@ describe('uploaded document analysis contract', () => {
         expect(response.narrative).toContain('upload://rodents-bats.pptx#chunk-2');
         expect(response.rag_chunks_used).toBe(2);
     });
+
+    it('does not force clinical differentials onto educational uploaded-document questions', () => {
+        const response = buildUploadedDocumentQuestionResponse({
+            sessionId: 'chat-3',
+            queryId: 'query-3',
+            query: 'discuss Assisted Reproductive Technologies in Veterinary Medicine',
+            startedAt: Date.now() - 8,
+            contexts: [
+                {
+                    upload_id: 'c'.repeat(64),
+                    document_id: 'doc-3',
+                    title: 'reproductive-technologies.pdf',
+                    source_name: 'Ask Vetios uploads',
+                    chunks: [
+                        {
+                            chunk_index: 0,
+                            heading: 'Assisted Reproductive Technologies',
+                            chunk_text: 'Assisted Reproductive Technologies in veterinary medicine include artificial insemination, estrus synchronization, embryo transfer, in vitro fertilization, semen cryopreservation, and embryo cryopreservation.',
+                        },
+                        {
+                            chunk_index: 1,
+                            heading: 'Applications',
+                            chunk_text: 'These techniques support genetic improvement, conservation breeding, infertility management, and planned reproduction in domestic and wildlife species.',
+                        },
+                    ],
+                },
+            ],
+        });
+
+        expect(response.model_version).toBe('ask-vetios-v2-uploaded-document-question');
+        expect(response.narrative).toContain('Answer synthesis');
+        expect(response.narrative).toContain('artificial insemination');
+        expect(response.differentials).toEqual([]);
+        expect(response.recommended_diagnostics).toEqual([]);
+        expect(response.flags.requires_specialist_review).toBe(false);
+        expect(response.document_tables?.map((table) => table.title)).not.toContain('Differential Reasoning');
+    });
 });
