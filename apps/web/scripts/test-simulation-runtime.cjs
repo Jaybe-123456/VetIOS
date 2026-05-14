@@ -590,7 +590,7 @@ async function main() {
                     mode: 'load',
                     model_version: 'baseline',
                     agent_count: 2,
-                    requests_per_agent: 6,
+                    requests_per_agent: 20,
                     request_rate_per_second: 100,
                     duration_seconds: 10,
                     prompt_distribution: {
@@ -606,7 +606,7 @@ async function main() {
                 simulationId: pollDrivenLoad.id,
             });
             assert.equal(firstLoadPoll.status, 'running', 'Status polling should leave a sliced load run active until all requests execute.');
-            assert.equal(firstLoadPoll.requests_completed, 10, 'Status polling should execute one bounded load work slice.');
+            assert.equal(firstLoadPoll.requests_completed, 25, 'Status polling should execute one bounded load work slice.');
 
             let nextLoadPoll = firstLoadPoll;
             while (nextLoadPoll.status === 'running') {
@@ -616,7 +616,7 @@ async function main() {
                 });
             }
             assert.equal(nextLoadPoll.status, 'complete', 'Repeated status polls should complete the remaining load slices.');
-            assert.equal(nextLoadPoll.requests_completed, 12, 'Poll-driven load progress should reach the request total.');
+            assert.equal(nextLoadPoll.requests_completed, 40, 'Poll-driven load progress should reach the request total.');
 
             const expiredLoad = await startSimulationRun(client, {
                 actor,

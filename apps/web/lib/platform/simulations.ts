@@ -156,13 +156,14 @@ const DEFAULT_WORKER_STALE_MS = 20_000;
 const DEFAULT_LOAD_MAX_CONCURRENCY = 10;
 const DEFAULT_ADVERSARIAL_MAX_CONCURRENCY = 6;
 const DEFAULT_REGRESSION_MAX_CONCURRENCY = 8;
-const DEFAULT_INLINE_LOAD_WORK_ITEMS = 10;
-const DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS = 12;
-const DEFAULT_INLINE_REGRESSION_WORK_ITEMS = 16;
+const DEFAULT_INLINE_LOAD_WORK_ITEMS = 25;
+const DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS = 20;
+const DEFAULT_INLINE_REGRESSION_WORK_ITEMS = 25;
 const DEFAULT_SIMULATION_INFERENCE_TIMEOUT_MS = 15_000;
 const DEFAULT_SIMULATION_PERSISTENCE_TIMEOUT_MS = 4_000;
 const MAX_LOAD_SIMULATION_WALL_CLOCK_MS = 120_000;
-const MAX_REGRESSION_SIMULATION_WALL_CLOCK_MS = 120_000;
+const MAX_ADVERSARIAL_SIMULATION_WALL_CLOCK_MS = 180_000;
+const MAX_REGRESSION_SIMULATION_WALL_CLOCK_MS = 180_000;
 const MODEL_SAFETY_CLASSES: Record<string, ModelSafetyClass> = {
     diag_smoke_v1: 'production',
     'diag_large_v11.0.0': 'production',
@@ -444,29 +445,43 @@ export async function getSimulationDetail(
     client: SupabaseClient,
     input: GetSimulationDetailInput,
 ) {
-    const simulations = await listRows(client, 'simulations');
-    const simulation = simulations.find((row) =>
-        readText(row.id) === input.simulationId
-        && readText(row.tenant_id) === input.tenantId,
-    );
+    const { data: simulation, error: simulationError } = await client
+        .from('simulations')
+        .select('*')
+        .eq('tenant_id', input.tenantId)
+        .eq('id', input.simulationId)
+        .maybeSingle();
+
+    if (simulationError) {
+        throw new Error(`Failed to read simulation: ${simulationError.message}`);
+    }
 
     if (!simulation) {
         return null;
     }
 
-    const events = (await listRows(client, 'simulation_events'))
-        .filter((row) =>
-            readText(row.simulation_id) === input.simulationId
-            && readText(row.tenant_id) === input.tenantId,
-        )
-        .sort(compareCreatedDesc)
-        .slice(0, clampInteger(input.eventLimit ?? 100, 1, 500, 100));
+    const eventLimit = clampInteger(input.eventLimit ?? 100, 1, 500, 100);
+    const { data: eventRows, error: eventError } = await client
+        .from('simulation_events')
+        .select('*')
+        .eq('tenant_id', input.tenantId)
+        .eq('simulation_id', input.simulationId)
+        .order('created_at', { ascending: false })
+        .limit(eventLimit);
+    if (eventError) {
+        throw new Error(`Failed to read simulation_events: ${eventError.message}`);
+    }
+    const events = ((eventRows ?? []) as Array<Record<string, unknown>>).sort(compareCreatedDesc);
 
-    const replays = (await listRows(client, 'regression_replays'))
-        .filter((row) =>
-            readText(row.simulation_id) === input.simulationId
-            && readText(row.tenant_id) === input.tenantId,
-        )
+    const { data: replayRows, error: replayError } = await client
+        .from('regression_replays')
+        .select('*')
+        .eq('tenant_id', input.tenantId)
+        .eq('simulation_id', input.simulationId);
+    if (replayError) {
+        throw new Error(`Failed to read regression_replays: ${replayError.message}`);
+    }
+    const replays = ((replayRows ?? []) as Array<Record<string, unknown>>)
         .sort((left, right) => Math.abs(readNumber(right.delta) ?? 0) - Math.abs(readNumber(left.delta) ?? 0))
         .slice(0, 50);
 
@@ -962,11 +977,12 @@ async function ensureSimulationWorker(
     const total = readNumber(row.total) ?? readNumber(row.requests_total) ?? readNumber(asRecord(row.results).total_requests) ?? readNumber(asRecord(row.results).total_replayed) ?? 0;
     const wallClockLimitMs = canonicalMode === 'load'
         ? MAX_LOAD_SIMULATION_WALL_CLOCK_MS
-        : canonicalMode === 'regression'
-            ? MAX_REGRESSION_SIMULATION_WALL_CLOCK_MS
-            : null;
-    if (wallClockLimitMs != null && completed < total && isSimulationWallClockExpired(row, wallClockLimitMs)) {
-        const message = `${canonicalMode === 'regression' ? 'Regression' : 'Load'} simulation exceeded the ${Math.round(wallClockLimitMs / 1000)}s wall-clock limit.`;
+        : canonicalMode === 'adversarial'
+            ? MAX_ADVERSARIAL_SIMULATION_WALL_CLOCK_MS
+            : MAX_REGRESSION_SIMULATION_WALL_CLOCK_MS;
+    if (completed < total && isSimulationWallClockExpired(row, wallClockLimitMs)) {
+        const modeLabel = canonicalMode === 'regression' ? 'Regression' : canonicalMode === 'adversarial' ? 'Adversarial' : 'Load';
+        const message = `${modeLabel} simulation exceeded the ${Math.round(wallClockLimitMs / 1000)}s wall-clock limit.`;
         await appendSimulationEvent(client, {
             simulation_id: input.simulationId,
             tenant_id: input.tenantId,
@@ -1297,7 +1313,7 @@ async function runLoadSimulation(
                 species: currentCase.species,
                 scenario_payload: inference.scenarioPayload,
                 response_status: inference.status,
-                response_body: inference.prediction,
+                response_body: compactSimulationInferenceResponse(inference),
                 latency_ms: inference.inferenceLatencyMs,
                 inference_event_id: inference.inferenceEventId,
                 success: inference.status < 400 && !inference.blocked,
@@ -2206,7 +2222,7 @@ async function runRegressionSimulation(
             species: normalizeSpeciesBucket(readText(inputSignature.species)),
             scenario_payload: candidate.scenarioPayload,
             response_status: candidate.status,
-            response_body: candidate.prediction,
+            response_body: compactSimulationInferenceResponse(candidate),
             latency_ms: candidate.inferenceLatencyMs,
             inference_event_id: candidate.inferenceEventId,
             success: !isRegression,
@@ -3584,6 +3600,19 @@ function buildSimulationInferenceRequest(input: {
     };
 }
 
+function compactSimulationInferenceResponse(inference: InternalInferenceResult) {
+    return {
+        model_version: inference.modelVersion,
+        status: inference.status,
+        confidence_score: inference.confidenceScore,
+        evaluation_score: inference.evaluation?.score ?? null,
+        blocked: inference.blocked,
+        flagged: inference.flagged,
+        reason: inference.reason ?? null,
+        error: readText(inference.prediction.error),
+    };
+}
+
 function inferSpeciesFromPrompt(prompt: string | null): SpeciesBucket {
     const normalized = String(prompt ?? '').toLowerCase();
     if (normalized.includes('cat') || normalized.includes('feline')) return 'feline';
@@ -4274,14 +4303,22 @@ async function listSimulationEventsFor(
     simulationId: string,
     eventType?: string,
 ) {
-    const rows = await listRows(client, 'simulation_events');
-    return rows
-        .filter((row) =>
-            readText(row.tenant_id) === tenantId
-            && readText(row.simulation_id) === simulationId
-            && (eventType ? readText(row.event_type) === eventType : true),
-        )
-        .sort(compareCreatedDesc);
+    let query = client
+        .from('simulation_events')
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .eq('simulation_id', simulationId)
+        .order('created_at', { ascending: false });
+    if (eventType) {
+        query = query.eq('event_type', eventType);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+        throw new Error(`Failed to read simulation_events: ${error.message}`);
+    }
+
+    return ((data ?? []) as Array<Record<string, unknown>>).sort(compareCreatedDesc);
 }
 
 async function findSimulationEventByType(
