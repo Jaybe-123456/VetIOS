@@ -461,6 +461,7 @@ async function main() {
     try {
         const {
             assertSimulationModelExists,
+            dispatchQueuedSimulationWorkerTask,
             estimateAdversarialPromptTotal,
             getSimulationStatusPayload,
             startSimulationRun,
@@ -581,6 +582,46 @@ async function main() {
         const previousVercel = process.env.VERCEL;
         process.env.VERCEL = '1';
         try {
+            const queuedLoad = await startSimulationRun(client, {
+                actor,
+                tenantId: 'tenant_001',
+                mode: 'load',
+                scenarioName: 'Queued Load Runtime Check',
+                config: {
+                    mode: 'load',
+                    model_version: 'baseline',
+                    agent_count: 1,
+                    requests_per_agent: 3,
+                    request_rate_per_second: 100,
+                    duration_seconds: 10,
+                    prompt_distribution: {
+                        canine: 100,
+                        feline: 0,
+                        equine: 0,
+                        other: 0,
+                    },
+                },
+            });
+            assert.ok(
+                client.tables.outbox_events.some((entry) =>
+                    entry.aggregate_type === 'simulation_worker'
+                    && entry.aggregate_id === queuedLoad.id
+                    && entry.event_name === 'simulation.worker.dispatch',
+                ),
+                'Vercel simulation starts should enqueue a durable worker task.',
+            );
+            const queuedObserve = await getSimulationStatusPayload(client, {
+                tenantId: 'tenant_001',
+                simulationId: queuedLoad.id,
+            });
+            assert.equal(queuedObserve.requests_completed, 0, 'Status polling should observe queued simulations before the queue fallback window expires.');
+            const queuedDispatch = await dispatchQueuedSimulationWorkerTask(client, {
+                tenantId: 'tenant_001',
+                simulationId: queuedLoad.id,
+            });
+            assert.equal(queuedDispatch.status, 'complete', 'Queued simulation worker should complete a small bounded run.');
+            assert.equal(queuedDispatch.requeued, false, 'Completed queued simulations should not enqueue another slice.');
+
             const pollDrivenLoad = await startSimulationRun(client, {
                 actor,
                 tenantId: 'tenant_001',
@@ -601,6 +642,7 @@ async function main() {
                     },
                 },
             });
+            client.tables.outbox_events = client.tables.outbox_events.filter((entry) => entry.aggregate_id !== pollDrivenLoad.id);
             const firstLoadPoll = await getSimulationStatusPayload(client, {
                 tenantId: 'tenant_001',
                 simulationId: pollDrivenLoad.id,
@@ -659,6 +701,7 @@ async function main() {
                     planned_prompt_total: adversarialPlannedTotal,
                 },
             });
+            client.tables.outbox_events = client.tables.outbox_events.filter((entry) => entry.aggregate_id !== pollDrivenAdversarial.id);
             const firstPoll = await getSimulationStatusPayload(client, {
                 tenantId: 'tenant_001',
                 simulationId: pollDrivenAdversarial.id,

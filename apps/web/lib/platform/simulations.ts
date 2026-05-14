@@ -161,6 +161,7 @@ const DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS = 20;
 const DEFAULT_INLINE_REGRESSION_WORK_ITEMS = 25;
 const DEFAULT_SIMULATION_INFERENCE_TIMEOUT_MS = 15_000;
 const DEFAULT_SIMULATION_PERSISTENCE_TIMEOUT_MS = 4_000;
+const DEFAULT_SIMULATION_QUEUE_FALLBACK_GRACE_MS = 75_000;
 const MAX_LOAD_SIMULATION_WALL_CLOCK_MS = 120_000;
 const MAX_ADVERSARIAL_SIMULATION_WALL_CLOCK_MS = 180_000;
 const MAX_REGRESSION_SIMULATION_WALL_CLOCK_MS = 180_000;
@@ -356,6 +357,34 @@ export async function startSimulationRun(
             scenario_name: input.scenarioName,
         },
     }).catch(() => undefined);
+
+    if (!launchWorkerImmediately) {
+        await enqueueSimulationWorkerTask(client, {
+            tenantId: record.tenant_id,
+            simulationId: record.id,
+            mode: canonicalMode,
+            reason: 'simulation_started',
+        }).then(async () => {
+            await appendSimulationEvent(client, {
+                simulation_id: record.id,
+                tenant_id: record.tenant_id,
+                event_type: 'worker_queued',
+                payload: {
+                    queue: 'outbox_events',
+                    worker_id: workerId,
+                },
+            }).catch(() => undefined);
+        }).catch(async (queueError) => {
+            await appendSimulationEvent(client, {
+                simulation_id: record.id,
+                tenant_id: record.tenant_id,
+                event_type: 'worker_queue_warning',
+                payload: {
+                    message: queueError instanceof Error ? queueError.message : 'Failed to enqueue simulation worker.',
+                },
+            }).catch(() => undefined);
+        });
+    }
 
     if (launchWorkerImmediately) {
         void executeSimulation(client, input.actor, record).catch(async (simulationError) => {
@@ -948,6 +977,58 @@ export async function getSimulationStatusPayload(
     };
 }
 
+export async function dispatchQueuedSimulationWorkerTask(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        simulationId: string;
+    },
+) {
+    const record = await readSimulationWorkerRecord(client, input);
+    if (!record) {
+        return {
+            simulation_id: input.simulationId,
+            status: 'missing',
+            requeued: false,
+        };
+    }
+
+    const status = normalizeStatusForResponse(readText((record as unknown as Record<string, unknown>).status));
+    if (status !== 'running') {
+        return {
+            simulation_id: input.simulationId,
+            status,
+            requeued: false,
+        };
+    }
+
+    const canonicalMode = normalizeSimulationMode(readText((record as unknown as Record<string, unknown>).mode) ?? 'load');
+    await executeSimulationWorkerSlice(client, record, canonicalMode);
+
+    const latestRecord = await readSimulationWorkerRecord(client, input);
+    const latestStatus = latestRecord
+        ? normalizeStatusForResponse(readText((latestRecord as unknown as Record<string, unknown>).status))
+        : 'missing';
+    const stillRunning = latestStatus === 'running';
+    if (stillRunning) {
+        await enqueueSimulationWorkerTask(client, {
+            tenantId: input.tenantId,
+            simulationId: input.simulationId,
+            mode: canonicalMode,
+            reason: 'simulation_slice_continued',
+        });
+    }
+
+    const latest = latestRecord as unknown as Record<string, unknown> | null;
+    return {
+        simulation_id: input.simulationId,
+        status: latestStatus,
+        completed: readNumber(latest?.completed) ?? readNumber(latest?.requests_completed) ?? 0,
+        total: readNumber(latest?.total) ?? readNumber(latest?.requests_total) ?? 0,
+        requeued: stillRunning,
+    };
+}
+
 async function ensureSimulationWorker(
     client: SupabaseClient,
     input: {
@@ -1010,6 +1091,10 @@ async function ensureSimulationWorker(
     }
 
     const runInlineSlice = !shouldLaunchSimulationWorkerImmediately();
+    if (runInlineSlice && await hasActiveSimulationWorkerQueueTask(client, input).catch(() => false)) {
+        return;
+    }
+
     const existingJob = getSimulationJobStore().get(input.simulationId);
     if (!runInlineSlice && existingJob && !isSimulationWorkerStale(row, existingJob)) {
         return;
@@ -1034,32 +1119,7 @@ async function ensureSimulationWorker(
     });
 
     if (runInlineSlice) {
-        try {
-            await executeSimulation(client, buildSystemSimulationActor(record), record, {
-                maxWorkItems: resolveSimulationWorkerSliceLimit(canonicalMode),
-                emitStartedWebhook: false,
-            });
-        } catch (simulationError) {
-            const message = simulationError instanceof Error ? simulationError.message : 'Simulation failed.';
-            await appendSimulationEvent(client, {
-                simulation_id: record.id,
-                tenant_id: record.tenant_id,
-                event_type: 'error',
-                payload: { message },
-            }).catch(() => undefined);
-            await finalizeSimulation(client, record, {
-                status: 'failed',
-                results: {
-                    ...(asRecord((record as unknown as Record<string, unknown>).results)),
-                    status: 'failed',
-                    error_message: message,
-                },
-                errorMessage: message,
-                failureStack: simulationError instanceof Error ? simulationError.stack ?? null : null,
-            }).catch(() => undefined);
-        } finally {
-            getSimulationJobStore().delete(record.id);
-        }
+        await executeSimulationWorkerSlice(client, record, canonicalMode);
         return;
     }
 
@@ -1083,6 +1143,101 @@ async function ensureSimulationWorker(
         }).catch(() => undefined);
         getSimulationJobStore().delete(record.id);
     });
+}
+
+async function readSimulationWorkerRecord(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        simulationId: string;
+    },
+) {
+    const { data, error } = await client
+        .from('simulations')
+        .select('*')
+        .eq('tenant_id', input.tenantId)
+        .eq('id', input.simulationId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to read simulation worker record: ${error.message}`);
+    }
+
+    return data ? normalizeSimulationRecord(data as Record<string, unknown>) as unknown as SimulationRecord : null;
+}
+
+async function hasActiveSimulationWorkerQueueTask(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        simulationId: string;
+    },
+) {
+    const { data, error } = await client
+        .from('outbox_events')
+        .select('id,status,created_at,available_at')
+        .eq('tenant_id', input.tenantId)
+        .eq('aggregate_type', 'simulation_worker')
+        .eq('aggregate_id', input.simulationId)
+        .in('status', ['pending', 'processing', 'retryable'])
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+    if (error) {
+        throw new Error(`Failed to inspect simulation worker queue: ${error.message}`);
+    }
+
+    const row = Array.isArray(data) ? data[0] as Record<string, unknown> | undefined : undefined;
+    if (!row) {
+        return false;
+    }
+
+    const referenceTime = readText(row.available_at) ?? readText(row.created_at);
+    const parsed = referenceTime ? Date.parse(referenceTime) : Number.NaN;
+    if (!Number.isFinite(parsed)) {
+        return true;
+    }
+
+    return parsed >= Date.now() - readSimulationQueueFallbackGraceMs();
+}
+
+async function executeSimulationWorkerSlice(
+    client: SupabaseClient,
+    record: SimulationRecord,
+    canonicalMode: CanonicalSimulationMode,
+) {
+    getSimulationJobStore().set(record.id, {
+        cancelled: false,
+        startedAtMs: Date.parse(record.started_at ?? record.created_at ?? new Date().toISOString()) || Date.now(),
+        lastProgressAtMs: 0,
+    });
+
+    try {
+        await executeSimulation(client, buildSystemSimulationActor(record), record, {
+            maxWorkItems: resolveSimulationWorkerSliceLimit(canonicalMode),
+            emitStartedWebhook: false,
+        });
+    } catch (simulationError) {
+        const message = simulationError instanceof Error ? simulationError.message : 'Simulation failed.';
+        await appendSimulationEvent(client, {
+            simulation_id: record.id,
+            tenant_id: record.tenant_id,
+            event_type: 'error',
+            payload: { message },
+        }).catch(() => undefined);
+        await finalizeSimulation(client, record, {
+            status: 'failed',
+            results: {
+                ...(asRecord((record as unknown as Record<string, unknown>).results)),
+                status: 'failed',
+                error_message: message,
+            },
+            errorMessage: message,
+            failureStack: simulationError instanceof Error ? simulationError.stack ?? null : null,
+        }).catch(() => undefined);
+    } finally {
+        getSimulationJobStore().delete(record.id);
+    }
 }
 
 async function executeSimulation(
@@ -2031,9 +2186,10 @@ async function runRegressionSimulation(
         throw new Error('candidate_model must differ from the production baseline.');
     }
     await assertSimulationModelExists(client, record.tenant_id, candidateModel);
+    const candidateModelVersion = candidateModel;
 
     const fixtureCount = await maybeRunRegressionFixtureSimulation(client, actor, record, {
-        candidateModel,
+        candidateModel: candidateModelVersion,
         baselineModel,
         thresholdPct,
     });
@@ -2109,7 +2265,7 @@ async function runRegressionSimulation(
         completed: replayed,
         results: {
             baseline_model: baselineModel,
-            candidate_model: candidateModel,
+            candidate_model: candidateModelVersion,
             total_replayed: baselineEvents.length,
             regression_count: regressionCount,
             improvement_count: improvementCount,
@@ -2157,7 +2313,7 @@ async function runRegressionSimulation(
             tenantId: record.tenant_id,
             simulationId: record.id,
             mode: 'regression',
-            modelVersion: candidateModel,
+            modelVersion: candidateModelVersion,
             prompt,
             species: normalizeSpeciesBucket(readText(inputSignature.species)),
             breed: readText(inputSignature.breed),
@@ -2191,7 +2347,7 @@ async function runRegressionSimulation(
             is_regression: isRegression,
             is_improvement: isImprovement,
             metadata: {
-                model_version: candidateModel,
+                model_version: candidateModelVersion,
                 baseline_model: baselineModel,
                 inference_latency_ms: candidate.inferenceLatencyMs,
             },
@@ -2236,7 +2392,7 @@ async function runRegressionSimulation(
             completed: replayed,
             results: {
                 baseline_model: baselineModel,
-                candidate_model: candidateModel,
+                candidate_model: candidateModelVersion,
                 total_replayed: baselineEvents.length,
                 regression_count: regressionCount,
                 improvement_count: improvementCount,
@@ -2263,7 +2419,7 @@ async function runRegressionSimulation(
             completed: replayed,
             results: {
                 baseline_model: baselineModel,
-                candidate_model: candidateModel,
+                candidate_model: candidateModelVersion,
                 total_replayed: baselineEvents.length,
                 regression_count: regressionCount,
                 improvement_count: improvementCount,
@@ -2287,7 +2443,7 @@ async function runRegressionSimulation(
     const finalStatus: SimulationStatus = shouldBlock ? 'blocked' : 'complete';
     const results = {
         baseline_model: baselineModel,
-        candidate_model: candidateModel,
+        candidate_model: candidateModelVersion,
         total_replayed: baselineEvents.length,
         regression_count: regressionCount,
         improvement_count: improvementCount,
@@ -2305,7 +2461,7 @@ async function runRegressionSimulation(
     if (shouldBlock && autoBlock) {
         await blockCandidateModel(client, {
             tenantId: record.tenant_id,
-            candidateModel,
+            candidateModel: candidateModelVersion,
             simulationId: record.id,
         });
         await createPlatformAlert(client, {
@@ -2313,10 +2469,10 @@ async function runRegressionSimulation(
             type: 'model_blocked',
             severity: 'critical',
             title: 'CANDIDATE MODEL BLOCKED BY REGRESSION SIMULATION',
-            message: `${candidateModel} was blocked after regression rate ${regressionRate}% exceeded threshold ${thresholdPct}%.`,
+            message: `${candidateModelVersion} was blocked after regression rate ${regressionRate}% exceeded threshold ${thresholdPct}%.`,
             metadata: {
                 simulation_id: record.id,
-                candidate_model: candidateModel,
+                candidate_model: candidateModelVersion,
                 regression_rate: regressionRate,
                 threshold_pct: thresholdPct,
             },
@@ -2327,7 +2483,7 @@ async function runRegressionSimulation(
             eventType: 'model_blocked',
             simulationId: record.id,
             payload: {
-                candidate_model: candidateModel,
+                candidate_model: candidateModelVersion,
                 regression_rate: regressionRate,
                 threshold_pct: thresholdPct,
             },
@@ -2339,7 +2495,7 @@ async function runRegressionSimulation(
             eventType: 'regression_threshold_exceeded',
             simulationId: record.id,
             payload: {
-                candidate_model: candidateModel,
+                candidate_model: candidateModelVersion,
                 regression_rate: regressionRate,
                 threshold_pct: thresholdPct,
                 auto_block: false,
@@ -2352,7 +2508,7 @@ async function runRegressionSimulation(
             eventType: 'regression_check_passed',
             simulationId: record.id,
             payload: {
-                candidate_model: candidateModel,
+                candidate_model: candidateModelVersion,
                 regression_rate: regressionRate,
                 baseline_mean: baselineMean,
                 candidate_mean: candidateMean,
@@ -4087,6 +4243,51 @@ async function emitSimulationOutboxEvent(
         });
 }
 
+async function enqueueSimulationWorkerTask(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        simulationId: string;
+        mode: CanonicalSimulationMode;
+        reason: string;
+    },
+) {
+    const now = new Date().toISOString();
+    const { error } = await client
+        .from('outbox_events')
+        .insert({
+            tenant_id: input.tenantId,
+            aggregate_type: 'simulation_worker',
+            aggregate_id: input.simulationId,
+            event_name: 'simulation.worker.dispatch',
+            topic: 'simulation.worker.dispatch',
+            handler_key: 'simulation_worker',
+            target_type: 'internal_task',
+            target_ref: input.simulationId,
+            payload: {
+                tenant_id: input.tenantId,
+                simulation_id: input.simulationId,
+                mode: input.mode,
+                reason: input.reason,
+            },
+            headers: {},
+            metadata: {
+                tenant_id: input.tenantId,
+                simulation_id: input.simulationId,
+                mode: input.mode,
+            },
+            status: 'pending',
+            attempt_count: 0,
+            max_attempts: 5,
+            next_retry_at: now,
+            available_at: now,
+        });
+
+    if (error) {
+        throw new Error(`Failed to enqueue simulation worker: ${error.message}`);
+    }
+}
+
 async function computeSimulationEventMetrics(
     client: SupabaseClient,
     simulationId: string,
@@ -4732,6 +4933,15 @@ function resolveSimulationWorkerSliceLimit(mode: CanonicalSimulationMode) {
     if (mode === 'adversarial') return DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS;
     if (mode === 'regression') return DEFAULT_INLINE_REGRESSION_WORK_ITEMS;
     return Number.MAX_SAFE_INTEGER;
+}
+
+function readSimulationQueueFallbackGraceMs() {
+    return clampInteger(
+        readNumber(process.env.VETIOS_SIMULATION_QUEUE_FALLBACK_GRACE_MS),
+        15_000,
+        300_000,
+        DEFAULT_SIMULATION_QUEUE_FALLBACK_GRACE_MS,
+    );
 }
 
 function readSimulationInferenceTimeoutMs() {
