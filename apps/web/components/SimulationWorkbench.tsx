@@ -121,6 +121,9 @@ const ADVERSARIAL_CATEGORIES = [
 ] as const;
 
 const STREAM_FALLBACK_MESSAGE = 'Simulation progress stream disconnected. Switching to live polling.';
+const LOAD_SIMULATION_TARGET_SECONDS = 120;
+const LOAD_SIMULATION_EXPECTED_LATENCY_SECONDS = 12;
+const LOAD_SIMULATION_DEFAULT_CONCURRENCY = 10;
 
 export default function SimulationWorkbench({
     canUseAllTenantScope = false,
@@ -171,7 +174,14 @@ export default function SimulationWorkbench({
 
     const distributionTotal = distribution.canine + distribution.feline + distribution.equine + distribution.other;
     const totalRequests = agentCount * requestsPerAgent;
-    const estimatedDurationSeconds = ratePerSecond > 0 ? Math.ceil(totalRequests / ratePerSecond) : 0;
+    const estimatedLoadConcurrency = Math.max(1, Math.min(agentCount, ratePerSecond, LOAD_SIMULATION_DEFAULT_CONCURRENCY));
+    const estimatedDurationSeconds = Math.min(
+        LOAD_SIMULATION_TARGET_SECONDS,
+        Math.max(
+            ratePerSecond > 0 ? Math.ceil(totalRequests / ratePerSecond) : 0,
+            Math.ceil(totalRequests / estimatedLoadConcurrency) * LOAD_SIMULATION_EXPECTED_LATENCY_SECONDS,
+        ),
+    );
     const adversarialRequestedPrompts = selectedCategories.length * promptsPerCategory;
     const adversarialTotalPrompts = selectedCategories.reduce((sum, category) => (
         sum + Math.min(promptCounts[category] ?? 0, promptsPerCategory)
@@ -779,6 +789,7 @@ export default function SimulationWorkbench({
                     lines={[
                         `TOTAL REQUESTS: ${formatNumber(totalRequests)}`,
                         `EST. DURATION: ${formatDuration(estimatedDurationSeconds)}`,
+                        `TARGET WALL CLOCK: <= ${formatDuration(LOAD_SIMULATION_TARGET_SECONDS)}`,
                     ]}
                 />
 

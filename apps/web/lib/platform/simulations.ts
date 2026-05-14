@@ -154,11 +154,12 @@ const DEFAULT_HEARTBEAT_INTERVAL_MS = 10_000;
 const DEFAULT_WATCHDOG_TIMEOUT_BUFFER_S = 120;
 const DEFAULT_WORKER_STALE_MS = 20_000;
 const DEFAULT_LOAD_MAX_CONCURRENCY = 10;
-const DEFAULT_ADVERSARIAL_MAX_CONCURRENCY = 4;
-const DEFAULT_INLINE_LOAD_WORK_ITEMS = 2;
-const DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS = 1;
-const DEFAULT_SIMULATION_INFERENCE_TIMEOUT_MS = 22_000;
+const DEFAULT_ADVERSARIAL_MAX_CONCURRENCY = 6;
+const DEFAULT_INLINE_LOAD_WORK_ITEMS = 10;
+const DEFAULT_INLINE_ADVERSARIAL_WORK_ITEMS = 12;
+const DEFAULT_SIMULATION_INFERENCE_TIMEOUT_MS = 15_000;
 const DEFAULT_SIMULATION_PERSISTENCE_TIMEOUT_MS = 4_000;
+const MAX_LOAD_SIMULATION_WALL_CLOCK_MS = 120_000;
 const MODEL_SAFETY_CLASSES: Record<string, ModelSafetyClass> = {
     diag_smoke_v1: 'production',
     'diag_large_v11.0.0': 'production',
@@ -945,6 +946,38 @@ async function ensureSimulationWorker(
         return;
     }
 
+    const record = normalizeSimulationRecord(row) as unknown as SimulationRecord;
+    const canonicalMode = normalizeSimulationMode(readText((record as unknown as Record<string, unknown>).mode) ?? 'load');
+    const completed = readNumber(row.completed) ?? readNumber(row.requests_completed) ?? readNumber(asRecord(row.results).completed) ?? 0;
+    const total = readNumber(row.total) ?? readNumber(row.requests_total) ?? readNumber(asRecord(row.results).total_requests) ?? 0;
+    if (canonicalMode === 'load' && completed < total && isLoadSimulationWallClockExpired(row)) {
+        const message = `Load simulation exceeded the ${Math.round(MAX_LOAD_SIMULATION_WALL_CLOCK_MS / 1000)}s wall-clock limit.`;
+        await appendSimulationEvent(client, {
+            simulation_id: input.simulationId,
+            tenant_id: input.tenantId,
+            event_type: 'error',
+            payload: {
+                message,
+                completed,
+                total,
+            },
+        }).catch(() => undefined);
+        await finalizeSimulation(client, record, {
+            status: 'failed',
+            results: {
+                ...(asRecord(row.results)),
+                status: 'failed',
+                completed,
+                total_requests: total,
+                error_message: message,
+                max_wall_clock_seconds: Math.round(MAX_LOAD_SIMULATION_WALL_CLOCK_MS / 1000),
+            },
+            errorMessage: message,
+        }).catch(() => undefined);
+        getSimulationJobStore().delete(input.simulationId);
+        return;
+    }
+
     const runInlineSlice = !shouldLaunchSimulationWorkerImmediately();
     const existingJob = getSimulationJobStore().get(input.simulationId);
     if (!runInlineSlice && existingJob && !isSimulationWorkerStale(row, existingJob)) {
@@ -963,8 +996,6 @@ async function ensureSimulationWorker(
         }).catch(() => undefined);
     }
 
-    const record = normalizeSimulationRecord(row) as unknown as SimulationRecord;
-    const canonicalMode = normalizeSimulationMode(readText((record as unknown as Record<string, unknown>).mode) ?? 'load');
     getSimulationJobStore().set(record.id, {
         cancelled: false,
         startedAtMs: Date.parse(record.started_at ?? record.created_at ?? new Date().toISOString()) || Date.now(),
@@ -1181,7 +1212,7 @@ async function runLoadSimulation(
                     weightKg: currentCase.weightKg,
                     agentIndex,
                     requestIndex,
-                    persistInference: true,
+                    persistInference: false,
                 });
             } catch (error) {
                 const message = error instanceof Error ? error.message : 'Inference request failed.';
@@ -1557,7 +1588,7 @@ async function runAdversarialSimulation(
                 species: inferSpeciesFromPrompt(readText(promptRow.prompt)),
                 agentIndex: 0,
                 requestIndex: ordinal - 1,
-                persistInference: true,
+                persistInference: false,
             });
 
             completedPrompts += 1;
@@ -4422,6 +4453,11 @@ function isSimulationWorkerStale(
         ?? job.lastProgressAtMs
         ?? job.startedAtMs;
     return Date.now() - heartbeatAtMs > readWorkerStaleMs();
+}
+
+function isLoadSimulationWallClockExpired(row: Record<string, unknown>) {
+    const startedAtMs = readDateMs(row.started_at) ?? readDateMs(row.created_at);
+    return startedAtMs != null && Date.now() - startedAtMs > MAX_LOAD_SIMULATION_WALL_CLOCK_MS;
 }
 
 function readHeartbeatIntervalMs() {

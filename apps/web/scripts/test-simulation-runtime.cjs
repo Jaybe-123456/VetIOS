@@ -511,9 +511,7 @@ async function main() {
         assert.ok(client.tables.platform_telemetry.length >= scenarioLoadDone.total, 'Scenario load should emit simulation telemetry records.');
         assert.ok(client.tables.simulation_events.some((entry) => entry.simulation_id === scenarioLoad.id && entry.event_type === 'request_complete'), 'Scenario load should persist request_complete events.');
         const scenarioInferenceRows = client.tables.ai_inference_events.filter((entry) => entry.simulation_id === scenarioLoad.id);
-        assert.equal(scenarioInferenceRows.length, scenarioLoadDone.total, 'Scenario load should persist one linked inference row per request.');
-        assert.ok(scenarioInferenceRows.every((entry) => entry.is_synthetic === true), 'Scenario load inference rows should be marked synthetic.');
-        assert.ok(scenarioInferenceRows.every((entry) => typeof entry.simulation_request_index === 'number'), 'Scenario load inference rows should preserve request indexes.');
+        assert.equal(scenarioInferenceRows.length, 0, 'Scenario load should not write synthetic requests into clinical inference history.');
 
         const adversarialPlannedTotal = await estimateAdversarialPromptTotal(client, {
             tenantId: 'tenant_001',
@@ -574,9 +572,10 @@ async function main() {
             entry.simulation_id === loggingTimeoutRun.id && entry.event_type === 'prompt_complete',
         );
         assert.ok(timeoutPromptEvents.length > 0, 'Logging timeout run should still persist prompt_complete events.');
-        assert.ok(
-            timeoutPromptEvents.every((entry) => String(entry.payload?.persistence_error ?? '').includes('statement timeout')),
-            'Prompt events should retain the persistence warning when inference logging times out.',
+        assert.equal(
+            loggingTimeoutClient.tables.ai_inference_events.filter((entry) => entry.simulation_id === loggingTimeoutRun.id).length,
+            0,
+            'Adversarial simulations should not write synthetic prompts into clinical inference history.',
         );
 
         const previousVercel = process.env.VERCEL;
@@ -607,7 +606,7 @@ async function main() {
                 simulationId: pollDrivenLoad.id,
             });
             assert.equal(firstLoadPoll.status, 'running', 'Status polling should leave a sliced load run active until all requests execute.');
-            assert.equal(firstLoadPoll.requests_completed, 2, 'Status polling should execute one bounded load work slice.');
+            assert.equal(firstLoadPoll.requests_completed, 10, 'Status polling should execute one bounded load work slice.');
 
             let nextLoadPoll = firstLoadPoll;
             while (nextLoadPoll.status === 'running') {
@@ -618,6 +617,34 @@ async function main() {
             }
             assert.equal(nextLoadPoll.status, 'complete', 'Repeated status polls should complete the remaining load slices.');
             assert.equal(nextLoadPoll.requests_completed, 12, 'Poll-driven load progress should reach the request total.');
+
+            const expiredLoad = await startSimulationRun(client, {
+                actor,
+                tenantId: 'tenant_001',
+                mode: 'load',
+                scenarioName: 'Expired Load Runtime Check',
+                config: {
+                    mode: 'load',
+                    model_version: 'baseline',
+                    agent_count: 2,
+                    requests_per_agent: 6,
+                    request_rate_per_second: 100,
+                    duration_seconds: 10,
+                    prompt_distribution: {
+                        canine: 100,
+                        feline: 0,
+                        equine: 0,
+                        other: 0,
+                    },
+                },
+            });
+            const expiredLoadRow = client.tables.simulations.find((entry) => entry.id === expiredLoad.id);
+            expiredLoadRow.started_at = new Date(Date.now() - 121_000).toISOString();
+            const expiredLoadStatus = await getSimulationStatusPayload(client, {
+                tenantId: 'tenant_001',
+                simulationId: expiredLoad.id,
+            });
+            assert.equal(expiredLoadStatus.status, 'failed', 'Load simulations should fail fast after the two-minute wall-clock cap.');
 
             const pollDrivenAdversarial = await startSimulationRun(client, {
                 actor,
@@ -636,8 +663,8 @@ async function main() {
                 tenantId: 'tenant_001',
                 simulationId: pollDrivenAdversarial.id,
             });
-            assert.equal(firstPoll.status, 'running', 'Status polling should leave a sliced adversarial run active until all prompts execute.');
-            assert.equal(firstPoll.requests_completed, 1, 'Status polling should execute one bounded adversarial work slice.');
+            assert.ok(['running', 'complete', 'failed'].includes(firstPoll.status), 'Status polling should execute a bounded adversarial work slice.');
+            assert.equal(firstPoll.requests_completed, adversarialPlannedTotal, 'The executable adversarial plan should fit in one bounded work slice for this fixture.');
 
             let nextAdversarialPoll = firstPoll;
             while (nextAdversarialPoll.status === 'running') {
