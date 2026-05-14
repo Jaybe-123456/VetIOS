@@ -20,6 +20,13 @@ import type {
     EdgeSyncJobRecord,
 } from '@/lib/edgeBox/service';
 
+const EDGE_CARD_CLASS = 'ring-1 ring-[hsl(0_0%_24%)] shadow-[0_14px_40px_rgba(0,0,0,0.35)]';
+const EDGE_INPUT_CLASS = 'border-[hsl(0_0%_38%)] bg-[hsl(0_0%_10%)] text-[hsl(0_0%_98%)] placeholder:text-[hsl(0_0%_68%)] focus:border-accent';
+const EDGE_SELECT_CLASS = 'w-full border border-[hsl(0_0%_38%)] bg-[hsl(0_0%_10%)] p-3 font-mono text-sm font-semibold text-[hsl(0_0%_98%)] focus:border-accent focus:outline-none';
+const EDGE_TEXTAREA_CLASS = 'border-[hsl(0_0%_38%)] bg-[hsl(0_0%_10%)] text-[hsl(0_0%_98%)] placeholder:text-[hsl(0_0%_68%)] focus:border-accent';
+const EDGE_ROW_CLASS = 'border border-[hsl(0_0%_28%)] bg-[hsl(0_0%_8%)] p-3';
+const EDGE_EMPTY_CLASS = 'border border-[hsl(0_0%_28%)] bg-[hsl(0_0%_8%)] p-3 font-mono text-xs text-[hsl(0_0%_78%)]';
+
 export default function EdgeBoxOperationsClient({
     initialSnapshot,
     tenantId,
@@ -136,17 +143,19 @@ export default function EdgeBoxOperationsClient({
                 <SummaryCard icon={<Boxes className="h-4 w-4" />} label="Staged Artifacts" value={snapshot.summary.staged_artifacts} />
             </div>
 
-            <ConsoleCard title="Edge Control" className="mt-6">
+            <ConsoleCard title="Edge Control" className={`mt-6 ${EDGE_CARD_CLASS}`}>
                 <div className="flex flex-wrap items-center gap-2">
                     <TerminalButton variant="secondary" onClick={() => void refreshSnapshot()} disabled={refreshing}>
                         <RefreshCw className="mr-2 h-3 w-3" />
                         {refreshing ? 'Refreshing...' : 'Refresh Snapshot'}
                     </TerminalButton>
-                    <div className="font-mono text-xs text-muted">Tenant: {tenantId}</div>
+                    <div className="border border-[hsl(0_0%_30%)] bg-[hsl(0_0%_8%)] px-3 py-2 font-mono text-xs text-[hsl(0_0%_82%)]">
+                        Tenant: <span className="text-[hsl(0_0%_96%)]">{tenantId}</span>
+                    </div>
                 </div>
                 <ActionStatePanel state={actionState} />
                 {provisioning && (
-                    <div className="mt-4 border border-warning/40 bg-warning/10 p-4 font-mono text-xs text-warning">
+                    <div className="mt-4 border border-warning/70 bg-warning/15 p-4 font-mono text-xs text-[hsl(45_100%_76%)]">
                         <div className="uppercase tracking-[0.18em]">One-time provisioning token</div>
                         <DataRow label="Edge Box ID" value={provisioning.edge_box_id} tone="warning" />
                         <DataRow label="Sync Endpoint" value={provisioning.endpoint} tone="warning" />
@@ -156,7 +165,7 @@ export default function EdgeBoxOperationsClient({
             </ConsoleCard>
 
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
-                <ConsoleCard title="Register Edge Box">
+                <ConsoleCard title="Register Edge Box" className={EDGE_CARD_CLASS}>
                     <div className="grid gap-4 md:grid-cols-2">
                         <FormField label="Node Name" value={edgeDraft.node_name} onChange={(value) => setEdgeDraft((current) => ({ ...current, node_name: value }))} />
                         <FormField label="Site Label" value={edgeDraft.site_label} onChange={(value) => setEdgeDraft((current) => ({ ...current, site_label: value }))} />
@@ -176,7 +185,7 @@ export default function EdgeBoxOperationsClient({
                     </div>
                 </ConsoleCard>
 
-                <ConsoleCard title="Queue Sync Job">
+                <ConsoleCard title="Queue Sync Job" className={EDGE_CARD_CLASS}>
                     <div className="grid gap-4 md:grid-cols-2">
                         <EdgeBoxSelect
                             label="Edge Box"
@@ -199,7 +208,7 @@ export default function EdgeBoxOperationsClient({
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Payload</TerminalLabel>
-                        <TerminalTextarea value={jobDraft.payload} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setJobDraft((current) => ({ ...current, payload: event.target.value }))} />
+                        <TerminalTextarea className={EDGE_TEXTAREA_CLASS} value={jobDraft.payload} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setJobDraft((current) => ({ ...current, payload: event.target.value }))} />
                     </div>
                     <div className="pt-4">
                         <TerminalButton
@@ -218,7 +227,7 @@ export default function EdgeBoxOperationsClient({
             </div>
 
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
-                <ConsoleCard title="Register Edge Artifact">
+                <ConsoleCard title="Register Edge Artifact" className={EDGE_CARD_CLASS}>
                     <div className="grid gap-4 md:grid-cols-2">
                         <EdgeBoxSelect
                             label="Edge Box"
@@ -253,19 +262,19 @@ export default function EdgeBoxOperationsClient({
                     </div>
                 </ConsoleCard>
 
-                <ConsoleCard title="Latest Edge Box">
+                <ConsoleCard title="Latest Edge Box" className={EDGE_CARD_CLASS}>
                     {latestBox ? (
                         <EdgeBoxDetail edgeBox={latestBox} />
                     ) : (
-                        <div className="font-mono text-xs text-muted">No edge box registered yet.</div>
+                        <div className={EDGE_EMPTY_CLASS}>No edge box registered yet.</div>
                     )}
                 </ConsoleCard>
             </div>
 
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
-                <ConsoleCard title="Sync Job Queue">
+                <ConsoleCard title="Sync Job Queue" className={EDGE_CARD_CLASS}>
                     {snapshot.sync_jobs.length === 0 ? (
-                        <div className="font-mono text-xs text-muted">No edge sync jobs queued.</div>
+                        <div className={EDGE_EMPTY_CLASS}>No edge sync jobs queued.</div>
                     ) : (
                         <div className="space-y-3">
                             {snapshot.sync_jobs.slice(0, 10).map((job) => <SyncJobRow key={job.id} job={job} edgeBoxes={snapshot.edge_boxes} />)}
@@ -273,9 +282,9 @@ export default function EdgeBoxOperationsClient({
                     )}
                 </ConsoleCard>
 
-                <ConsoleCard title="Artifact Staging">
+                <ConsoleCard title="Artifact Staging" className={EDGE_CARD_CLASS}>
                     {snapshot.sync_artifacts.length === 0 ? (
-                        <div className="font-mono text-xs text-muted">No edge artifacts staged.</div>
+                        <div className={EDGE_EMPTY_CLASS}>No edge artifacts staged.</div>
                     ) : (
                         <div className="space-y-3">
                             {snapshot.sync_artifacts.slice(0, 10).map((artifact) => <ArtifactRow key={artifact.id} artifact={artifact} edgeBoxes={snapshot.edge_boxes} />)}
@@ -299,12 +308,12 @@ function SummaryCard({
     tone?: 'neutral' | 'warning';
 }) {
     return (
-        <ConsoleCard className={tone === 'warning' ? 'border-warning/30 text-warning' : undefined}>
+        <ConsoleCard className={`${EDGE_CARD_CLASS} ${tone === 'warning' ? 'ring-warning/50 text-warning' : ''}`}>
             <div className="flex items-center justify-between">
-                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-muted">{label}</div>
-                <div>{icon}</div>
+                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-[hsl(0_0%_78%)]">{label}</div>
+                <div className={tone === 'warning' ? 'text-warning' : 'text-accent'}>{icon}</div>
             </div>
-            <div className="font-mono text-3xl">{value}</div>
+            <div className="font-mono text-3xl font-semibold text-[hsl(0_0%_98%)]">{value}</div>
         </ConsoleCard>
     );
 }
@@ -321,7 +330,7 @@ function FormField({
     return (
         <div>
             <TerminalLabel>{label}</TerminalLabel>
-            <TerminalInput value={value} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)} />
+            <TerminalInput className={EDGE_INPUT_CLASS} value={value} onChange={(event: ChangeEvent<HTMLInputElement>) => onChange(event.target.value)} />
         </div>
     );
 }
@@ -343,7 +352,7 @@ function SelectField({
             <select
                 value={value}
                 onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)}
-                className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
+                className={EDGE_SELECT_CLASS}
             >
                 {options.map((option) => (
                     <option key={option} value={option}>{option}</option>
@@ -376,7 +385,7 @@ function EdgeBoxSelect({
             <select
                 value={value}
                 onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)}
-                className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
+                className={EDGE_SELECT_CLASS}
             >
                 {allowGlobal && <option value="">All edge boxes</option>}
                 {edgeBoxes.map((box) => (
@@ -390,7 +399,7 @@ function EdgeBoxSelect({
 function EdgeBoxDetail({ edgeBox }: { edgeBox: EdgeBoxRecord }) {
     return (
         <>
-            <DataRow label="ID" value={edgeBox.id} tone="muted" />
+            <DataRow label="ID" value={edgeBox.id} />
             <DataRow label="Node" value={edgeBox.node_name} />
             <DataRow label="Site" value={edgeBox.site_label} />
             <DataRow label="Status" value={edgeBox.status.toUpperCase()} />
@@ -404,9 +413,9 @@ function EdgeBoxDetail({ edgeBox }: { edgeBox: EdgeBoxRecord }) {
 function SyncJobRow({ job, edgeBoxes }: { job: EdgeSyncJobRecord; edgeBoxes: EdgeBoxRecord[] }) {
     const edgeBox = edgeBoxes.find((box) => box.id === job.edge_box_id);
     return (
-        <div className="border border-grid/60 bg-black/20 p-3">
+        <div className={EDGE_ROW_CLASS}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-mono text-sm text-foreground">{job.job_type}</div>
+                <div className="font-mono text-sm font-semibold text-[hsl(0_0%_98%)]">{job.job_type}</div>
                 <StatusPill status={job.status} />
             </div>
             <div className="mt-2 grid gap-2 md:grid-cols-2">
@@ -423,9 +432,9 @@ function SyncJobRow({ job, edgeBoxes }: { job: EdgeSyncJobRecord; edgeBoxes: Edg
 function ArtifactRow({ artifact, edgeBoxes }: { artifact: EdgeSyncArtifactRecord; edgeBoxes: EdgeBoxRecord[] }) {
     const edgeBox = edgeBoxes.find((box) => box.id === artifact.edge_box_id);
     return (
-        <div className="border border-grid/60 bg-black/20 p-3">
+        <div className={EDGE_ROW_CLASS}>
             <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="font-mono text-sm text-foreground">{artifact.artifact_type}</div>
+                <div className="font-mono text-sm font-semibold text-[hsl(0_0%_98%)]">{artifact.artifact_type}</div>
                 <StatusPill status={artifact.status} />
             </div>
             <div className="mt-2 grid gap-2 md:grid-cols-2">
@@ -440,10 +449,10 @@ function ArtifactRow({ artifact, edgeBoxes }: { artifact: EdgeSyncArtifactRecord
 
 function StatusPill({ status }: { status: string }) {
     const tone = status === 'failed' || status === 'offline'
-        ? 'border-danger/40 text-danger'
+        ? 'border-danger/70 bg-danger/15 text-[hsl(0_85%_72%)]'
         : status === 'running' || status === 'queued' || status === 'staged'
-            ? 'border-warning/40 text-warning'
-            : 'border-accent/40 text-accent';
+            ? 'border-warning/70 bg-warning/15 text-[hsl(45_100%_72%)]'
+            : 'border-accent/70 bg-accent/15 text-[hsl(142_76%_68%)]';
 
     return (
         <span className={`border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] ${tone}`}>
@@ -470,10 +479,10 @@ function ActionStatePanel({
     }
 
     const tone = state.status === 'error'
-        ? 'border-danger/30 bg-danger/10 text-danger'
+        ? 'border-danger/70 bg-danger/15 text-[hsl(0_85%_72%)]'
         : state.status === 'success'
-            ? 'border-accent/30 bg-accent/10 text-accent'
-            : 'border-warning/30 bg-warning/10 text-warning';
+            ? 'border-accent/70 bg-accent/15 text-[hsl(142_76%_68%)]'
+            : 'border-warning/70 bg-warning/15 text-[hsl(45_100%_72%)]';
 
     return <div className={`mt-4 border px-4 py-3 font-mono text-xs ${tone}`}>{state.message}</div>;
 }
