@@ -30,6 +30,16 @@ describe('Ask Vetios clinical upload text extraction', () => {
         expect(extracted.text).toContain('elevated cPLI');
     });
 
+    it('extracts hex-encoded PDF text operators', () => {
+        const encoded = Buffer.from('Equine embryo transfer and artificial insemination lecture content.', 'utf8').toString('hex');
+        const pdf = Buffer.from(`%PDF-1.4\nBT <${encoded}> Tj ET`);
+        const extracted = extractClinicalUploadText({ sourceType: 'pdf', buffer: pdf });
+
+        expect(extracted.method).toBe('pdf_literal_text');
+        expect(extracted.text).toContain('embryo transfer');
+        expect(extracted.text).toContain('artificial insemination');
+    });
+
     it('extracts text from compressed PDF content streams', () => {
         const streamText = 'BT (Assisted Reproductive Technologies include artificial insemination, embryo transfer, IVF, and cryopreservation.) Tj ET';
         const compressed = deflateSync(Buffer.from(streamText, 'latin1'));

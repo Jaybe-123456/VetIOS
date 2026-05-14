@@ -468,6 +468,25 @@ function decodePdfLiteral(value: string): string {
         .replace(/\\([0-7]{1,3})/g, (_match, octal) => String.fromCharCode(Number.parseInt(octal, 8)));
 }
 
+function decodePdfHexString(value: string): string {
+    const clean = value.replace(/\s+/g, '');
+    const bytes: number[] = [];
+    for (let index = 0; index < clean.length; index += 2) {
+        const byte = Number.parseInt(clean.slice(index, index + 2).padEnd(2, '0'), 16);
+        if (Number.isFinite(byte)) bytes.push(byte);
+    }
+
+    if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+        let decoded = '';
+        for (let index = 2; index + 1 < bytes.length; index += 2) {
+            decoded += String.fromCharCode((bytes[index] << 8) | bytes[index + 1]);
+        }
+        return decoded;
+    }
+
+    return Buffer.from(bytes).toString('utf8');
+}
+
 function flattenJson(value: unknown, prefix = ''): string[] {
     if (value === null || value === undefined) return [];
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
