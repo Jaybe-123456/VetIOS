@@ -106,7 +106,7 @@ export async function POST(req: Request) {
     try {
         let result: Record<string, unknown> = {};
         if (parsed.data.action === 'create_edge_box') {
-            result.edge_box = await createEdgeBox(client, {
+            const provisioned = await createEdgeBox(client, {
                 tenantId: context.tenantId,
                 actor: context.userId,
                 nodeName: parsed.data.node_name ?? '',
@@ -115,6 +115,7 @@ export async function POST(req: Request) {
                 status: parsed.data.status ?? 'provisioning',
                 softwareVersion: parsed.data.software_version ?? null,
             });
+            result = provisioned as unknown as Record<string, unknown>;
         } else if (parsed.data.action === 'queue_sync_job') {
             result.sync_job = await queueEdgeSyncJob(client, {
                 tenantId: context.tenantId,
@@ -128,6 +129,7 @@ export async function POST(req: Request) {
         } else if (parsed.data.action === 'register_artifact') {
             result.sync_artifact = await registerEdgeArtifact(client, {
                 tenantId: context.tenantId,
+                actor: context.userId,
                 edgeBoxId: parsed.data.edge_box_id ?? null,
                 artifactType: parsed.data.artifact_type ?? 'config_bundle',
                 artifactRef: parsed.data.artifact_ref ?? '',
@@ -140,6 +142,7 @@ export async function POST(req: Request) {
                 edgeBoxId: parsed.data.edge_box_id ?? '',
                 status: parsed.data.status ?? 'online',
                 softwareVersion: parsed.data.software_version ?? null,
+                actor: context.userId,
             });
         } else {
             return NextResponse.json({ error: 'Unsupported edge-box action.', request_id: requestId }, { status: 400 });

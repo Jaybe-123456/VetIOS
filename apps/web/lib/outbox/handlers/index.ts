@@ -1,4 +1,5 @@
 import { dispatchApiWebhook } from '@/lib/outbox/handlers/api-webhook.handler';
+import { dispatchEdgeSync } from '@/lib/outbox/handlers/edge-sync.handler';
 import { dispatchOutcomeContribution } from '@/lib/outbox/handlers/outcome-contribution.handler';
 import { dispatchPetPassSync } from '@/lib/outbox/handlers/petpass-sync.handler';
 import { dispatchSimulationWorker } from '@/lib/outbox/handlers/simulation-worker.handler';
@@ -11,6 +12,7 @@ const HANDLER_REGISTRY: Record<string, OutboxHandler> = {
     outcome_contribution: dispatchOutcomeContribution,
     api_webhook: dispatchApiWebhook,
     simulation_worker: dispatchSimulationWorker,
+    edge_sync: dispatchEdgeSync,
 };
 
 export async function dispatchEvent(event: OutboxEvent): Promise<DeliveryResult> {

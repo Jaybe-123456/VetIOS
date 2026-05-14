@@ -16,6 +16,8 @@ import {
 import type {
     EdgeBoxControlPlaneSnapshot,
     EdgeBoxRecord,
+    EdgeSyncArtifactRecord,
+    EdgeSyncJobRecord,
 } from '@/lib/edgeBox/service';
 
 export default function EdgeBoxOperationsClient({
@@ -31,6 +33,7 @@ export default function EdgeBoxOperationsClient({
         status: 'idle',
         message: '',
     });
+    const [provisioning, setProvisioning] = useState<{ edge_box_id: string; token: string; endpoint: string } | null>(null);
     const [edgeDraft, setEdgeDraft] = useState({
         node_name: '',
         site_label: '',
@@ -58,7 +61,13 @@ export default function EdgeBoxOperationsClient({
         setRefreshing(true);
         try {
             const res = await fetch('/api/platform/edge-box', { cache: 'no-store' });
-            const data = await res.json() as { snapshot?: EdgeBoxControlPlaneSnapshot; error?: string };
+            const data = await res.json() as {
+                snapshot?: EdgeBoxControlPlaneSnapshot;
+                edge_box?: EdgeBoxRecord;
+                provisioning_token?: string;
+                sync_endpoint?: string;
+                error?: string;
+            };
             if (!res.ok || !data.snapshot) {
                 throw new Error(data.error ?? 'Failed to refresh edge-box snapshot.');
             }
@@ -81,7 +90,13 @@ export default function EdgeBoxOperationsClient({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
             });
-            const data = await res.json() as { snapshot?: EdgeBoxControlPlaneSnapshot; error?: string };
+            const data = await res.json() as {
+                snapshot?: EdgeBoxControlPlaneSnapshot;
+                edge_box?: EdgeBoxRecord;
+                provisioning_token?: string;
+                sync_endpoint?: string;
+                error?: string;
+            };
             if (!res.ok || !data.snapshot) {
                 throw new Error(data.error ?? 'Edge-box operation failed.');
             }
@@ -90,6 +105,13 @@ export default function EdgeBoxOperationsClient({
             if (nextSnapshot.edge_boxes[0]?.id) {
                 setJobDraft((current) => ({ ...current, edge_box_id: current.edge_box_id || nextSnapshot.edge_boxes[0].id }));
                 setArtifactDraft((current) => ({ ...current, edge_box_id: current.edge_box_id || nextSnapshot.edge_boxes[0].id }));
+            }
+            if (data.edge_box && data.provisioning_token) {
+                setProvisioning({
+                    edge_box_id: data.edge_box.id,
+                    token: data.provisioning_token,
+                    endpoint: data.sync_endpoint ?? '/api/edge-box/sync',
+                });
             }
             setActionState({ status: 'success', message: successMessage });
         } catch (error) {
@@ -123,6 +145,14 @@ export default function EdgeBoxOperationsClient({
                     <div className="font-mono text-xs text-muted">Tenant: {tenantId}</div>
                 </div>
                 <ActionStatePanel state={actionState} />
+                {provisioning && (
+                    <div className="mt-4 border border-warning/40 bg-warning/10 p-4 font-mono text-xs text-warning">
+                        <div className="uppercase tracking-[0.18em]">One-time provisioning token</div>
+                        <DataRow label="Edge Box ID" value={provisioning.edge_box_id} tone="warning" />
+                        <DataRow label="Sync Endpoint" value={provisioning.endpoint} tone="warning" />
+                        <DataRow label="Token" value={provisioning.token} tone="warning" />
+                    </div>
+                )}
             </ConsoleCard>
 
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
@@ -148,7 +178,12 @@ export default function EdgeBoxOperationsClient({
 
                 <ConsoleCard title="Queue Sync Job">
                     <div className="grid gap-4 md:grid-cols-2">
-                        <FormField label="Edge Box ID" value={jobDraft.edge_box_id} onChange={(value) => setJobDraft((current) => ({ ...current, edge_box_id: value }))} />
+                        <EdgeBoxSelect
+                            label="Edge Box"
+                            value={jobDraft.edge_box_id}
+                            edgeBoxes={snapshot.edge_boxes}
+                            onChange={(value) => setJobDraft((current) => ({ ...current, edge_box_id: value }))}
+                        />
                         <SelectField
                             label="Job Type"
                             value={jobDraft.job_type}
@@ -185,7 +220,13 @@ export default function EdgeBoxOperationsClient({
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
                 <ConsoleCard title="Register Edge Artifact">
                     <div className="grid gap-4 md:grid-cols-2">
-                        <FormField label="Edge Box ID" value={artifactDraft.edge_box_id} onChange={(value) => setArtifactDraft((current) => ({ ...current, edge_box_id: value }))} />
+                        <EdgeBoxSelect
+                            label="Edge Box"
+                            value={artifactDraft.edge_box_id}
+                            edgeBoxes={snapshot.edge_boxes}
+                            allowGlobal
+                            onChange={(value) => setArtifactDraft((current) => ({ ...current, edge_box_id: value }))}
+                        />
                         <SelectField
                             label="Artifact Type"
                             value={artifactDraft.artifact_type}
@@ -217,6 +258,28 @@ export default function EdgeBoxOperationsClient({
                         <EdgeBoxDetail edgeBox={latestBox} />
                     ) : (
                         <div className="font-mono text-xs text-muted">No edge box registered yet.</div>
+                    )}
+                </ConsoleCard>
+            </div>
+
+            <div className="mt-6 grid gap-6 xl:grid-cols-2">
+                <ConsoleCard title="Sync Job Queue">
+                    {snapshot.sync_jobs.length === 0 ? (
+                        <div className="font-mono text-xs text-muted">No edge sync jobs queued.</div>
+                    ) : (
+                        <div className="space-y-3">
+                            {snapshot.sync_jobs.slice(0, 10).map((job) => <SyncJobRow key={job.id} job={job} edgeBoxes={snapshot.edge_boxes} />)}
+                        </div>
+                    )}
+                </ConsoleCard>
+
+                <ConsoleCard title="Artifact Staging">
+                    {snapshot.sync_artifacts.length === 0 ? (
+                        <div className="font-mono text-xs text-muted">No edge artifacts staged.</div>
+                    ) : (
+                        <div className="space-y-3">
+                            {snapshot.sync_artifacts.slice(0, 10).map((artifact) => <ArtifactRow key={artifact.id} artifact={artifact} edgeBoxes={snapshot.edge_boxes} />)}
+                        </div>
                     )}
                 </ConsoleCard>
             </div>
@@ -290,9 +353,44 @@ function SelectField({
     );
 }
 
+function EdgeBoxSelect({
+    label,
+    value,
+    edgeBoxes,
+    allowGlobal = false,
+    onChange,
+}: {
+    label: string;
+    value: string;
+    edgeBoxes: EdgeBoxRecord[];
+    allowGlobal?: boolean;
+    onChange: (value: string) => void;
+}) {
+    if (edgeBoxes.length === 0) {
+        return <FormField label={`${label} ID`} value={value} onChange={onChange} />;
+    }
+
+    return (
+        <div>
+            <TerminalLabel>{label}</TerminalLabel>
+            <select
+                value={value}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)}
+                className="w-full border border-grid bg-dim p-3 font-mono text-sm text-foreground"
+            >
+                {allowGlobal && <option value="">All edge boxes</option>}
+                {edgeBoxes.map((box) => (
+                    <option key={box.id} value={box.id}>{box.node_name} / {box.site_label}</option>
+                ))}
+            </select>
+        </div>
+    );
+}
+
 function EdgeBoxDetail({ edgeBox }: { edgeBox: EdgeBoxRecord }) {
     return (
         <>
+            <DataRow label="ID" value={edgeBox.id} tone="muted" />
             <DataRow label="Node" value={edgeBox.node_name} />
             <DataRow label="Site" value={edgeBox.site_label} />
             <DataRow label="Status" value={edgeBox.status.toUpperCase()} />
@@ -301,6 +399,62 @@ function EdgeBoxDetail({ edgeBox }: { edgeBox: EdgeBoxRecord }) {
             <DataRow label="Heartbeat" value={edgeBox.last_heartbeat_at ?? 'NO DATA'} />
         </>
     );
+}
+
+function SyncJobRow({ job, edgeBoxes }: { job: EdgeSyncJobRecord; edgeBoxes: EdgeBoxRecord[] }) {
+    const edgeBox = edgeBoxes.find((box) => box.id === job.edge_box_id);
+    return (
+        <div className="border border-grid/60 bg-black/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-mono text-sm text-foreground">{job.job_type}</div>
+                <StatusPill status={job.status} />
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                <DataRow label="Node" value={edgeBox ? `${edgeBox.node_name} / ${edgeBox.site_label}` : job.edge_box_id} />
+                <DataRow label="Direction" value={job.direction} />
+                <DataRow label="Scheduled" value={formatTimestamp(job.scheduled_at)} />
+                <DataRow label="Completed" value={job.completed_at ? formatTimestamp(job.completed_at) : 'pending'} tone={job.completed_at ? 'accent' : 'muted'} />
+            </div>
+            {job.error_message && <div className="mt-2 font-mono text-xs text-danger">{job.error_message}</div>}
+        </div>
+    );
+}
+
+function ArtifactRow({ artifact, edgeBoxes }: { artifact: EdgeSyncArtifactRecord; edgeBoxes: EdgeBoxRecord[] }) {
+    const edgeBox = edgeBoxes.find((box) => box.id === artifact.edge_box_id);
+    return (
+        <div className="border border-grid/60 bg-black/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-mono text-sm text-foreground">{artifact.artifact_type}</div>
+                <StatusPill status={artifact.status} />
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                <DataRow label="Target" value={edgeBox ? `${edgeBox.node_name} / ${edgeBox.site_label}` : 'all edge boxes'} />
+                <DataRow label="Size" value={`${artifact.size_bytes} bytes`} />
+                <DataRow label="Artifact Ref" value={artifact.artifact_ref} />
+                <DataRow label="SHA-256" value={artifact.content_hash} tone="muted" />
+            </div>
+        </div>
+    );
+}
+
+function StatusPill({ status }: { status: string }) {
+    const tone = status === 'failed' || status === 'offline'
+        ? 'border-danger/40 text-danger'
+        : status === 'running' || status === 'queued' || status === 'staged'
+            ? 'border-warning/40 text-warning'
+            : 'border-accent/40 text-accent';
+
+    return (
+        <span className={`border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] ${tone}`}>
+            {status}
+        </span>
+    );
+}
+
+function formatTimestamp(value: string): string {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
 function ActionStatePanel({
