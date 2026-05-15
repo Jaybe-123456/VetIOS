@@ -32,6 +32,15 @@ export interface MessageMetadata {
         columns: string[];
         rows: string[][];
     }>;
+    uploaded_document?: {
+        upload_id: string;
+        file_name: string;
+        status?: string;
+        source_type?: string;
+        rag_document_id?: string | null;
+        chunks_indexed?: number;
+        extracted_characters?: number;
+    };
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';

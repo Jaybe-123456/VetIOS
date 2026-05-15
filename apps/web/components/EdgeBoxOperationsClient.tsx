@@ -13,6 +13,7 @@ import {
     TerminalLabel,
     TerminalTextarea,
 } from '@/components/ui/terminal';
+import { fetchWithTimeout } from '@/lib/http/clientRequest';
 import type {
     EdgeBoxControlPlaneSnapshot,
     EdgeBoxRecord,
@@ -67,7 +68,10 @@ export default function EdgeBoxOperationsClient({
     async function refreshSnapshot() {
         setRefreshing(true);
         try {
-            const res = await fetch('/api/platform/edge-box', { cache: 'no-store' });
+            const res = await fetchWithTimeout('/api/platform/edge-box', { cache: 'no-store' }, {
+                timeoutMs: 12_000,
+                timeoutMessage: 'Edge Box snapshot refresh timed out. Check the connection and retry.',
+            });
             const data = await res.json() as {
                 snapshot?: EdgeBoxControlPlaneSnapshot;
                 edge_box?: EdgeBoxRecord;
@@ -92,10 +96,13 @@ export default function EdgeBoxOperationsClient({
     async function runAction(body: Record<string, unknown>, successMessage: string) {
         setActionState({ status: 'running', message: 'Running edge-box operation...' });
         try {
-            const res = await fetch('/api/platform/edge-box', {
+            const res = await fetchWithTimeout('/api/platform/edge-box', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body),
+            }, {
+                timeoutMs: 15_000,
+                timeoutMessage: 'Edge Box operation timed out before confirmation. Refresh the snapshot before retrying.',
             });
             const data = await res.json() as {
                 snapshot?: EdgeBoxControlPlaneSnapshot;
@@ -127,6 +134,27 @@ export default function EdgeBoxOperationsClient({
                 message: error instanceof Error ? error.message : 'Edge-box operation failed.',
             });
         }
+    }
+
+    function queueSyncJob() {
+        let payload: Record<string, unknown>;
+        try {
+            payload = parseJson(jobDraft.payload);
+        } catch (error) {
+            setActionState({
+                status: 'error',
+                message: error instanceof Error ? error.message : 'Payload must be valid JSON.',
+            });
+            return;
+        }
+
+        void runAction({
+            action: 'queue_sync_job',
+            edge_box_id: jobDraft.edge_box_id,
+            job_type: jobDraft.job_type,
+            direction: jobDraft.direction,
+            payload,
+        }, 'Edge sync job queued.');
     }
 
     return (
@@ -212,13 +240,7 @@ export default function EdgeBoxOperationsClient({
                     </div>
                     <div className="pt-4">
                         <TerminalButton
-                            onClick={() => void runAction({
-                                action: 'queue_sync_job',
-                                edge_box_id: jobDraft.edge_box_id,
-                                job_type: jobDraft.job_type,
-                                direction: jobDraft.direction,
-                                payload: parseJson(jobDraft.payload),
-                            }, 'Edge sync job queued.')}
+                            onClick={queueSyncJob}
                         >
                             Queue Sync Job
                         </TerminalButton>
@@ -494,6 +516,6 @@ function parseJson(value: string): Record<string, unknown> {
             ? parsed as Record<string, unknown>
             : {};
     } catch {
-        return {};
+        throw new Error('Payload must be valid JSON before queueing a sync job.');
     }
 }

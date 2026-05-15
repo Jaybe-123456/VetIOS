@@ -20,6 +20,7 @@ import { Container, PageHeader, ConsoleCard, DataRow, TerminalLabel, TerminalInp
 import { MetricCard } from '@/components/InferenceMetrics';
 import { SystemLogConsole, type LogEntry } from '@/components/SystemLogConsole';
 import { isPopulatedPanelValue, panelsToDiagnosticTests } from '@/lib/inference/panel-diagnostics';
+import { fetchWithTimeout } from '@/lib/http/clientRequest';
 
 type InferenceTab = 'analysis' | 'vectors' | 'diagnostics' | 'pathways';
 
@@ -524,12 +525,15 @@ export default function InferenceConsole() {
             const requestPayloadForState = v1RequestBody.input.input_signature as Record<string, unknown>;
 
             const startTime = performance.now();
-            const res = await fetch('/api/inference', {
+            const res = await fetchWithTimeout('/api/inference', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'same-origin',
                 cache: 'no-store',
                 body: JSON.stringify(data)
+            }, {
+                timeoutMs: 28_000,
+                timeoutMessage: 'Inference did not return within 28 seconds. Retry with a smaller payload or check the network connection.',
             });
 
             const textResult = await res.text();
@@ -704,7 +708,7 @@ export default function InferenceConsole() {
         if (!confirmed) return;
 
         try {
-            const response = await fetch(`/api/cire/incidents/${state.cire.incident_id}/resolve`, {
+            const response = await fetchWithTimeout(`/api/cire/incidents/${state.cire.incident_id}/resolve`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'same-origin',
@@ -713,6 +717,9 @@ export default function InferenceConsole() {
                     override_action: true,
                     resolution_notes: 'Operator override from inference console',
                 }),
+            }, {
+                timeoutMs: 12_000,
+                timeoutMessage: 'CIRE override logging timed out. Check the network before retrying.',
             });
             const result = await response.json();
             if (!response.ok) {
@@ -732,9 +739,12 @@ export default function InferenceConsole() {
     }
 
     async function loadEpisodeWorkflow(episodeId: string): Promise<WorkflowEpisodeDetail> {
-        const response = await fetch(`/api/episodes/${episodeId}?limit=20`, {
+        const response = await fetchWithTimeout(`/api/episodes/${episodeId}?limit=20`, {
             credentials: 'same-origin',
             cache: 'no-store',
+        }, {
+            timeoutMs: 10_000,
+            timeoutMessage: 'Episode workflow loading timed out. The outcome was saved, but workflow details may need a refresh.',
         });
         const result = await response.json();
         if (!response.ok) {
@@ -768,12 +778,15 @@ export default function InferenceConsole() {
         };
 
         try {
-            const res = await fetch('/api/outcome', {
+            const res = await fetchWithTimeout('/api/outcome', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'same-origin',
                 cache: 'no-store',
                 body: JSON.stringify(data),
+            }, {
+                timeoutMs: 15_000,
+                timeoutMessage: 'Outcome submission timed out. Check the case before submitting again to avoid duplicates.',
             });
 
             const result = await res.json();

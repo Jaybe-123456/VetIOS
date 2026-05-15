@@ -15,6 +15,8 @@ const HTTP_STATUS_TEXT: Record<number, string> = {
     503: 'Service Unavailable',
 };
 
+import { fetchWithTimeout, type FetchWithTimeoutOptions } from '@/lib/http/clientRequest';
+
 export class ApiResponseError extends Error {
     status: number;
     statusText: string;
@@ -29,11 +31,11 @@ export class ApiResponseError extends Error {
     }
 }
 
-export async function requestJson(input: RequestInfo | URL, init?: RequestInit) {
-    const response = await fetch(input, {
+export async function requestJson(input: RequestInfo | URL, init?: RequestInit, options?: FetchWithTimeoutOptions) {
+    const response = await fetchWithTimeout(input, {
         cache: 'no-store',
         ...init,
-    });
+    }, options);
 
     const body = await parseResponseBody(response);
     return { response, body };

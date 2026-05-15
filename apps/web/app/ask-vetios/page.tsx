@@ -7,6 +7,8 @@ import ChatContainer from '@/components/ask-vetios/ChatContainer';
 import ChatInput from '@/components/ask-vetios/ChatInput';
 import { DashboardMetrics, AnalyticsChart } from '@/components/ask-vetios/DashboardMetrics';
 import { RecentCases } from '@/components/ask-vetios/RecentCases';
+import type { Chat } from '@/store/useChatStore';
+import { fetchWithTimeout } from '@/lib/http/clientRequest';
 import {
     Plus, History, Share2, Download, Trash2, MessageSquare, Clock
 } from 'lucide-react';
@@ -105,9 +107,9 @@ export default function AskVetIOSPage() {
         setLoading(true);
 
         try {
-            const activeUploads = chatUploads[activeChatId] ?? [];
+            const activeUploads = resolveChatUploads(activeChat, chatUploads[activeChatId] ?? []);
             if (activeUploads.length > 0) {
-                const queryResponse = await fetch('/api/ask-vetios/query', {
+                const queryResponse = await fetchWithTimeout('/api/ask-vetios/query', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -118,6 +120,9 @@ export default function AskVetIOSPage() {
                             .filter((value): value is string => Boolean(value)),
                         domain: 'clinical_document,diagnostics,lab_reference',
                     }),
+                }, {
+                    timeoutMs: 30_000,
+                    timeoutMessage: 'Uploaded document reasoning took longer than 30 seconds. Retry the question or ask for a narrower section.',
                 });
                 const analysis = await queryResponse.json() as AskVetiosContractResponse;
                 if (!queryResponse.ok || analysis.error) {
@@ -132,10 +137,13 @@ export default function AskVetIOSPage() {
                 return;
             }
 
-            const response = await fetch('/api/ask-vetios', {
+            const response = await fetchWithTimeout('/api/ask-vetios', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: content, conversation: history }),
+            }, {
+                timeoutMs: 30_000,
+                timeoutMessage: 'VetIOS did not return within 30 seconds. Retry with a narrower question or check the network connection.',
             });
 
             const data = await response.json() as {
@@ -213,9 +221,12 @@ export default function AskVetIOSPage() {
             form.append('session_id', activeChatId);
             form.append('domain', 'clinical_document,diagnostics,lab_reference');
 
-            const uploadResponse = await fetch('/api/ask-vetios/upload', {
+            const uploadResponse = await fetchWithTimeout('/api/ask-vetios/upload', {
                 method: 'POST',
                 body: form,
+            }, {
+                timeoutMs: 65_000,
+                timeoutMessage: 'Document upload or indexing exceeded 65 seconds. Retry with a smaller file or a text-searchable PDF.',
             });
             const upload = await uploadResponse.json() as UploadResponse;
             if (!uploadResponse.ok || upload.error || !upload.upload_id) {
@@ -242,6 +253,7 @@ export default function AskVetIOSPage() {
                         chunks_indexed: upload.chunks_indexed,
                         source_type: upload.source_type,
                     },
+                    uploaded_document: buildUploadedDocumentMetadata(file.name, upload),
                 },
             });
         } catch (err) {
@@ -487,6 +499,43 @@ function buildDocumentAnalysisMetadata(analysis: AskVetiosContractResponse, uplo
             upload_status: upload.status,
             chunks_indexed: upload.chunks_indexed,
         },
+        uploaded_document: upload.upload_id && upload.file_name
+            ? buildUploadedDocumentMetadata(upload.file_name, upload)
+            : undefined,
+    };
+}
+
+function resolveChatUploads(activeChat: Chat | undefined, volatileUploads: UploadResponse[]): UploadResponse[] {
+    const byUploadId = new Map<string, UploadResponse>();
+    for (const upload of volatileUploads) {
+        if (upload.upload_id) byUploadId.set(upload.upload_id, upload);
+    }
+    for (const message of activeChat?.messages ?? []) {
+        const upload = message.metadata?.uploaded_document;
+        if (upload?.upload_id && !byUploadId.has(upload.upload_id)) {
+            byUploadId.set(upload.upload_id, {
+                upload_id: upload.upload_id,
+                file_name: upload.file_name,
+                status: upload.status,
+                source_type: upload.source_type,
+                rag_document_id: upload.rag_document_id,
+                chunks_indexed: upload.chunks_indexed,
+                extracted_characters: upload.extracted_characters,
+            });
+        }
+    }
+    return [...byUploadId.values()];
+}
+
+function buildUploadedDocumentMetadata(fileName: string, upload: UploadResponse) {
+    return {
+        upload_id: upload.upload_id ?? '',
+        file_name: fileName,
+        status: upload.status,
+        source_type: upload.source_type,
+        rag_document_id: upload.rag_document_id,
+        chunks_indexed: upload.chunks_indexed,
+        extracted_characters: upload.extracted_characters,
     };
 }
 
