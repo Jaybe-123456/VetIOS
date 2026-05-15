@@ -1142,7 +1142,7 @@ export async function injectControlPlaneSimulation(input: {
     });
     const target = resolveTopologySimulationTarget(controlPlane, input.targetNodeId);
     const profile = buildSimulationProfile(input.scenario, input.severity, input.targetNodeId);
-    let simulationEventId = randomUUID();
+    let simulationEventId: string = randomUUID();
     const timestamp = new Date().toISOString();
 
     simulationEventId = await logSimulation(input.client, {
