@@ -14,6 +14,7 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { getSupabaseServer } from '@/lib/supabaseServer';
+import { addAskVetiosBudgetHeaders, enforceAskVetiosTokenBudget } from '@/lib/askVetios/usageBudget';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -43,6 +44,24 @@ export async function POST(req: Request) {
     }
 
     const queryId = randomUUID();
+    const tokenBudget = enforceAskVetiosTokenBudget({
+        req,
+        kind: 'document_query',
+        message: parsed.data.query,
+    });
+    if (!tokenBudget.allowed) {
+        const response = NextResponse.json({
+            error: 'token_budget_exceeded',
+            reason: `Ask Vetios document-query token budget reached. Retry after ${Math.ceil(tokenBudget.retryAfterSeconds / 60)} minute(s) or ask a narrower question.`,
+            retry_after_seconds: tokenBudget.retryAfterSeconds,
+            token_limit: tokenBudget.limit,
+            token_remaining: tokenBudget.remaining,
+            token_request: tokenBudget.requestedTokens,
+            request_id: requestId,
+        }, { status: 429 });
+        addAskVetiosBudgetHeaders(response.headers, tokenBudget);
+        return withHeaders(response, requestId, startTime);
+    }
     if (parsed.data.upload_ids.length > 0) {
         const contexts = await loadUploadedDocumentContexts({
             client: getSupabaseServer(),
@@ -63,14 +82,18 @@ export async function POST(req: Request) {
                     queryId,
                     startedAt: startTime,
                 });
-            return withHeaders(NextResponse.json({ ...response, request_id: requestId }), requestId, startTime);
+            const res = NextResponse.json({ ...response, request_id: requestId });
+            addAskVetiosBudgetHeaders(res.headers, tokenBudget);
+            return withHeaders(res, requestId, startTime);
         }
 
-        return withHeaders(NextResponse.json({
+        const res = NextResponse.json({
             error: 'uploaded_document_not_indexed',
             reason: 'The uploaded file was validated, but no indexed document chunks are available for this upload ID yet. Re-upload the document or wait for indexing to finish before asking document-specific questions.',
             request_id: requestId,
-        }, { status: 409 }), requestId, startTime);
+        }, { status: 409 });
+        addAskVetiosBudgetHeaders(res.headers, tokenBudget);
+        return withHeaders(res, requestId, startTime);
     }
 
     const heuristic = buildHeuristicResponse(parsed.data.query);
@@ -91,7 +114,9 @@ export async function POST(req: Request) {
         startedAt: startTime,
     });
 
-    return withHeaders(NextResponse.json({ ...response, request_id: requestId }), requestId, startTime);
+    const res = NextResponse.json({ ...response, request_id: requestId });
+    addAskVetiosBudgetHeaders(res.headers, tokenBudget);
+    return withHeaders(res, requestId, startTime);
 }
 
 async function resolveQueryRag(input: {

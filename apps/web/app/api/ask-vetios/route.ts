@@ -20,6 +20,10 @@ import { parseAskVetIOSQuery } from '@vetios/ask-vetios';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/service';
 import { buildHeuristicResponse as buildAskVetiosHeuristicResponse, type AskVetiosHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
+import {
+    addAskVetiosBudgetHeaders,
+    enforceAskVetiosTokenBudget,
+} from '@/lib/askVetios/usageBudget';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -67,6 +71,41 @@ export async function POST(req: Request) {
     }
 
     const { message, conversation } = parsed.data;
+    const tokenBudget = enforceAskVetiosTokenBudget({
+        req,
+        kind: 'chat',
+        message,
+        conversation,
+    });
+    if (!tokenBudget.allowed) {
+        writeAuditLog({
+            ...auditCtx,
+            request_id: requestId,
+            tenant_id: null,
+            status_code: 429,
+            latency_ms: Date.now() - startTime,
+            blocked: true,
+            block_reason: 'ask_vetios_token_budget_exceeded',
+            metadata: {
+                token_limit: tokenBudget.limit,
+                token_remaining: tokenBudget.remaining,
+                token_request: tokenBudget.requestedTokens,
+                reset_at: new Date(tokenBudget.resetAt).toISOString(),
+            },
+            timestamp: new Date().toISOString(),
+        });
+        const res = NextResponse.json({
+            error: 'token_budget_exceeded',
+            message: `Ask Vetios token budget reached. Retry after ${Math.ceil(tokenBudget.retryAfterSeconds / 60)} minute(s), shorten the conversation, or start a new paid plan session.`,
+            retry_after_seconds: tokenBudget.retryAfterSeconds,
+            token_limit: tokenBudget.limit,
+            token_remaining: tokenBudget.remaining,
+            token_request: tokenBudget.requestedTokens,
+            request_id: requestId,
+        }, { status: 429 });
+        addAskVetiosBudgetHeaders(res.headers, tokenBudget);
+        return withAskVetiosHeaders(res, requestId, startTime);
+    }
 
     // ── Heuristic fallback (dev / test) ──
     if (shouldUseAiHeuristicFallback()) {
@@ -80,6 +119,7 @@ export async function POST(req: Request) {
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, fingerprint: fp, mode: heuristicBody.mode, metadata: { heuristic: true }, timestamp: new Date().toISOString() });
         const res = NextResponse.json(attachResponseFingerprint({ ...heuristicBody, query_history_id: queryHistoryId } as Record<string, unknown>, fp), { status: 200 });
         res.headers.set('x-vetios-fingerprint', fp);
+        addAskVetiosBudgetHeaders(res.headers, tokenBudget);
         return withAskVetiosHeaders(res, requestId, startTime);
     }
 
@@ -136,6 +176,7 @@ export async function POST(req: Request) {
         const queryHistoryId = await logAskVetiosQuery(message, response, startTime).catch(() => null);
         const responseWithHistory = queryHistoryId ? { ...response, query_history_id: queryHistoryId } : response;
         const res = NextResponse.json(responseWithHistory, { status: 200 });
+        addAskVetiosBudgetHeaders(res.headers, tokenBudget);
         withAskVetiosHeaders(res, requestId, startTime);
 
         // ── Passive population signal ingestion (fire-and-forget) ──
@@ -165,6 +206,7 @@ export async function POST(req: Request) {
         const queryHistoryId = await logAskVetiosQuery(message, fallback as unknown as Record<string, unknown>, startTime).catch(() => null);
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, metadata: { fallback: true, error: error instanceof Error ? error.message : 'Unknown' }, timestamp: new Date().toISOString() });
         const res = NextResponse.json({ ...fallback, query_history_id: queryHistoryId, _fallback: true }, { status: 200 });
+        addAskVetiosBudgetHeaders(res.headers, tokenBudget);
         return withAskVetiosHeaders(res, requestId, startTime);
     }
 }

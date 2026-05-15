@@ -74,7 +74,8 @@ interface ChatState {
     setUsername: (username: string | null) => void;
     setTier: (tier: 'free' | 'premium') => void;
     incrementUsage: () => boolean; // Returns true if allowed, false if limit exceeded
-    addMessage: (chatId: string, message: Omit<Message, 'id' | 'timestamp'>) => void;
+    addMessage: (chatId: string, message: Omit<Message, 'id' | 'timestamp'>) => string;
+    updateMessage: (chatId: string, messageId: string, patch: Partial<Pick<Message, 'content' | 'metadata'>>) => void;
     createChat: (title?: string) => string;
     deleteChat: (chatId: string) => void;
     switchChat: (chatId: string) => void;
@@ -152,6 +153,30 @@ export const useChatStore = create<ChatState>()(
                                 title: chat.messages.length === 1 && message.role === 'user'
                                     ? message.content.slice(0, 38) + (message.content.length > 38 ? '…' : '')
                                     : chat.title,
+                            }
+                            : chat
+                    ),
+                }));
+                return newMessage.id;
+            },
+
+            updateMessage: (chatId, messageId, patch) => {
+                set((state) => ({
+                    chats: state.chats.map((chat) =>
+                        chat.id === chatId
+                            ? {
+                                ...chat,
+                                messages: chat.messages.map((message) =>
+                                    message.id === messageId
+                                        ? {
+                                            ...message,
+                                            ...patch,
+                                            metadata: patch.metadata
+                                                ? { ...message.metadata, ...patch.metadata }
+                                                : message.metadata,
+                                        }
+                                        : message,
+                                ),
                             }
                             : chat
                     ),

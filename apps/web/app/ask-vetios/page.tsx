@@ -45,6 +45,7 @@ type AskVetiosContractResponse = {
     }>;
     error?: string;
     reason?: string;
+    message?: string;
 };
 
 type UploadResponse = {
@@ -58,6 +59,7 @@ type UploadResponse = {
     processing_note?: string | null;
     error?: string;
     reason?: string;
+    message?: string;
     file_name?: string;
 };
 
@@ -66,7 +68,7 @@ const MAX_DOCUMENT_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 export default function AskVetIOSPage() {
     const {
-    createChat, activeChatId, addMessage, setLoading, isLoading,
+    createChat, activeChatId, addMessage, updateMessage, setLoading, isLoading,
     switchChat, chats, deleteChat, username, incrementUsage
 } = useChatStore();
 
@@ -106,12 +108,18 @@ export default function AskVetIOSPage() {
         addMessage(activeChatId, { role: 'user', content });
         setLoading(true);
 
+        let assistantMessageId: string | null = null;
+        const clientId = getAskVetiosClientId();
+
         try {
             const activeUploads = resolveChatUploads(activeChat, chatUploads[activeChatId] ?? []);
             if (activeUploads.length > 0) {
                 const queryResponse = await fetchWithTimeout('/api/ask-vetios/query', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'x-vetios-client-id': clientId,
+                    },
                     body: JSON.stringify({
                         session_id: activeChatId,
                         query: content,
@@ -126,7 +134,7 @@ export default function AskVetIOSPage() {
                 });
                 const analysis = await queryResponse.json() as AskVetiosContractResponse;
                 if (!queryResponse.ok || analysis.error) {
-                    throw new Error(analysis.reason || analysis.error || 'Uploaded document analysis failed.');
+                    throw new Error(formatAskVetiosApiError(queryResponse.status, analysis, 'Uploaded document analysis failed.'));
                 }
                 const latestUpload = activeUploads[activeUploads.length - 1] ?? {};
                 addMessage(activeChatId, {
@@ -137,42 +145,48 @@ export default function AskVetIOSPage() {
                 return;
             }
 
-            const response = await fetchWithTimeout('/api/ask-vetios', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ message: content, conversation: history }),
-            }, {
-                timeoutMs: 30_000,
-                timeoutMessage: 'VetIOS did not return within 30 seconds. Retry with a narrower question or check the network connection.',
-            });
-
-            const data = await response.json() as {
-                mode?: string; content?: string; topic?: string; metadata?: unknown; error?: string; query_history_id?: string | null;
-            };
-
-            if (data.error) throw new Error(data.error);
-
-            addMessage(activeChatId, {
+            assistantMessageId = addMessage(activeChatId, {
                 role: 'assistant',
-                content: data.content ?? '',
-                metadata: {
-                    mode: (data.mode as 'educational' | 'clinical' | 'general') ?? 'general',
-                    topic: data.topic,
-                    query_history_id: data.query_history_id,
-                    ...(data.metadata as object ?? {}),
+                content: '',
+                metadata: { mode: 'general' },
+            });
+            let streamedContent = '';
+            await streamAskVetiosResponse({
+                clientId,
+                payload: { message: content, conversation: history },
+                onMetadata: (event) => {
+                    updateMessage(activeChatId, assistantMessageId!, {
+                        metadata: {
+                            mode: (event.mode as 'educational' | 'clinical' | 'general') ?? 'general',
+                            topic: event.topic,
+                            query_history_id: event.query_history_id,
+                            ...(asRecord(event.metadata)),
+                        },
+                    });
+                },
+                onChunk: (chunk) => {
+                    streamedContent += chunk;
+                    updateMessage(activeChatId, assistantMessageId!, { content: streamedContent });
                 },
             });
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'Intelligence gateway error. Please check that the AI provider key is configured and the gateway is operational.';
-            addMessage(activeChatId, {
-                role: 'assistant',
-                content: msg,
-                metadata: { mode: 'general' },
-            });
+            if (assistantMessageId) {
+                updateMessage(activeChatId, assistantMessageId, {
+                    content: msg,
+                    metadata: { mode: 'general' },
+                });
+            } else {
+                addMessage(activeChatId, {
+                    role: 'assistant',
+                    content: msg,
+                    metadata: { mode: 'general' },
+                });
+            }
         } finally {
             setLoading(false);
         }
-    }, [activeChatId, chats, chatUploads, addMessage, setLoading, incrementUsage]);
+    }, [activeChatId, chats, chatUploads, addMessage, updateMessage, setLoading, incrementUsage]);
 
     const handleFollowUp = useCallback((prompt: string) => {
         void sendMessage(prompt);
@@ -215,6 +229,8 @@ export default function AskVetIOSPage() {
         setUploading(true);
         setLoading(true);
 
+        const clientId = getAskVetiosClientId();
+
         try {
             const form = new FormData();
             form.append('file', file);
@@ -223,6 +239,9 @@ export default function AskVetIOSPage() {
 
             const uploadResponse = await fetchWithTimeout('/api/ask-vetios/upload', {
                 method: 'POST',
+                headers: {
+                    'x-vetios-client-id': clientId,
+                },
                 body: form,
             }, {
                 timeoutMs: 65_000,
@@ -230,7 +249,7 @@ export default function AskVetIOSPage() {
             });
             const upload = await uploadResponse.json() as UploadResponse;
             if (!uploadResponse.ok || upload.error || !upload.upload_id) {
-                throw new Error(upload.reason || upload.error || 'Upload failed security validation.');
+                throw new Error(formatAskVetiosApiError(uploadResponse.status, upload, 'Upload failed security validation.'));
             }
             upload.file_name = file.name;
             if ((upload.chunks_indexed ?? 0) <= 0) {
@@ -475,6 +494,143 @@ return (
             `}</style>
         </div>
     );
+}
+
+type AskVetiosStreamEvent = {
+    type: 'start' | 'metadata' | 'chunk' | 'done' | 'error';
+    content?: string;
+    mode?: string;
+    topic?: string;
+    metadata?: unknown;
+    query_history_id?: string | null;
+    status?: number;
+    error?: string;
+    message?: string;
+    request_id?: string | null;
+};
+
+async function streamAskVetiosResponse(input: {
+    clientId: string;
+    payload: { message: string; conversation: Array<{ role: 'user' | 'assistant'; content: string }> };
+    onMetadata: (event: AskVetiosStreamEvent) => void;
+    onChunk: (chunk: string) => void;
+}) {
+    const response = await fetchWithTimeout('/api/ask-vetios/stream', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'x-vetios-client-id': input.clientId,
+        },
+        body: JSON.stringify(input.payload),
+    }, {
+        timeoutMs: 65_000,
+        timeoutMessage: 'VetIOS streaming did not complete within 65 seconds. Retry with a narrower question or check the network connection.',
+    });
+
+    if (!response.body) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(formatAskVetiosApiError(response.status, payload, 'VetIOS stream returned no readable response body.'));
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            handleAskVetiosStreamEvent(JSON.parse(line) as AskVetiosStreamEvent, input);
+        }
+    }
+
+    if (buffer.trim()) {
+        handleAskVetiosStreamEvent(JSON.parse(buffer) as AskVetiosStreamEvent, input);
+    }
+}
+
+function handleAskVetiosStreamEvent(
+    event: AskVetiosStreamEvent,
+    input: {
+        onMetadata: (event: AskVetiosStreamEvent) => void;
+        onChunk: (chunk: string) => void;
+    },
+) {
+    if (event.type === 'error') {
+        throw new Error(formatAskVetiosApiError(event.status ?? 500, event, 'VetIOS stream failed.'));
+    }
+    if (event.type === 'metadata' || event.type === 'done') {
+        input.onMetadata(event);
+        return;
+    }
+    if (event.type === 'chunk' && typeof event.content === 'string') {
+        input.onChunk(event.content);
+    }
+}
+
+function getAskVetiosClientId(): string {
+    const key = 'vetios.ask.client_id';
+    try {
+        const existing = window.localStorage.getItem(key);
+        if (existing) return existing;
+        const next = `ask_${crypto.randomUUID()}`;
+        window.localStorage.setItem(key, next);
+        return next;
+    } catch {
+        return `ask_${Math.random().toString(36).slice(2)}_${Date.now()}`;
+    }
+}
+
+function formatAskVetiosApiError(
+    status: number,
+    payload: unknown,
+    fallback: string,
+): string {
+    const record = asRecord(payload);
+    const rawMessage = readString(record.message) ?? readString(record.reason) ?? readString(record.error);
+    if (record.error === 'rate_limit_exceeded') {
+        const retryAfter = readNumber(record.retry_after_seconds)
+            ?? Math.ceil((readNumber(record.retry_after_ms) ?? 0) / 1000);
+        return retryAfter > 0
+            ? `Rate limit reached. Retry in ${retryAfter} second(s).`
+            : 'Rate limit reached. Wait a moment, then retry.';
+    }
+    if (record.error === 'token_budget_exceeded') {
+        const retryAfter = readNumber(record.retry_after_seconds);
+        const resetText = retryAfter ? ` Retry in ${Math.ceil(retryAfter / 60)} minute(s).` : '';
+        return `${rawMessage ?? 'Ask Vetios token budget reached.'}${resetText}`;
+    }
+    if (status === 401 || status === 403) {
+        return rawMessage ?? 'You are not authorized for this VetIOS action. Sign in again or check your role.';
+    }
+    if (status === 409) {
+        return rawMessage ?? 'The document is not ready yet. Wait for indexing to finish, then retry.';
+    }
+    if (status >= 500) {
+        return rawMessage ?? 'VetIOS service error. The action was not completed; retry after the platform recovers.';
+    }
+    return rawMessage ?? fallback;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
+}
+
+function readString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }
 
 function buildDocumentAnalysisMetadata(analysis: AskVetiosContractResponse, upload: UploadResponse) {

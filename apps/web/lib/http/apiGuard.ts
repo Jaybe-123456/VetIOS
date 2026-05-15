@@ -117,9 +117,12 @@ export async function apiGuard(
     if (!rateResult.allowed) {
         const res = NextResponse.json(
             {
-                error: 'Too many requests',
+                error: 'rate_limit_exceeded',
+                message: `Rate limit exceeded for this route. Retry in ${Math.ceil(rateResult.resetMs / 1000)} seconds.`,
                 request_id: requestId,
                 retry_after_ms: rateResult.resetMs,
+                limit: maxRequests,
+                window_ms: windowMs,
             },
             { status: 429 }
         );
