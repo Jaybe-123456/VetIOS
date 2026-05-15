@@ -41,10 +41,10 @@ export function VercelLogTable({
     }, [autoScroll, rows]);
 
     return (
-        <div className={`border border-grid bg-black font-mono text-[11px] text-[hsl(0_0%_92%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${className}`}>
+        <div className={`border border-grid bg-black font-mono text-[12px] text-[hsl(0_0%_92%)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] ${className}`}>
             <div ref={scrollRef} className={`overflow-auto ${bodyClassName}`}>
-                <div className="min-w-[1040px]">
-                    <div className="sticky top-0 z-10 grid grid-cols-[155px_96px_170px_270px_minmax(320px,1fr)] gap-0 border-b border-grid bg-[#050505] px-4 py-3 text-[12px] font-semibold text-[hsl(0_0%_58%)]">
+                <div className="min-w-[1360px]">
+                    <div className="sticky top-0 z-10 grid grid-cols-[180px_150px_190px_320px_minmax(520px,1fr)] items-center gap-0 border-b border-grid bg-[#050505] px-4 py-3 text-[12px] font-semibold text-[hsl(0_0%_58%)]">
                         <div>Time</div>
                         <div>Status</div>
                         <div>Host</div>
@@ -60,25 +60,17 @@ export function VercelLogTable({
                         rows.map((row) => (
                             <div
                                 key={row.id}
-                                className="grid grid-cols-[155px_96px_170px_270px_minmax(320px,1fr)] gap-0 border-b border-white/[0.03] px-4 py-2.5 odd:bg-white/[0.025] hover:bg-white/[0.07]"
+                                className="grid grid-cols-[180px_150px_190px_320px_minmax(520px,1fr)] items-center gap-0 border-b border-white/[0.03] px-4 py-2 odd:bg-white/[0.025] hover:bg-white/[0.07]"
                             >
                                 <TimeCell timestamp={row.timestamp} />
-                                <div className="flex items-center gap-1.5 whitespace-nowrap">
-                                    {row.method && <span className="text-[hsl(0_0%_72%)]">{row.method}</span>}
-                                    <span className={`font-bold ${statusTone(row.level, row.status)}`}>
+                                <div className="flex min-w-0 items-center gap-2 overflow-hidden whitespace-nowrap pr-4">
+                                    {row.method && <span className="truncate text-[hsl(0_0%_72%)]">{row.method}</span>}
+                                    <span className={`shrink-0 font-bold ${statusTone(row.level, row.status)}`}>
                                         {row.status ?? row.level ?? 'INFO'}
                                     </span>
                                 </div>
-                                <div className="truncate pr-4 font-bold text-[#dffcff]">{row.host ?? 'vetios.tech'}</div>
-                                <div className="flex min-w-0 items-center gap-1.5 pr-4">
-                                    {row.badges?.slice(0, 3).map((badge, index) => (
-                                        <span
-                                            key={`${row.id}-${badge}-${index}`}
-                                            className="inline-flex h-4 min-w-4 items-center justify-center border border-[hsl(0_0%_32%)] bg-white/[0.04] px-1 text-[9px] font-bold text-[hsl(0_0%_68%)]"
-                                        >
-                                            {badge}
-                                        </span>
-                                    ))}
+                                <div className="truncate whitespace-nowrap pr-4 font-bold text-[#dffcff]">{row.host ?? 'vetios.tech'}</div>
+                                <div className="flex min-w-0 items-center pr-4">
                                     <span className="truncate font-bold text-white">{row.request ?? '-'}</span>
                                 </div>
                                 <div className="flex min-w-0 items-center gap-2">
@@ -87,7 +79,7 @@ export function VercelLogTable({
                                             {row.messageCount}
                                         </span>
                                     )}
-                                    <span className={`truncate font-semibold ${messageTone(row.level)}`}>
+                                    <span className={`truncate whitespace-nowrap font-semibold ${messageTone(row.level)}`}>
                                         {row.message}
                                     </span>
                                 </div>
@@ -104,9 +96,9 @@ function TimeCell({ timestamp }: { timestamp: string }) {
     const { date, time } = formatLogTimestamp(timestamp);
 
     return (
-        <div className="whitespace-nowrap pr-4">
-            <span className="mr-2 font-bold uppercase text-[hsl(0_0%_46%)]">{date}</span>
-            <span className="font-bold text-white">{time}</span>
+        <div className="truncate whitespace-nowrap pr-4">
+            <span className="font-bold uppercase text-[hsl(0_0%_46%)]">{date}</span>
+            <span className="font-bold text-white"> {time}</span>
         </div>
     );
 }
