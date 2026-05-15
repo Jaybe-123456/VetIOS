@@ -30,6 +30,7 @@ import type {
 } from '@/lib/intelligence/types';
 
 type ModelFamily = 'diagnostics' | 'vision' | 'therapeutics';
+type TopologyRegistrySnapshot = Awaited<ReturnType<typeof getModelRegistryControlPlaneSnapshot>>;
 type NodeId =
     | 'control_plane'
     | 'registry_control'
@@ -239,6 +240,7 @@ export async function getTopologySnapshot(
         window: TopologyWindow;
         until?: string | null;
         observerHeartbeatTimestamp?: string | null;
+        registrySnapshot?: TopologyRegistrySnapshot | Promise<TopologyRegistrySnapshot>;
     },
 ): Promise<TopologySnapshot> {
     const until = resolveUntil(input.until);
@@ -247,11 +249,15 @@ export async function getTopologySnapshot(
     const experimentStore = createSupabaseExperimentTrackingStore(client);
     const learningStore = createSupabaseLearningEngineStore(client);
 
+    const registrySnapshot = input.registrySnapshot
+        ? Promise.resolve(input.registrySnapshot)
+        : getModelRegistryControlPlaneSnapshot(experimentStore, tenantId);
+
     const [telemetryRows, operationalTelemetryRows, caseRows, controlPlane, simulations, evaluationLoad, latestSourceTimestamps] = await Promise.all([
         loadTelemetryEvents(client, tenantId, from, until),
         loadOperationalTelemetryRows(client, tenantId, from, until),
         loadClinicalCases(client, tenantId, from, until),
-        getModelRegistryControlPlaneSnapshot(experimentStore, tenantId),
+        registrySnapshot,
         loadSimulationEvents(learningStore, {
             tenantId,
             from: from.toISOString(),

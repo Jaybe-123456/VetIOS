@@ -399,6 +399,15 @@ export async function POST(req: Request) {
             metadata: actionResult,
         });
 
+        if (payload.action === 'inject_simulation') {
+            const response = NextResponse.json({
+                result: actionResult,
+                request_id: requestId,
+            });
+            withRequestHeaders(response.headers, requestId, startTime);
+            return response;
+        }
+
         const snapshot = await getControlPlaneSnapshot({
             client: adminClient,
             tenantId: actor.tenantId,

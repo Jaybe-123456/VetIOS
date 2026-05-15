@@ -1,7 +1,6 @@
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { backfillTenantClinicalCaseLearningState } from '@/lib/clinicalCases/clinicalCaseBackfill';
-import { collectClinicalDatasetDebugSnapshot } from '@/lib/dataset/clinicalDatasetDiagnostics';
 import { evaluateDecisionEngine } from '@/lib/decisionEngine/service';
 import type { DecisionAuditLogRecord } from '@/lib/decisionEngine/types';
 import {
@@ -106,12 +105,14 @@ export async function getControlPlaneSnapshot(input: {
     readOnly?: boolean;
 }): Promise<ControlPlaneSnapshot> {
     const experimentStore = createSupabaseExperimentTrackingStore(input.client);
+    const registrySnapshotPromise = getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId, {
+        readOnly: input.readOnly === true,
+    });
 
     const [
         telemetryEvents,
         topologySnapshot,
         registrySnapshot,
-        datasetDebug,
         configBundle,
         apiKeys,
         actions,
@@ -126,11 +127,9 @@ export async function getControlPlaneSnapshot(input: {
         getTopologySnapshot(input.client, input.tenantId, {
             window: '24h',
             observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+            registrySnapshot: registrySnapshotPromise,
         }),
-        getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId, {
-            readOnly: input.readOnly === true,
-        }),
-        collectClinicalDatasetDebugSnapshot(input.client, input.tenantId, input.userId),
+        registrySnapshotPromise,
         getControlPlaneConfigBundle(input.client, input.tenantId),
         listControlPlaneApiKeys(input.client, input.tenantId),
         listControlPlaneActions(input.client, input.tenantId),
@@ -228,8 +227,12 @@ export async function getControlPlaneSnapshot(input: {
             latest_inference_event_id: latestInferenceId ?? extractLatestTelemetrySourceId(telemetryEvents, 'ai_inference_events'),
             latest_outcome_event_id: latestOutcomeId ?? extractLatestTelemetrySourceId(telemetryEvents, 'clinical_outcome_events'),
             latest_evaluation_event_id: latestEvaluationId,
-            dataset_row_count: datasetDebug.dataset_row_count,
-            orphan_counts: datasetDebug.orphan_counts,
+            dataset_row_count: 0,
+            orphan_counts: {
+                inference_events_missing_case_id: 0,
+                outcome_events_missing_case_id: 0,
+                simulation_events_missing_case_id: 0,
+            },
         },
         telemetry_events: telemetryEvents,
         dashboard: {
@@ -262,6 +265,9 @@ export async function getDashboardControlPlaneSnapshot(input: {
     readOnly?: boolean;
 }): Promise<ControlPlaneDashboardViewSnapshot> {
     const experimentStore = createSupabaseExperimentTrackingStore(input.client);
+    const registrySnapshotPromise = getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId, {
+        readOnly: input.readOnly === true,
+    });
     const [
         telemetryEvents,
         topologySnapshot,
@@ -275,10 +281,9 @@ export async function getDashboardControlPlaneSnapshot(input: {
         getTopologySnapshot(input.client, input.tenantId, {
             window: '24h',
             observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+            registrySnapshot: registrySnapshotPromise,
         }),
-        getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId, {
-            readOnly: input.readOnly === true,
-        }),
+        registrySnapshotPromise,
         getControlPlaneConfigBundle(input.client, input.tenantId),
         listDashboardInferenceHistory(input.client, input.tenantId),
         loadDashboardRoutingSummary(input.client, input.tenantId),
@@ -1137,10 +1142,10 @@ export async function injectControlPlaneSimulation(input: {
     });
     const target = resolveTopologySimulationTarget(controlPlane, input.targetNodeId);
     const profile = buildSimulationProfile(input.scenario, input.severity, input.targetNodeId);
-    const simulationEventId = cryptoRandomId();
+    let simulationEventId = randomUUID();
     const timestamp = new Date().toISOString();
 
-    await logSimulation(input.client, {
+    simulationEventId = await logSimulation(input.client, {
         id: simulationEventId,
         tenant_id: input.tenantId,
         user_id: input.actor,

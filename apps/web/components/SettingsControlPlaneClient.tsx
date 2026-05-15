@@ -1370,7 +1370,7 @@ function ControlActionButton({
             type="button"
             disabled={disabled}
             onClick={onClick}
-            className="w-full text-left border border-grid p-3 font-mono text-xs uppercase tracking-widest text-muted hover:text-foreground hover:border-muted disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            className="w-full text-left border border-[hsl(0_0%_28%)] bg-[hsl(0_0%_8%)] p-3 font-mono text-xs uppercase tracking-widest text-[hsl(0_0%_82%)] hover:border-accent/60 hover:text-accent disabled:cursor-not-allowed disabled:border-[hsl(0_0%_20%)] disabled:bg-[hsl(0_0%_7%)] disabled:text-[hsl(0_0%_52%)] flex items-center gap-2"
         >
             {icon}
             {label}
