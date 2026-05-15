@@ -4,6 +4,7 @@
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalButton } from '@/components/ui/terminal';
+import { VercelLogTable, type VercelLogTableRow } from '@/components/logs/VercelLogTable';
 import { TelemetryChart } from '@/components/ui/TelemetryChart';
 import type { ControlPlaneSimulationModeResponse } from '@/lib/settings/types';
 import type {
@@ -17,7 +18,6 @@ import {
     AlertTriangle,
     CheckCircle2,
     RefreshCw,
-    Terminal,
     Wifi,
     WifiOff,
 } from 'lucide-react';
@@ -387,23 +387,16 @@ export default function TelemetryObserverPage() {
             </div>
 
             <ConsoleCard title="System Log Stream" collapsible>
-                <div className="bg-black border border-grid/50 p-3 sm:p-4 h-[220px] sm:h-[280px] overflow-hidden flex flex-col font-mono text-xs">
-                    <div className="flex items-center gap-2 text-accent/50 mb-3 sm:mb-4 border-b border-grid/50 pb-2 text-[10px] sm:text-xs">
-                        <Terminal className="w-3 h-3 sm:w-4 sm:h-4" />
-                        <span>EVENT-DRIVEN TELEMETRY LOG</span>
-                        <Activity className="w-3 h-3 ml-auto animate-pulse" />
+                <div className="space-y-3">
+                    <div className="flex items-center gap-2 border-b border-grid/50 pb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-accent">
+                        <span>Event-Driven Telemetry Log</span>
+                        <Activity className="ml-auto h-3 w-3 animate-pulse" />
                     </div>
-                    <div className="flex-1 overflow-y-auto space-y-1 text-[hsl(0_0%_82%)]">
-                        {snapshot && snapshot.logs.length > 0 ? (
-                            snapshot.logs.map((log) => (
-                                <LogLine key={log.id} log={log} />
-                            ))
-                        ) : (
-                            <div className="text-[hsl(0_0%_55%)] text-center pt-8">
-                                {disconnectedWithoutData ? 'STREAM DISCONNECTED' : 'NO DATA'}
-                            </div>
-                        )}
-                    </div>
+                    <VercelLogTable
+                        rows={(snapshot?.logs ?? []).map(telemetryLogToRow)}
+                        emptyMessage={disconnectedWithoutData ? 'STREAM DISCONNECTED' : 'NO DATA'}
+                        bodyClassName="h-[260px]"
+                    />
                 </div>
             </ConsoleCard>
         </Container>
@@ -484,21 +477,18 @@ function EmptyChartState({ message }: { message: string }) {
     );
 }
 
-function LogLine({ log }: { log: TelemetryLogEntry }) {
-    const tone = log.level === 'ERROR'
-        ? 'text-danger'
-        : log.level === 'WARN'
-            ? 'text-[#ffcc00]'
-            : 'text-[hsl(0_0%_85%)]';
-
-    return (
-        <div className={`truncate text-[11px] sm:text-xs ${tone}`}>
-            <span className="text-[hsl(0_0%_55%)] mr-2">
-                {new Date(log.timestamp).toLocaleTimeString()}
-            </span>
-            {log.message}
-        </div>
-    );
+function telemetryLogToRow(log: TelemetryLogEntry): VercelLogTableRow {
+    return {
+        id: log.id,
+        timestamp: log.timestamp,
+        method: 'EVT',
+        status: log.level,
+        level: log.level,
+        host: 'telemetry',
+        request: '/api/telemetry/stream',
+        badges: ['m', 'f'],
+        message: log.message,
+    };
 }
 
 function formatCount(value: number | undefined, disconnectedWithoutData: boolean) {

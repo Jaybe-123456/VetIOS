@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode, type ChangeEvent } from 'react';
 import { ConsoleCard, Container, PageHeader, TerminalButton, TerminalInput, TerminalLabel } from '@/components/ui/terminal';
+import { VercelLogTable, type VercelLogLevel, type VercelLogTableRow } from '@/components/logs/VercelLogTable';
 import { extractApiErrorMessage, extractEnvelopeData, requestJson } from '@/lib/debugTools/client';
 
 type SimulationMode = 'load' | 'adversarial' | 'regression';
@@ -706,15 +707,12 @@ export default function SimulationWorkbench({
 
                             <div className="border border-grid p-3 bg-black/10">
                                 <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-[hsl(0_0%_88%)] font-bold">Live Log</div>
-                                <div className="h-[200px] overflow-y-auto bg-black/30 p-2">
-                                    {logs.length === 0 ? (
-                                        <div className="font-mono text-[11px] text-[hsl(0_0%_72%)] font-medium">NO EVENTS YET.</div>
-                                    ) : logs.map((line) => (
-                                        <div key={line.id} className={`font-mono text-[11px] ${logToneClass(line.tone)} font-medium`}>
-                                            <span className="text-[hsl(0_0%_75%)]">[{formatClock(line.timestamp)}]</span> {line.text}
-                                        </div>
-                                    ))}
-                                </div>
+                                <VercelLogTable
+                                    rows={logs.map((line) => simulationLogToRow(line, runId))}
+                                    emptyMessage="NO EVENTS YET"
+                                    bodyClassName="h-[220px]"
+                                    autoScroll
+                                />
                             </div>
 
                             <div className="border border-grid p-3 bg-black/10">
@@ -1173,11 +1171,6 @@ function formatDuration(seconds: number) {
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function formatClock(timestamp: string) {
-    const date = new Date(timestamp);
-    return Number.isNaN(date.getTime()) ? timestamp : date.toLocaleTimeString('en-US', { hour12: false });
-}
-
 function formatDate(timestamp?: string | null) {
     if (!timestamp) return 'NO DATE';
     const date = new Date(timestamp);
@@ -1192,14 +1185,6 @@ function statusTone(status?: string | null) {
     return 'border-grid text-muted';
 }
 
-function logToneClass(tone: LogTone) {
-    if (tone === 'success') return 'text-[#4ADE80]';
-    if (tone === 'warning') return 'text-[#EF9F27]';
-    if (tone === 'error') return 'text-[#E24B4A]';
-    if (tone === 'info') return 'text-[#00E5FF]';
-    return 'text-muted';
-}
-
 function readNumber(value: unknown) {
     if (typeof value === 'number' && Number.isFinite(value)) return value;
     if (typeof value === 'string' && value.trim().length > 0) {
@@ -1211,6 +1196,27 @@ function readNumber(value: unknown) {
 
 function readText(value: unknown) {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function simulationLogToRow(line: LogLine, runId: string | null): VercelLogTableRow {
+    return {
+        id: line.id,
+        timestamp: line.timestamp,
+        method: 'SIM',
+        status: line.tone === 'default' ? 'INFO' : line.tone.toUpperCase(),
+        level: simulationToneLevel(line.tone),
+        host: 'simulation-lab',
+        request: runId ?? 'pending',
+        badges: ['m', 'f'],
+        message: line.text,
+    };
+}
+
+function simulationToneLevel(tone: LogTone): VercelLogLevel {
+    if (tone === 'success') return 'SUCCESS';
+    if (tone === 'warning') return 'WARN';
+    if (tone === 'error') return 'ERROR';
+    return 'INFO';
 }
 
 function readBoolean(value: unknown) {

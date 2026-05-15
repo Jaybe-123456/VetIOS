@@ -14,6 +14,7 @@ import {
     TerminalLabel,
     TerminalTextarea,
 } from '@/components/ui/terminal';
+import { VercelLogTable, type VercelLogTableRow } from '@/components/logs/VercelLogTable';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import type {
     ControlPlaneAlertSensitivity,
@@ -1176,29 +1177,43 @@ function renderLogsTab(input: Parameters<typeof renderTab>[0]) {
             </ConsoleCard>
 
             <ConsoleCard title="Trace Viewer">
-                <div className="bg-black border border-grid/50 p-4 h-[480px] overflow-y-auto font-mono text-xs space-y-2">
-                    {input.filteredLogs.length === 0 ? (
-                        <div className="text-muted">No logs match the current filters.</div>
-                    ) : (
-                        input.filteredLogs.map((log) => (
-                            <div key={log.id} className={log.level === 'ERROR' ? 'text-danger' : log.level === 'WARN' ? 'text-[#ffcc00]' : 'text-muted/90'}>
-                                <span className="text-muted/40 mr-2">{new Date(log.timestamp).toLocaleString()}</span>
-                                <span className="mr-2">[{log.category}]</span>
-                                {log.message}
-                                {(log.run_id || log.model_version) && (
-                                    <span className="text-muted/50 ml-2">
-                                        {log.run_id ? `run=${log.run_id}` : ''}
-                                        {log.run_id && log.model_version ? ' ' : ''}
-                                        {log.model_version ? `model=${log.model_version}` : ''}
-                                    </span>
-                                )}
-                            </div>
-                        ))
-                    )}
-                </div>
+                <VercelLogTable
+                    rows={input.filteredLogs.map(controlPlaneLogToRow)}
+                    emptyMessage="NO LOGS MATCH THE CURRENT FILTERS"
+                    bodyClassName="h-[520px]"
+                />
             </ConsoleCard>
         </div>
     );
+}
+
+function controlPlaneLogToRow(log: ControlPlaneLogRecord): VercelLogTableRow {
+    const contextCount = [log.run_id, log.model_version].filter(Boolean).length;
+
+    return {
+        id: log.id,
+        timestamp: log.timestamp,
+        method: log.category.toUpperCase(),
+        status: log.level,
+        level: log.level,
+        host: log.model_version ?? 'control-plane',
+        request: log.run_id ?? log.event_type ?? log.category,
+        badges: [
+            (log.event_type ?? log.category).slice(0, 1).toLowerCase(),
+            log.category.slice(0, 1).toLowerCase(),
+        ],
+        messageCount: contextCount > 0 ? contextCount : undefined,
+        message: appendLogContext(log.message, log),
+    };
+}
+
+function appendLogContext(message: string, log: ControlPlaneLogRecord) {
+    const context = [
+        log.run_id ? `run=${log.run_id}` : null,
+        log.model_version ? `model=${log.model_version}` : null,
+    ].filter(Boolean);
+
+    return context.length > 0 ? `${message}  ${context.join(' ')}` : message;
 }
 
 function renderConfigurationTab(

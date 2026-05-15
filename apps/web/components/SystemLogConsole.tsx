@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
+import { VercelLogTable, type VercelLogLevel, type VercelLogTableRow } from '@/components/logs/VercelLogTable';
 
 export interface LogEntry {
     id: string;
@@ -10,13 +11,7 @@ export interface LogEntry {
 }
 
 export function SystemLogConsole({ logs, className = '' }: { logs: LogEntry[], className?: string }) {
-    const scrollRef = useRef<HTMLDivElement>(null);
-
-    useEffect(() => {
-        if (scrollRef.current) {
-            scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-        }
-    }, [logs]);
+    const rows = logs.map(systemLogToRow);
 
     return (
         <div className={`border border-grid bg-black/40 font-mono text-[11px] leading-relaxed flex flex-col ${className}`}>
@@ -29,30 +24,56 @@ export function SystemLogConsole({ logs, className = '' }: { logs: LogEntry[], c
                 </div>
             </div>
             
-            <div 
-                ref={scrollRef}
-                className="p-3 overflow-y-auto max-h-[200px] sm:max-h-[300px] min-h-[120px] sm:min-h-[150px] scrollbar-thin scrollbar-thumb-grid transition-all scroll-touch"
-            >
+            <div className="p-3">
                 {logs.length === 0 ? (
                     <div className="text-[hsl(0_0%_72%)] font-medium italic">Awaiting system initialization...</div>
                 ) : (
-                    <div className="space-y-1">
-                        {logs.map((log) => (
-                            <div key={log.id} className="flex gap-2 sm:gap-3 py-0.5">
-                                <span className="text-[hsl(0_0%_75%)] shrink-0 text-[10px] mt-0.5 font-bold">[{log.timestamp}]</span>
-                                <span className={`break-words font-medium ${
-                                    log.level === 'error' ? 'text-danger font-bold' : 
-                                    log.level === 'warn' ? 'text-warning font-bold' : 
-                                    log.level === 'success' ? 'text-accent font-bold' : 
-                                    'text-foreground'
-                                }`}>
-                                    {log.message}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
+                    <VercelLogTable
+                        rows={rows}
+                        autoScroll
+                        bodyClassName="max-h-[200px] min-h-[120px] sm:max-h-[300px] sm:min-h-[150px]"
+                    />
                 )}
             </div>
         </div>
     );
+}
+
+function systemLogToRow(log: LogEntry): VercelLogTableRow {
+    return {
+        id: log.id,
+        timestamp: normalizeTimestamp(log.timestamp),
+        method: 'SYS',
+        status: log.level.toUpperCase(),
+        level: systemLogLevel(log.level),
+        host: 'inference-console',
+        request: '/runtime/logs',
+        badges: ['m', 'f'],
+        message: log.message,
+    };
+}
+
+function systemLogLevel(level: LogEntry['level']): VercelLogLevel {
+    if (level === 'error') return 'ERROR';
+    if (level === 'warn') return 'WARN';
+    if (level === 'success') return 'SUCCESS';
+    return 'INFO';
+}
+
+function normalizeTimestamp(timestamp: string) {
+    const parsed = new Date(timestamp);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+
+    const clockMatch = timestamp.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?$/i);
+    if (clockMatch) {
+        const today = new Date();
+        const meridiem = clockMatch[4]?.toUpperCase();
+        let hours = Number(clockMatch[1]);
+        if (meridiem === 'PM' && hours < 12) hours += 12;
+        if (meridiem === 'AM' && hours === 12) hours = 0;
+        today.setHours(hours, Number(clockMatch[2]), Number(clockMatch[3] ?? '0'), 0);
+        return today.toISOString();
+    }
+
+    return new Date().toISOString();
 }

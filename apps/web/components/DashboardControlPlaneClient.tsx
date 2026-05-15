@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { ConsoleCard, Container, DataRow, PageHeader, TerminalButton, TerminalTabs } from '@/components/ui/terminal';
+import { VercelLogTable, type VercelLogTableRow } from '@/components/logs/VercelLogTable';
 import { TelemetryChart } from '@/components/ui/TelemetryChart';
 import type {
     ControlPlaneAlertRecord,
@@ -693,14 +694,10 @@ export default function DashboardControlPlaneClient() {
                             Recent Signal Flow
                         </div>
                         {recentLogs.length > 0 ? (
-                            <div className="space-y-2">
-                                {recentLogs.map((log) => (
-                                    <div key={log.id} className={`font-mono text-[10px] break-words ${logTone(log.level)}`}>
-                                        <span className="text-muted mr-2">{new Date(log.timestamp).toLocaleTimeString()}</span>
-                                        {log.message}
-                                    </div>
-                                ))}
-                            </div>
+                            <VercelLogTable
+                                rows={recentLogs.map(dashboardLogToRow)}
+                                bodyClassName="max-h-[220px]"
+                            />
                         ) : (
                             <EmptyListState message="NO CONTROL-PLANE LOGS" compact />
                         )}
@@ -1094,10 +1091,18 @@ function alertTextTone(severity: ControlPlaneAlertRecord['severity']) {
     return 'text-accent';
 }
 
-function logTone(level: 'INFO' | 'WARN' | 'ERROR') {
-    if (level === 'ERROR') return 'text-danger';
-    if (level === 'WARN') return 'text-[#ffcc00]';
-    return 'text-muted/80';
+function dashboardLogToRow(log: ControlPlaneDashboardViewSnapshot['logs'][number]): VercelLogTableRow {
+    return {
+        id: log.id,
+        timestamp: log.timestamp,
+        method: log.category.toUpperCase(),
+        status: log.level,
+        level: log.level,
+        host: log.model_version ?? 'control-plane',
+        request: log.run_id ?? log.event_type ?? log.category,
+        badges: [(log.event_type ?? log.category).slice(0, 1).toLowerCase(), log.category.slice(0, 1).toLowerCase()],
+        message: log.message,
+    };
 }
 
 function formatTimestampOrState(timestamp: string | null, streamStatus: StreamStatus) {
