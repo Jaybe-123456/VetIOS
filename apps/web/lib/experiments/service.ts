@@ -959,10 +959,10 @@ export async function getExperimentRunDetail(
     } = {},
 ): Promise<ExperimentRunDetail | null> {
     const readOnly = options.readOnly !== false;
-    await backfillSummaryExperimentRuns(store, tenantId, {
-        materializeGovernance: !readOnly,
-    });
     if (!readOnly) {
+        await backfillSummaryExperimentRuns(store, tenantId, {
+            materializeGovernance: true,
+        });
         await ensureGovernanceForRun(store, tenantId, runId, null);
     }
 
@@ -1113,9 +1113,9 @@ export async function getExperimentDashboardSnapshot(
 ): Promise<ExperimentDashboardSnapshot> {
     const readOnly = options.readOnly !== false;
     const lightweight = options.lightweight === true;
-    if (!lightweight) {
+    if (!lightweight && !readOnly) {
         await backfillSummaryExperimentRuns(store, tenantId, {
-            materializeGovernance: !readOnly,
+            materializeGovernance: true,
         });
     }
 
@@ -1182,9 +1182,9 @@ export async function getModelRegistryControlPlaneSnapshot(
     }
 
     const promise = (async () => {
-        if (!lightweight) {
+        if (!lightweight && !readOnly) {
             await backfillSummaryExperimentRuns(store, tenantId, {
-                materializeGovernance: !readOnly,
+                materializeGovernance: true,
             });
         }
 

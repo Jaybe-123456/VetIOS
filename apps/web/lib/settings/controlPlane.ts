@@ -88,6 +88,7 @@ const CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS = [
 ].join(',');
 const MAX_CONTROL_PLANE_TELEMETRY_EVENTS = 120;
 const MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS = 60;
+const CONTROL_PLANE_READ_TIMEOUT_MS = 8_000;
 
 type ControlPlaneUserContext = {
     user: User | null;
@@ -590,16 +591,30 @@ export async function listControlPlaneActions(
 ): Promise<ControlPlaneActionRecord[]> {
     const C = CONTROL_PLANE_ACTION_LOG.COLUMNS;
     try {
-        const { data, error } = await client
+        const { data, error } = await applyControlPlaneReadTimeout(client
             .from(CONTROL_PLANE_ACTION_LOG.TABLE)
-            .select('*')
+            .select([
+                C.id,
+                C.actor,
+                C.action_type,
+                C.target_type,
+                C.target_id,
+                C.status,
+                C.requires_confirmation,
+                C.metadata,
+                C.created_at,
+            ].join(','))
             .eq(C.tenant_id, tenantId)
             .order(C.created_at, { ascending: false })
-            .limit(80);
+            .limit(80));
 
         if (error) throw error;
-        return (data ?? []).map((row) => mapControlPlaneAction(row as Record<string, unknown>));
+        return (data ?? []).map((row) => mapControlPlaneAction(row as unknown as Record<string, unknown>));
     } catch (error) {
+        if (isControlPlaneReadTimeout(error)) {
+            warnControlPlaneReadTimeout(CONTROL_PLANE_ACTION_LOG.TABLE);
+            return [];
+        }
         if (isMissingRelationError(error, CONTROL_PLANE_ACTION_LOG.TABLE)) {
             return [];
         }
@@ -645,56 +660,72 @@ export async function recordControlPlaneAction(input: {
 export async function listTelemetryEvents(client: SupabaseClient, tenantId: string): Promise<TelemetryEventRecord[]> {
     const C = TELEMETRY_EVENTS.COLUMNS;
     const windowStart = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
-    const latestResult = await client
-        .from(TELEMETRY_EVENTS.TABLE)
-        .select(CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS)
-        .eq(C.tenant_id, tenantId)
-        .gte(C.timestamp, windowStart)
-        .order(C.timestamp, { ascending: false })
-        .limit(MAX_CONTROL_PLANE_TELEMETRY_EVENTS);
-
-    if (latestResult.error) {
-        if (isMissingRelationError(latestResult.error, TELEMETRY_EVENTS.TABLE)) return [];
-        throw new Error(`Failed to list telemetry events: ${latestResult.error.message}`);
-    }
-
-    const merged = new Map<string, Record<string, unknown>>();
-    const latestRows = (latestResult.data ?? []) as unknown as Record<string, unknown>[];
-    const hasOperationalRows = latestRows.some((record) => {
-        const eventType = textOrNull(record.event_type);
-        return eventType === 'inference'
-            || eventType === 'outcome'
-            || eventType === 'evaluation'
-            || eventType === 'simulation';
-    });
-    let workloadRows: Record<string, unknown>[] = [];
-
-    if (!hasOperationalRows) {
-        const workloadResult = await client
+    try {
+        const latestResult = await applyControlPlaneReadTimeout(client
             .from(TELEMETRY_EVENTS.TABLE)
             .select(CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS)
             .eq(C.tenant_id, tenantId)
             .gte(C.timestamp, windowStart)
-            .in(C.event_type, ['inference', 'outcome', 'evaluation', 'simulation'])
             .order(C.timestamp, { ascending: false })
-            .limit(MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS);
+            .limit(MAX_CONTROL_PLANE_TELEMETRY_EVENTS));
 
-        if (workloadResult.error && !isMissingRelationError(workloadResult.error, TELEMETRY_EVENTS.TABLE)) {
-            throw new Error(`Failed to list workload telemetry events: ${workloadResult.error.message}`);
+        if (latestResult.error) {
+            if (isMissingRelationError(latestResult.error, TELEMETRY_EVENTS.TABLE)) return [];
+            if (isControlPlaneReadTimeout(latestResult.error)) {
+                warnControlPlaneReadTimeout(TELEMETRY_EVENTS.TABLE);
+                return [];
+            }
+            throw new Error(`Failed to list telemetry events: ${latestResult.error.message}`);
         }
 
-        workloadRows = (workloadResult.data ?? []) as unknown as Record<string, unknown>[];
-    }
+        const merged = new Map<string, Record<string, unknown>>();
+        const latestRows = (latestResult.data ?? []) as unknown as Record<string, unknown>[];
+        const hasOperationalRows = latestRows.some((record) => {
+            const eventType = textOrNull(record.event_type);
+            return eventType === 'inference'
+                || eventType === 'outcome'
+                || eventType === 'evaluation'
+                || eventType === 'simulation';
+        });
+        let workloadRows: Record<string, unknown>[] = [];
 
-    for (const record of [...latestRows, ...workloadRows]) {
-        const eventId = textOrNull(record.event_id);
-        if (!eventId) continue;
-        merged.set(eventId, record);
-    }
+        if (!hasOperationalRows) {
+            const workloadResult = await applyControlPlaneReadTimeout(client
+                .from(TELEMETRY_EVENTS.TABLE)
+                .select(CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS)
+                .eq(C.tenant_id, tenantId)
+                .gte(C.timestamp, windowStart)
+                .in(C.event_type, ['inference', 'outcome', 'evaluation', 'simulation'])
+                .order(C.timestamp, { ascending: false })
+                .limit(MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS));
 
-    return Array.from(merged.values())
-        .map((row) => mapTelemetryEvent(row))
-        .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+            if (workloadResult.error) {
+                if (isControlPlaneReadTimeout(workloadResult.error)) {
+                    warnControlPlaneReadTimeout(TELEMETRY_EVENTS.TABLE);
+                } else if (!isMissingRelationError(workloadResult.error, TELEMETRY_EVENTS.TABLE)) {
+                    throw new Error(`Failed to list workload telemetry events: ${workloadResult.error.message}`);
+                }
+            } else {
+                workloadRows = (workloadResult.data ?? []) as unknown as Record<string, unknown>[];
+            }
+        }
+
+        for (const record of [...latestRows, ...workloadRows]) {
+            const eventId = textOrNull(record.event_id);
+            if (!eventId) continue;
+            merged.set(eventId, record);
+        }
+
+        return Array.from(merged.values())
+            .map((row) => mapTelemetryEvent(row))
+            .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+    } catch (error) {
+        if (isControlPlaneReadTimeout(error)) {
+            warnControlPlaneReadTimeout(TELEMETRY_EVENTS.TABLE);
+            return [];
+        }
+        throw error;
+    }
 }
 
 export async function resolveControlPlaneApiKey(input: {
@@ -808,32 +839,40 @@ async function loadDashboardRoutingSummary(
 ): Promise<ControlPlaneSnapshot['dashboard']['routing']> {
     const C = MODEL_ROUTING_DECISIONS.COLUMNS;
     const windowStart = new Date(Date.now() - (24 * 60 * 60 * 1000)).toISOString();
-    const { data, error } = await client
-        .from(MODEL_ROUTING_DECISIONS.TABLE)
-        .select([
-            C.model_family,
-            C.selected_model_id,
-            C.route_mode,
-            C.analysis,
-            C.created_at,
-        ].join(','))
-        .eq(C.tenant_id, tenantId)
-        .gte(C.created_at, windowStart)
-        .order(C.created_at, { ascending: false })
-        .limit(240);
+    let rows: Record<string, unknown>[];
+    try {
+        const { data, error } = await applyControlPlaneReadTimeout(client
+            .from(MODEL_ROUTING_DECISIONS.TABLE)
+            .select([
+                C.model_family,
+                C.selected_model_id,
+                C.route_mode,
+                C.analysis,
+                C.created_at,
+            ].join(','))
+            .eq(C.tenant_id, tenantId)
+            .gte(C.created_at, windowStart)
+            .order(C.created_at, { ascending: false })
+            .limit(240));
 
-    if (error) {
-        if (isMissingRelationError(error, MODEL_ROUTING_DECISIONS.TABLE)) {
-            return {
-                top_route: null,
-                route_shift_count: 0,
-                fallback_count: 0,
-                ensemble_count: 0,
-                family_count: 0,
-                family_rows: [],
-            };
+        if (error) {
+            if (isControlPlaneReadTimeout(error)) {
+                warnControlPlaneReadTimeout(MODEL_ROUTING_DECISIONS.TABLE);
+                return createEmptyDashboardRouting();
+            }
+            if (isMissingRelationError(error, MODEL_ROUTING_DECISIONS.TABLE)) {
+                return createEmptyDashboardRouting();
+            }
+            throw new Error(`Failed to load dashboard routing summary: ${error.message}`);
         }
-        throw new Error(`Failed to load dashboard routing summary: ${error.message}`);
+
+        rows = (data ?? []).map((entry) => asRecord(entry));
+    } catch (error) {
+        if (isControlPlaneReadTimeout(error)) {
+            warnControlPlaneReadTimeout(MODEL_ROUTING_DECISIONS.TABLE);
+            return createEmptyDashboardRouting();
+        }
+        throw error;
     }
 
     const distribution = new Map<string, number>();
@@ -842,7 +881,7 @@ async function loadDashboardRoutingSummary(
     let fallbackCount = 0;
     let ensembleCount = 0;
 
-    for (const row of (data ?? []).map((entry) => asRecord(entry))) {
+    for (const row of rows) {
         const family = textOrNull(row[C.model_family]) ?? 'unknown';
         const selectedModel = textOrNull(row[C.selected_model_id]);
         const routeMode = textOrNull(row[C.route_mode]);
@@ -1842,6 +1881,45 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stripUndefined<T extends Record<string, unknown>>(value: T) {
     return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+}
+
+function applyControlPlaneReadTimeout<T extends { abortSignal(signal: AbortSignal): T }>(query: T): T {
+    return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? query.abortSignal(AbortSignal.timeout(CONTROL_PLANE_READ_TIMEOUT_MS))
+        : query;
+}
+
+function isControlPlaneReadTimeout(error: unknown): boolean {
+    const record = asRecord(error);
+    const message = error instanceof Error
+        ? error.message
+        : typeof record.message === 'string'
+            ? record.message
+            : '';
+    const name = error instanceof Error
+        ? error.name
+        : typeof record.name === 'string'
+            ? record.name
+            : '';
+
+    return name === 'AbortError'
+        || message.toLowerCase().includes('abort')
+        || message.toLowerCase().includes('timeout');
+}
+
+function warnControlPlaneReadTimeout(tableName: string): void {
+    console.warn(`[control-plane] degraded optional read table=${tableName} timeout_ms=${CONTROL_PLANE_READ_TIMEOUT_MS}`);
+}
+
+function createEmptyDashboardRouting(): ControlPlaneSnapshot['dashboard']['routing'] {
+    return {
+        top_route: null,
+        route_shift_count: 0,
+        fallback_count: 0,
+        ensemble_count: 0,
+        family_count: 0,
+        family_rows: [],
+    };
 }
 
 function isMissingRelationError(error: unknown, relation: string) {

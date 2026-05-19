@@ -669,25 +669,36 @@ export function createSupabaseExperimentTrackingStore(
         },
 
         async listLearningDatasetVersions(tenantId, limit = 100) {
+            const C = LEARNING_DATASET_VERSIONS.COLUMNS;
             const { data, error } = await client
                 .from(LEARNING_DATASET_VERSIONS.TABLE)
-                .select('*')
-                .eq(LEARNING_DATASET_VERSIONS.COLUMNS.tenant_id, tenantId)
-                .order(LEARNING_DATASET_VERSIONS.COLUMNS.created_at, { ascending: false })
+                .select([
+                    C.id,
+                    C.dataset_version,
+                    C.dataset_kind,
+                    C.row_count,
+                    C.summary,
+                    C.created_at,
+                ].join(','))
+                .eq(C.tenant_id, tenantId)
+                .order(C.created_at, { ascending: false })
                 .limit(limit);
 
             if (error) {
                 throw new Error(`Failed to list learning dataset versions for experiments: ${error.message}`);
             }
 
-            return (data ?? []).map((row) => ({
-                id: String(row.id),
-                dataset_version: String(row.dataset_version),
-                dataset_kind: String(row.dataset_kind),
-                row_count: readNumber(row.row_count) ?? 0,
-                summary: asRecord(row.summary),
-                created_at: String(row.created_at),
-            }));
+            return (data ?? []).map((entry) => {
+                const row = asRecord(entry);
+                return {
+                    id: String(row.id),
+                    dataset_version: String(row.dataset_version),
+                    dataset_kind: String(row.dataset_kind),
+                    row_count: readNumber(row.row_count) ?? 0,
+                    summary: asRecord(row.summary),
+                    created_at: String(row.created_at),
+                };
+            });
         },
 
         async listLearningBenchmarkReports(tenantId, limit = 200) {
