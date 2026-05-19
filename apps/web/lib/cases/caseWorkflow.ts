@@ -30,6 +30,9 @@ export interface CaseIntakeInput {
 
 export interface CaseSummary {
     id: string;
+    tenant_id: string;
+    user_id: string | null;
+    clinic_id: string | null;
     created_at: string;
     updated_at: string;
     case_status: CaseStatus;
@@ -235,7 +238,7 @@ export async function updateCaseIntakeSnapshot(
     }
 }
 
-function mapCaseSummary(row: Record<string, unknown>): CaseSummary {
+export function mapCaseSummary(row: Record<string, unknown>): CaseSummary {
     const metadata = asRecord(row.patient_metadata) ?? asRecord(row.metadata);
     const latestSignature = asRecord(row.latest_input_signature);
     const statusText = readText(row.case_status);
@@ -243,6 +246,9 @@ function mapCaseSummary(row: Record<string, unknown>): CaseSummary {
 
     return {
         id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        user_id: readText(row.user_id),
+        clinic_id: readText(row.clinic_id),
         created_at: String(row.created_at),
         updated_at: String(row.updated_at),
         case_status: statusText === 'closed' || statusText === 'referred'

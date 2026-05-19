@@ -88,7 +88,7 @@ export async function POST(req: Request) {
     const outputPayload = asRecord((inferenceEvent as Record<string, unknown>).output_payload);
     const predictedLabel = differentials[0]?.label ?? readTopDiagnosisFromOutput(outputPayload);
     const predictionCorrect = predictedLabel ? labelsMatch(predictedLabel, actualLabel) : null;
-    const predictedP = differentials.find((entry) => entry.label === actualLabel)?.p ?? 0;
+    const predictedP = differentials.find((entry) => labelsMatch(entry.label, actualLabel))?.p ?? 0;
     const calibrationDelta = Number((body.outcome.payload.confidence - predictedP).toFixed(4));
 
     const inputSignature = asRecord((inferenceEvent as Record<string, unknown>).input_signature);
@@ -706,7 +706,10 @@ function normalizeDifferentials(value: unknown): Differential[] {
         .map((entry) => {
             const record = asRecord(entry);
             const label = readText(record.label) ?? readText(record.name) ?? readText(record.condition);
-            const probability = readNumber(record.p) ?? readNumber(record.probability);
+            const probability = readNumber(record.p)
+                ?? readNumber(record.probability)
+                ?? readNumber(record.confidence)
+                ?? readNumber(record.confidence_score);
             return label && probability != null
                 ? { label, p: Math.min(1, Math.max(0, probability)) }
                 : null;

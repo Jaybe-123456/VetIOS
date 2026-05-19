@@ -2,8 +2,9 @@
 
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
-import { Plus, Search } from 'lucide-react';
+import { AlertTriangle, ClipboardCheck, Gauge, Plus, Search } from 'lucide-react';
 import type { CaseSummary } from '@/lib/cases/caseWorkflow';
+import { buildOpenCaseClosureDigest, caseAgeHours, isClosedCase } from '@/lib/cases/caseClosureMetrics';
 import { ConsoleCard, DataRow, TerminalInput } from '@/components/ui/terminal';
 
 export function CaseListClient({ cases }: { cases: CaseSummary[] }) {
@@ -12,6 +13,8 @@ export function CaseListClient({ cases }: { cases: CaseSummary[] }) {
     const [fromDate, setFromDate] = useState('');
     const [toDate, setToDate] = useState('');
     const [query, setQuery] = useState('');
+    const closureDigest = useMemo(() => buildOpenCaseClosureDigest(cases, { limit: 5 }), [cases]);
+    const closureMetrics = closureDigest.metrics;
 
     const filtered = useMemo(() => cases.filter((entry) => {
         if (status !== 'all' && entry.case_status !== status) return false;
@@ -37,6 +40,72 @@ export function CaseListClient({ cases }: { cases: CaseSummary[] }) {
 
     return (
         <div className="flex flex-col gap-4">
+            <ConsoleCard title="Outcome Flywheel">
+                <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
+                    <MetricTile
+                        label="Closure Rate"
+                        value={formatPercent(closureMetrics.closure_rate)}
+                        detail={`${closureMetrics.closed_cases}/${closureMetrics.total_cases} cases closed`}
+                    />
+                    <MetricTile
+                        label="Inferred Closure"
+                        value={formatPercent(closureMetrics.inferred_closure_rate)}
+                        detail={`${closureMetrics.inferred_cases} inferred cases`}
+                    />
+                    <MetricTile
+                        label="Open Backlog"
+                        value={String(closureMetrics.open_cases)}
+                        detail={`${closureMetrics.overdue_open_cases} over ${closureDigest.overdue_hours}h`}
+                        tone={closureMetrics.overdue_open_cases > 0 ? 'warning' : 'normal'}
+                    />
+                    <MetricTile
+                        label="Median Closure"
+                        value={formatHours(closureMetrics.median_hours_to_closure)}
+                        detail="created to closed"
+                    />
+                    <MetricTile
+                        label="Clinicians"
+                        value={String(closureMetrics.by_clinician.length)}
+                        detail="tracked cohorts"
+                    />
+                </div>
+
+                {closureDigest.items.length > 0 && (
+                    <div className="mt-4 border-t border-[hsl(0_0%_100%_/_0.06)] pt-4">
+                        <div className="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.16em] text-[hsl(0_0%_62%)]">
+                            <ClipboardCheck className="h-3.5 w-3.5 text-accent" />
+                            Open cases to close
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 lg:grid-cols-5">
+                            {closureDigest.items.map((item) => (
+                                <Link
+                                    key={item.case_id}
+                                    href={`/cases/${item.case_id}`}
+                                    className="border border-[hsl(0_0%_100%_/_0.08)] bg-[hsl(0_0%_100%_/_0.03)] p-3 transition hover:border-accent/50 hover:bg-accent/5"
+                                >
+                                    <div className="flex items-center justify-between gap-2">
+                                        <span className="truncate font-mono text-[12px] text-[hsl(0_0%_94%)]">{item.patient_name}</span>
+                                        {item.overdue && <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-[hsl(45_100%_60%)]" />}
+                                    </div>
+                                    <div className="mt-2 line-clamp-2 text-[12px] leading-relaxed text-[hsl(0_0%_70%)]">{item.complaint}</div>
+                                    <div className="mt-3 flex items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.12em]">
+                                        <span className="truncate text-[hsl(0_0%_50%)]">{item.species}</span>
+                                        <span className={item.closure_ready ? 'text-accent' : 'text-[hsl(45_100%_60%)]'}>
+                                            {formatHours(item.age_hours)}
+                                        </span>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                        {closureDigest.truncated && (
+                            <div className="mt-3 font-mono text-[11px] text-[hsl(0_0%_58%)]">
+                                Digest shows the oldest closure-ready cases first. Additional backlog items are hidden.
+                            </div>
+                        )}
+                    </div>
+                )}
+            </ConsoleCard>
+
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-5 lg:max-w-5xl">
                     <label className="flex flex-col gap-1">
@@ -91,6 +160,7 @@ export function CaseListClient({ cases }: { cases: CaseSummary[] }) {
                                 <th className="px-3 py-3">Status</th>
                                 <th className="px-3 py-3">Top Differential</th>
                                 <th className="px-3 py-3">Confidence</th>
+                                <th className="px-3 py-3">Closure Signal</th>
                                 <th className="px-3 py-3">Created</th>
                             </tr>
                         </thead>
@@ -109,6 +179,7 @@ export function CaseListClient({ cases }: { cases: CaseSummary[] }) {
                                     </td>
                                     <td className="px-3 py-3 text-[hsl(0_0%_82%)]">{entry.confirmed_diagnosis ?? entry.top_diagnosis ?? '-'}</td>
                                     <td className="px-3 py-3 text-accent">{formatPercent(entry.diagnosis_confidence)}</td>
+                                    <td className="px-3 py-3 text-[hsl(0_0%_70%)]">{formatClosureSignal(entry)}</td>
                                     <td className="px-3 py-3 text-[hsl(0_0%_62%)]">{formatDate(entry.created_at)}</td>
                                 </tr>
                             ))}
@@ -121,6 +192,30 @@ export function CaseListClient({ cases }: { cases: CaseSummary[] }) {
                     </div>
                 )}
             </ConsoleCard>
+        </div>
+    );
+}
+
+function MetricTile({
+    label,
+    value,
+    detail,
+    tone = 'normal',
+}: {
+    label: string;
+    value: string;
+    detail: string;
+    tone?: 'normal' | 'warning';
+}) {
+    const valueTone = tone === 'warning' ? 'text-[hsl(45_100%_60%)]' : 'text-accent';
+    return (
+        <div className="border border-[hsl(0_0%_100%_/_0.08)] bg-[hsl(0_0%_100%_/_0.03)] p-3">
+            <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.14em] text-[hsl(0_0%_58%)]">
+                <Gauge className="h-3.5 w-3.5" />
+                {label}
+            </div>
+            <div className={`mt-2 font-mono text-[22px] ${valueTone}`}>{value}</div>
+            <div className="mt-1 text-[12px] text-[hsl(0_0%_62%)]">{detail}</div>
         </div>
     );
 }
@@ -138,7 +233,29 @@ function formatPercent(value: number | null): string {
     return typeof value === 'number' ? `${Math.round(value * 100)}%` : '-';
 }
 
+function formatHours(value: number | null): string {
+    if (value == null) return '-';
+    if (value < 1) return `${Math.round(value * 60)}m`;
+    if (value < 48) return `${Math.round(value)}h`;
+    return `${Math.round(value / 24)}d`;
+}
+
+function formatClosureSignal(entry: CaseSummary): string {
+    if (isClosedCase(entry)) {
+        return entry.closed_at ? `Closed in ${formatHours(hoursBetween(entry.created_at, entry.closed_at))}` : 'Closed';
+    }
+    if (!entry.latest_inference_event_id) return 'Needs inference';
+    return `Open ${formatHours(caseAgeHours(entry))}`;
+}
+
 function formatDate(value: string): string {
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
+}
+
+function hoursBetween(startValue: string, endValue: string): number | null {
+    const start = Date.parse(startValue);
+    const end = Date.parse(endValue);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return Math.max(0, (end - start) / (60 * 60 * 1000));
 }

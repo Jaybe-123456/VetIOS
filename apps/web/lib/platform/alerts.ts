@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
 import { CONTROL_PLANE_ALERTS } from '@/lib/db/schemaContracts';
 import { recordPlatformTelemetry } from '@/lib/platform/telemetry';
 
@@ -7,6 +8,7 @@ type AlertSeverity = 'low' | 'medium' | 'high' | 'critical';
 export async function createPlatformAlert(
     client: SupabaseClient,
     input: {
+        alertKey?: string | null;
         tenantId: string;
         type: string;
         severity: AlertSeverity;
@@ -22,23 +24,32 @@ export async function createPlatformAlert(
         : input.severity === 'high'
             ? 'high'
             : 'warning';
+    const explicitAlertKey = normalizeAlertKey(input.alertKey);
+    const alertKey = explicitAlertKey ?? `${input.type}:${randomUUID()}`;
 
-    const { data, error } = await client
-        .from(CONTROL_PLANE_ALERTS.TABLE)
-        .insert({
-            [C.tenant_id]: input.tenantId,
-            [C.severity]: mappedSeverity,
-            [C.title]: input.title,
-            [C.message]: input.message,
-            [C.node_id]: input.nodeId ?? null,
-            [C.resolved]: false,
-            [C.metadata]: {
-                alert_type: input.type,
-                ...(input.metadata ?? {}),
-            },
-        })
-        .select('*')
-        .single();
+    const payload = {
+        [C.alert_key]: alertKey,
+        [C.tenant_id]: input.tenantId,
+        [C.severity]: mappedSeverity,
+        [C.title]: input.title,
+        [C.message]: input.message,
+        [C.node_id]: input.nodeId ?? null,
+        [C.resolved]: false,
+        [C.metadata]: {
+            alert_type: input.type,
+            ...(input.metadata ?? {}),
+        },
+    };
+
+    const query = explicitAlertKey
+        ? client
+            .from(CONTROL_PLANE_ALERTS.TABLE)
+            .upsert(payload, { onConflict: `${C.tenant_id},${C.alert_key}` })
+        : client
+            .from(CONTROL_PLANE_ALERTS.TABLE)
+            .insert(payload);
+
+    const { data, error } = await query.select('*').single();
 
     if (error || !data) {
         throw new Error(`Failed to create platform alert: ${error?.message ?? 'Unknown error'}`);
@@ -67,4 +78,8 @@ export async function createPlatformAlert(
     });
 
     return data;
+}
+
+function normalizeAlertKey(value: string | null | undefined): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }

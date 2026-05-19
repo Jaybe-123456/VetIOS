@@ -246,7 +246,10 @@ function extractDifferentials(inference: Record<string, unknown> | null): Array<
     return source.map((entry) => {
         const record = asRecord(entry);
         const label = readText(record.condition) ?? readText(record.name) ?? readText(record.label);
-        const confidence = readNumber(record.probability) ?? readNumber(record.p) ?? readNumber(record.confidence_score);
+        const confidence = readNumber(record.probability)
+            ?? readNumber(record.p)
+            ?? readNumber(record.confidence)
+            ?? readNumber(record.confidence_score);
         return label ? { label, confidence } : null;
     }).filter((entry): entry is { label: string; confidence: number | null } => Boolean(entry));
 }
