@@ -1,5 +1,6 @@
 {
   "framework": "nextjs",
+  "buildCommand": "pnpm --workspace-root run build --filter=@vetios/web",
   "outputDirectory": ".next",
   "functions": {
     "app/api/**": {
