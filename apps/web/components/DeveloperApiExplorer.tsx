@@ -107,10 +107,15 @@ export default function DeveloperApiExplorer({
                 headers.set('X-Tenant-Scope', tenantScope);
             }
 
+            const executablePayload = ensureEndpointRequestPayload(endpoint, payload);
+            if (executablePayload !== payload) {
+                setPayload(executablePayload);
+            }
+
             const { response, body } = await requestJson(endpoint, {
                 method: 'POST',
                 headers,
-                body: payload,
+                body: executablePayload,
             });
 
             setStatus(response.status);
@@ -124,7 +129,7 @@ export default function DeveloperApiExplorer({
             }
             setRequestHistory((current) => [{
                 endpoint,
-                payload,
+                payload: executablePayload,
                 status: response.status,
                 statusText: response.statusText,
                 response: body,
@@ -332,6 +337,38 @@ export default function DeveloperApiExplorer({
             </div>
         </div>
     );
+}
+
+function ensureEndpointRequestPayload(endpoint: ExplorerEndpoint, payload: string): string {
+    if (endpoint !== '/api/inference' && endpoint !== '/api/outcome' && endpoint !== '/api/simulate') {
+        return payload;
+    }
+
+    try {
+        const parsed = JSON.parse(payload);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return payload;
+        }
+        const record = parsed as Record<string, unknown>;
+        if (typeof record.request_id === 'string' && record.request_id.trim().length > 0) {
+            return payload;
+        }
+        return JSON.stringify({ request_id: createRequestId(), ...record }, null, 2);
+    } catch {
+        return payload;
+    }
+}
+
+function createRequestId(): string {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+        const random = Math.floor(Math.random() * 16);
+        const value = char === 'x' ? random : (random & 0x3) | 0x8;
+        return value.toString(16);
+    });
 }
 
 function extractInferenceEventId(body: unknown) {

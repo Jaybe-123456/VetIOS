@@ -1,5 +1,6 @@
 export function buildInferenceTestPayload() {
     return {
+        request_id: createRequestId(),
         model: { name: 'VetIOS Diagnostics', version: 'latest' },
         input: {
             input_signature: {
@@ -16,6 +17,7 @@ export function buildInferenceTestPayload() {
 
 export function buildOutcomeTestPayload(inferenceEventId: string) {
     return {
+        request_id: createRequestId(),
         inference_event_id: inferenceEventId,
         outcome: {
             type: 'confirmed_diagnosis',
@@ -33,6 +35,7 @@ export function buildOutcomeTestPayload(inferenceEventId: string) {
 
 export function buildSimulateTestPayload() {
     return {
+        request_id: createRequestId(),
         steps: 5,
         mode: 'adaptive',
         base_case: {
@@ -68,4 +71,17 @@ export function buildEvaluationTestPayload(inferenceEventId?: string | null) {
         predicted_confidence: 0.82,
         trigger_type: 'inference',
     };
+}
+
+function createRequestId(): string {
+    const randomUUID = globalThis.crypto?.randomUUID;
+    if (typeof randomUUID === 'function') {
+        return randomUUID.call(globalThis.crypto);
+    }
+
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+        const random = Math.floor(Math.random() * 16);
+        const value = char === 'x' ? random : (random & 0x3) | 0x8;
+        return value.toString(16);
+    });
 }

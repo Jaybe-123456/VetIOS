@@ -61,7 +61,7 @@ export async function GET(req: Request) {
     const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? '20'), 100));
     const { data, error } = await supabase
         .from('ai_inference_events')
-        .select('id, created_at, model_name, model_version, input_signature, differentials, confidence_score, cire')
+        .select('id, created_at, model_name, model_version, input_signature, output_payload, confidence_score, uncertainty_metrics, inference_latency_ms')
         .eq('tenant_id', auth.actor.tenantId)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -71,7 +71,7 @@ export async function GET(req: Request) {
     }
 
     return NextResponse.json({
-        data: data ?? [],
+        data: (data ?? []).map(normalizeInferenceListRow),
         meta: {
             tenant_id: auth.actor.tenantId,
             request_id: requestId,
@@ -403,7 +403,7 @@ async function loadCachedInferenceEvent(
 ) {
     return supabase
         .from('ai_inference_events')
-        .select('id, case_id, tenant_id, request_id, output_payload, differentials, confidence_score, inference_latency_ms, latency_ms, cire, created_at')
+        .select('id, case_id, tenant_id, request_id, output_payload, confidence_score, inference_latency_ms, created_at')
         .eq('tenant_id', tenantId)
         .eq('request_id', requestId)
         .maybeSingle();
@@ -419,7 +419,11 @@ function buildCachedInferencePayload(row: Record<string, unknown>, requestId: st
         ? row.differentials
         : Array.isArray(outputPayload.differentials)
             ? outputPayload.differentials
-            : [];
+            : Array.isArray(asCoreRecord(outputPayload.diagnosis).top_differentials)
+                ? asCoreRecord(outputPayload.diagnosis).top_differentials
+                : [];
+    const cire = asCoreRecord(row.cire);
+    const outputCire = asCoreRecord(outputPayload.cire);
 
     return {
         inference_event_id: readString(row.id),
@@ -430,14 +434,35 @@ function buildCachedInferencePayload(row: Record<string, unknown>, requestId: st
             output_payload: outputPayload,
         },
         output_payload: outputPayload,
-        latency_ms: readNumber(row.inference_latency_ms) ?? readNumber(row.latency_ms) ?? 0,
-        cire: asCoreRecord(row.cire),
+        latency_ms: readNumber(row.inference_latency_ms) ?? 0,
+        cire: Object.keys(cire).length > 0 ? cire : outputCire,
         meta: {
             tenant_id: readString(row.tenant_id),
             request_id: requestId,
             idempotent: true,
         },
         error: null,
+    };
+}
+
+function normalizeInferenceListRow(row: unknown): Record<string, unknown> {
+    const record = asCoreRecord(row);
+    const outputPayload = asCoreRecord(record.output_payload);
+    const diagnosis = asCoreRecord(outputPayload.diagnosis);
+    const differentials = Array.isArray(record.differentials)
+        ? record.differentials
+        : Array.isArray(outputPayload.differentials)
+            ? outputPayload.differentials
+            : Array.isArray(diagnosis.top_differentials)
+                ? diagnosis.top_differentials
+                : [];
+    const cire = asCoreRecord(record.cire);
+    const outputCire = asCoreRecord(outputPayload.cire);
+
+    return {
+        ...record,
+        differentials,
+        cire: Object.keys(cire).length > 0 ? cire : outputCire,
     };
 }
 
