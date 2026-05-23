@@ -10,8 +10,28 @@ export function getAiProviderBaseUrl(): string {
     return process.env.AI_PROVIDER_BASE_URL || 'https://api.openai.com/v1';
 }
 
+export function getAiProviderName(): string {
+    return process.env.AI_PROVIDER_NAME || 'openai';
+}
+
 export function getAiProviderDefaultModel(fallback = 'gpt-4o-mini'): string {
     return process.env.AI_PROVIDER_DEFAULT_MODEL || fallback;
+}
+
+export function getAiFallbackProviderName(): string | null {
+    return process.env.AI_FALLBACK_PROVIDER_NAME || process.env.AI_FALLBACK_PROVIDER || null;
+}
+
+export function getAiFallbackProviderBaseUrl(): string | null {
+    return process.env.AI_FALLBACK_PROVIDER_BASE_URL || null;
+}
+
+export function getAiFallbackProviderApiKey(): string | null {
+    return process.env.AI_FALLBACK_PROVIDER_API_KEY || null;
+}
+
+export function getAiFallbackProviderDefaultModel(): string | null {
+    return process.env.AI_FALLBACK_PROVIDER_DEFAULT_MODEL || null;
 }
 
 // ─── Hugging Face / Custom Model Config ───

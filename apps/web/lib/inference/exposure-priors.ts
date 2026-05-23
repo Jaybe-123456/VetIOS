@@ -25,7 +25,7 @@ export const VECTOR_EXPOSURE_PRIORS: {
 } = {
     mosquito_endemic: {
         dirofilariosis_canine: {
-            with_no_prevention: 0.18,
+            with_no_prevention: 0.35,
             with_inconsistent_prevention: 0.08,
             with_consistent_prevention: 0.001,
             with_unknown_prevention: 0.10,

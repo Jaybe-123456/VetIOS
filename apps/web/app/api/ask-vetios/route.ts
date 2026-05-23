@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { runInference } from '@/lib/ai/provider';
+import { AiProviderUnavailableError, runInference } from '@/lib/ai/provider';
 import { embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import {
@@ -201,6 +201,18 @@ export async function POST(req: Request) {
         return res;
 
     } catch (error) {
+        if (error instanceof AiProviderUnavailableError) {
+            writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 503, latency_ms: Date.now() - startTime, metadata: { error_code: error.errorCode }, timestamp: new Date().toISOString() });
+            const res = NextResponse.json({
+                error: 'inference_unavailable',
+                error_code: error.errorCode,
+                request_id: requestId,
+            }, { status: 503 });
+            res.headers.set('Retry-After', '5');
+            addAskVetiosBudgetHeaders(res.headers, tokenBudget);
+            return withAskVetiosHeaders(res, requestId, startTime);
+        }
+
         // Surface fallback on AI failure — still better than a 500
         const fallback = buildAskVetiosHeuristicResponse(message);
         const queryHistoryId = await logAskVetiosQuery(message, fallback as unknown as Record<string, unknown>, startTime).catch(() => null);

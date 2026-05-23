@@ -6,11 +6,24 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 import { checkRateLimit } from '@/lib/inference-rate-limit';
 import { runInference } from '@/lib/vetios-inference';
 import { safeJson } from '@/lib/http/safeJson';
+import {
+    SupabaseWriteError,
+    asRecord as asCoreRecord,
+    isUuidV4,
+    logApiCompleted,
+    logApiReceived,
+    logSupabaseFailure,
+    readErrorCode,
+    readErrorMessage,
+    readString,
+    retryAfterResponse,
+} from '@/lib/api/corePipeline';
 import type { InputSignature } from '@/lib/vetios-inference';
 
 export const runtime = 'nodejs';
 
 const InferenceRequestSchema = z.object({
+    request_id: z.string().refine(isUuidV4, 'request_id must be a UUID v4'),
     model: z.object({
         name: z.string().min(1),
         version: z.string().min(1),
@@ -61,7 +74,9 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-    const requestId = randomUUID();
+    const startTime = Date.now();
+    let requestId: string | null = null;
+    let tenantId: string | null = null;
     const supabase = getSupabaseServer();
     const auth = await resolveClinicalApiActor(req, {
         client: supabase,
@@ -72,7 +87,7 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const tenantId = auth.actor.tenantId;
+    tenantId = auth.actor.tenantId;
     const rateLimit = checkRateLimit(tenantId);
     if (!rateLimit.allowed) {
         return NextResponse.json(
@@ -89,18 +104,75 @@ export async function POST(req: Request) {
 
     const parsedJson = await safeJson(req);
     if (!parsedJson.ok) {
+        logApiReceived({ event: 'inference.received', route: '/api/inference', tenantId, requestId });
+        logApiCompleted({
+            event: 'inference.completed',
+            route: '/api/inference',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'invalid_json',
+        });
         return NextResponse.json(
             { error: 'invalid_input', detail: parsedJson.error },
             { status: 400 },
         );
     }
 
+    requestId = readString(asCoreRecord(parsedJson.data).request_id);
+    logApiReceived({ event: 'inference.received', route: '/api/inference', tenantId, requestId });
+
     const parsed = InferenceRequestSchema.safeParse(parsedJson.data);
     if (!parsed.success) {
+        logApiCompleted({
+            event: 'inference.completed',
+            route: '/api/inference',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'invalid_input',
+        });
         return NextResponse.json(
             { error: 'invalid_input', detail: formatZodErrors(parsed.error) },
             { status: 400 },
         );
+    }
+    requestId = parsed.data.request_id;
+
+    const cached = await loadCachedInferenceEvent(supabase, tenantId, requestId);
+    if (cached.error) {
+        const errorCode = readErrorCode(cached.error, 'inference_idempotency_lookup_failed');
+        logSupabaseFailure({
+            route: '/api/inference',
+            requestId,
+            tenantId,
+            errorCode,
+            error: cached.error,
+        });
+        logApiCompleted({
+            event: 'inference.completed',
+            route: '/api/inference',
+            tenantId,
+            requestId,
+            startTime,
+            error: errorCode,
+        });
+        return retryAfterResponse({ requestId, errorCode, detail: readErrorMessage(cached.error) });
+    }
+    if (cached.data) {
+        logApiCompleted({
+            event: 'inference.completed',
+            route: '/api/inference',
+            tenantId,
+            requestId,
+            startTime,
+            confidenceScore: readNumber((cached.data as Record<string, unknown>).confidence_score),
+            cached: true,
+        });
+        const response = NextResponse.json(buildCachedInferencePayload(cached.data as Record<string, unknown>, requestId));
+        response.headers.set('X-RateLimit-Remaining', String(rateLimit.remaining));
+        response.headers.set('X-RateLimit-Reset', String(rateLimit.resetAt));
+        return response;
     }
 
     try {
@@ -110,6 +182,14 @@ export async function POST(req: Request) {
             auth.actor,
         );
         if (!simulationContext.ok) {
+            logApiCompleted({
+                event: 'inference.completed',
+                route: '/api/inference',
+                tenantId,
+                requestId,
+                startTime,
+                error: simulationContext.code,
+            });
             return NextResponse.json(
                 { error: simulationContext.code, detail: simulationContext.message },
                 { status: simulationContext.status },
@@ -147,21 +227,109 @@ export async function POST(req: Request) {
         });
         response.headers.set('X-RateLimit-Remaining', String(rateLimit.remaining));
         response.headers.set('X-RateLimit-Reset', String(rateLimit.resetAt));
+        logApiCompleted({
+            event: 'inference.completed',
+            route: '/api/inference',
+            tenantId,
+            requestId,
+            startTime,
+            confidenceScore: result.data.confidence_score,
+        });
         return response;
     } catch (error) {
+        if (error instanceof SupabaseWriteError) {
+            logSupabaseFailure({
+                route: '/api/inference',
+                requestId,
+                tenantId,
+                errorCode: error.errorCode,
+                error: error.originalError,
+            });
+            logApiCompleted({
+                event: 'inference.completed',
+                route: '/api/inference',
+                tenantId,
+                requestId,
+                startTime,
+                error: error.errorCode,
+            });
+            return retryAfterResponse({ requestId, errorCode: error.errorCode, detail: error.message });
+        }
+
         const message = error instanceof Error ? error.message : 'Unknown model error';
         if (message === 'unparseable output') {
+            logApiCompleted({
+                event: 'inference.completed',
+                route: '/api/inference',
+                tenantId,
+                requestId,
+                startTime,
+                error: 'model_error',
+            });
             return NextResponse.json(
                 { error: 'model_error', detail: 'unparseable output' },
                 { status: 502 },
             );
         }
 
+        logApiCompleted({
+            event: 'inference.completed',
+            route: '/api/inference',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'model_error',
+        });
         return NextResponse.json(
             { error: 'model_error', detail: message },
             { status: 502 },
         );
     }
+}
+
+async function loadCachedInferenceEvent(
+    supabase: ReturnType<typeof getSupabaseServer>,
+    tenantId: string,
+    requestId: string,
+) {
+    return supabase
+        .from('ai_inference_events')
+        .select('id, case_id, tenant_id, request_id, output_payload, differentials, confidence_score, inference_latency_ms, latency_ms, cire, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('request_id', requestId)
+        .maybeSingle();
+}
+
+function buildCachedInferencePayload(row: Record<string, unknown>, requestId: string) {
+    const outputPayload = asCoreRecord(row.output_payload);
+    const confidenceScore = readNumber(row.confidence_score)
+        ?? readNumber(outputPayload.confidence_score)
+        ?? readNumber(outputPayload.primary_confidence)
+        ?? 0;
+    const differentials = Array.isArray(row.differentials)
+        ? row.differentials
+        : Array.isArray(outputPayload.differentials)
+            ? outputPayload.differentials
+            : [];
+
+    return {
+        inference_event_id: readString(row.id),
+        clinical_case_id: readString(row.case_id),
+        data: {
+            confidence_score: confidenceScore,
+            differentials,
+            output_payload: outputPayload,
+        },
+        output_payload: outputPayload,
+        latency_ms: readNumber(row.inference_latency_ms) ?? readNumber(row.latency_ms) ?? 0,
+        cire: asCoreRecord(row.cire),
+        meta: {
+            tenant_id: readString(row.tenant_id),
+            request_id: requestId,
+            idempotent: true,
+        },
+        error: null,
+    };
 }
 
 type SimulationContext =

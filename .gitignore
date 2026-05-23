@@ -5,6 +5,7 @@ node_modules/
 dist/
 .next/
 out/
+*.tsbuildinfo
 
 # Turbo
 .turbo/
@@ -34,6 +35,9 @@ supabase_status.txt
 # Logs
 *.log
 
+*.txt
+!docs/**/*.txt
+!requirements.txt
 supabase_*.txt
 *_results.txt
 check.html

@@ -168,13 +168,16 @@ describe('VetIOS Agentic RAG service primitives', () => {
         });
 
         expect(jobs).toHaveLength(2);
-        expect(jobs[0].source.name).toBe('VetIOS clinical guideline source');
-        expect(jobs[0].source.species_scope).toEqual(['canine', 'feline']);
-        expect(jobs[0].source.medicine_domain).toEqual(['clinical_guideline', 'diagnostics']);
-        expect(jobs[0].document.content_text).toContain('acute vomiting and diarrhea');
-        expect(jobs[0].document.content_url).toBe('https://www.vin.com/acute-vomiting-diarrhea-guideline');
-        expect(jobs[0].document.metadata.document_species).toEqual(['canine']);
-        expect(jobs[0].document.metadata.document_domains).toEqual(['clinical_guideline', 'diagnostics']);
+        const firstJob = jobs[0];
+        expect(firstJob).toBeDefined();
+        expect(firstJob!.source.name).toBe('VetIOS clinical guideline source');
+        expect(firstJob!.source.species_scope).toEqual(['canine', 'feline']);
+        expect(firstJob!.source.medicine_domain).toEqual(['clinical_guideline', 'diagnostics']);
+        expect(firstJob!.document.content_text).toContain('acute vomiting and diarrhea');
+        expect(firstJob!.document.content_url).toBe('https://www.vin.com/acute-vomiting-diarrhea-guideline');
+        const firstJobMetadata = firstJob!.document.metadata ?? {};
+        expect(firstJobMetadata.document_species).toEqual(['canine']);
+        expect(firstJobMetadata.document_domains).toEqual(['clinical_guideline', 'diagnostics']);
     });
 
     it('plans multi-source veterinary training corpus ingestion runs', () => {

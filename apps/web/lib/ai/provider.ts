@@ -2,15 +2,49 @@ import { detectContradictions, type ContradictionResult } from '@/lib/ai/contrad
 import { createHeuristicInferencePayload } from '@/lib/ai/diagnosticSafety';
 import { getClosedWorldDiseasePromptBlock } from '@/lib/ai/diseaseOntology';
 import {
+    getAiFallbackProviderApiKey,
+    getAiFallbackProviderBaseUrl,
+    getAiFallbackProviderDefaultModel,
+    getAiFallbackProviderName,
     getAiProviderApiKey,
     getAiProviderBaseUrl,
     getAiProviderDefaultModel,
+    getAiProviderName,
     getHfProviderApiKey,
     getHfProviderBaseUrl,
     getHfProviderModel,
     isHfEnabled,
     shouldUseAiHeuristicFallback,
 } from '@/lib/ai/config';
+
+const AI_PROVIDER_TIMEOUT_MS = 30_000;
+const AI_PROVIDER_RETRY_BACKOFF_MS = 2_000;
+
+class AiProviderHttpError extends Error {
+    readonly status: number;
+
+    constructor(status: number, message: string) {
+        super(message);
+        this.name = 'AiProviderHttpError';
+        this.status = status;
+    }
+}
+
+class AiProviderTimeoutError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'AiProviderTimeoutError';
+    }
+}
+
+export class AiProviderUnavailableError extends Error {
+    readonly errorCode = 'inference_unavailable';
+
+    constructor(message = 'AI inference provider is unavailable.') {
+        super(message);
+        this.name = 'AiProviderUnavailableError';
+    }
+}
 
 export interface InferenceInput {
     model?: string;
@@ -325,7 +359,7 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
             : '',
         ragBlock,
     ].filter((block) => block.trim().length > 0).join('\n\n');
-    const isVisionCapable = ['gpt-4o', 'gpt-4-turbo', 'gpt-4-vision-preview'].some((prefix) => primaryModel.startsWith(prefix));
+    const isVisionCapable = ['gpt-4o', 'gpt-4-vision-preview'].some((prefix) => primaryModel.startsWith(prefix));
     const userMessageContent: any[] = [{ type: 'text', text: userPromptText }];
 
     for (const image of images) {
@@ -377,14 +411,18 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
         }
     }
 
-    const primaryRequest = performApiRequest(
-        getAiProviderBaseUrl(),
-        getAiProviderApiKey(),
-        primaryModel,
-        enrichedSystemPrompt,
-        userMessageContent,
-        options?.signal,
-    );
+    const primaryRequest = performApiRequestWithResilience({
+        primary: {
+            name: getAiProviderName(),
+            baseUrl: getAiProviderBaseUrl(),
+            apiKey: getAiProviderApiKey(),
+            model: primaryModel,
+        },
+        fallback: buildFallbackProvider(primaryModel),
+        systemPrompt: enrichedSystemPrompt,
+        userContent: userMessageContent,
+        signal: options?.signal,
+    });
 
     let hfRequest: Promise<any> | null = null;
     if (isHfEnabled()) {
@@ -398,11 +436,17 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
 
     // Execute concurrently
     const [primaryResult, hfResult] = await Promise.all([
-        primaryRequest.catch(err => ({ error: err.message })),
+        primaryRequest.catch(err => ({
+            error: err.message,
+            error_code: err instanceof AiProviderUnavailableError ? err.errorCode : undefined,
+        })),
         hfRequest ? hfRequest.catch(err => ({ error: err.message })) : Promise.resolve(null)
     ]);
 
     if ('error' in primaryResult) {
+        if (primaryResult.error_code === 'inference_unavailable') {
+            throw new AiProviderUnavailableError(primaryResult.error);
+        }
         if (input.input_signature.query_type === 'ask_vetios') {
             throw new Error(`Primary AI failed: ${primaryResult.error}`);
         }
@@ -463,13 +507,14 @@ async function performApiRequest(
     userContent: any[],
     signal?: AbortSignal,
 ): Promise<any> {
+    const timedSignal = withTimeoutSignal(signal, AI_PROVIDER_TIMEOUT_MS);
     const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${apiKey}`,
         },
-        signal,
+        signal: timedSignal.signal,
         body: JSON.stringify({
             model,
             messages: [
@@ -480,14 +525,134 @@ async function performApiRequest(
             max_tokens: 2048,
             response_format: { type: 'json_object' },
         }),
+    }).catch((error) => {
+        if (timedSignal.signal.aborted) {
+            throw new AiProviderTimeoutError('AI provider request timed out.');
+        }
+        throw error;
+    }).finally(() => {
+        timedSignal.dispose();
     });
 
     if (!response.ok) {
         const error = await response.text();
-        throw new Error(`API error (${response.status}): ${error}`);
+        throw new AiProviderHttpError(response.status, `API error (${response.status}): ${error}`);
     }
 
     return response.json();
+}
+
+async function performApiRequestWithResilience(input: {
+    primary: AiProviderDescriptor;
+    fallback: AiProviderDescriptor | null;
+    systemPrompt: string;
+    userContent: any[];
+    signal?: AbortSignal;
+}): Promise<any> {
+    const primaryResult = await callProviderWithRetry(input.primary, input.systemPrompt, input.userContent, input.signal);
+    if (primaryResult.ok) return primaryResult.data;
+
+    if (input.fallback) {
+        logProviderFallback(input.fallback.name, primaryResult.reason);
+        try {
+            return await performApiRequest(
+                input.fallback.baseUrl,
+                input.fallback.apiKey,
+                input.fallback.model,
+                input.systemPrompt,
+                input.userContent,
+                input.signal,
+            );
+        } catch (error) {
+            throw new AiProviderUnavailableError(
+                `AI providers failed: primary=${primaryResult.reason}; fallback=${error instanceof Error ? error.message : 'unknown'}`,
+            );
+        }
+    }
+
+    throw new AiProviderUnavailableError(`AI provider failed: ${primaryResult.reason}`);
+}
+
+async function callProviderWithRetry(
+    provider: AiProviderDescriptor,
+    systemPrompt: string,
+    userContent: any[],
+    signal?: AbortSignal,
+): Promise<{ ok: true; data: any } | { ok: false; reason: string }> {
+    try {
+        return {
+            ok: true,
+            data: await performApiRequest(provider.baseUrl, provider.apiKey, provider.model, systemPrompt, userContent, signal),
+        };
+    } catch (error) {
+        if (!isRetryableProviderError(error)) {
+            return { ok: false, reason: error instanceof Error ? error.message : 'provider_failed' };
+        }
+        await sleep(AI_PROVIDER_RETRY_BACKOFF_MS);
+    }
+
+    try {
+        return {
+            ok: true,
+            data: await performApiRequest(provider.baseUrl, provider.apiKey, provider.model, systemPrompt, userContent, signal),
+        };
+    } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : 'provider_failed_after_retry' };
+    }
+}
+
+interface AiProviderDescriptor {
+    name: string;
+    baseUrl: string;
+    apiKey: string;
+    model: string;
+}
+
+function buildFallbackProvider(primaryModel: string): AiProviderDescriptor | null {
+    const name = getAiFallbackProviderName();
+    const baseUrl = getAiFallbackProviderBaseUrl();
+    const apiKey = getAiFallbackProviderApiKey();
+    if (!name || !baseUrl || !apiKey) return null;
+
+    return {
+        name,
+        baseUrl,
+        apiKey,
+        model: getAiFallbackProviderDefaultModel() || primaryModel,
+    };
+}
+
+function isRetryableProviderError(error: unknown): boolean {
+    return error instanceof AiProviderTimeoutError
+        || (error instanceof AiProviderHttpError && error.status >= 500);
+}
+
+function logProviderFallback(provider: string, reason: string): void {
+    console.log(JSON.stringify({
+        type: 'ai_provider_fallback',
+        provider,
+        reason,
+        timestamp: new Date().toISOString(),
+    }));
+}
+
+function withTimeoutSignal(signal: AbortSignal | undefined, timeoutMs: number): { signal: AbortSignal; dispose: () => void } {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const abortFromParent = () => controller.abort();
+    signal?.addEventListener('abort', abortFromParent, { once: true });
+
+    return {
+        signal: controller.signal,
+        dispose() {
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abortFromParent);
+        },
+    };
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function buildFallbackInference(

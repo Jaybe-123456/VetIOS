@@ -5,6 +5,7 @@ import {
     ensureCanonicalClinicalCase,
     finalizeClinicalCaseAfterInference,
 } from '@/lib/clinicalCases/clinicalCaseManager';
+import { SupabaseWriteError, readErrorCode } from '@/lib/api/corePipeline';
 import { runClinicalInferenceEngine } from '@/lib/inference/engine';
 import type { ClinicalInferenceEngineResult } from '@/lib/inference/engine';
 
@@ -82,6 +83,7 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
         ? null
         : await persistInferenceEvent(options.supabase, {
             tenantId: options.tenantId,
+            requestId: options.requestId,
             userId: options.userId ?? null,
             clinicId: options.clinicId ?? null,
             requestedCaseId: options.requestedCaseId ?? null,
@@ -201,6 +203,7 @@ async function persistInferenceEvent(
     supabase: SupabaseClient,
     input: {
         tenantId: string;
+        requestId: string;
         userId?: string | null;
         clinicId?: string | null;
         requestedCaseId?: string | null;
@@ -256,6 +259,7 @@ async function persistInferenceEvent(
 
     const payload: Record<string, unknown> = {
         tenant_id: input.tenantId,
+        request_id: input.requestId,
         user_id: input.userId ?? null,
         clinic_id: input.clinicId ?? null,
         case_id: clinicalCase.id,
@@ -346,12 +350,20 @@ async function insertInferenceEvent(
         }
 
         if (!error) {
-            throw new Error('Failed to persist inference event: Unknown error');
+            throw new SupabaseWriteError(
+                'Failed to persist inference event: Unknown error',
+                'ai_inference_event_insert_failed',
+                error,
+            );
         }
 
         const missingColumn = resolveMissingColumn(error.message ?? '', nextPayload, optionalColumns);
         if (!missingColumn) {
-            throw new Error(`Failed to persist inference event: ${error.message}`);
+            throw new SupabaseWriteError(
+                `Failed to persist inference event: ${error.message}`,
+                readErrorCode(error, 'ai_inference_event_insert_failed'),
+                error,
+            );
         }
 
         if (requiredSimulationColumns.has(missingColumn)) {

@@ -9,6 +9,7 @@
         "lint": "next lint",
         "typecheck": "tsc --noEmit",
         "typecheck:tests": "tsc --project tsconfig.test.json --noEmit",
+        "test": "vitest run",
         "test:auth-surface": "node scripts/test-auth-surface.cjs",
         "test:api-auth-surface": "node scripts/test-api-auth-surface.cjs",
         "test:access-control": "node scripts/test-access-control.cjs",

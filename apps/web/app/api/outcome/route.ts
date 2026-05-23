@@ -1,8 +1,19 @@
-import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import {
+    SupabaseWriteError,
+    asRecord as asCoreRecord,
+    isUuidV4,
+    logApiCompleted,
+    logApiReceived,
+    logSupabaseFailure,
+    readErrorCode,
+    readErrorMessage,
+    readString,
+    retryAfterResponse,
+} from '@/lib/api/corePipeline';
 import {
     createSupabaseClinicalCaseStore,
     finalizeClinicalCaseAfterOutcome,
@@ -16,6 +27,7 @@ import type { Differential } from '@/lib/cire';
 export const runtime = 'nodejs';
 
 const OutcomeRequestSchema = z.object({
+    request_id: z.string().refine(isUuidV4, 'request_id must be a UUID v4'),
     inference_event_id: z.string().uuid(),
     outcome: z.object({
         type: z.string().min(1),
@@ -33,7 +45,9 @@ const OutcomeRequestSchema = z.object({
 });
 
 export async function POST(req: Request) {
-    const requestId = randomUUID();
+    const startTime = Date.now();
+    let requestId: string | null = null;
+    let tenantId: string | null = null;
     const supabase = getSupabaseServer();
     const auth = await resolveClinicalApiActor(req, {
         client: supabase,
@@ -46,22 +60,75 @@ export async function POST(req: Request) {
 
     const parsedJson = await safeJson(req);
     if (!parsedJson.ok) {
+        logApiReceived({ event: 'outcome.received', route: '/api/outcome', tenantId, requestId });
+        logApiCompleted({
+            event: 'outcome.completed',
+            route: '/api/outcome',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'invalid_json',
+        });
         return NextResponse.json(
             { error: 'invalid_input', detail: parsedJson.error },
             { status: 400 },
         );
     }
 
+    requestId = readString(asCoreRecord(parsedJson.data).request_id);
     const parsed = OutcomeRequestSchema.safeParse(parsedJson.data);
+    tenantId = auth.actor.tenantId;
+    logApiReceived({ event: 'outcome.received', route: '/api/outcome', tenantId, requestId });
+
     if (!parsed.success) {
+        logApiCompleted({
+            event: 'outcome.completed',
+            route: '/api/outcome',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'invalid_input',
+        });
         return NextResponse.json(
             { error: 'invalid_input', detail: formatZodErrors(parsed.error) },
             { status: 400 },
         );
     }
 
-    const tenantId = auth.actor.tenantId;
+    requestId = parsed.data.request_id;
     const body = parsed.data;
+
+    const cached = await loadCachedOutcomeEvent(supabase, tenantId, requestId);
+    if (cached.error) {
+        const errorCode = readErrorCode(cached.error, 'outcome_idempotency_lookup_failed');
+        logSupabaseFailure({
+            route: '/api/outcome',
+            requestId,
+            tenantId,
+            errorCode,
+            error: cached.error,
+        });
+        logApiCompleted({
+            event: 'outcome.completed',
+            route: '/api/outcome',
+            tenantId,
+            requestId,
+            startTime,
+            error: errorCode,
+        });
+        return retryAfterResponse({ requestId, errorCode, detail: readErrorMessage(cached.error) });
+    }
+    if (cached.data) {
+        logApiCompleted({
+            event: 'outcome.completed',
+            route: '/api/outcome',
+            tenantId,
+            requestId,
+            startTime,
+            cached: true,
+        });
+        return NextResponse.json(buildCachedOutcomePayload(cached.data as Record<string, unknown>, requestId));
+    }
 
     const { data: inferenceEvent, error: inferenceError } = await supabase
         .from('ai_inference_events')
@@ -71,12 +138,33 @@ export async function POST(req: Request) {
         .maybeSingle();
 
     if (inferenceError) {
-        return NextResponse.json(
-            { error: 'inference_lookup_failed', detail: inferenceError.message },
-            { status: 500 },
-        );
+        const errorCode = readErrorCode(inferenceError, 'inference_lookup_failed');
+        logSupabaseFailure({
+            route: '/api/outcome',
+            requestId,
+            tenantId,
+            errorCode,
+            error: inferenceError,
+        });
+        logApiCompleted({
+            event: 'outcome.completed',
+            route: '/api/outcome',
+            tenantId,
+            requestId,
+            startTime,
+            error: errorCode,
+        });
+        return retryAfterResponse({ requestId, errorCode, detail: inferenceError.message });
     }
     if (!inferenceEvent) {
+        logApiCompleted({
+            event: 'outcome.completed',
+            route: '/api/outcome',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'not_found',
+        });
         return NextResponse.json(
             { error: 'not_found', detail: 'Inference event not found.' },
             { status: 404 },
@@ -116,6 +204,7 @@ export async function POST(req: Request) {
             user_id: readText((inferenceEvent as Record<string, unknown>).user_id) ?? auth.actor.userId,
             clinic_id: readText((inferenceEvent as Record<string, unknown>).clinic_id),
             case_id: caseId,
+            request_id: requestId,
             source_module: 'clinical_outcome_closure',
             inference_event_id: body.inference_event_id,
             outcome_type: body.outcome.type,
@@ -128,10 +217,23 @@ export async function POST(req: Request) {
             timestamp: body.outcome.timestamp,
         });
     } catch (error) {
-        return NextResponse.json(
-            { error: 'outcome_insert_failed', detail: error instanceof Error ? error.message : 'Unknown insert error' },
-            { status: 500 },
-        );
+        const errorCode = error instanceof SupabaseWriteError ? error.errorCode : 'outcome_insert_failed';
+        logSupabaseFailure({
+            route: '/api/outcome',
+            requestId,
+            tenantId,
+            errorCode,
+            error: error instanceof SupabaseWriteError ? error.originalError : error,
+        });
+        logApiCompleted({
+            event: 'outcome.completed',
+            route: '/api/outcome',
+            tenantId,
+            requestId,
+            startTime,
+            error: errorCode,
+        });
+        return retryAfterResponse({ requestId, errorCode, detail: error instanceof Error ? error.message : 'Unknown insert error' });
     }
 
     const outcomeResolution = {
@@ -146,23 +248,29 @@ export async function POST(req: Request) {
         timestamp: body.outcome.timestamp,
     };
     try {
-        await updateInferenceOutcome(supabase, tenantId, body.inference_event_id, {
-            output_payload: {
-                ...outputPayload,
-                outcome_resolution: outcomeResolution,
-            },
-            calibration_delta: calibrationDelta,
-            outcome_resolved: true,
-            outcome_confirmed: true,
-            outcome_confirmed_at: body.outcome.timestamp,
-            confirmed_diagnosis: actualLabel,
-            prediction_correct: predictionCorrect,
+        await upsertLabelCalibration(supabase, {
+            tenantId,
+            label: actualLabel,
+            calibrationDelta,
         });
     } catch (error) {
-        return NextResponse.json(
-            { error: 'inference_update_failed', detail: error instanceof Error ? error.message : 'Unknown update error' },
-            { status: 500 },
-        );
+        const errorCode = error instanceof SupabaseWriteError ? error.errorCode : 'label_calibration_write_failed';
+        logSupabaseFailure({
+            route: '/api/outcome',
+            requestId,
+            tenantId,
+            errorCode,
+            error: error instanceof SupabaseWriteError ? error.originalError : error,
+        });
+        logApiCompleted({
+            event: 'outcome.completed',
+            route: '/api/outcome',
+            tenantId,
+            requestId,
+            startTime,
+            error: errorCode,
+        });
+        return retryAfterResponse({ requestId, errorCode, detail: error instanceof Error ? error.message : 'Unknown calibration error' });
     }
 
     let clinicalCase: ClinicalCaseRecord | null = null;
@@ -190,6 +298,14 @@ export async function POST(req: Request) {
                 );
             }
         } catch (error) {
+            logApiCompleted({
+                event: 'outcome.completed',
+                route: '/api/outcome',
+                tenantId,
+                requestId,
+                startTime,
+                error: 'clinical_case_update_failed',
+            });
             return NextResponse.json(
                 { error: 'clinical_case_update_failed', detail: error instanceof Error ? error.message : 'Unknown clinical case update error' },
                 { status: 500 },
@@ -231,7 +347,7 @@ export async function POST(req: Request) {
         clinicalCase,
     });
 
-    return NextResponse.json({
+    const responseBody = {
         outcome_event_id: persistedOutcomeId,
         clinical_case_id: clinicalCase?.id ?? caseId,
         linked_inference_event_id: body.inference_event_id,
@@ -248,7 +364,49 @@ export async function POST(req: Request) {
             ],
         },
         request_id: requestId,
+    };
+    logApiCompleted({
+        event: 'outcome.completed',
+        route: '/api/outcome',
+        tenantId,
+        requestId,
+        startTime,
     });
+    return NextResponse.json(responseBody);
+}
+
+async function loadCachedOutcomeEvent(
+    supabase: ReturnType<typeof getSupabaseServer>,
+    tenantId: string,
+    requestId: string,
+) {
+    return supabase
+        .from('clinical_outcome_events')
+        .select('id, tenant_id, request_id, case_id, inference_event_id, outcome_type, outcome_payload, actual_label, actual_confidence, calibration_delta, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('request_id', requestId)
+        .maybeSingle();
+}
+
+function buildCachedOutcomePayload(row: Record<string, unknown>, requestId: string) {
+    const payload = asCoreRecord(row.outcome_payload);
+    return {
+        outcome_event_id: readString(row.id),
+        clinical_case_id: readString(row.case_id),
+        linked_inference_event_id: readString(row.inference_event_id),
+        calibration_delta: readNumber(row.calibration_delta) ?? readNumber(payload.calibration_delta),
+        prediction_correct: typeof payload.prediction_correct === 'boolean' ? payload.prediction_correct : null,
+        derived_updates: {
+            cached: true,
+            warnings: [],
+        },
+        request_id: requestId,
+        meta: {
+            tenant_id: readString(row.tenant_id),
+            idempotent: true,
+        },
+        error: null,
+    };
 }
 
 const OPTIONAL_OUTCOME_INSERT_COLUMNS = new Set([
@@ -260,15 +418,6 @@ const OPTIONAL_OUTCOME_INSERT_COLUMNS = new Set([
     'actual_confidence',
     'calibration_delta',
     'timestamp',
-]);
-
-const OPTIONAL_INFERENCE_OUTCOME_COLUMNS = new Set([
-    'calibration_delta',
-    'outcome_resolved',
-    'outcome_confirmed',
-    'outcome_confirmed_at',
-    'confirmed_diagnosis',
-    'prediction_correct',
 ]);
 
 const OPTIONAL_DIAGNOSIS_RECORD_COLUMNS = new Set([
@@ -304,13 +453,72 @@ async function insertOutcomeEvent(
             .single();
 
         if (!error && data?.id) return String(data.id);
-        if (!error) throw new Error('Unknown insert error');
+        if (!error) {
+            throw new SupabaseWriteError(
+                'clinical_outcome_events insert failed: Unknown insert error',
+                'outcome_insert_failed',
+                error,
+            );
+        }
 
         const missingColumn = resolveMissingColumn(error.message ?? '', nextPayload, OPTIONAL_OUTCOME_INSERT_COLUMNS);
-        if (!missingColumn) throw new Error(error.message);
+        if (!missingColumn) {
+            throw new SupabaseWriteError(
+                `clinical_outcome_events insert failed: ${error.message}`,
+                readErrorCode(error, 'outcome_insert_failed'),
+                error,
+            );
+        }
 
         nextPayload = { ...nextPayload };
         delete nextPayload[missingColumn];
+    }
+}
+
+async function upsertLabelCalibration(
+    supabase: SupabaseClient,
+    input: {
+        tenantId: string;
+        label: string;
+        calibrationDelta: number;
+    },
+): Promise<void> {
+    const existing = await supabase
+        .from('label_calibration')
+        .select('sample_count, cumulative_delta')
+        .eq('tenant_id', input.tenantId)
+        .eq('label', input.label)
+        .maybeSingle();
+
+    if (existing.error) {
+        throw new SupabaseWriteError(
+            `label_calibration lookup failed: ${existing.error.message}`,
+            readErrorCode(existing.error, 'label_calibration_lookup_failed'),
+            existing.error,
+        );
+    }
+
+    const row = asCoreRecord(existing.data);
+    const sampleCount = Math.max(0, Math.trunc(readNumber(row.sample_count) ?? 0)) + 1;
+    const cumulativeDelta = (readNumber(row.cumulative_delta) ?? 0) + input.calibrationDelta;
+    const { error } = await supabase
+        .from('label_calibration')
+        .upsert({
+            tenant_id: input.tenantId,
+            label: input.label,
+            sample_count: sampleCount,
+            cumulative_delta: cumulativeDelta,
+            updated_at: new Date().toISOString(),
+        }, {
+            onConflict: 'tenant_id,label',
+        });
+
+    if (error) {
+        throw new SupabaseWriteError(
+            `label_calibration write failed: ${error.message}`,
+            readErrorCode(error, 'label_calibration_write_failed'),
+            error,
+        );
     }
 }
 
@@ -434,31 +642,6 @@ async function closeClinicalCaseIfPossible(
 
         patch = { ...patch };
         delete patch[missingColumn];
-    }
-}
-
-async function updateInferenceOutcome(
-    supabase: SupabaseClient,
-    tenantId: string,
-    inferenceEventId: string,
-    patch: Record<string, unknown>,
-): Promise<void> {
-    let nextPatch = { ...patch };
-
-    for (;;) {
-        const { error } = await supabase
-            .from('ai_inference_events')
-            .update(nextPatch)
-            .eq('id', inferenceEventId)
-            .eq('tenant_id', tenantId);
-
-        if (!error) return;
-
-        const missingColumn = resolveMissingColumn(error.message ?? '', nextPatch, OPTIONAL_INFERENCE_OUTCOME_COLUMNS);
-        if (!missingColumn) throw new Error(error.message);
-
-        nextPatch = { ...nextPatch };
-        delete nextPatch[missingColumn];
     }
 }
 

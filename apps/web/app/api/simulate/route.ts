@@ -2,6 +2,18 @@ import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import {
+    SupabaseWriteError,
+    asRecord as asCoreRecord,
+    isUuidV4,
+    logApiCompleted,
+    logApiReceived,
+    logSupabaseFailure,
+    readErrorCode,
+    readErrorMessage,
+    readString,
+    retryAfterResponse,
+} from '@/lib/api/corePipeline';
 import { safeJson } from '@/lib/http/safeJson';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runInference, type InputSignature } from '@/lib/vetios-inference';
@@ -10,6 +22,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 300;
 
 const SimulateRequestSchema = z.object({
+    request_id: z.string().refine(isUuidV4, 'request_id must be a UUID v4'),
     steps: z.number().int().min(1).max(50),
     mode: z.enum(['adaptive', 'fixed']),
     base_case: z.object({
@@ -27,7 +40,9 @@ const SimulateRequestSchema = z.object({
 type SimulationMode = z.infer<typeof SimulateRequestSchema>['mode'];
 
 export async function POST(req: Request) {
-    const requestId = randomUUID();
+    const startTime = Date.now();
+    let requestId: string | null = null;
+    let tenantId: string | null = null;
     const supabase = getSupabaseServer();
     const auth = await resolveClinicalApiActor(req, {
         client: supabase,
@@ -40,22 +55,77 @@ export async function POST(req: Request) {
 
     const parsedJson = await safeJson(req);
     if (!parsedJson.ok) {
+        logApiReceived({ event: 'simulate.received', route: '/api/simulate', tenantId, requestId });
+        logApiCompleted({
+            event: 'simulate.completed',
+            route: '/api/simulate',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'invalid_json',
+        });
         return NextResponse.json(
             { error: 'invalid_input', detail: parsedJson.error },
             { status: 400 },
         );
     }
 
+    requestId = readString(asCoreRecord(parsedJson.data).request_id);
+    tenantId = auth.actor.tenantId;
+    logApiReceived({ event: 'simulate.received', route: '/api/simulate', tenantId, requestId });
+
     const parsed = SimulateRequestSchema.safeParse(normalizeSimulateRequest(parsedJson.data));
     if (!parsed.success) {
+        logApiCompleted({
+            event: 'simulate.completed',
+            route: '/api/simulate',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'invalid_input',
+        });
         return NextResponse.json(
             { error: 'invalid_input', detail: formatZodErrors(parsed.error) },
             { status: 400 },
         );
     }
 
-    const tenantId = auth.actor.tenantId;
+    requestId = parsed.data.request_id;
     const body = parsed.data;
+
+    const cached = await loadCachedSimulationEvent(supabase, tenantId, requestId);
+    if (cached.error) {
+        const errorCode = readErrorCode(cached.error, 'simulate_idempotency_lookup_failed');
+        logSupabaseFailure({
+            route: '/api/simulate',
+            requestId,
+            tenantId,
+            errorCode,
+            error: cached.error,
+        });
+        logApiCompleted({
+            event: 'simulate.completed',
+            route: '/api/simulate',
+            tenantId,
+            requestId,
+            startTime,
+            error: errorCode,
+        });
+        return retryAfterResponse({ requestId, errorCode, detail: readErrorMessage(cached.error) });
+    }
+    if (cached.data) {
+        logApiCompleted({
+            event: 'simulate.completed',
+            route: '/api/simulate',
+            tenantId,
+            requestId,
+            startTime,
+            confidenceScore: readNumber(asCoreRecord((cached.data as Record<string, unknown>).stress_metrics).mean_confidence),
+            cached: true,
+        });
+        return NextResponse.json(buildCachedSimulationPayload(cached.data as Record<string, unknown>, requestId));
+    }
+
     const model = {
         name: body.inference?.model ?? 'VetIOS Diagnostics',
         version: body.inference?.model_version ?? 'latest',
@@ -73,10 +143,23 @@ export async function POST(req: Request) {
     });
 
     if (!simulationRun.ok) {
-        return NextResponse.json(
-            { error: 'simulation_run_create_failed', detail: simulationRun.message },
-            { status: 500 },
-        );
+        const errorCode = 'simulation_run_create_failed';
+        logSupabaseFailure({
+            route: '/api/simulate',
+            requestId,
+            tenantId,
+            errorCode,
+            error: new Error(simulationRun.message),
+        });
+        logApiCompleted({
+            event: 'simulate.completed',
+            route: '/api/simulate',
+            tenantId,
+            requestId,
+            startTime,
+            error: errorCode,
+        });
+        return retryAfterResponse({ requestId, errorCode, detail: simulationRun.message });
     }
 
     const inferenceEventIds: string[] = [];
@@ -93,12 +176,13 @@ export async function POST(req: Request) {
                 simulationId: simulationRun.id,
                 step: index + 1,
                 mode: body.mode,
+                routeRequestId: requestId,
             });
             variants.push(variant);
 
             const result = await runInference({
                 tenantId,
-                requestId,
+                requestId: randomUUID(),
                 supabase,
                 model,
                 inputSignature: variant,
@@ -126,6 +210,32 @@ export async function POST(req: Request) {
             },
             error_message: error instanceof Error ? error.message : 'Unknown simulation error',
         }).catch(() => undefined);
+        if (error instanceof SupabaseWriteError) {
+            logSupabaseFailure({
+                route: '/api/simulate',
+                requestId,
+                tenantId,
+                errorCode: error.errorCode,
+                error: error.originalError,
+            });
+            logApiCompleted({
+                event: 'simulate.completed',
+                route: '/api/simulate',
+                tenantId,
+                requestId,
+                startTime,
+                error: error.errorCode,
+            });
+            return retryAfterResponse({ requestId, errorCode: error.errorCode, detail: error.message });
+        }
+        logApiCompleted({
+            event: 'simulate.completed',
+            route: '/api/simulate',
+            tenantId,
+            requestId,
+            startTime,
+            error: 'simulation_failed',
+        });
         return NextResponse.json(
             { error: 'simulation_failed', detail: error instanceof Error ? error.message : 'Unknown simulation error' },
             { status: 502 },
@@ -151,6 +261,7 @@ export async function POST(req: Request) {
         .from('edge_simulation_events')
         .insert({
             tenant_id: tenantId,
+            request_id: requestId,
             simulation_type: `stability_${body.mode}`,
             simulation_parameters: {
                 steps: body.steps,
@@ -187,10 +298,23 @@ export async function POST(req: Request) {
             },
             error_message: insertError?.message ?? 'Unknown insert error',
         }).catch(() => undefined);
-        return NextResponse.json(
-            { error: 'simulation_insert_failed', detail: insertError?.message ?? 'Unknown insert error' },
-            { status: 500 },
-        );
+        const errorCode = readErrorCode(insertError, 'simulation_insert_failed');
+        logSupabaseFailure({
+            route: '/api/simulate',
+            requestId,
+            tenantId,
+            errorCode,
+            error: insertError ?? new Error('Unknown insert error'),
+        });
+        logApiCompleted({
+            event: 'simulate.completed',
+            route: '/api/simulate',
+            tenantId,
+            requestId,
+            startTime,
+            error: errorCode,
+        });
+        return retryAfterResponse({ requestId, errorCode, detail: insertError?.message ?? 'Unknown insert error' });
     }
 
     await updateSimulationRun(supabase, simulationRun.id, {
@@ -208,6 +332,14 @@ export async function POST(req: Request) {
         },
     }).catch(() => undefined);
 
+    logApiCompleted({
+        event: 'simulate.completed',
+        route: '/api/simulate',
+        tenantId,
+        requestId,
+        startTime,
+        confidenceScore: stabilityReport.mean_confidence,
+    });
     return NextResponse.json({
         simulation_id: simulationRun.id,
         simulation_event_id: String(simulationEvent.id),
@@ -220,7 +352,7 @@ export async function POST(req: Request) {
 
 function attachSimulationMetadata(
     input: InputSignature,
-    metadata: { simulationId: string; step: number; mode: SimulationMode },
+    metadata: { simulationId: string; step: number; mode: SimulationMode; routeRequestId: string },
 ): InputSignature {
     return {
         ...input,
@@ -230,8 +362,39 @@ function attachSimulationMetadata(
             simulation_step: metadata.step,
             simulation_request_index: metadata.step,
             simulation_mode: metadata.mode,
+            route_request_id: metadata.routeRequestId,
             is_synthetic: true,
         },
+    };
+}
+
+async function loadCachedSimulationEvent(
+    supabase: ReturnType<typeof getSupabaseServer>,
+    tenantId: string,
+    requestId: string,
+) {
+    return supabase
+        .from('edge_simulation_events')
+        .select('id, tenant_id, request_id, case_id, triggered_inference_id, stress_metrics, simulation_parameters, created_at')
+        .eq('tenant_id', tenantId)
+        .eq('request_id', requestId)
+        .maybeSingle();
+}
+
+function buildCachedSimulationPayload(row: Record<string, unknown>, requestId: string) {
+    const stressMetrics = asCoreRecord(row.stress_metrics);
+    return {
+        simulation_id: readString(stressMetrics.simulation_id),
+        simulation_event_id: readString(row.id),
+        clinical_case_id: readString(row.case_id) ?? readString(stressMetrics.clinical_case_id),
+        inference_event_ids: Array.isArray(stressMetrics.inference_event_ids) ? stressMetrics.inference_event_ids : [],
+        stability_report: asCoreRecord(stressMetrics.stability_report),
+        request_id: requestId,
+        meta: {
+            tenant_id: readString(row.tenant_id),
+            idempotent: true,
+        },
+        error: null,
     };
 }
 
