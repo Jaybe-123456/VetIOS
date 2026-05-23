@@ -29,6 +29,10 @@ import { getRAGPipeline } from '@/lib/rag/ragPipeline';
 import type { RAGContext } from '@/lib/rag/ragPipeline';
 import { panelsToDiagnosticTests } from '@/lib/inference/panel-diagnostics';
 import {
+    DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
+    computePromptTemplateHash,
+} from '@/lib/inference/lineage';
+import {
     validateEncounterPayloadV2,
     validateSpeciesPanelGating,
     flattenPanelsToStructuredText,
@@ -289,6 +293,22 @@ export async function POST(req: Request) {
             };
         }
 
+        const phiHat = clampProbability(readNumber((cirePayload as Record<string, unknown> | null)?.phi_hat)
+            ?? inferenceResult.confidence_score
+            ?? 0);
+        const outputPayload = {
+            ...inferenceResult.output_payload,
+            governance_lineage: {
+                prompt_template_hash: computePromptTemplateHash(),
+                prompt_template_version: DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
+                schema_version: 'v2',
+                model_name: 'gpt-4o-mini',
+                model_version: '1.0.0',
+                phi_hat: phiHat,
+                inference_engine: 'inference_orchestrator_v2',
+            },
+        };
+
         const contradiction = inferenceResult.contradiction_analysis && typeof inferenceResult.contradiction_analysis === 'object'
             ? inferenceResult.contradiction_analysis as Record<string, unknown>
             : null;
@@ -304,9 +324,11 @@ export async function POST(req: Request) {
             model_name: 'gpt-4o-mini',
             model_version: '1.0.0',
             input_signature: v1InputSignature,
-            output_payload: inferenceResult.output_payload,
+            output_payload: outputPayload,
             confidence_score: inferenceResult.confidence_score ?? null,
             inference_latency_ms: latencyMs,
+            schema_version: 'v2',
+            phi_hat: phiHat,
             source_module: 'inference_console_v2',
             species: payload.patient.species,
             structured_input_text: structuredText || null,
@@ -320,7 +342,7 @@ export async function POST(req: Request) {
             tenantId,
             modelVersion: '1.0.0',
             observedAt: new Date().toISOString(),
-            outputPayload: inferenceResult.output_payload,
+            outputPayload,
             confidenceScore: inferenceResult.confidence_score ?? null,
             contradictionScore,
         }).catch(() => {});
@@ -330,8 +352,9 @@ export async function POST(req: Request) {
         const response = NextResponse.json({
             inference_event_id: eventId,
             data: {
-                output: inferenceResult.output_payload,
+                output: outputPayload,
             },
+            output_payload: outputPayload,
             structured_input_text: structuredText,
             active_systems: activeSystems,
             species: payload.patient.species,
@@ -361,4 +384,18 @@ export async function POST(req: Request) {
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     }
+}
+
+function readNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function clampProbability(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Number(Math.min(1, Math.max(0, value)).toFixed(4));
 }

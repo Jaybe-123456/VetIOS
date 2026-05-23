@@ -252,6 +252,19 @@ describe('core API regression suite', () => {
         expect(migration).toContain('revoke insert, update, delete on table public.ai_inference_events from anon');
         expect(migration).toContain('grant select, insert, update, delete on table public.ai_inference_events to service_role');
     });
+
+    it('Governance lineage migration: inference events require prompt/schema/CIRE lineage', () => {
+        const migration = readFileSync(
+            repoPath('supabase/migrations/20260523000000_inference_lineage_governance.sql'),
+            'utf8',
+        );
+
+        expect(migration).toContain('add column if not exists prompt_template_hash text');
+        expect(migration).toContain('add column if not exists schema_version text');
+        expect(migration).toContain('add column if not exists phi_hat double precision');
+        expect(migration).toContain('alter column prompt_template_hash set not null');
+        expect(migration).toContain('ai_inference_events_phi_hat_range_check');
+    });
 });
 
 function jsonRequest(path: string, body: unknown) {

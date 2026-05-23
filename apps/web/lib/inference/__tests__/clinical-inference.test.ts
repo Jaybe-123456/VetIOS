@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { runClinicalInferenceEngine } from '../engine';
+import { computePromptTemplateHash } from '../lineage';
 import { runInference } from '../../vetios-inference';
 import type { InferenceRequest } from '../types';
 
@@ -475,10 +476,23 @@ describe('clinical inference engine deep upgrade', () => {
         expect(result.clinical_case_id).toBe(clinicalCaseId);
         expect(inserted[0]).toMatchObject({
             case_id: clinicalCaseId,
+            prompt_template_hash: computePromptTemplateHash(),
+            prompt_template_version: 'vetios_clinical_diagnostic_v1',
+            schema_version: 'v1',
             simulation_id: '22222222-2222-4222-8222-222222222222',
             is_synthetic: true,
             simulation_request_index: 3,
             source_module: 'legacy_simulate',
+        });
+        expect(typeof inserted[0]?.phi_hat).toBe('number');
+        expect(inserted[0]?.output_payload).toMatchObject({
+            governance_lineage: {
+                prompt_template_hash: computePromptTemplateHash(),
+                prompt_template_version: 'vetios_clinical_diagnostic_v1',
+                schema_version: 'v1',
+                model_name: 'clinical-engine',
+                model_version: 'test',
+            },
         });
         expect(clinicalCaseRow).toMatchObject({
             id: clinicalCaseId,

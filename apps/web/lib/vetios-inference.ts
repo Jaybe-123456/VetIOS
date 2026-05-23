@@ -9,6 +9,11 @@ import { runInference as runAiProviderInference } from '@/lib/ai/provider';
 import { SupabaseWriteError, readErrorCode } from '@/lib/api/corePipeline';
 import { runClinicalInferenceEngine } from '@/lib/inference/engine';
 import type { ClinicalInferenceEngineResult } from '@/lib/inference/engine';
+import {
+    DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
+    INFERENCE_SCHEMA_VERSION,
+    computePromptTemplateHash,
+} from '@/lib/inference/lineage';
 
 export interface InputSignature {
     species: string;
@@ -323,6 +328,8 @@ async function persistInferenceEvent(
             source: 'vetios_inference',
         },
     };
+    const governanceLineage = buildGovernanceLineage(input.inputSignature, input.model, input.cire);
+    enrichedOutputPayload.governance_lineage = governanceLineage;
     const uncertaintyMetrics = {
         cps: input.cire.cps,
         safety_state: input.cire.safety_state,
@@ -350,6 +357,10 @@ async function persistInferenceEvent(
         inference_latency_ms: input.latencyMs,
         output_payload: enrichedOutputPayload,
         uncertainty_metrics: uncertaintyMetrics,
+        prompt_template_hash: governanceLineage.prompt_template_hash,
+        prompt_template_version: governanceLineage.prompt_template_version,
+        schema_version: governanceLineage.schema_version,
+        phi_hat: governanceLineage.phi_hat,
         source_module: sourceModule,
         species: readText(input.inputSignature.species),
         top_diagnosis: topDiagnosis,
@@ -536,6 +547,29 @@ function buildOutputPayload(
                         : 'ROUTINE',
         },
     };
+}
+
+function buildGovernanceLineage(
+    inputSignature: InputSignature,
+    model: InferenceModelDescriptor,
+    cire: CIRESignals,
+) {
+    return {
+        prompt_template_hash: computePromptTemplateHash(),
+        prompt_template_version: DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
+        schema_version: resolveSchemaVersion(inputSignature),
+        model_name: model.name,
+        model_version: model.version,
+        phi_hat: clampProbability(cire.phi_hat),
+        inference_engine: 'clinical_deterministic_multisystem_v1',
+    };
+}
+
+function resolveSchemaVersion(inputSignature: InputSignature): string {
+    const metadata = asRecord(inputSignature.metadata);
+    return readText(inputSignature.schema_version)
+        ?? readText(metadata.schema_version)
+        ?? (metadata.v2_payload === true ? 'v2' : INFERENCE_SCHEMA_VERSION);
 }
 
 async function applyOutcomePayloadCalibration(

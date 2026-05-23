@@ -61,7 +61,7 @@ export async function GET(req: Request) {
     const limit = Math.max(1, Math.min(Number(url.searchParams.get('limit') ?? '20'), 100));
     const { data, error } = await supabase
         .from('ai_inference_events')
-        .select('id, created_at, model_name, model_version, input_signature, output_payload, confidence_score, uncertainty_metrics, inference_latency_ms')
+        .select('id, created_at, model_name, model_version, prompt_template_hash, prompt_template_version, schema_version, phi_hat, input_signature, output_payload, confidence_score, uncertainty_metrics, inference_latency_ms')
         .eq('tenant_id', auth.actor.tenantId)
         .order('created_at', { ascending: false })
         .limit(limit);
@@ -403,7 +403,7 @@ async function loadCachedInferenceEvent(
 ) {
     return supabase
         .from('ai_inference_events')
-        .select('id, case_id, tenant_id, request_id, output_payload, confidence_score, inference_latency_ms, created_at')
+        .select('id, case_id, tenant_id, request_id, prompt_template_hash, prompt_template_version, schema_version, phi_hat, output_payload, confidence_score, inference_latency_ms, created_at')
         .eq('tenant_id', tenantId)
         .eq('request_id', requestId)
         .maybeSingle();

@@ -10,6 +10,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'crypto';
 import { AI_INFERENCE_EVENTS } from '@/lib/db/schemaContracts';
+import {
+    DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
+    INFERENCE_SCHEMA_VERSION,
+    computePromptTemplateHash,
+} from '@/lib/inference/lineage';
 
 export interface InferenceLogInput {
     id?: string;
@@ -20,6 +25,10 @@ export interface InferenceLogInput {
     source_module?: string | null;
     model_name: string;
     model_version: string;
+    prompt_template_hash?: string | null;
+    prompt_template_version?: string | null;
+    schema_version?: string | null;
+    phi_hat?: number | null;
     input_signature: Record<string, unknown>;
     output_payload: Record<string, unknown>;
     confidence_score?: number | null;
@@ -66,6 +75,10 @@ export async function logInference(
             [C.source_module]: input.source_module ?? null,
             [C.model_name]: input.model_name,
             [C.model_version]: input.model_version,
+            [C.prompt_template_hash]: input.prompt_template_hash ?? computePromptTemplateHash(),
+            [C.prompt_template_version]: input.prompt_template_version ?? DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
+            [C.schema_version]: input.schema_version ?? resolveSchemaVersion(input.input_signature),
+            [C.phi_hat]: clampPhiHat(input.phi_hat ?? extractPhiHat(input.output_payload, input.uncertainty_metrics, input.confidence_score)),
             [C.input_signature]: input.input_signature,
             [C.output_payload]: input.output_payload,
             [C.confidence_score]: input.confidence_score ?? null,
@@ -102,4 +115,47 @@ export async function logInference(
     }
 
     return eventId;
+}
+
+function resolveSchemaVersion(inputSignature: Record<string, unknown>): string {
+    const metadata = asRecord(inputSignature.metadata);
+    return readText(inputSignature.schema_version)
+        ?? readText(metadata.schema_version)
+        ?? (metadata.v2_payload === true ? 'v2' : INFERENCE_SCHEMA_VERSION);
+}
+
+function extractPhiHat(
+    outputPayload: Record<string, unknown>,
+    uncertaintyMetrics?: Record<string, unknown> | null,
+    confidenceScore?: number | null,
+): number {
+    const uncertainty = asRecord(uncertaintyMetrics);
+    const outputCire = asRecord(outputPayload.cire);
+    return readNumber(uncertainty.phi_hat)
+        ?? readNumber(asRecord(uncertainty.cire).phi_hat)
+        ?? readNumber(outputCire.phi_hat)
+        ?? confidenceScore
+        ?? 0;
+}
+
+function clampPhiHat(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Number(Math.min(1, Math.max(0, value)).toFixed(4));
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function readText(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string' && value.trim().length > 0) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }

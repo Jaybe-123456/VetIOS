@@ -17,6 +17,10 @@ export const AI_INFERENCE_EVENTS = {
         source_module: 'source_module',           // text, nullable
         model_name: 'model_name',                 // text, NOT NULL
         model_version: 'model_version',           // text, NOT NULL
+        prompt_template_hash: 'prompt_template_hash', // text, NOT NULL
+        prompt_template_version: 'prompt_template_version', // text, NOT NULL
+        schema_version: 'schema_version',         // text, NOT NULL
+        phi_hat: 'phi_hat',                       // double precision, NOT NULL
         input_signature: 'input_signature',       // jsonb, NOT NULL
         output_payload: 'output_payload',         // jsonb, NOT NULL
         differentials: 'differentials',           // jsonb, NOT NULL
@@ -178,6 +182,24 @@ export const CLINICAL_OUTCOME_EVENTS = {
         simulation_id: 'simulation_id',           // uuid, nullable
         is_synthetic: 'is_synthetic',             // boolean, NOT NULL
         created_at: 'created_at',                 // timestamptz, NOT NULL
+    },
+} as const;
+
+export const TENANT_LEARNING_CONSENTS = {
+    TABLE: 'tenant_learning_consents',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        consent_scope: 'consent_scope',
+        status: 'status',
+        consent_version: 'consent_version',
+        granted_by: 'granted_by',
+        revoked_by: 'revoked_by',
+        policy_snapshot: 'policy_snapshot',
+        granted_at: 'granted_at',
+        revoked_at: 'revoked_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
     },
 } as const;
 
