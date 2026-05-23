@@ -1,7 +1,7 @@
 /**
  * GET /api/cron/active-learning-sweep
  *
- * Runs daily at 8am UTC (0 8 * * *).
+ * Runs daily by Vercel cron on the Hobby-safe schedule in vercel.json.
  * Sweeps the active learning queue:
  *   1. Auto-resolve cases older than 30 days (model has since improved)
  *   2. Escalate high-priority cases older than 7 days to clinic admin
@@ -136,7 +136,7 @@ export async function GET(req: Request) {
     const res = NextResponse.json({
       cron: {
         job: 'active-learning-sweep',
-        schedule: '0 8 * * *',
+        schedule: '25 0 * * *',
         authorized_by: _cronAuth.method,
         ran_at: now.toISOString(),
       },

@@ -36,7 +36,7 @@ export default async function OutboxOperationsPage() {
             initialEvents={initialEvents}
             scheduler={{
                 cronPath: '/api/cron/outbox-dispatch',
-                cronSchedule: '*/1 * * * *',
+                cronSchedule: '10 0 * * *',
                 batchSize: resolvePositiveInteger(process.env.VETIOS_OUTBOX_BATCH_SIZE, 25),
                 maxBatches: resolvePositiveInteger(process.env.VETIOS_OUTBOX_CRON_MAX_BATCHES, 4),
                 cronSecretConfigured: Boolean(process.env.CRON_SECRET?.trim()),

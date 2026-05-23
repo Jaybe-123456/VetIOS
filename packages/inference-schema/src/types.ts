@@ -571,10 +571,19 @@ export interface EncounterMetadataV2 {
     clinic_id: string | null;
 }
 
+export interface DiagnosticAttachmentV2 {
+    file_name?: string;
+    mime_type: string;
+    size_bytes?: number;
+    content_base64: string;
+}
+
 export interface EncounterPayloadV2 {
     patient: PatientV2;
     encounter: EncounterDataV2;
     active_system_panels: SystemPanel[];
     imaging: Record<string, TestValue>;
+    diagnostic_images?: DiagnosticAttachmentV2[];
+    lab_results?: DiagnosticAttachmentV2[];
     metadata: EncounterMetadataV2;
 }

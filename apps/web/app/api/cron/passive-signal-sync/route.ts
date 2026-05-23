@@ -30,7 +30,7 @@ export async function GET(req: Request) {
 
     const response = NextResponse.json({
         cron: {
-            schedule: '*/15 * * * *',
+            schedule: '5 1 * * *',
             authorized_by: _cronAuth.method,
             tenant_id: tenantId,
         },

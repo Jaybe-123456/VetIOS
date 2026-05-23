@@ -195,6 +195,18 @@ export default function TelemetryObserverPage() {
                     icon={snapshot?.metrics.anomaly_count ? <AlertTriangle className="w-3 h-3 text-danger" /> : undefined}
                 />
                 <MetricCard
+                    label="p99 Latency"
+                    value={formatP99LatencyMetric(snapshot, streamStatus)}
+                    tone={(snapshot?.metrics.p99_latency_ms ?? 0) > 5000 ? 'danger' : 'accent'}
+                    icon={(snapshot?.metrics.p99_latency_ms ?? 0) > 5000 ? <AlertTriangle className="w-3 h-3 text-danger" /> : undefined}
+                />
+                <MetricCard
+                    label="Error Rate"
+                    value={formatPercentMetric(snapshot?.metrics.error_rate, snapshot?.metric_states.error_rate, streamStatus)}
+                    tone={(snapshot?.metrics.error_rate ?? 0) > 0 ? 'danger' : 'accent'}
+                    icon={(snapshot?.metrics.error_rate ?? 0) > 0 ? <AlertTriangle className="w-3 h-3 text-danger" /> : undefined}
+                />
+                <MetricCard
                     label="Avg Confidence"
                     value={formatPercentMetric(snapshot?.metrics.avg_confidence, snapshot?.metric_states.avg_confidence, streamStatus)}
                     tone={(snapshot?.metrics.avg_confidence ?? 1) < 0.6 ? 'danger' : 'accent'}
@@ -250,6 +262,11 @@ export default function TelemetryObserverPage() {
                     label="Latency Anomalies"
                     value={formatCount(snapshot?.metrics.anomaly_count, disconnectedWithoutData)}
                     tone={snapshot?.metrics.anomaly_count ? 'danger' : 'muted'}
+                />
+                <MetricCard
+                    label="Runtime Errors"
+                    value={formatCount(snapshot?.metrics.error_count, disconnectedWithoutData)}
+                    tone={snapshot?.metrics.error_count ? 'danger' : 'muted'}
                 />
                 <MetricCard
                     label="Memory Usage"
@@ -503,6 +520,13 @@ function formatLatencyMetric(snapshot: TelemetrySnapshot | null, streamStatus: S
         return `${snapshot.metrics.p95_latency_ms.toFixed(1)}ms`;
     }
     return formatMetricState(snapshot?.metric_states.p95_latency, streamStatus);
+}
+
+function formatP99LatencyMetric(snapshot: TelemetrySnapshot | null, streamStatus: StreamStatus) {
+    if (snapshot?.metric_states.p99_latency === 'READY' && snapshot.metrics.p99_latency_ms != null) {
+        return `${snapshot.metrics.p99_latency_ms.toFixed(1)}ms`;
+    }
+    return formatMetricState(snapshot?.metric_states.p99_latency, streamStatus);
 }
 
 function formatPercentMetric(

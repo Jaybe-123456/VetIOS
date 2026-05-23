@@ -5,6 +5,7 @@ import {
     ensureCanonicalClinicalCase,
     finalizeClinicalCaseAfterInference,
 } from '@/lib/clinicalCases/clinicalCaseManager';
+import { runInference as runAiProviderInference } from '@/lib/ai/provider';
 import { SupabaseWriteError, readErrorCode } from '@/lib/api/corePipeline';
 import { runClinicalInferenceEngine } from '@/lib/inference/engine';
 import type { ClinicalInferenceEngineResult } from '@/lib/inference/engine';
@@ -77,8 +78,9 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
     const cire = computeCIRE(calibratedDifferentials);
     const confidenceScore = calibratedDifferentials[0]?.p
         ?? clampProbability(clinicalOutput.confidence);
-    const latencyMs = Date.now() - startTime;
     const outputPayload = buildOutputPayload(calibratedDifferentials, confidenceScore, cire, clinicalOutput);
+    await attachVisionInferenceIfPresent(outputPayload, options);
+    const latencyMs = Date.now() - startTime;
     const persistenceResult = options.persist === false
         ? null
         : await persistInferenceEvent(options.supabase, {
@@ -117,6 +119,84 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
         output_payload: outputPayload,
         latency_ms: latencyMs,
     };
+}
+
+async function attachVisionInferenceIfPresent(
+    outputPayload: Record<string, unknown>,
+    options: RunInferenceOptions,
+): Promise<void> {
+    const imageCount = countDiagnosticImages(options.inputSignature);
+    if (imageCount === 0) {
+        return;
+    }
+
+    const model = resolveVisionModel(options.model);
+    try {
+        const result = await runAiProviderInference({
+            model,
+            input_signature: buildVisionInputSignature(options.inputSignature),
+        });
+        outputPayload.vision_inference = {
+            status: 'completed',
+            model,
+            image_count: imageCount,
+            output_payload: result.output_payload,
+            confidence_score: result.confidence_score,
+            uncertainty_metrics: result.uncertainty_metrics,
+            contradiction_analysis: result.contradiction_analysis,
+            ensemble_metadata: result.ensemble_metadata ?? null,
+        };
+    } catch (error) {
+        outputPayload.vision_inference = {
+            status: 'failed',
+            model,
+            image_count: imageCount,
+            error: error instanceof Error ? error.message : 'Vision provider failed.',
+        };
+    }
+}
+
+function buildVisionInputSignature(inputSignature: InputSignature): Record<string, unknown> {
+    const metadata = asRecord(inputSignature.metadata);
+    return {
+        ...inputSignature,
+        raw_consultation: [
+            buildDiagnosticPrompt(inputSignature),
+            '',
+            'Interpret the attached diagnostic image(s) as clinical evidence. Return JSON and include visual findings, image quality limitations, and how the image changes the differential diagnosis.',
+        ].join('\n'),
+        query_type: 'clinical',
+        metadata: {
+            ...metadata,
+            model_family: 'vision',
+            route_hint: 'image_diagnostic_review',
+        },
+    };
+}
+
+function countDiagnosticImages(inputSignature: InputSignature): number {
+    const images = Array.isArray(inputSignature.diagnostic_images)
+        ? inputSignature.diagnostic_images
+        : [];
+    return images.filter((entry) => {
+        const record = asRecord(entry);
+        const mimeType = readText(record.mime_type) ?? '';
+        const contentBase64 = readText(record.content_base64);
+        return Boolean(contentBase64 && mimeType.startsWith('image/'));
+    }).length;
+}
+
+function resolveVisionModel(model: InferenceModelDescriptor): string {
+    const configured = readText(process.env.AI_PROVIDER_VISION_MODEL)
+        ?? readText(process.env.OPENAI_VISION_MODEL);
+    if (configured) return configured;
+
+    const requested = readText(model.version) ?? readText(model.name);
+    if (requested && (requested.startsWith('gpt-4o') || requested.toLowerCase().includes('vision'))) {
+        return requested;
+    }
+
+    return 'gpt-4o';
 }
 
 export function buildDiagnosticPrompt(inputSignature: InputSignature): string {

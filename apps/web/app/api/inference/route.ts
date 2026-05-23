@@ -6,6 +6,13 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 import { checkRateLimit } from '@/lib/inference-rate-limit';
 import { runInference } from '@/lib/vetios-inference';
 import { safeJson } from '@/lib/http/safeJson';
+import { recordInferenceObservability } from '@/lib/telemetry/observability';
+import {
+    emitTelemetryEvent,
+    extractPredictionLabel,
+    resolveTelemetryRunId,
+    telemetryInferenceEventId,
+} from '@/lib/telemetry/service';
 import {
     SupabaseWriteError,
     asRecord as asCoreRecord,
@@ -227,6 +234,12 @@ export async function POST(req: Request) {
         });
         response.headers.set('X-RateLimit-Remaining', String(rateLimit.remaining));
         response.headers.set('X-RateLimit-Reset', String(rateLimit.resetAt));
+        await recordSuccessfulInferenceTelemetry({
+            supabase,
+            tenantId,
+            result,
+            modelVersion: parsed.data.model.version,
+        });
         logApiCompleted({
             event: 'inference.completed',
             route: '/api/inference',
@@ -238,6 +251,14 @@ export async function POST(req: Request) {
         return response;
     } catch (error) {
         if (error instanceof SupabaseWriteError) {
+            await recordFailedInferenceTelemetry({
+                supabase,
+                tenantId,
+                requestId,
+                startTime,
+                modelVersion: parsed.data.model.version,
+                errorCode: error.errorCode,
+            });
             logSupabaseFailure({
                 route: '/api/inference',
                 requestId,
@@ -257,6 +278,14 @@ export async function POST(req: Request) {
         }
 
         const message = error instanceof Error ? error.message : 'Unknown model error';
+        await recordFailedInferenceTelemetry({
+            supabase,
+            tenantId,
+            requestId,
+            startTime,
+            modelVersion: parsed.data.model.version,
+            errorCode: message === 'unparseable output' ? 'unparseable_output' : 'model_error',
+        });
         if (message === 'unparseable output') {
             logApiCompleted({
                 event: 'inference.completed',
@@ -285,6 +314,86 @@ export async function POST(req: Request) {
             { status: 502 },
         );
     }
+}
+
+async function recordSuccessfulInferenceTelemetry(input: {
+    supabase: ReturnType<typeof getSupabaseServer>;
+    tenantId: string;
+    result: Awaited<ReturnType<typeof runInference>>;
+    modelVersion: string;
+}): Promise<void> {
+    if (!input.result.inference_event_id) return;
+
+    const observedAt = new Date().toISOString();
+    const contradiction = asCoreRecord(input.result.output_payload.contradiction_analysis);
+    const contradictionScore = readNumber(input.result.output_payload.contradiction_score)
+        ?? readNumber(contradiction.contradiction_score);
+    const prediction = extractPredictionLabel(input.result.output_payload);
+
+    await Promise.allSettled([
+        recordInferenceObservability(input.supabase, {
+            inferenceEventId: input.result.inference_event_id,
+            tenantId: input.tenantId,
+            modelVersion: input.modelVersion,
+            observedAt,
+            outputPayload: input.result.output_payload,
+            confidenceScore: input.result.data.confidence_score,
+            contradictionScore,
+        }),
+        emitTelemetryEvent(input.supabase, {
+            event_id: telemetryInferenceEventId(input.result.inference_event_id),
+            tenant_id: input.tenantId,
+            linked_event_id: input.result.inference_event_id,
+            source_id: input.result.inference_event_id,
+            source_table: 'ai_inference_events',
+            event_type: 'inference',
+            timestamp: observedAt,
+            model_version: input.modelVersion,
+            run_id: resolveTelemetryRunId(input.modelVersion, asCoreRecord(input.result.output_payload.telemetry).run_id),
+            metrics: {
+                latency_ms: input.result.latency_ms,
+                confidence: input.result.data.confidence_score,
+                prediction,
+                failed: false,
+            },
+            metadata: {
+                source_module: 'clinical_api',
+                inference_event_id: input.result.inference_event_id,
+                vision_status: asCoreRecord(input.result.output_payload.vision_inference).status ?? null,
+            },
+        }),
+    ]);
+}
+
+async function recordFailedInferenceTelemetry(input: {
+    supabase: ReturnType<typeof getSupabaseServer>;
+    tenantId: string | null;
+    requestId: string | null;
+    startTime: number;
+    modelVersion: string;
+    errorCode: string;
+}): Promise<void> {
+    if (!input.tenantId) return;
+    const timestamp = new Date().toISOString();
+    const eventId = `evt_inference_failed_${input.requestId ?? randomUUID()}`;
+    await Promise.allSettled([emitTelemetryEvent(input.supabase, {
+        event_id: eventId,
+        tenant_id: input.tenantId,
+        event_type: 'inference',
+        timestamp,
+        model_version: input.modelVersion,
+        run_id: resolveTelemetryRunId(input.modelVersion, null),
+        metrics: {
+            latency_ms: Date.now() - input.startTime,
+            failed: true,
+            error_code: input.errorCode,
+        },
+        metadata: {
+            source_module: 'clinical_api',
+            request_id: input.requestId,
+            error_code: input.errorCode,
+        },
+    })]);
 }
 
 async function loadCachedInferenceEvent(

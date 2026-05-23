@@ -89,6 +89,8 @@ export async function emitTelemetryEvent(
             prediction: textOrNull(input.metrics?.prediction),
             ground_truth: textOrNull(input.metrics?.ground_truth),
             correct: booleanOrNull(input.metrics?.correct),
+            failed: booleanOrNull(input.metrics?.failed),
+            error_code: textOrNull(input.metrics?.error_code),
         },
         [C.system]: {
             cpu: numberOrNull(input.system?.cpu),
@@ -422,6 +424,11 @@ function buildTelemetrySnapshot(
         : 'STALE';
 
     const p95Latency = percentile(latencies, 95);
+    const p99Latency = percentile(latencies, 99);
+    const errorCount = inferenceEvents.filter(isFailedInferenceEvent).length;
+    const errorRate = inferenceEvents.length > 0
+        ? roundNumber(errorCount / inferenceEvents.length, 4)
+        : null;
     const avgConfidence = mean(confidences);
     const accuracy = accuracyPairs.length > 0
         ? accuracyPairs.filter((entry) => entry.correct).length / accuracyPairs.length
@@ -449,7 +456,10 @@ function buildTelemetrySnapshot(
         metrics: {
             inference_count: inferenceEvents.length,
             p95_latency_ms: p95Latency,
+            p99_latency_ms: p99Latency,
             avg_confidence: avgConfidence,
+            error_count: errorCount,
+            error_rate: errorRate,
             accuracy,
             rolling_top1_accuracy: latestAccuracy?.top1_accuracy ?? null,
             rolling_top3_accuracy: latestAccuracy?.top3_accuracy ?? null,
@@ -467,6 +477,8 @@ function buildTelemetrySnapshot(
         },
         metric_states: {
             p95_latency: latencies.length > 0 ? 'READY' : 'NO_DATA',
+            p99_latency: latencies.length > 0 ? 'READY' : 'NO_DATA',
+            error_rate: inferenceEvents.length > 0 ? 'READY' : 'NO_DATA',
             avg_confidence: confidences.length > 0 ? 'READY' : 'NO_DATA',
             accuracy: accuracyPairs.length > 0 ? 'READY' : 'INSUFFICIENT_OUTCOMES',
             rolling_top1_accuracy: latestAccuracy?.sample_size ? 'READY' : 'INSUFFICIENT_OUTCOMES',
@@ -498,7 +510,9 @@ function buildTelemetrySnapshot(
         },
         logs: buildLogs(observerEvents, {
             p95Latency,
+            p99Latency,
             avgConfidence,
+            errorRate,
             accuracy,
             driftScore,
             anomalyCount,
@@ -525,7 +539,9 @@ function buildLogs(
     events: TelemetryEventRecord[],
     aggregate: {
         p95Latency: number | null;
+        p99Latency: number | null;
         avgConfidence: number | null;
+        errorRate: number | null;
         accuracy: number | null;
         driftScore: number | null;
         anomalyCount: number;
@@ -540,9 +556,9 @@ function buildLogs(
         ? null
         : {
             id: `agg_${latestTimestamp}_${aggregate.p95Latency ?? 'na'}_${aggregate.driftScore ?? 'na'}_${aggregate.accuracy ?? 'na'}_${aggregate.anomalyCount}`,
-            level: aggregate.anomalyCount > 0 ? 'WARN' : 'INFO',
+            level: aggregate.anomalyCount > 0 || (aggregate.errorRate ?? 0) > 0 ? 'WARN' : 'INFO',
             timestamp: latestTimestamp,
-            message: `[${aggregate.anomalyCount > 0 ? 'WARN' : 'INFO'}] AGGREGATE p95=${formatLatencyValue(aggregate.p95Latency)} drift=${formatScore(aggregate.driftScore, 'INSUFFICIENT OUTCOMES')} accuracy=${formatScore(aggregate.accuracy, 'INSUFFICIENT OUTCOMES')} confidence=${formatScore(aggregate.avgConfidence, 'NO DATA')}`,
+            message: `[${aggregate.anomalyCount > 0 || (aggregate.errorRate ?? 0) > 0 ? 'WARN' : 'INFO'}] AGGREGATE p95=${formatLatencyValue(aggregate.p95Latency)} p99=${formatLatencyValue(aggregate.p99Latency)} error_rate=${formatPercentValue(aggregate.errorRate)} drift=${formatScore(aggregate.driftScore, 'INSUFFICIENT OUTCOMES')} accuracy=${formatScore(aggregate.accuracy, 'INSUFFICIENT OUTCOMES')} confidence=${formatScore(aggregate.avgConfidence, 'NO DATA')}`,
         };
 
     return [aggregateLog, ...recentEventLogs]
@@ -553,13 +569,16 @@ function buildLogs(
 function mapEventToLog(event: TelemetryEventRecord): TelemetryLogEntry {
     const latency = numberOrNull(event.metrics.latency_ms);
     const anomaly = latency != null && latency > LATENCY_ANOMALY_MS;
+    const failed = isFailedInferenceEvent(event);
 
     if (event.event_type === 'inference') {
         return {
             id: event.event_id,
-            level: anomaly ? 'WARN' : 'INFO',
+            level: failed || anomaly ? 'WARN' : 'INFO',
             timestamp: event.timestamp,
-            message: anomaly
+            message: failed
+                ? `[WARN] INFERENCE ${event.event_id} failed=true error=${textOrNull(event.metrics.error_code) ?? textOrNull(event.metadata.error_code) ?? 'model_error'} latency=${formatLatencyValue(latency)}`
+                : anomaly
                 ? `[WARN] INFERENCE ${event.event_id} latency=${latency?.toFixed(1) ?? 'NO DATA'}ms anomaly=true`
                 : `[INFO] INFERENCE ${event.event_id} latency=${latency?.toFixed(1) ?? 'NO DATA'}ms confidence=${formatScore(numberOrNull(event.metrics.confidence), 'NO DATA')} prediction=${textOrNull(event.metrics.prediction) ?? 'NO DATA'}`,
         };
@@ -762,6 +781,8 @@ function asMetricsPayload(value: unknown): TelemetryMetricsPayload {
         prediction: textOrNull(record.prediction),
         ground_truth: textOrNull(record.ground_truth),
         correct: booleanOrNull(record.correct),
+        failed: booleanOrNull(record.failed),
+        error_code: textOrNull(record.error_code),
     };
 }
 
@@ -830,6 +851,20 @@ function formatLatencyValue(value: number | null) {
 
 function formatScore(value: number | null, fallback: string) {
     return value == null ? fallback : value.toFixed(3);
+}
+
+function formatPercentValue(value: number | null) {
+    return value == null ? 'NO DATA' : `${(value * 100).toFixed(1)}%`;
+}
+
+function isFailedInferenceEvent(event: TelemetryEventRecord) {
+    return event.event_type === 'inference'
+        && (
+            booleanOrNull(event.metrics.failed) === true
+            || textOrNull(event.metrics.error_code) != null
+            || textOrNull(event.metadata.error_code) != null
+            || textOrNull(event.metadata.error) != null
+        );
 }
 
 function randomBetween(min: number, max: number) {

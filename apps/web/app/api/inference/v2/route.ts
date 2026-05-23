@@ -93,8 +93,8 @@ function mapV2ToV1InputSignature(
             duration_days: encounter.history.duration_days,
             encounter_id: payload.metadata.encounter_id,
         },
-        diagnostic_images: [],
-        lab_results: [],
+        diagnostic_images: payload.diagnostic_images ?? [],
+        lab_results: payload.lab_results ?? [],
     };
 }
 

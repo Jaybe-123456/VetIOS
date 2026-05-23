@@ -14,6 +14,8 @@ export interface TelemetryMetricsPayload {
     prediction?: string | null;
     ground_truth?: string | null;
     correct?: boolean | null;
+    failed?: boolean | null;
+    error_code?: string | null;
 }
 
 export interface TelemetrySystemPayload {
@@ -98,7 +100,10 @@ export interface TelemetrySnapshot {
     metrics: {
         inference_count: number;
         p95_latency_ms: number | null;
+        p99_latency_ms: number | null;
         avg_confidence: number | null;
+        error_count: number;
+        error_rate: number | null;
         accuracy: number | null;
         rolling_top1_accuracy: number | null;
         rolling_top3_accuracy: number | null;
@@ -116,6 +121,8 @@ export interface TelemetrySnapshot {
     };
     metric_states: {
         p95_latency: TelemetryMetricState;
+        p99_latency: TelemetryMetricState;
+        error_rate: TelemetryMetricState;
         avg_confidence: TelemetryMetricState;
         accuracy: TelemetryMetricState;
         rolling_top1_accuracy: TelemetryMetricState;

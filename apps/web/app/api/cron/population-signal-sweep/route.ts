@@ -1,7 +1,7 @@
 /**
  * GET /api/cron/population-signal-sweep
  *
- * Runs every 4 hours by Vercel cron.
+ * Runs daily by Vercel cron on the Hobby-safe schedule in vercel.json.
  * Aggregates cross-clinic disease signals and runs outbreak detection:
  *   1. Run outbreak detection across all regions
  *   2. Escalate emergency/alert-severity outbreaks to platform alerts
@@ -79,7 +79,7 @@ export async function GET(req: Request) {
     const res = NextResponse.json({
       cron: {
         job: 'population-signal-sweep',
-        schedule: '0 */4 * * *',
+        schedule: '35 1 * * *',
         authorized_by: _cronAuth.method,
         ran_at: new Date().toISOString(),
       },

@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     const results = await runDriftDetection(getSupabaseServer());
     const response = NextResponse.json({
       cron: {
-        schedule: '0 * * * *',
+        schedule: '25 1 * * *',
         authorized_by: _cronAuth.method,
       },
       summary: {

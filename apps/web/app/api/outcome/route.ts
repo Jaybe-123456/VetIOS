@@ -22,6 +22,7 @@ import {
 import { safeJson } from '@/lib/http/safeJson';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
+import { recordOutcomeObservability } from '@/lib/telemetry/observability';
 import type { Differential } from '@/lib/cire';
 
 export const runtime = 'nodejs';
@@ -346,6 +347,18 @@ export async function POST(req: Request) {
         inputSignature,
         clinicalCase,
     });
+    await recordOutcomeTelemetry({
+        supabase,
+        tenantId,
+        inferenceEvent,
+        inferenceEventId: body.inference_event_id,
+        outcomeEventId: persistedOutcomeId,
+        observedAt: body.outcome.timestamp,
+        predictedLabel,
+        actualLabel,
+        outputPayload,
+        outcomePayload,
+    });
 
     const responseBody = {
         outcome_event_id: persistedOutcomeId,
@@ -373,6 +386,38 @@ export async function POST(req: Request) {
         startTime,
     });
     return NextResponse.json(responseBody);
+}
+
+async function recordOutcomeTelemetry(input: {
+    supabase: ReturnType<typeof getSupabaseServer>;
+    tenantId: string;
+    inferenceEvent: Record<string, unknown>;
+    inferenceEventId: string;
+    outcomeEventId: string;
+    observedAt: string;
+    predictedLabel: string | null;
+    actualLabel: string;
+    outputPayload: Record<string, unknown>;
+    outcomePayload: Record<string, unknown>;
+}): Promise<void> {
+    const contradiction = asRecord(input.outputPayload.contradiction_analysis);
+    const contradictionScore = readNumber(input.outputPayload.contradiction_score)
+        ?? readNumber(contradiction.contradiction_score);
+
+    await Promise.allSettled([recordOutcomeObservability(input.supabase, {
+        tenantId: input.tenantId,
+        inferenceEventId: input.inferenceEventId,
+        outcomeEventId: input.outcomeEventId,
+        evaluationEventId: `outcome_${input.outcomeEventId}`,
+        modelVersion: readText(input.inferenceEvent.model_version) ?? 'unknown',
+        observedAt: input.observedAt,
+        prediction: input.predictedLabel,
+        actual: input.actualLabel,
+        confidence: readNumber(input.inferenceEvent.confidence_score),
+        contradictionScore,
+        outputPayload: input.outputPayload,
+        actualOutcome: input.outcomePayload,
+    })]);
 }
 
 async function loadCachedOutcomeEvent(

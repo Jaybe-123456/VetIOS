@@ -81,11 +81,20 @@ const EncounterMetadataV2Schema = z.object({
     clinic_id: z.string().nullable(),
 });
 
+const DiagnosticAttachmentV2Schema = z.object({
+    file_name: z.string().optional(),
+    mime_type: z.string().min(1),
+    size_bytes: z.number().int().nonnegative().optional(),
+    content_base64: z.string().min(1),
+}).passthrough();
+
 export const EncounterPayloadV2Schema = z.object({
     patient: PatientV2Schema,
     encounter: EncounterDataV2Schema,
     active_system_panels: z.array(SystemPanelSchema).min(1),
     imaging: z.record(z.string(), TestValueSchema).default({}),
+    diagnostic_images: z.array(DiagnosticAttachmentV2Schema).optional(),
+    lab_results: z.array(DiagnosticAttachmentV2Schema).optional(),
     metadata: EncounterMetadataV2Schema,
 });
 

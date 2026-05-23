@@ -37,6 +37,8 @@ export interface NormalizedInput {
     region?: string | null;
     age_years?: number;
     weight_kg?: number;
+    diagnostic_images?: unknown[];
+    lab_results?: unknown[];
     metadata: Record<string, unknown>;
 }
 
@@ -119,6 +121,8 @@ function normalizeFromJson(raw: string): NormalizedInput | null {
         region: typeof sig.region === 'string' ? sig.region : null,
         age_years: typeof sig.age_years === 'number' ? sig.age_years : undefined,
         weight_kg: typeof sig.weight_kg === 'number' ? sig.weight_kg : undefined,
+        diagnostic_images: Array.isArray(sig.diagnostic_images) ? sig.diagnostic_images : undefined,
+        lab_results: Array.isArray(sig.lab_results) ? sig.lab_results : undefined,
         metadata,
     };
 }
@@ -554,6 +558,8 @@ function enrichNormalizedInput(input: NormalizedInput): NormalizedInput {
         region: input.region,
         age_years: input.age_years,
         weight_kg: input.weight_kg,
+        diagnostic_images: input.diagnostic_images,
+        lab_results: input.lab_results,
         metadata,
     };
 }

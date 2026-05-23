@@ -498,6 +498,16 @@ export default function InferenceConsole() {
                 model_family: (finalInput.metadata as Record<string, unknown> | undefined)?.model_family ?? 'diagnostics',
                 route_hint: (finalInput.metadata as Record<string, unknown> | undefined)?.route_hint ?? 'clinical_diagnosis',
             };
+            const diagnosticImages = state.diagnosticImages.length > 0
+                ? state.diagnosticImages
+                : Array.isArray(finalInput.diagnostic_images)
+                    ? finalInput.diagnostic_images
+                    : [];
+            const labResults = state.labResults.length > 0
+                ? state.labResults
+                : Array.isArray(finalInput.lab_results)
+                    ? finalInput.lab_results
+                    : [];
             const v1RequestBody = {
                 model: {
                     name: "VetIOS Diagnostics",
@@ -516,8 +526,8 @@ export default function InferenceConsole() {
                         region: finalInput.region,
                         weight_kg: finalInput.weight_kg,
                         metadata,
-                        diagnostic_images: state.diagnosticImages,
-                        lab_results: state.labResults,
+                        diagnostic_images: diagnosticImages,
+                        lab_results: labResults,
                     }
                 }
             };

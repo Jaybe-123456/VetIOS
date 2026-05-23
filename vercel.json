@@ -9,8 +9,64 @@
   },
   "crons": [
     {
+      "path": "/api/cron/simulation-watchdog",
+      "schedule": "5 0 * * *"
+    },
+    {
+      "path": "/api/cron/outbox-dispatch",
+      "schedule": "10 0 * * *"
+    },
+    {
       "path": "/api/cron/outbox-flush",
-      "schedule": "*/1 * * * *"
+      "schedule": "15 0 * * *"
+    },
+    {
+      "path": "/api/cron/active-learning-sweep",
+      "schedule": "25 0 * * *"
+    },
+    {
+      "path": "/api/cron/rlhf-batch",
+      "schedule": "35 0 * * *"
+    },
+    {
+      "path": "/api/cron/rag-refresh",
+      "schedule": "45 0 * * *"
+    },
+    {
+      "path": "/api/cron/passive-signal-sync",
+      "schedule": "5 1 * * *"
+    },
+    {
+      "path": "/api/cron/platform-orphan-monitor",
+      "schedule": "15 1 * * *"
+    },
+    {
+      "path": "/api/cron/platform-drift-monitor",
+      "schedule": "25 1 * * *"
+    },
+    {
+      "path": "/api/cron/population-signal-sweep",
+      "schedule": "35 1 * * *"
+    },
+    {
+      "path": "/api/cron/population-calibration",
+      "schedule": "45 1 * * *"
+    },
+    {
+      "path": "/api/cron/calibration-recompute",
+      "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/outbreak-scan",
+      "schedule": "20 2 * * *"
+    },
+    {
+      "path": "/api/cron/federation-rounds",
+      "schedule": "40 2 * * *"
+    },
+    {
+      "path": "/api/cron/case-closure-digest",
+      "schedule": "0 3 * * *"
     }
   ]
 }

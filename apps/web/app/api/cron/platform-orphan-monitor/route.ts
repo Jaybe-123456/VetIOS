@@ -27,7 +27,7 @@ export async function GET(req: Request) {
     const summary = await runOrphanMonitor(getSupabaseServer());
     const response = NextResponse.json({
       cron: {
-        schedule: '*/1 * * * *',
+        schedule: '15 1 * * *',
         authorized_by: _cronAuth.method,
       },
       summary,

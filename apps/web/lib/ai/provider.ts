@@ -16,6 +16,7 @@ import {
     isHfEnabled,
     shouldUseAiHeuristicFallback,
 } from '@/lib/ai/config';
+import { runWithAiCircuitBreaker } from '@/lib/ai/circuitBreaker';
 
 const AI_PROVIDER_TIMEOUT_MS = 30_000;
 const AI_PROVIDER_RETRY_BACKOFF_MS = 2_000;
@@ -555,14 +556,7 @@ async function performApiRequestWithResilience(input: {
     if (input.fallback) {
         logProviderFallback(input.fallback.name, primaryResult.reason);
         try {
-            return await performApiRequest(
-                input.fallback.baseUrl,
-                input.fallback.apiKey,
-                input.fallback.model,
-                input.systemPrompt,
-                input.userContent,
-                input.signal,
-            );
+            return await callProviderRequest(input.fallback, input.systemPrompt, input.userContent, input.signal);
         } catch (error) {
             throw new AiProviderUnavailableError(
                 `AI providers failed: primary=${primaryResult.reason}; fallback=${error instanceof Error ? error.message : 'unknown'}`,
@@ -582,7 +576,7 @@ async function callProviderWithRetry(
     try {
         return {
             ok: true,
-            data: await performApiRequest(provider.baseUrl, provider.apiKey, provider.model, systemPrompt, userContent, signal),
+            data: await callProviderRequest(provider, systemPrompt, userContent, signal),
         };
     } catch (error) {
         if (!isRetryableProviderError(error)) {
@@ -594,11 +588,28 @@ async function callProviderWithRetry(
     try {
         return {
             ok: true,
-            data: await performApiRequest(provider.baseUrl, provider.apiKey, provider.model, systemPrompt, userContent, signal),
+            data: await callProviderRequest(provider, systemPrompt, userContent, signal),
         };
     } catch (error) {
         return { ok: false, reason: error instanceof Error ? error.message : 'provider_failed_after_retry' };
     }
+}
+
+async function callProviderRequest(
+    provider: AiProviderDescriptor,
+    systemPrompt: string,
+    userContent: any[],
+    signal?: AbortSignal,
+): Promise<any> {
+    const circuitKey = `${provider.name}:${provider.baseUrl}:${provider.model}`;
+    return runWithAiCircuitBreaker(circuitKey, () => performApiRequest(
+        provider.baseUrl,
+        provider.apiKey,
+        provider.model,
+        systemPrompt,
+        userContent,
+        signal,
+    ));
 }
 
 interface AiProviderDescriptor {
