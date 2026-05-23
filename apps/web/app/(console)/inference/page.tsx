@@ -326,6 +326,18 @@ export default function InferenceConsole() {
             : `enc_${Date.now()}_${Math.random().toString(16).slice(2)}`;
     }
 
+    function createRequestId(): string {
+        if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+            return crypto.randomUUID();
+        }
+
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
+            const random = Math.floor(Math.random() * 16);
+            const value = char === 'x' ? random : (random & 0x3) | 0x8;
+            return value.toString(16);
+        });
+    }
+
     function readEncounterPayloadV2(value: unknown): EncounterPayloadV2 | null {
         if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
         const record = value as Record<string, unknown>;
@@ -509,6 +521,7 @@ export default function InferenceConsole() {
                     ? finalInput.lab_results
                     : [];
             const v1RequestBody = {
+                request_id: createRequestId(),
                 model: {
                     name: "VetIOS Diagnostics",
                     version: "latest"
@@ -774,6 +787,7 @@ export default function InferenceConsole() {
         const formData = new FormData(e.currentTarget);
         const actualDiagnosis = String(formData.get('actualDiagnosis') ?? '').trim();
         const data = {
+            request_id: createRequestId(),
             inference_event_id: state.eventId,
             outcome: {
                 type: 'confirmed_diagnosis',
