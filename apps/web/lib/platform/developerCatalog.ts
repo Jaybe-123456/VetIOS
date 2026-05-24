@@ -116,19 +116,20 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         purpose: 'Normalize passive vendor connector payloads and attach them to episodes.',
         notes: [
             'Supports lab results, refills, rechecks, referrals, and imaging reports today.',
+            'PIMS workflow payloads can provide workflow_event_type instead of connector_type; VetIOS maps ezyVet/Covetrus-style events into the passive connector contract.',
             'Supports connector marketplace installations and installation-scoped credentials, with the older shared-secret path still present only for legacy traffic.',
         ],
         samplePayload: {
             connector: {
-                connector_type: 'lab_result',
+                workflow_event_type: 'appointment.completed',
                 clinic_id: 'clinic_123',
                 patient_id: '00000000-0000-0000-0000-000000000000',
-                vendor_name: 'IDEXX',
+                vendor_name: 'ezyVet',
                 payload: {
-                    analyte: 'ALT',
-                    value: 145,
-                    units: 'U/L',
-                    abnormal: true,
+                    appointment_status: 'completed',
+                    start_at: '2026-05-23T15:00:00.000Z',
+                    reason: 'IMHA follow-up recheck',
+                    primary_condition_class: 'hematologic',
                 },
             },
         },

@@ -485,11 +485,12 @@ export function validateConnectorInstallationAccess(input: {
         return { ok: false, status: 403, message: 'Connector installation is not active.' };
     }
 
-    if (installation.connector_type !== input.connectorType) {
+    const supportedConnectorTypes = getSupportedConnectorTypes(installation);
+    if (!supportedConnectorTypes.includes(input.connectorType)) {
         return { ok: false, status: 403, message: 'Connector installation is not authorized for this connector type.' };
     }
 
-    if (installation.vendor_name && installation.vendor_name !== normalizeOptionalText(input.vendorName)) {
+    if (installation.vendor_name && !sameOptionalText(installation.vendor_name, normalizeOptionalText(input.vendorName))) {
         return { ok: false, status: 403, message: 'Connector installation is not authorized for this vendor.' };
     }
 
@@ -498,6 +499,19 @@ export function validateConnectorInstallationAccess(input: {
     }
 
     return { ok: true };
+}
+
+function getSupportedConnectorTypes(installation: ConnectorInstallationRecord): string[] {
+    const passiveSignal = asRecord(asRecord(installation.metadata).passive_signal);
+    const metadataTypes = asStringArray(passiveSignal.supported_connector_types)
+        .map((entry) => normalizeOptionalText(entry))
+        .filter((entry): entry is string => entry != null);
+
+    return [...new Set([installation.connector_type, ...metadataTypes].filter(Boolean))];
+}
+
+function sameOptionalText(left: string | null, right: string | null): boolean {
+    return normalizeOptionalText(left)?.toLowerCase() === normalizeOptionalText(right)?.toLowerCase();
 }
 
 async function resolveMachineApiPrincipal(

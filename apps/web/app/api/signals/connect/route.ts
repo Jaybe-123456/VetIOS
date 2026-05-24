@@ -17,6 +17,7 @@ import {
     reconcileEpisodeMembership,
 } from '@/lib/outcomeNetwork/service';
 import { normalizePassiveConnectorPayload } from '@/lib/outcomeNetwork/passiveConnectors';
+import { resolvePassiveConnectorWorkflow } from '@/lib/outcomeNetwork/pimsWorkflowAdapter';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
@@ -59,10 +60,25 @@ export async function POST(req: Request) {
         );
     }
 
+    let workflow: ReturnType<typeof resolvePassiveConnectorWorkflow>;
+    try {
+        workflow = resolvePassiveConnectorWorkflow({
+            connectorType: body.connector.connector_type ?? null,
+            vendorName: body.connector.vendor_name ?? null,
+            vendorEventType: body.connector.workflow_event_type ?? null,
+            payload: body.connector.payload,
+        });
+    } catch (error) {
+        return NextResponse.json(
+            { error: error instanceof Error ? error.message : 'Unable to normalize passive connector workflow.', request_id: requestId },
+            { status: 400 },
+        );
+    }
+
     if (auth.actor) {
         const connectorAccess = validateConnectorInstallationAccess({
             actor: auth.actor,
-            connectorType: body.connector.connector_type,
+            connectorType: workflow.connectorType,
             vendorName: body.connector.vendor_name ?? null,
             vendorAccountRef: body.connector.vendor_account_ref ?? null,
         });
@@ -76,18 +92,18 @@ export async function POST(req: Request) {
 
     try {
         const normalized = normalizePassiveConnectorPayload({
-            connectorType: body.connector.connector_type,
+            connectorType: workflow.connectorType,
             vendorName: body.connector.vendor_name ?? null,
             patientId: body.connector.patient_id ?? null,
             observedAt: body.connector.observed_at ?? null,
-            payload: body.connector.payload,
+            payload: workflow.payload,
         });
         const repo = createOutcomeNetworkRepository(supabase);
 
         let sourceId: string | null = null;
         const existingSource = await repo.findSignalSource(
             tenantId,
-            body.connector.connector_type,
+            workflow.connectorType,
             body.connector.vendor_name ?? null,
             body.connector.vendor_account_ref ?? null,
         );
@@ -97,7 +113,7 @@ export async function POST(req: Request) {
             const createdSource = await repo.createSignalSource({
                 tenant_id: tenantId,
                 clinic_id: body.connector.clinic_id ?? null,
-                source_type: body.connector.connector_type,
+                source_type: workflow.connectorType,
                 vendor_name: body.connector.vendor_name ?? null,
                 vendor_account_ref: body.connector.vendor_account_ref ?? null,
             });
@@ -162,9 +178,11 @@ export async function POST(req: Request) {
                         },
                         metadata: {
                             source_module: 'api/signals/connect',
-                            connector_type: body.connector.connector_type,
+                            connector_type: workflow.connectorType,
                             vendor_name: body.connector.vendor_name ?? null,
                             vendor_account_ref: body.connector.vendor_account_ref ?? null,
+                            workflow_event_type: workflow.vendorEventType,
+                            normalized_by: workflow.normalizedBy,
                         },
                     });
                     outboxEventId = queued.event.id;
@@ -204,7 +222,10 @@ export async function POST(req: Request) {
             signal_event: signalEvent,
             episode,
             connector: {
-                connector_type: body.connector.connector_type,
+                connector_type: workflow.connectorType,
+                workflow_event_type: workflow.vendorEventType,
+                normalized_by: workflow.normalizedBy,
+                warnings: workflow.warnings,
                 signal_type: normalized.signalType,
                 signal_subtype: normalized.signalSubtype,
                 primary_condition_class: normalized.primaryConditionClass,

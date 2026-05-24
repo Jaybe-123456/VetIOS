@@ -156,7 +156,8 @@ export const PassiveConnectorIngestRequestSchema = z.object({
             'recheck',
             'referral',
             'imaging_report',
-        ]),
+        ]).optional(),
+        workflow_event_type: z.string().min(1).optional(),
         clinic_id: z.string().optional(),
         patient_id: z.uuid().optional(),
         encounter_id: z.uuid().optional(),
@@ -165,10 +166,19 @@ export const PassiveConnectorIngestRequestSchema = z.object({
         vendor_name: z.string().min(1).optional(),
         vendor_account_ref: z.string().min(1).optional(),
         observed_at: z.string().min(1).optional(),
-        payload: z.record(z.string(), z.unknown()),
+        payload: z.record(z.string(), z.unknown()).optional().default({}),
         auto_reconcile: z.boolean().optional().default(true),
     }),
-});
+}).refine(
+    (value) =>
+        value.connector.connector_type != null ||
+        value.connector.workflow_event_type != null ||
+        Object.keys(value.connector.payload).length > 0,
+    {
+        path: ['connector', 'connector_type'],
+        message: 'connector_type, workflow_event_type, or a vendor payload is required.',
+    },
+);
 
 export type PassiveConnectorIngestRequest = z.infer<typeof PassiveConnectorIngestRequestSchema>;
 
