@@ -76,7 +76,7 @@ export async function loadCireValidationReport(
         throw new Error(`Failed to load CIRE validation outcomes: ${outcomeError.message}`);
     }
 
-    const outcomeRows = (outcomes ?? []) as CireValidationOutcomeRow[];
+    const outcomeRows = coerceRows<CireValidationOutcomeRow>(outcomes);
     const inferenceIds = Array.from(new Set(
         outcomeRows
             .map((row) => readText(row.inference_event_id))
@@ -186,7 +186,7 @@ async function loadValidationInferenceRows(
         .in(IC.id, inferenceIds);
 
     if (!result.error) {
-        return (result.data ?? []) as CireValidationInferenceRow[];
+        return coerceRows<CireValidationInferenceRow>(result.data);
     }
 
     if (!isMissingColumnError(result.error.message)) {
@@ -203,7 +203,11 @@ async function loadValidationInferenceRows(
         throw new Error(`Failed to load CIRE validation inferences: ${fallback.error.message}`);
     }
 
-    return (fallback.data ?? []) as CireValidationInferenceRow[];
+    return coerceRows<CireValidationInferenceRow>(fallback.data);
+}
+
+function coerceRows<T>(value: unknown): T[] {
+    return Array.isArray(value) ? value as T[] : [];
 }
 
 function extractPhiHat(row: CireValidationInferenceRow): number | null {
