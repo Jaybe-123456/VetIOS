@@ -13,8 +13,9 @@ import TechStackSection from './sections/TechStackSection';
 import FinalCTASection from './sections/FinalCTASection';
 import TrainingSection from './TrainingSection';
 import Footer from './sections/Footer';
+import type { PublicEvidenceSnapshot } from '@/lib/platform/publicEvidenceSnapshot';
 
-export default function LandingPage() {
+export default function LandingPage({ evidenceSnapshot }: { evidenceSnapshot: PublicEvidenceSnapshot }) {
     const [menuOpen, setMenuOpen] = useState(false);
     const [scrolled, setScrolled] = useState(false);
 
@@ -66,7 +67,7 @@ export default function LandingPage() {
                 <ArchitectureSection />
                 <ModulesSection />
                 <FlywheelSection />
-                <TrainingSection />
+                <TrainingSection evidenceSnapshot={evidenceSnapshot} />
                 <GlobalNetworkSection />
                 <InterfacePreviewSection />
                 <DeveloperInfraSection />
