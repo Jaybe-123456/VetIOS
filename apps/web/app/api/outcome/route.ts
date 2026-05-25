@@ -218,6 +218,21 @@ export async function POST(req: Request) {
             timestamp: body.outcome.timestamp,
         });
     } catch (error) {
+        if (isUniqueViolation(error)) {
+            const cachedAfterConflict = await loadCachedOutcomeEvent(supabase, tenantId, requestId);
+            if (!cachedAfterConflict.error && cachedAfterConflict.data) {
+                logApiCompleted({
+                    event: 'outcome.completed',
+                    route: '/api/outcome',
+                    tenantId,
+                    requestId,
+                    startTime,
+                    cached: true,
+                });
+                return NextResponse.json(buildCachedOutcomePayload(cachedAfterConflict.data as Record<string, unknown>, requestId));
+            }
+        }
+
         const errorCode = error instanceof SupabaseWriteError ? error.errorCode : 'outcome_insert_failed';
         logSupabaseFailure({
             route: '/api/outcome',
@@ -1023,4 +1038,8 @@ function isMissingColumnError(message: string): boolean {
 function isMissingRelationError(message: string): boolean {
     return message.includes('relation')
         && (message.includes('does not exist') || message.includes('schema cache'));
+}
+
+function isUniqueViolation(error: unknown): boolean {
+    return error instanceof SupabaseWriteError && error.errorCode === '23505';
 }

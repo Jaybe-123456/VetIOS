@@ -166,6 +166,32 @@ describe('core API regression suite', () => {
         expect(body.outcome_event_id).toBe(outcomeEventId);
     });
 
+    it('Outcome route: duplicate request_id at insert returns cached outcome', async () => {
+        mocks.getSupabaseServer.mockReturnValue(createOutcomeSupabaseMock({
+            inferenceFound: true,
+            duplicateOutcomeInsert: true,
+            cachedOutcomeAfterDuplicate: true,
+        }));
+
+        const response = await outcomePost(jsonRequest('/api/outcome', {
+            request_id: requestId,
+            inference_event_id: inferenceEventId,
+            outcome: {
+                type: 'confirmed_diagnosis',
+                payload: {
+                    label: 'canine_pancreatitis',
+                    confidence: 0.9,
+                },
+                timestamp: '2026-05-22T12:00:00.000Z',
+            },
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(body.outcome_event_id).toBe(outcomeEventId);
+        expect(body.meta.idempotent).toBe(true);
+    });
+
     it('Outcome route: unknown inference_event_id returns 404', async () => {
         mocks.getSupabaseServer.mockReturnValue(createOutcomeSupabaseMock({ inferenceFound: false }));
 
@@ -281,9 +307,37 @@ function repoPath(relativePath: string) {
         : join(process.cwd(), relativePath);
 }
 
-function createOutcomeSupabaseMock(input: { inferenceFound: boolean }) {
+function createOutcomeSupabaseMock(input: {
+    inferenceFound: boolean;
+    duplicateOutcomeInsert?: boolean;
+    cachedOutcomeAfterDuplicate?: boolean;
+}) {
+    let outcomeSelectCount = 0;
+
     return createSupabaseMock(({ table, action }) => {
         if (table === 'clinical_outcome_events' && action === 'select') {
+            outcomeSelectCount += 1;
+            if (input.cachedOutcomeAfterDuplicate && outcomeSelectCount > 1) {
+                return {
+                    data: {
+                        id: outcomeEventId,
+                        tenant_id: tenantId,
+                        request_id: requestId,
+                        case_id: null,
+                        inference_event_id: inferenceEventId,
+                        outcome_type: 'confirmed_diagnosis',
+                        outcome_payload: {
+                            prediction_correct: true,
+                            calibration_delta: 0.2,
+                        },
+                        actual_label: 'canine_pancreatitis',
+                        actual_confidence: 0.9,
+                        calibration_delta: 0.2,
+                        created_at: '2026-05-22T12:00:00.000Z',
+                    },
+                    error: null,
+                };
+            }
             return { data: null, error: null };
         }
         if (table === 'ai_inference_events' && action === 'select') {
@@ -309,6 +363,15 @@ function createOutcomeSupabaseMock(input: { inferenceFound: boolean }) {
             };
         }
         if (table === 'clinical_outcome_events' && action === 'insert') {
+            if (input.duplicateOutcomeInsert) {
+                return {
+                    data: null,
+                    error: {
+                        code: '23505',
+                        message: 'duplicate key value violates unique constraint "idx_clinical_outcome_events_request_id"',
+                    },
+                };
+            }
             return { data: { id: outcomeEventId }, error: null };
         }
         if (table === 'label_calibration' && action === 'select') {
