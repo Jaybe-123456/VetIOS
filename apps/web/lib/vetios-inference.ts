@@ -406,6 +406,10 @@ function resolveRequestedCaseId(inputSignature: InputSignature, explicitCaseId?:
 }
 
 const OPTIONAL_INFERENCE_COLUMNS = [
+    'prompt_template_hash',
+    'prompt_template_version',
+    'schema_version',
+    'phi_hat',
     'source_module',
     'species',
     'top_diagnosis',
