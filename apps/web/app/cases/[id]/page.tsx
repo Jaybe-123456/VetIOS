@@ -22,7 +22,25 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
     }
 
     const { id } = await params;
-    const clinicalCase = await getClinicalCaseDetail(getSupabaseServer(), session.tenantId, id);
+    let clinicalCase: Awaited<ReturnType<typeof getClinicalCaseDetail>>;
+    try {
+        clinicalCase = await getClinicalCaseDetail(getSupabaseServer(), session.tenantId, id);
+    } catch {
+        return (
+            <Container>
+                <PageHeader title="Clinical Case" description="We couldn't load this case right now." />
+                <ConsoleCard title="Case Unavailable">
+                    <div className="space-y-4 text-sm text-[hsl(0_0%_72%)]">
+                        <p>Reload the page in a moment. If it still does not load, open My Cases and try the case again.</p>
+                        <Link href="/cases">
+                            <TerminalButton type="button">Back To Cases</TerminalButton>
+                        </Link>
+                    </div>
+                </ConsoleCard>
+            </Container>
+        );
+    }
+
     if (!clinicalCase) {
         return (
             <Container>

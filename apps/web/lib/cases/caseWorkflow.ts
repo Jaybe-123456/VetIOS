@@ -280,28 +280,71 @@ async function loadLatestInference(
     caseId: string,
     latestInferenceId: string | null,
 ): Promise<Record<string, unknown> | null> {
-    const baseSelect = 'id, model_name, model_version, confidence_score, output_payload, uncertainty_metrics, created_at';
-    const query = latestInferenceId
+    const withUncertainty = await queryLatestInference(client, tenantId, caseId, latestInferenceId, [
+        'id',
+        'model_name',
+        'model_version',
+        'confidence_score',
+        'output_payload',
+        'uncertainty_metrics',
+        'created_at',
+    ]);
+
+    if (!withUncertainty.error) {
+        return withUncertainty.data ? withUncertainty.data as unknown as Record<string, unknown> : null;
+    }
+
+    if (isMissingRelationError(withUncertainty.error.message ?? '')) {
+        return null;
+    }
+
+    if (!isMissingColumnError(withUncertainty.error.message ?? '')) {
+        throw new Error(`Failed to load latest inference: ${withUncertainty.error.message}`);
+    }
+
+    const stableColumns = await queryLatestInference(client, tenantId, caseId, latestInferenceId, [
+        'id',
+        'model_name',
+        'model_version',
+        'confidence_score',
+        'output_payload',
+        'created_at',
+    ]);
+
+    if (stableColumns.error) {
+        if (
+            isMissingColumnError(stableColumns.error.message ?? '') ||
+            isMissingRelationError(stableColumns.error.message ?? '')
+        ) return null;
+        throw new Error(`Failed to load latest inference: ${stableColumns.error.message}`);
+    }
+
+    return stableColumns.data ? stableColumns.data as unknown as Record<string, unknown> : null;
+}
+
+function queryLatestInference(
+    client: SupabaseClient,
+    tenantId: string,
+    caseId: string,
+    latestInferenceId: string | null,
+    columns: string[],
+) {
+    const select = columns.join(', ');
+    return latestInferenceId
         ? client
             .from('ai_inference_events')
-            .select(baseSelect)
+            .select(select)
             .eq('tenant_id', tenantId)
             .eq('id', latestInferenceId)
             .maybeSingle()
         : client
             .from('ai_inference_events')
-            .select(baseSelect)
+            .select(select)
             .eq('tenant_id', tenantId)
             .eq('case_id', caseId)
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
-
-    const { data, error } = await query;
-    if (error) {
-        throw new Error(`Failed to load latest inference: ${error.message}`);
-    }
-    return data ? data as Record<string, unknown> : null;
 }
 
 async function loadOutcomes(
@@ -309,18 +352,59 @@ async function loadOutcomes(
     tenantId: string,
     caseId: string,
 ): Promise<Record<string, unknown>[]> {
-    const { data, error } = await client
+    const withLearningColumns = await queryOutcomes(client, tenantId, caseId, [
+        'id',
+        'outcome_type',
+        'outcome_payload',
+        'actual_label',
+        'actual_confidence',
+        'calibration_delta',
+        'created_at',
+    ]);
+
+    if (!withLearningColumns.error) {
+        return (withLearningColumns.data ?? []) as unknown as Record<string, unknown>[];
+    }
+
+    if (isMissingRelationError(withLearningColumns.error.message ?? '')) {
+        return [];
+    }
+
+    if (!isMissingColumnError(withLearningColumns.error.message ?? '')) {
+        throw new Error(`Failed to load outcomes: ${withLearningColumns.error.message}`);
+    }
+
+    const stableColumns = await queryOutcomes(client, tenantId, caseId, [
+        'id',
+        'outcome_type',
+        'outcome_payload',
+        'created_at',
+    ]);
+
+    if (stableColumns.error) {
+        if (
+            isMissingRelationError(stableColumns.error.message ?? '') ||
+            isMissingColumnError(stableColumns.error.message ?? '')
+        ) return [];
+        throw new Error(`Failed to load outcomes: ${stableColumns.error.message}`);
+    }
+
+    return (stableColumns.data ?? []) as unknown as Record<string, unknown>[];
+}
+
+function queryOutcomes(
+    client: SupabaseClient,
+    tenantId: string,
+    caseId: string,
+    columns: string[],
+) {
+    return client
         .from('clinical_outcome_events')
-        .select('id, outcome_type, outcome_payload, actual_label, actual_confidence, calibration_delta, created_at')
+        .select(columns.join(', '))
         .eq('tenant_id', tenantId)
         .eq('case_id', caseId)
         .order('created_at', { ascending: false })
         .limit(20);
-
-    if (error) {
-        throw new Error(`Failed to load outcomes: ${error.message}`);
-    }
-    return (data ?? []) as Record<string, unknown>[];
 }
 
 async function loadDiagnosisRecords(
@@ -337,7 +421,7 @@ async function loadDiagnosisRecords(
         .limit(20);
 
     if (error) {
-        if (isMissingRelationError(error.message ?? '')) {
+        if (isMissingRelationError(error.message ?? '') || isMissingColumnError(error.message ?? '')) {
             return [];
         }
         throw new Error(`Failed to load diagnosis records: ${error.message}`);
