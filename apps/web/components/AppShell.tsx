@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import UserNav from '@/components/UserNav';
 import VetiosGuide from '@/components/VetiosGuide';
+import { ClinicianShell } from '@/components/clinical/ClinicianShell';
 import { Menu, X, TerminalSquare, ChevronLeft } from 'lucide-react';
 import { isShelllessPublicPath } from '@/lib/site';
 
@@ -31,6 +32,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 {children}
             </div>
         );
+    }
+
+    if (pathname === '/cases' || pathname?.startsWith('/cases/')) {
+        return <ClinicianShell>{children}</ClinicianShell>;
     }
 
     return (

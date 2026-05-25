@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     const { searchParams, origin } = requestUrl;
     const code = searchParams.get('code');
     const mode = searchParams.get('mode');
-    const next = sanitizeInternalPath(searchParams.get('next'), '/inference');
+    const next = sanitizeInternalPath(searchParams.get('next'), '/cases');
     const tokenHash = searchParams.get('token_hash');
     const emailOtpType = normalizeEmailOtpType(searchParams.get('type'));
 

@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { CaseIntakeClient } from '@/components/cases/CaseIntakeClient';
+import { ClinicalCaseEntryClient } from '@/components/clinical/ClinicalCaseEntryClient';
 import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components/ui/terminal';
 import { resolveSessionTenant } from '@/lib/supabaseServer';
 
@@ -23,10 +23,10 @@ export default async function NewCasePage() {
     return (
         <Container>
             <PageHeader
-                title="New Clinical Case"
-                description="Capture signalment, complaint, exam findings, labs, and run VetIOS inference."
+                title="New Case"
+                description="Describe the patient in plain language and get ranked diagnoses."
             />
-            <CaseIntakeClient />
+            <ClinicalCaseEntryClient />
         </Container>
     );
 }

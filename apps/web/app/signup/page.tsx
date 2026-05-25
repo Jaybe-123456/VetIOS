@@ -140,7 +140,7 @@ export default function SignupPage() {
                 return;
             }
 
-            const nextStep = typeof payload?.next === 'string' ? payload.next : '/inference';
+            const nextStep = typeof payload?.next === 'string' ? payload.next : '/cases';
             setStatus(nextStep.startsWith('/verify-email') ? 'sent' : 'success');
             setCaptchaRequired(false);
             setCaptchaToken(null);

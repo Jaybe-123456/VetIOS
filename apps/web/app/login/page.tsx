@@ -33,7 +33,7 @@ export default function LoginPage() {
     const [captchaToken, setCaptchaToken] = useState<string | null>(null);
     const [captchaResetKey, setCaptchaResetKey] = useState(0);
     const [captchaError, setCaptchaError] = useState<string | null>(null);
-    const [nextPath, setNextPath] = useState('/inference');
+    const [nextPath, setNextPath] = useState('/cases');
     const [rememberMe, setRememberMe] = useState(false);
     const [isGoogleRedirecting, setIsGoogleRedirecting] = useState(false);
     const [passwordTouched, setPasswordTouched] = useState(false);
@@ -49,7 +49,7 @@ export default function LoginPage() {
         setShowSignupSuccess(params.get('signup') === 'success');
         setShowVerificationRequired(params.get('verification') === 'required');
         setAuthError(params.get('error'));
-        setNextPath(params.get('next') ?? '/inference');
+        setNextPath(sanitizeNextPath(params.get('next'), resolveStoredModePath()));
     }, []);
 
     useEffect(() => {
@@ -207,7 +207,7 @@ export default function LoginPage() {
                             <p className="font-mono text-xs text-muted">
                                 {successMode === 'email_verification_required'
                                     ? 'Your sign-in worked. Check your inbox for the VetIOS confirmation link. Redirecting you to the verification page now.'
-                                    : 'Redirecting you into the VetIOS console.'}
+                                    : 'Redirecting you into VetIOS.'}
                             </p>
                         </div>
                     ) : (
@@ -412,10 +412,14 @@ export default function LoginPage() {
     );
 }
 
-function sanitizeNextPath(value: string | null): string {
+function sanitizeNextPath(value: string | null, fallback = '/cases'): string {
     if (!value || !value.startsWith('/') || value.startsWith('//')) {
-        return '/inference';
+        return fallback;
     }
 
     return value;
+}
+
+function resolveStoredModePath(): string {
+    return window.localStorage.getItem('vetios_mode') === 'console' ? '/console' : '/cases';
 }

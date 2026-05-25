@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { CaseDetailClient } from '@/components/cases/CaseDetailClient';
+import { ClinicalCaseDetailClient } from '@/components/clinical/ClinicalCaseDetailClient';
 import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components/ui/terminal';
 import { getClinicalCaseDetail } from '@/lib/cases/caseWorkflow';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
@@ -40,9 +40,9 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         <Container>
             <PageHeader
                 title={clinicalCase.patient_name ?? 'Clinical Case'}
-                description={clinicalCase.presenting_complaint ?? clinicalCase.symptom_summary ?? 'Case detail and outcome closure.'}
+                description={clinicalCase.presenting_complaint ?? clinicalCase.symptom_summary ?? 'Diagnosis results and confirmation.'}
             />
-            <CaseDetailClient clinicalCase={clinicalCase} />
+            <ClinicalCaseDetailClient clinicalCase={clinicalCase} />
         </Container>
     );
 }

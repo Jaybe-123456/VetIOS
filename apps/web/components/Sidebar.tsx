@@ -44,6 +44,10 @@ interface SidebarProps {
 export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
     const pathname = usePathname();
 
+    function rememberClinicalMode() {
+        window.localStorage.setItem('vetios_mode', 'clinician');
+    }
+
     return (
         <aside className={`
             ${isMobile ? 'w-full h-full' : 'w-64 h-full'}
@@ -114,6 +118,13 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
 
             {/* ── System Status ── */}
             <div className="p-3 border-t border-[hsl(0_0%_100%_/_0.07)] shrink-0">
+                <Link
+                    href="/cases"
+                    onClick={rememberClinicalMode}
+                    className="mb-2 flex min-h-[36px] items-center px-3 font-mono text-[10px] uppercase tracking-[0.14em] text-[hsl(0_0%_58%)] transition-colors hover:text-accent"
+                >
+                    Clinical view -&gt;
+                </Link>
                 <div className="flex items-center gap-3 px-3 py-2.5 glass-card hover:border-accent/30 transition-all duration-300 cursor-default">
                     <div className="w-1.5 h-1.5 bg-accent animate-pulse shadow-[0_0_8px_hsl(142_76%_46%),0_0_16px_hsl(142_76%_46%_/_0.5)] shrink-0" />
                     <div className="flex flex-col gap-0.5 min-w-0">

@@ -1,6 +1,6 @@
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/auth/callback'];
-const PUBLIC_MARKETING_PATHS = ['/', '/platform', '/privacy', '/terms', '/docs', '/support', '/contact'];
+const PUBLIC_MARKETING_PATHS = ['/', '/demo', '/platform', '/privacy', '/terms', '/docs', '/support', '/contact'];
 const PUBLIC_METADATA_PATHS = ['/robots.txt', '/sitemap.xml', '/manifest.webmanifest', '/icon.svg'];
 
 function normalizeConfiguredOrigin(value: string | null | undefined): string | null {
@@ -65,6 +65,7 @@ export function isPublicRoutePath(pathname: string): boolean {
 export function isShelllessPublicPath(pathname: string): boolean {
     return isPublicAuthPath(pathname)
         || pathname === '/'
+        || pathname === '/demo'
         || pathname === '/platform'
         || pathname.startsWith('/platform/')
         || pathname === '/privacy'
@@ -122,7 +123,7 @@ export function buildConfiguredEmailVerificationCallbackUrl(
 ): string | null {
     const params = new URLSearchParams();
     params.set('mode', 'email-verification');
-    params.set('next', sanitizeInternalPath(nextPath, '/inference'));
+    params.set('next', sanitizeInternalPath(nextPath, '/cases'));
     return buildConfiguredAbsoluteUrl('/auth/callback', `?${params.toString()}`, fallbackOrigin);
 }
 
@@ -132,7 +133,7 @@ export function buildClientEmailVerificationCallbackUrl(
 ): string {
     const url = new URL('/auth/callback', resolveClientAuthOrigin(fallbackOrigin));
     url.searchParams.set('mode', 'email-verification');
-    url.searchParams.set('next', sanitizeInternalPath(nextPath, '/inference'));
+    url.searchParams.set('next', sanitizeInternalPath(nextPath, '/cases'));
     return url.toString();
 }
 

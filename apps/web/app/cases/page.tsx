@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { CaseListClient } from '@/components/cases/CaseListClient';
+import { ClinicalCaseListClient } from '@/components/clinical/ClinicalCaseListClient';
 import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components/ui/terminal';
 import { listClinicalCases } from '@/lib/cases/caseWorkflow';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
@@ -26,10 +26,10 @@ export default async function CasesPage() {
     return (
         <Container>
             <PageHeader
-                title="Clinical Cases"
-                description="Clinician-entered cases with inference status and confirmed outcome closure."
+                title="My Cases"
+                description="Review recent patients, open a case, or start a new diagnosis."
             />
-            <CaseListClient cases={cases} />
+            <ClinicalCaseListClient cases={cases} />
         </Container>
     );
 }
