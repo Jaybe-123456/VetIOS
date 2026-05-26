@@ -31,6 +31,9 @@ export async function GET(req: Request) {
             tenantId: resolvedTenantId,
             limit: readPositiveInteger(url.searchParams.get('limit')),
             minSampleSize: readPositiveInteger(url.searchParams.get('min_sample_size')),
+            correlationThreshold: readPositiveNumber(url.searchParams.get('correlation_threshold')),
+            realClinicalOnly: isTruthy(url.searchParams.get('real_clinical_only'))
+                || isTruthy(url.searchParams.get('evidence_grade')),
         });
 
         const response = NextResponse.json({
@@ -79,4 +82,14 @@ function readPositiveInteger(value: string | null): number | undefined {
     if (!value) return undefined;
     const parsed = Number(value);
     return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function readPositiveNumber(value: string | null): number | undefined {
+    if (!value) return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function isTruthy(value: string | null): boolean {
+    return value === 'true' || value === '1' || value === 'yes';
 }

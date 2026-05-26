@@ -46,6 +46,27 @@ describe('CIRE validation report', () => {
         expect(report.validated).toBe(false);
         expect(report.interpretation).toContain('3 more');
     });
+
+    it('uses a 200-case target and excludes synthetic rows for real clinical validation', () => {
+        const report = buildCireValidationReportFromRows(
+            [
+                inference('i1', 0.95),
+                inference('i2', 0.1),
+                inference('i3', 0.05),
+            ],
+            [
+                outcome('i1', true),
+                outcome('i2', false),
+                outcome('i3', false, { is_synthetic: true, label_type: 'synthetic' }),
+            ],
+            { realClinicalOnly: true },
+        );
+
+        expect(report.validation_scope).toBe('real_clinical_outcomes');
+        expect(report.min_sample_size).toBe(200);
+        expect(report.sample_size).toBe(2);
+        expect(report.status).toBe('insufficient_outcomes');
+    });
 });
 
 function inference(id: string, phiHat: number) {
@@ -65,12 +86,19 @@ function inference(id: string, phiHat: number) {
     };
 }
 
-function outcome(inferenceId: string, predictionCorrect: boolean) {
+function outcome(
+    inferenceId: string,
+    predictionCorrect: boolean,
+    patch: Record<string, unknown> = {},
+) {
     return {
         id: `outcome_${inferenceId}`,
         inference_event_id: inferenceId,
+        is_synthetic: false,
+        label_type: 'expert_reviewed',
         outcome_payload: {
             prediction_correct: predictionCorrect,
         },
+        ...patch,
     };
 }

@@ -18,6 +18,9 @@ export interface CireValidationInferenceRow {
 export interface CireValidationOutcomeRow {
     id?: string | null;
     inference_event_id?: string | null;
+    source_module?: string | null;
+    label_type?: string | null;
+    is_synthetic?: boolean | string | null;
     outcome_payload?: Record<string, unknown> | null;
     created_at?: string | null;
 }
@@ -28,6 +31,7 @@ export interface CireValidationReport {
     sample_size: number;
     min_sample_size: number;
     correlation_threshold: number;
+    validation_scope: 'all_outcome_linked_inferences' | 'real_clinical_outcomes';
     spearman_r: number | null;
     correctness_rate: number | null;
     mean_phi_correct: number | null;
@@ -60,6 +64,7 @@ export async function loadCireValidationReport(
         limit?: number;
         minSampleSize?: number;
         correlationThreshold?: number;
+        realClinicalOnly?: boolean;
     },
 ): Promise<CireValidationReport> {
     const limit = Math.max(1, Math.min(input.limit ?? 1000, 5000));
@@ -67,7 +72,7 @@ export async function loadCireValidationReport(
     const IC = AI_INFERENCE_EVENTS.COLUMNS;
     const { data: outcomes, error: outcomeError } = await client
         .from(CLINICAL_OUTCOME_EVENTS.TABLE)
-        .select(`${OC.id},${OC.inference_event_id},${OC.outcome_payload},${OC.created_at}`)
+        .select(`${OC.id},${OC.inference_event_id},${OC.source_module},${OC.label_type},${OC.is_synthetic},${OC.outcome_payload},${OC.created_at}`)
         .eq(OC.tenant_id, input.tenantId)
         .order(OC.created_at, { ascending: false })
         .limit(limit);
@@ -97,14 +102,19 @@ export function buildCireValidationReportFromRows(
     input: {
         minSampleSize?: number;
         correlationThreshold?: number;
+        realClinicalOnly?: boolean;
     } = {},
 ): CireValidationReport {
-    const minSampleSize = Math.max(1, input.minSampleSize ?? 30);
+    const realClinicalOnly = input.realClinicalOnly === true;
+    const minSampleSize = Math.max(1, input.minSampleSize ?? (realClinicalOnly ? 200 : 30));
     const correlationThreshold = input.correlationThreshold ?? 0.5;
+    const validationScope = realClinicalOnly ? 'real_clinical_outcomes' : 'all_outcome_linked_inferences';
     const inferenceById = new Map(inferences.map((row) => [row.id, row]));
     const pairs: ValidationPair[] = [];
 
     for (const outcome of outcomes) {
+        if (realClinicalOnly && !isRealClinicalOutcome(outcome)) continue;
+
         const inferenceId = readText(outcome.inference_event_id);
         if (!inferenceId) continue;
 
@@ -135,6 +145,7 @@ export function buildCireValidationReportFromRows(
         sample_size: pairs.length,
         min_sample_size: minSampleSize,
         correlation_threshold: correlationThreshold,
+        validation_scope: validationScope,
         spearman_r: spearman == null ? null : roundMetric(spearman),
         correctness_rate: pairs.length === 0 ? null : roundMetric(correctPairs.length / pairs.length),
         mean_phi_correct: correctPairs.length === 0 ? null : roundMetric(mean(correctPairs.map((pair) => pair.phiHat))),
@@ -249,6 +260,19 @@ function buildInterpretation(
         return 'CIRE phi_hat is inversely associated with correctness and should not be marketed as a reliability signal yet.';
     }
     return `CIRE phi_hat has outcome coverage but the observed correlation ${spearman == null ? 'is unavailable' : `is ${roundMetric(spearman)}`} below the validation threshold.`;
+}
+
+function isRealClinicalOutcome(row: CireValidationOutcomeRow): boolean {
+    if (readBoolean(row.is_synthetic) === true) return false;
+
+    const payload = asRecord(row.outcome_payload);
+    const labelType = (readText(row.label_type) ?? readText(payload.label_type) ?? '').toLowerCase();
+    if (labelType === 'synthetic') return false;
+
+    const sourceModule = (readText(row.source_module) ?? '').toLowerCase();
+    if (sourceModule.includes('simulation')) return false;
+
+    return true;
 }
 
 function buildReliabilityBins(pairs: ValidationPair[]) {
