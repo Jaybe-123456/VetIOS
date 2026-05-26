@@ -119,12 +119,17 @@ export async function GET(req: Request) {
         break;
       }
 
+      case 'readiness': {
+        data = vkg.getReadinessReport();
+        break;
+      }
+
       default: {
         const res = NextResponse.json(
           {
             error: {
               code: 'bad_request',
-              message: `Unknown mode: ${mode}. Valid: differentials, contraindications, path, progression, stats`,
+              message: `Unknown mode: ${mode}. Valid: differentials, contraindications, path, progression, differentials_for_disease, stats, readiness`,
             },
           },
           { status: 400 }

@@ -63,6 +63,34 @@ export interface VKGPath {
   clinicalSignificance: 'high' | 'moderate' | 'low';
 }
 
+export const VKG_PHASE3_TARGETS = {
+  disease_nodes: 50,
+  symptom_nodes: 200,
+  weighted_edges: 500,
+} as const;
+
+type VKGPhase3TargetKey = keyof typeof VKG_PHASE3_TARGETS;
+
+export interface VKGStats {
+  nodeCount: number;
+  edgeCount: number;
+  nodeTypes: Record<string, number>;
+  edgeTypes: Record<string, number>;
+}
+
+export interface VKGReadinessReport {
+  status: 'below_minimum_target' | 'target_ready';
+  graph_ready_for_gbs: boolean;
+  species_scope_ready: boolean;
+  targets: typeof VKG_PHASE3_TARGETS;
+  counts: Record<VKGPhase3TargetKey, number> & {
+    canine_disease_nodes: number;
+    feline_disease_nodes: number;
+  };
+  missing: Record<VKGPhase3TargetKey, number>;
+  coverage: Record<VKGPhase3TargetKey, number>;
+}
+
 // ─── Knowledge Graph ─────────────────────────────────────────
 
 export class VeterinaryKnowledgeGraph {
@@ -291,13 +319,92 @@ export class VeterinaryKnowledgeGraph {
     return this.nodes.get(id);
   }
 
-  getStats(): { nodeCount: number; edgeCount: number; nodeTypes: Record<string, number> } {
+  getStats(): VKGStats {
     const nodeTypes: Record<string, number> = {};
     for (const node of this.nodes.values()) {
       nodeTypes[node.type] = (nodeTypes[node.type] ?? 0) + 1;
     }
-    const edgeCount = Array.from(this.adjacency.values()).reduce((s, e) => s + e.length, 0);
-    return { nodeCount: this.nodes.size, edgeCount, nodeTypes };
+
+    const edgeTypes: Record<string, number> = {};
+    let edgeCount = 0;
+    for (const edges of this.adjacency.values()) {
+      edgeCount += edges.length;
+      for (const edge of edges) {
+        edgeTypes[edge.type] = (edgeTypes[edge.type] ?? 0) + 1;
+      }
+    }
+
+    return { nodeCount: this.nodes.size, edgeCount, nodeTypes, edgeTypes };
+  }
+
+  getReadinessReport(): VKGReadinessReport {
+    const stats = this.getStats();
+    const counts = {
+      disease_nodes: stats.nodeTypes.disease ?? 0,
+      symptom_nodes: stats.nodeTypes.symptom ?? 0,
+      weighted_edges: this.countWeightedEdges(),
+      canine_disease_nodes: this.countDiseaseNodesForSpecies('canine'),
+      feline_disease_nodes: this.countDiseaseNodesForSpecies('feline'),
+    };
+
+    const missing = {
+      disease_nodes: Math.max(0, VKG_PHASE3_TARGETS.disease_nodes - counts.disease_nodes),
+      symptom_nodes: Math.max(0, VKG_PHASE3_TARGETS.symptom_nodes - counts.symptom_nodes),
+      weighted_edges: Math.max(0, VKG_PHASE3_TARGETS.weighted_edges - counts.weighted_edges),
+    };
+
+    const coverage = {
+      disease_nodes: this.coverageRatio(counts.disease_nodes, VKG_PHASE3_TARGETS.disease_nodes),
+      symptom_nodes: this.coverageRatio(counts.symptom_nodes, VKG_PHASE3_TARGETS.symptom_nodes),
+      weighted_edges: this.coverageRatio(counts.weighted_edges, VKG_PHASE3_TARGETS.weighted_edges),
+    };
+
+    const speciesScopeReady = counts.canine_disease_nodes > 0 && counts.feline_disease_nodes > 0;
+    const graphReadyForGbs = speciesScopeReady
+      && missing.disease_nodes === 0
+      && missing.symptom_nodes === 0
+      && missing.weighted_edges === 0;
+
+    return {
+      status: graphReadyForGbs ? 'target_ready' : 'below_minimum_target',
+      graph_ready_for_gbs: graphReadyForGbs,
+      species_scope_ready: speciesScopeReady,
+      targets: VKG_PHASE3_TARGETS,
+      counts,
+      missing,
+      coverage,
+    };
+  }
+
+  private countWeightedEdges(): number {
+    let count = 0;
+    for (const edges of this.adjacency.values()) {
+      count += edges.filter((edge) => Number.isFinite(edge.weight) && edge.weight > 0).length;
+    }
+    return count;
+  }
+
+  private countDiseaseNodesForSpecies(species: 'canine' | 'feline'): number {
+    let count = 0;
+    for (const node of this.nodes.values()) {
+      if (node.type === 'disease' && this.diseaseHasSpeciesScope(node, species)) {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private diseaseHasSpeciesScope(node: VKGNode, species: 'canine' | 'feline'): boolean {
+    const searchable = `${node.id} ${node.label}`.toLowerCase();
+    if (searchable.includes(species)) return true;
+
+    const outbound = this.adjacency.get(node.id) ?? [];
+    const inbound = this.reverseIndex.get(node.id) ?? [];
+    return [...outbound, ...inbound].some((edge) => edge.species_scope?.includes(species));
+  }
+
+  private coverageRatio(count: number, target: number): number {
+    return target > 0 ? Number(Math.min(count / target, 1).toFixed(3)) : 1;
   }
 
   // ─── Corpus Seed ─────────────────────────────────────────
@@ -775,6 +882,166 @@ export class VeterinaryKnowledgeGraph {
     this.addEdge({ from: cLymph, to: 'breed:golden_retriever', type: 'breed_predisposition', weight: 0.80, evidence: 'strong', species_scope: ['canine'] });
     this.addEdge({ from: cLymph, to: 'breed:rottweiler', type: 'breed_predisposition', weight: 0.65, evidence: 'moderate', species_scope: ['canine'] });
     this.addEdge({ from: cLymph, to: cCush, type: 'differentiates_from', weight: 0.55, evidence: 'moderate' });
+
+    this.seedPhase3CompanionGraph();
+  }
+
+  private seedPhase3CompanionGraph(): void {
+    const symptoms = [
+      'acute_vomiting', 'chronic_vomiting', 'bilious_vomiting', 'regurgitation',
+      'acute_diarrhoea', 'chronic_diarrhoea', 'large_bowel_diarrhoea', 'small_bowel_diarrhoea',
+      'haematochezia', 'tenesmus', 'flatulence', 'borborygmi',
+      'nausea', 'ptyalism', 'hypersalivation', 'food_refusal',
+      'weight_gain', 'failure_to_gain_weight', 'cachexia', 'poor_body_condition',
+      'stunted_growth', 'exercise_intolerance', 'heat_intolerance', 'cold_intolerance',
+      'panting', 'orthopnoea', 'open_mouth_breathing', 'increased_respiratory_effort',
+      'inspiratory_stridor', 'expiratory_wheeze', 'cyanosis', 'nasal_stertor',
+      'reverse_sneezing', 'epistaxis', 'productive_cough', 'dry_cough',
+      'nocturnal_cough', 'gagging', 'voice_change', 'sudden_collapse',
+      'syncope', 'bounding_pulses', 'weak_pulses', 'heart_murmur',
+      'gallop_rhythm', 'jugular_distension', 'peripheral_oedema', 'pleural_effusion_signs',
+      'abdominal_effusion', 'hindlimb_weakness', 'ataxic_gait', 'knuckling',
+      'head_tilt', 'nystagmus', 'circling', 'mentation_change',
+      'disorientation', 'tremors', 'muscle_fasciculations', 'paresis',
+      'paralysis', 'hyperesthesia', 'neck_pain', 'back_pain',
+      'lameness', 'non_weight_bearing_lameness', 'shifting_leg_lameness', 'joint_swelling',
+      'joint_crepitus', 'reduced_range_of_motion', 'difficulty_rising', 'reluctance_to_jump',
+      'stiffness_after_rest', 'muscle_atrophy', 'cranial_drawer_sign', 'patellar_luxation',
+      'dysuria', 'pollakiuria', 'stranguria', 'periuria',
+      'urinary_incontinence', 'urine_dribbling', 'oliguria', 'anuria',
+      'crystalluria_signs', 'malodorous_urine', 'vulvar_discharge', 'preputial_discharge',
+      'tenesmus_to_urinate', 'painful_bladder', 'distended_bladder', 'azotaemic_breath',
+      'pruritus', 'alopecia', 'erythema', 'papules',
+      'pustules', 'crusting', 'scaling', 'lichenification',
+      'hyperpigmentation', 'otorrhoea', 'head_shaking', 'ear_scratching',
+      'aural_pain', 'malodorous_ears', 'ceruminous_debris', 'facial_pruritus',
+      'pododermatitis', 'interdigital_cysts', 'hot_spots', 'flea_dirt',
+      'ocular_discharge_serous', 'ocular_discharge_purulent', 'conjunctival_hyperaemia',
+      'blepharospasm', 'corneal_opacity', 'anisocoria', 'mydriasis',
+      'miosis', 'vision_loss', 'third_eyelid_elevation', 'ocular_pain',
+      'halitosis', 'gingival_inflammation', 'oral_ulcers', 'tooth_mobility',
+      'dropping_food', 'pawing_at_mouth', 'facial_swelling', 'submandibular_swelling',
+      'fever', 'persistent_fever', 'hypovolaemic_shock', 'septic_shock',
+      'delayed_capillary_refill', 'tacky_mucous_membranes', 'icteric_mucous_membranes',
+      'petechiae', 'ecchymoses', 'melena_stool', 'bruising',
+      'lymphadenopathy', 'splenomegaly', 'hepatomegaly', 'abdominal_mass',
+      'polyphagia_with_weight_loss', 'ravenous_appetite', 'reduced_appetite', 'selective_appetite',
+      'plantigrade_stance', 'cataracts', 'thin_skin', 'pot_belly',
+      'truncal_alopecia', 'recurrent_skin_infections', 'calcinosis_cutis', 'hypertension_signs',
+      'behaviour_change', 'aggression', 'hiding', 'vocalisation',
+      'overgrooming', 'under_grooming', 'house_soiling', 'restlessness',
+      'sleep_disturbance', 'cognitive_decline', 'reduced_interaction', 'compulsive_licking',
+      'queen_nesting', 'dystocia', 'mammary_swelling', 'galactorrhoea',
+      'pyrexia_postpartum', 'abdominal_guarding', 'uterine_discharge', 'shocky_presentation',
+      'tick_exposure', 'travel_history', 'kennel_exposure', 'shelter_exposure',
+      'raw_diet_exposure', 'toxin_exposure', 'rodenticide_access', 'plant_toxin_access',
+      'anticoagulant_exposure', 'foreign_body_risk', 'recent_surgery', 'recent_vaccination',
+      'poor_vaccine_history', 'outdoor_access', 'multi_cat_household', 'boarding_history',
+      'low_wbc', 'high_wbc', 'neutrophilia', 'neutropenia',
+      'lymphopenia', 'anaemia', 'regenerative_anaemia', 'non_regenerative_anaemia',
+      'high_pcv', 'low_platelets', 'high_bun', 'high_creatinine',
+      'high_alt', 'high_alp', 'high_bilirubin', 'low_albumin',
+      'high_glucose', 'low_glucose', 'high_fructosamine', 'high_lipase',
+      'high_spec_cpl', 'high_total_t4', 'low_total_t4', 'high_cortisol',
+      'low_cortisol', 'hyponatraemia', 'hypernatraemia', 'hyperkalaemia',
+      'hypokalaemia', 'hypercalcaemia_lab', 'hypocalcaemia_lab', 'proteinuria',
+      'glucosuria_lab', 'ketonuria', 'bacteriuria', 'positive_urine_culture',
+      'positive_parvo_elisa', 'positive_felv_test', 'positive_fiv_test', 'positive_heartworm_test',
+      'positive_tick_panel', 'positive_toxoplasma_titre', 'low_albumin_globulin_ratio',
+      'high_somatic_cell_count',
+    ];
+
+    for (const symptom of symptoms) {
+      this.addNodeIfMissing({
+        id: `symptom:${symptom}`,
+        type: 'symptom',
+        label: symptom.replace(/_/g, ' '),
+        metadata: { phase3_minimum_graph: true },
+      });
+    }
+
+    const profiles = [
+      { id: 'disease:canine_acute_hemorrhagic_diarrhea_syndrome', label: 'Canine Acute Hemorrhagic Diarrhea Syndrome', species: 'canine', symptoms: ['acute_vomiting', 'haematochezia', 'dehydration', 'hypovolaemic_shock', 'lethargy', 'abdominal_pain', 'high_pcv', 'tacky_mucous_membranes', 'food_refusal', 'acute_diarrhoea'] },
+      { id: 'disease:canine_giardiasis', label: 'Canine Giardiasis', species: 'canine', symptoms: ['chronic_diarrhoea', 'flatulence', 'borborygmi', 'weight_loss', 'poor_body_condition', 'small_bowel_diarrhoea', 'mucus_stool', 'kennel_exposure', 'reduced_appetite', 'intermittent_diarrhoea'] },
+      { id: 'disease:canine_leptospirosis', label: 'Canine Leptospirosis', species: 'canine', symptoms: ['fever', 'lethargy', 'vomiting', 'high_bun', 'high_creatinine', 'high_alt', 'icteric_mucous_membranes', 'tick_exposure', 'outdoor_access', 'oliguria'] },
+      { id: 'disease:canine_pyometra', label: 'Canine Pyometra', species: 'canine', symptoms: ['vulvar_discharge', 'fever', 'lethargy', 'polydipsia', 'polyuria', 'abdominal_guarding', 'shocky_presentation', 'high_wbc', 'reduced_appetite', 'vomiting'] },
+      { id: 'disease:canine_imha', label: 'Canine Immune-Mediated Hemolytic Anemia', species: 'canine', symptoms: ['pale_mucous_membranes', 'icteric_mucous_membranes', 'tachycardia', 'weak_pulses', 'lethargy', 'regenerative_anaemia', 'high_bilirubin', 'collapse', 'exercise_intolerance', 'splenomegaly'] },
+      { id: 'disease:canine_osteoarthritis', label: 'Canine Osteoarthritis', species: 'canine', symptoms: ['lameness', 'stiffness_after_rest', 'difficulty_rising', 'reduced_range_of_motion', 'joint_crepitus', 'muscle_atrophy', 'reluctance_to_jump', 'exercise_intolerance', 'joint_swelling', 'painful_gait'] },
+      { id: 'disease:canine_atopic_dermatitis', label: 'Canine Atopic Dermatitis', species: 'canine', symptoms: ['pruritus', 'facial_pruritus', 'pododermatitis', 'otitis_externa', 'erythema', 'lichenification', 'alopecia', 'recurrent_skin_infections', 'interdigital_cysts', 'compulsive_licking'] },
+      { id: 'disease:canine_otitis_externa', label: 'Canine Otitis Externa', species: 'canine', symptoms: ['head_shaking', 'ear_scratching', 'aural_pain', 'otorrhoea', 'malodorous_ears', 'ceruminous_debris', 'facial_pruritus', 'erythema', 'head_tilt', 'vocalisation'] },
+      { id: 'disease:canine_congestive_heart_failure', label: 'Canine Congestive Heart Failure', species: 'canine', symptoms: ['nocturnal_cough', 'exercise_intolerance', 'tachycardia', 'heart_murmur', 'increased_respiratory_effort', 'orthopnoea', 'syncope', 'weak_pulses', 'abdominal_effusion', 'cyanosis'] },
+      { id: 'disease:canine_chronic_kidney_disease', label: 'Canine Chronic Kidney Disease', species: 'canine', symptoms: ['polyuria', 'polydipsia', 'weight_loss', 'high_bun', 'high_creatinine', 'proteinuria', 'azotaemic_breath', 'vomiting', 'reduced_appetite', 'hypertension_signs'] },
+      { id: 'disease:canine_urinary_tract_infection', label: 'Canine Urinary Tract Infection', species: 'canine', symptoms: ['pollakiuria', 'dysuria', 'stranguria', 'haematuria', 'malodorous_urine', 'bacteriuria', 'positive_urine_culture', 'painful_bladder', 'urinary_incontinence', 'fever'] },
+      { id: 'disease:canine_chronic_enteropathy', label: 'Canine Chronic Enteropathy', species: 'canine', symptoms: ['chronic_diarrhoea', 'weight_loss', 'vomiting', 'flatulence', 'borborygmi', 'low_albumin', 'poor_body_condition', 'selective_appetite', 'large_bowel_diarrhoea', 'small_bowel_diarrhoea'] },
+      { id: 'disease:canine_brachycephalic_airway_syndrome', label: 'Canine Brachycephalic Airway Syndrome', species: 'canine', symptoms: ['inspiratory_stridor', 'nasal_stertor', 'exercise_intolerance', 'heat_intolerance', 'cyanosis', 'syncope', 'regurgitation', 'open_mouth_breathing', 'increased_respiratory_effort', 'sleep_disturbance'] },
+      { id: 'disease:canine_periodontal_disease', label: 'Canine Periodontal Disease', species: 'canine', symptoms: ['halitosis', 'gingival_inflammation', 'tooth_mobility', 'dropping_food', 'pawing_at_mouth', 'facial_swelling', 'reduced_appetite', 'oral_ulcers', 'submandibular_swelling', 'behaviour_change'] },
+      { id: 'disease:canine_epilepsy', label: 'Canine Epilepsy', species: 'canine', symptoms: ['seizures', 'mentation_change', 'disorientation', 'collapse', 'muscle_fasciculations', 'ptyalism', 'sleep_disturbance', 'postictal_restlessness', 'behaviour_change', 'ataxic_gait'] },
+      { id: 'disease:canine_cruciate_ligament_disease', label: 'Canine Cranial Cruciate Ligament Disease', species: 'canine', symptoms: ['non_weight_bearing_lameness', 'lameness', 'joint_swelling', 'cranial_drawer_sign', 'difficulty_rising', 'muscle_atrophy', 'reduced_range_of_motion', 'painful_gait', 'reluctance_to_jump', 'stiffness_after_rest'] },
+      { id: 'disease:canine_anaphylaxis', label: 'Canine Anaphylaxis', species: 'canine', symptoms: ['sudden_collapse', 'hypovolaemic_shock', 'vomiting', 'diarrhoea', 'facial_swelling', 'weak_pulses', 'delayed_capillary_refill', 'tacky_mucous_membranes', 'recent_vaccination', 'restlessness'] },
+      { id: 'disease:canine_rodenticide_toxicosis', label: 'Canine Anticoagulant Rodenticide Toxicosis', species: 'canine', symptoms: ['rodenticide_access', 'pale_mucous_membranes', 'bruising', 'petechiae', 'weakness', 'tachycardia', 'melena_stool', 'epistaxis', 'exercise_intolerance', 'collapse'] },
+      { id: 'disease:feline_congestive_heart_failure', label: 'Feline Congestive Heart Failure', species: 'feline', symptoms: ['open_mouth_breathing', 'increased_respiratory_effort', 'pleural_effusion_signs', 'gallop_rhythm', 'tachycardia', 'cyanosis', 'orthopnoea', 'reduced_appetite', 'hiding', 'sudden_collapse'] },
+      { id: 'disease:feline_chronic_gingivostomatitis', label: 'Feline Chronic Gingivostomatitis', species: 'feline', symptoms: ['oral_ulcers', 'gingival_inflammation', 'halitosis', 'ptyalism', 'dropping_food', 'pawing_at_mouth', 'weight_loss', 'reduced_appetite', 'vocalisation', 'under_grooming'] },
+      { id: 'disease:feline_inflammatory_bowel_disease', label: 'Feline Inflammatory Bowel Disease', species: 'feline', symptoms: ['chronic_vomiting', 'chronic_diarrhoea', 'weight_loss', 'poor_body_condition', 'reduced_appetite', 'low_albumin', 'borborygmi', 'small_bowel_diarrhoea', 'selective_appetite', 'under_grooming'] },
+      { id: 'disease:feline_cholangitis', label: 'Feline Cholangitis', species: 'feline', symptoms: ['jaundice', 'high_alt', 'high_bilirubin', 'fever', 'vomiting', 'reduced_appetite', 'lethargy', 'abdominal_guarding', 'weight_loss', 'dehydration'] },
+      { id: 'disease:feline_anaemia', label: 'Feline Anaemia', species: 'feline', symptoms: ['pale_mucous_membranes', 'lethargy', 'tachycardia', 'weakness', 'regenerative_anaemia', 'non_regenerative_anaemia', 'exercise_intolerance', 'collapse', 'reduced_appetite', 'positive_felv_test'] },
+      { id: 'disease:feline_urinary_obstruction', label: 'Feline Urethral Obstruction', species: 'feline', symptoms: ['stranguria', 'anuria', 'distended_bladder', 'painful_bladder', 'vocalisation', 'hyperkalaemia', 'high_bun', 'high_creatinine', 'collapse', 'shocky_presentation'] },
+      { id: 'disease:feline_osteoarthritis', label: 'Feline Osteoarthritis', species: 'feline', symptoms: ['reluctance_to_jump', 'stiffness_after_rest', 'under_grooming', 'behaviour_change', 'hiding', 'lameness', 'reduced_range_of_motion', 'muscle_atrophy', 'aggression', 'sleep_disturbance'] },
+      { id: 'disease:feline_atopic_skin_syndrome', label: 'Feline Atopic Skin Syndrome', species: 'feline', symptoms: ['pruritus', 'overgrooming', 'alopecia', 'facial_pruritus', 'erythema', 'crusting', 'scaling', 'hot_spots', 'compulsive_licking', 'recurrent_skin_infections'] },
+      { id: 'disease:feline_otitis_externa', label: 'Feline Otitis Externa', species: 'feline', symptoms: ['head_shaking', 'ear_scratching', 'aural_pain', 'otorrhoea', 'malodorous_ears', 'ceruminous_debris', 'head_tilt', 'vocalisation', 'hiding', 'facial_pruritus'] },
+      { id: 'disease:feline_small_cell_lymphoma', label: 'Feline Small Cell Lymphoma', species: 'feline', symptoms: ['weight_loss', 'chronic_vomiting', 'chronic_diarrhoea', 'poor_body_condition', 'low_albumin', 'reduced_appetite', 'abdominal_mass', 'lymphadenopathy', 'under_grooming', 'selective_appetite'] },
+      { id: 'disease:feline_hypertension', label: 'Feline Systemic Hypertension', species: 'feline', symptoms: ['hypertension_signs', 'vision_loss', 'mydriasis', 'mentation_change', 'vocalisation', 'high_bun', 'high_creatinine', 'heart_murmur', 'restlessness', 'collapse'] },
+      { id: 'disease:feline_periodontal_disease', label: 'Feline Periodontal Disease', species: 'feline', symptoms: ['halitosis', 'gingival_inflammation', 'tooth_mobility', 'dropping_food', 'pawing_at_mouth', 'reduced_appetite', 'weight_loss', 'facial_swelling', 'oral_ulcers', 'under_grooming'] },
+      { id: 'disease:feline_epilepsy', label: 'Feline Epilepsy', species: 'feline', symptoms: ['seizures', 'collapse', 'mentation_change', 'disorientation', 'ptyalism', 'restlessness', 'ataxic_gait', 'behaviour_change', 'hiding', 'postictal_restlessness'] },
+      { id: 'disease:feline_food_allergy', label: 'Feline Food Allergy', species: 'feline', symptoms: ['pruritus', 'facial_pruritus', 'overgrooming', 'chronic_vomiting', 'chronic_diarrhoea', 'alopecia', 'erythema', 'otitis_externa', 'selective_appetite', 'weight_loss'] },
+      { id: 'disease:feline_constipation_megacolon', label: 'Feline Constipation and Megacolon', species: 'feline', symptoms: ['tenesmus', 'reduced_appetite', 'vomiting', 'lethargy', 'abdominal_guarding', 'dehydration', 'vocalisation', 'weight_loss', 'distended_bladder', 'hiding'] },
+      { id: 'disease:feline_toxoplasmosis', label: 'Feline Toxoplasmosis', species: 'feline', symptoms: ['fever', 'lethargy', 'uveitis', 'dyspnoea', 'ataxia', 'seizures', 'positive_toxoplasma_titre', 'reduced_appetite', 'jaundice', 'muscle_pain'] },
+      { id: 'disease:feline_pleural_effusion', label: 'Feline Pleural Effusion', species: 'feline', symptoms: ['open_mouth_breathing', 'increased_respiratory_effort', 'orthopnoea', 'cyanosis', 'pleural_effusion_signs', 'muffled_heart_sounds', 'lethargy', 'hiding', 'reduced_appetite', 'tachycardia'] },
+    ] as const;
+
+    for (const profile of profiles) {
+      this.addNodeIfMissing({
+        id: profile.id,
+        type: 'disease',
+        label: profile.label,
+        metadata: { species: profile.species, phase3_minimum_graph: true },
+      });
+      this.addEdge({ from: profile.id, to: `species:${profile.species}`, type: 'affects_species', weight: 0.99, evidence: 'strong', species_scope: [profile.species] });
+
+      profile.symptoms.forEach((symptom, index) => {
+        this.addNodeIfMissing({
+          id: `symptom:${symptom}`,
+          type: 'symptom',
+          label: symptom.replace(/_/g, ' '),
+          metadata: { phase3_minimum_graph: true },
+        });
+        this.addEdge({
+          from: profile.id,
+          to: `symptom:${symptom}`,
+          type: 'presents_with',
+          weight: Math.max(0.52, 0.92 - index * 0.035),
+          evidence: index < 6 ? 'strong' : 'moderate',
+          species_scope: [profile.species],
+        });
+      });
+    }
+
+    for (let i = 0; i < profiles.length - 1; i += 1) {
+      const current = profiles[i];
+      const next = profiles[i + 1];
+      if (current.species !== next.species) continue;
+      this.addEdge({
+        from: current.id,
+        to: next.id,
+        type: 'differentiates_from',
+        weight: 0.55,
+        evidence: 'moderate',
+        species_scope: [current.species],
+      });
+    }
+  }
+
+  private addNodeIfMissing(node: VKGNode): void {
+    if (!this.nodes.has(node.id)) this.addNode(node);
   }
 }
 
