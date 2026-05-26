@@ -41,6 +41,7 @@
         "@vetios/gaas": "workspace:*",
         "@vetios/inference-schema": "workspace:*",
         "@vetios/pharmacos": "workspace:*",
+        "@vetios/quantum": "workspace:*",
         "autoprefixer": "^10.4.24",
         "chart.js": "^4.5.1",
         "class-variance-authority": "^0.7.1",

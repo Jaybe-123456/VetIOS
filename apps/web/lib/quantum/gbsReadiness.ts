@@ -1,3 +1,8 @@
+import {
+  createPennyLaneBraketManifest,
+  type PennyLaneBraketManifest,
+  type WeightedCliqueProblem,
+} from '@vetios/quantum';
 import { getVKG } from '@/lib/vkg/veterinaryKnowledgeGraph';
 
 export interface QuantumReadinessInput {
@@ -26,7 +31,7 @@ export interface QuantumReadinessResult {
   problem_type: 'maximum_weighted_clique';
   hardware_target: 'gbs_compatible';
   backend: 'classical_baseline';
-  quantum_backend: 'not_configured';
+  quantum_backend: 'not_configured' | 'pennylane_aws_braket';
   graph: {
     nodes: QuantumReadinessNode[];
     edges: QuantumReadinessEdge[];
@@ -39,9 +44,10 @@ export interface QuantumReadinessResult {
     score: number;
   };
   readiness: {
-    status: 'insufficient_graph_signal' | 'problem_ready_backend_missing';
+    status: 'insufficient_graph_signal' | 'problem_ready_backend_missing' | 'problem_ready_backend_configured';
     gates: Array<{ name: string; pass: boolean; detail: string }>;
   };
+  experiment: PennyLaneBraketManifest;
 }
 
 const DEFAULT_MAX_CANDIDATES = 12;
@@ -67,6 +73,16 @@ export function buildGbsReadinessProblem(input: QuantumReadinessInput): QuantumR
   const baseline = solveBaseline(nodes, edges);
   const possibleEdges = nodes.length > 1 ? (nodes.length * (nodes.length - 1)) / 2 : 0;
   const density = possibleEdges === 0 ? 0 : round(edges.length / possibleEdges);
+  const experiment = createPennyLaneBraketManifest(
+    toWeightedCliqueProblem(nodes, edges),
+    {
+      enabled: process.env.VETIOS_QUANTUM_BACKEND === 'pennylane_braket',
+      deviceArn: process.env.PENNYLANE_BRAKET_DEVICE_ARN,
+      region: process.env.AWS_REGION ?? process.env.AWS_DEFAULT_REGION,
+      s3Bucket: process.env.BRAKET_S3_BUCKET,
+      shots: parsePositiveInteger(process.env.PENNYLANE_BRAKET_SHOTS),
+    },
+  );
 
   const gates = [
     {
@@ -85,24 +101,52 @@ export function buildGbsReadinessProblem(input: QuantumReadinessInput): QuantumR
     },
     {
       name: 'quantum_backend',
-      pass: false,
-      detail: 'No PennyLane, AWS Braket, or Jiuzhang backend is configured; returning the local classical baseline.',
+      pass: experiment.status === 'backend_ready',
+      detail: experiment.status === 'backend_ready'
+        ? 'PennyLane/AWS Braket backend is configured; manifest is ready for the research runner.'
+        : 'No PennyLane/AWS Braket backend is configured; returning the local classical baseline and manifest.',
     },
   ];
+
+  const problemReady = nodes.length > 0 && edges.length > 0;
 
   return {
     problem_type: 'maximum_weighted_clique',
     hardware_target: 'gbs_compatible',
     backend: 'classical_baseline',
-    quantum_backend: 'not_configured',
+    quantum_backend: experiment.status === 'backend_ready' ? 'pennylane_aws_braket' : 'not_configured',
     graph: { nodes, edges, density },
     baseline_solution: baseline,
     readiness: {
-      status: nodes.length > 0 && edges.length > 0
-        ? 'problem_ready_backend_missing'
-        : 'insufficient_graph_signal',
+      status: !problemReady
+        ? 'insufficient_graph_signal'
+        : experiment.status === 'backend_ready'
+          ? 'problem_ready_backend_configured'
+          : 'problem_ready_backend_missing',
       gates,
     },
+    experiment,
+  };
+}
+
+function toWeightedCliqueProblem(
+  nodes: QuantumReadinessNode[],
+  edges: QuantumReadinessEdge[],
+): WeightedCliqueProblem {
+  return {
+    id: 'vetios_vkg_differential_ranking',
+    problem_type: 'maximum_weighted_clique',
+    nodes: nodes.map((node) => ({
+      id: node.id,
+      label: node.label,
+      weight: node.score,
+    })),
+    edges: edges.map((edge) => ({
+      from: edge.from,
+      to: edge.to,
+      weight: edge.weight,
+      reasons: edge.reasons,
+    })),
   };
 }
 
@@ -224,6 +268,12 @@ function intersection(left: string[], right: string[]): string[] {
 function clampInteger(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
 function round(value: number): number {

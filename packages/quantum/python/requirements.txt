@@ -1,0 +1,3 @@
+pennylane
+amazon-braket-pennylane-plugin
+amazon-braket-sdk

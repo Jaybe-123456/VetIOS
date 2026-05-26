@@ -10,8 +10,8 @@ export const dynamic = 'force-dynamic';
  * POST /api/quantum/readiness
  *
  * Prepares the existing VKG differential candidates as a GBS-compatible
- * maximum weighted clique problem. This does not call Jiuzhang, PennyLane,
- * or any external quantum backend.
+ * maximum weighted clique problem plus a PennyLane/AWS Braket experiment
+ * manifest. This does not call Jiuzhang, PennyLane, or any external backend.
  */
 export async function POST(req: Request) {
   const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
