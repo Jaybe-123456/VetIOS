@@ -1,8 +1,11 @@
 {
   "framework": "nextjs",
   "buildCommand": "pnpm --workspace-root run build --filter=@vetios/web",
-  "outputDirectory": ".next",
+  "outputDirectory": "apps/web/.next",
   "functions": {
+    "apps/web/app/api/**": {
+      "maxDuration": 60
+    },
     "app/api/**": {
       "maxDuration": 60
     }
@@ -18,7 +21,7 @@
     },
     {
       "path": "/api/cron/outbox-flush",
-      "schedule": "15 0 * * *"
+      "schedule": "*/1 * * * *"
     },
     {
       "path": "/api/cron/active-learning-sweep",

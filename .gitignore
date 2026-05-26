@@ -28,6 +28,7 @@ Thumbs.db
 # Supabase
 infra/supabase/.temp/
 supabase_env*.txt
+*_env*.txt
 supabase_start*.txt
 supabase_restart.txt
 supabase_status.txt
@@ -39,6 +40,8 @@ supabase_status.txt
 !docs/**/*.txt
 !requirements.txt
 supabase_*.txt
+build-results.txt
+test-results.txt
 *_results.txt
 check.html
 simulator.html

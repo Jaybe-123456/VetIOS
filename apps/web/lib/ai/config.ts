@@ -11,7 +11,7 @@ export function getAiProviderBaseUrl(): string {
 }
 
 export function getAiProviderName(): string {
-    return process.env.AI_PROVIDER_NAME || 'openai';
+    return process.env.AI_PRIMARY_PROVIDER || process.env.AI_PROVIDER_NAME || 'openai';
 }
 
 export function getAiProviderDefaultModel(fallback = 'gpt-4o-mini'): string {

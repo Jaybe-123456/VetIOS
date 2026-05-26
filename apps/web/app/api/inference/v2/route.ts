@@ -370,16 +370,24 @@ export async function POST(req: Request) {
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'V2 inference failed.';
         const isTimeout = errorMessage === 'AI_TIMEOUT';
+        const isUnavailable = isTimeout || isInferenceUnavailableError(error);
 
         const response = NextResponse.json(
-            {
-                error: isTimeout
-                    ? 'Inference timed out. The model did not respond within the allowed window.'
-                    : errorMessage,
-                request_id: requestId,
-            },
-            { status: isTimeout ? 504 : 500 },
+            isUnavailable
+                ? {
+                    error: 'inference_unavailable',
+                    message: 'AI provider unavailable. Please retry.',
+                    request_id: requestId,
+                }
+                : {
+                    error: errorMessage,
+                    request_id: requestId,
+                },
+            { status: isUnavailable ? 503 : 500 },
         );
+        if (isUnavailable) {
+            response.headers.set('Retry-After', '5');
+        }
 
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
@@ -398,4 +406,24 @@ function readNumber(value: unknown): number | null {
 function clampProbability(value: number): number {
     if (!Number.isFinite(value)) return 0;
     return Number(Math.min(1, Math.max(0, value)).toFixed(4));
+}
+
+function isInferenceUnavailableError(error: unknown): boolean {
+    const record = typeof error === 'object' && error !== null ? error as Record<string, unknown> : {};
+    const name = typeof record.name === 'string' ? record.name : null;
+    const code = typeof record.errorCode === 'string'
+        ? record.errorCode
+        : typeof record.error_code === 'string'
+            ? record.error_code
+            : null;
+    const message = error instanceof Error
+        ? error.message
+        : typeof record.message === 'string'
+            ? record.message
+            : '';
+
+    return code === 'inference_unavailable'
+        || name === 'AiProviderUnavailableError'
+        || name === 'AiProviderTimeoutError'
+        || /AI provider .*timed out/i.test(message);
 }

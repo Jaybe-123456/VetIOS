@@ -277,6 +277,35 @@ export async function POST(req: Request) {
             return retryAfterResponse({ requestId, errorCode: error.errorCode, detail: error.message });
         }
 
+        if (isInferenceUnavailableError(error)) {
+            await recordFailedInferenceTelemetry({
+                supabase,
+                tenantId,
+                requestId,
+                startTime,
+                modelVersion: parsed.data.model.version,
+                errorCode: 'inference_unavailable',
+            });
+            logApiCompleted({
+                event: 'inference.completed',
+                route: '/api/inference',
+                tenantId,
+                requestId,
+                startTime,
+                error: 'inference_unavailable',
+            });
+            const response = NextResponse.json(
+                {
+                    error: 'inference_unavailable',
+                    message: 'AI provider unavailable. Please retry.',
+                    request_id: requestId,
+                },
+                { status: 503 },
+            );
+            response.headers.set('Retry-After', '5');
+            return response;
+        }
+
         const message = error instanceof Error ? error.message : 'Unknown model error';
         await recordFailedInferenceTelemetry({
             supabase,
@@ -550,6 +579,20 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function isInferenceUnavailableError(error: unknown): boolean {
+    const record = asCoreRecord(error);
+    const name = readString(record.name);
+    const code = readString(record.errorCode) ?? readString(record.error_code);
+    const message = error instanceof Error
+        ? error.message
+        : readString(record.message) ?? '';
+
+    return code === 'inference_unavailable'
+        || name === 'AiProviderUnavailableError'
+        || name === 'AiProviderTimeoutError'
+        || /AI_TIMEOUT|AI provider .*timed out/i.test(message);
 }
 
 function formatZodErrors(error: z.ZodError): string {
