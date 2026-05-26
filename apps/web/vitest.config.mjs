@@ -8,6 +8,7 @@ export default defineConfig({
     resolve: {
         alias: {
             '@': rootDir,
+            '@vetios/graph': path.resolve(rootDir, '../../packages/graph/src/index.ts'),
         },
     },
     test: {

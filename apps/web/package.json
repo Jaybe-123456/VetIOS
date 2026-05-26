@@ -39,6 +39,7 @@
         "@vetios/ask-vetios": "workspace:*",
         "@vetios/cire-engine": "workspace:*",
         "@vetios/gaas": "workspace:*",
+        "@vetios/graph": "workspace:*",
         "@vetios/inference-schema": "workspace:*",
         "@vetios/pharmacos": "workspace:*",
         "@vetios/quantum": "workspace:*",

@@ -69,6 +69,9 @@ importers:
       '@vetios/gaas':
         specifier: workspace:*
         version: link:../../packages/gaas
+      '@vetios/graph':
+        specifier: workspace:*
+        version: link:../../packages/graph
       '@vetios/inference-schema':
         specifier: workspace:*
         version: link:../../packages/inference-schema
@@ -332,6 +335,18 @@ importers:
         version: 5.9.3
 
   packages/quantum:
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.33
+      '@vetios/tsconfig':
+        specifier: workspace:*
+        version: link:../tsconfig
+      typescript:
+        specifier: '>=5.7.0 <6.0.0'
+        version: 5.9.3
+
+  packages/graph:
     devDependencies:
       '@types/node':
         specifier: ^20.0.0

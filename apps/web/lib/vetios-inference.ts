@@ -208,6 +208,7 @@ export function buildDiagnosticPrompt(inputSignature: InputSignature): string {
     const metadata = asRecord(inputSignature.metadata);
     const labs = asRecord(metadata.labs);
     const ageYears = readNumber(metadata.age_years);
+    const graphPriorBlock = formatGraphPriorBlock(metadata.graph_priors);
 
     return [
         'You are a veterinary diagnostic AI. Given the clinical input below, return ONLY a JSON object with this exact shape:',
@@ -219,7 +220,25 @@ export function buildDiagnosticPrompt(inputSignature: InputSignature): string {
         `Symptoms: ${inputSignature.symptoms.join(', ')}`,
         `Labs: ${Object.keys(labs).length > 0 ? JSON.stringify(labs) : 'none'}`,
         `Age: ${ageYears ?? 'unknown'} years`,
-    ].join('\n');
+        graphPriorBlock ? `Veterinary knowledge graph priors: ${graphPriorBlock}` : null,
+    ].filter((line): line is string => line != null).join('\n');
+}
+
+function formatGraphPriorBlock(value: unknown): string | null {
+    if (!Array.isArray(value) || value.length === 0) return null;
+
+    const priors = value
+        .map((entry) => {
+            const record = asRecord(entry);
+            const label = readText(record.display_name) ?? readText(record.label);
+            const score = readNumber(record.score);
+            if (!label || score == null) return null;
+            return `${label} (${score})`;
+        })
+        .filter((entry): entry is string => entry != null)
+        .slice(0, 5);
+
+    return priors.length > 0 ? priors.join(', ') : null;
 }
 
 export function parseModelOutput(modelOutputText: string): ModelOutput {

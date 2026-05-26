@@ -5,6 +5,7 @@ import { resolveClinicalApiActor, type ClinicalApiActor } from '@/lib/auth/machi
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { checkRateLimit } from '@/lib/inference-rate-limit';
 import { runInference } from '@/lib/vetios-inference';
+import { enrichInputWithGraphPriors } from '@/lib/graph/inferencePriors';
 import { safeJson } from '@/lib/http/safeJson';
 import { recordInferenceObservability } from '@/lib/telemetry/observability';
 import {
@@ -203,12 +204,17 @@ export async function POST(req: Request) {
             );
         }
 
+        const enrichedInputSignature = await enrichInputWithGraphPriors(
+            supabase,
+            parsed.data.input.input_signature as InputSignature,
+        );
+
         const result = await runInference({
             tenantId,
             requestId,
             supabase,
             model: parsed.data.model,
-            inputSignature: parsed.data.input.input_signature as InputSignature,
+            inputSignature: enrichedInputSignature,
             persist: true,
             userId: auth.actor.userId,
             sourceModule: simulationContext.simulationId ? 'simulation_api' : 'clinical_api',

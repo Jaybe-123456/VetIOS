@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
+import { enrichInputWithGraphPriors } from '@/lib/graph/inferencePriors';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
@@ -235,11 +236,13 @@ export async function POST(req: Request) {
 
     // Map V2 payload to the existing V1 input signature.
 
-    const v1InputSignature = mapV2ToV1InputSignature(payload, structuredText, crossPanelPrompt);
+    let v1InputSignature = mapV2ToV1InputSignature(payload, structuredText, crossPanelPrompt);
 
     if (ragCtx?.promptContext) {
         (v1InputSignature.metadata as Record<string, unknown>).rag_context = ragCtx.promptContext;
     }
+
+    v1InputSignature = await enrichInputWithGraphPriors(supabase, v1InputSignature);
 
     // Execute inference pipeline.
 

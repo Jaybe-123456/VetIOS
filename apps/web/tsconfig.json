@@ -38,6 +38,9 @@
       ],
       "@vetios/pharmacos": [
         "../../packages/pharmacos/src/index.ts"
+      ],
+      "@vetios/graph": [
+        "../../packages/graph/src/index.ts"
       ]
     },
     "allowArbitraryExtensions": true
