@@ -94,7 +94,7 @@ function mapV2ToV1InputSignature(
             structured_input_text: structuredText,
             cross_panel_prompt: crossPanelPrompt,
             sex: patient.sex,
-            age_years: patient.age_years,
+            age_years: patient.age_years ?? undefined,
             medications: encounter.history.medications,
             duration_days: encounter.history.duration_days,
             encounter_id: payload.metadata.encounter_id,
