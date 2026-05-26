@@ -12,6 +12,7 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runInferencePipeline } from '@/lib/ai/inferenceOrchestrator';
 import { logInference } from '@/lib/logging/inferenceLogger';
 import { enrichInputWithGraphPriors } from '@/lib/graph/inferencePriors';
+import type { InputSignature } from '@/lib/vetios-inference';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
@@ -55,7 +56,7 @@ function mapV2ToV1InputSignature(
     payload: EncounterPayloadV2,
     structuredText: string,
     crossPanelPrompt: string,
-) {
+): InputSignature {
     const { patient, encounter } = payload;
 
     const diagnosticTests = panelsToDiagnosticTests(payload.active_system_panels);
