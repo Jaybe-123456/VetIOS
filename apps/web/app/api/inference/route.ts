@@ -6,6 +6,7 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 import { checkRateLimit } from '@/lib/inference-rate-limit';
 import { runInference } from '@/lib/vetios-inference';
 import { enrichInputWithGraphPriors } from '@/lib/graph/inferencePriors';
+import { runOptionalQuantumRanking } from '@/lib/quantum/inferenceRanking';
 import { safeJson } from '@/lib/http/safeJson';
 import { recordInferenceObservability } from '@/lib/telemetry/observability';
 import {
@@ -44,6 +45,7 @@ const InferenceRequestSchema = z.object({
             metadata: z.record(z.string(), z.unknown()).optional(),
         }).passthrough(),
     }),
+    use_quantum: z.boolean().optional(),
 });
 
 export async function GET(req: Request) {
@@ -208,6 +210,10 @@ export async function POST(req: Request) {
             supabase,
             parsed.data.input.input_signature as InputSignature,
         );
+        const quantumRanking = await runOptionalQuantumRanking({
+            enabledByRequest: parsed.data.use_quantum === true,
+            inputSignature: enrichedInputSignature,
+        });
 
         const result = await runInference({
             tenantId,
@@ -223,6 +229,8 @@ export async function POST(req: Request) {
             simulationAgentIndex: simulationContext.agentIndex,
             simulationRequestIndex: simulationContext.requestIndex,
             parentInferenceEventId: simulationContext.parentInferenceEventId,
+            ranker: quantumRanking.ranker,
+            quantumResult: quantumRanking.quantumResult,
         });
 
         const response = NextResponse.json({
@@ -235,6 +243,8 @@ export async function POST(req: Request) {
             output_payload: result.output_payload,
             latency_ms: result.latency_ms,
             cire: result.cire,
+            ranker: result.ranker,
+            quantum_result: result.quantum_result,
             meta: result.meta,
             error: null,
         });
@@ -438,7 +448,7 @@ async function loadCachedInferenceEvent(
 ) {
     return supabase
         .from('ai_inference_events')
-        .select('id, case_id, tenant_id, request_id, prompt_template_hash, prompt_template_version, schema_version, phi_hat, output_payload, confidence_score, inference_latency_ms, created_at')
+        .select('id, case_id, tenant_id, request_id, prompt_template_hash, prompt_template_version, schema_version, phi_hat, output_payload, confidence_score, inference_latency_ms, ranker, quantum_result, created_at')
         .eq('tenant_id', tenantId)
         .eq('request_id', requestId)
         .maybeSingle();
@@ -471,6 +481,8 @@ function buildCachedInferencePayload(row: Record<string, unknown>, requestId: st
         output_payload: outputPayload,
         latency_ms: readNumber(row.inference_latency_ms) ?? 0,
         cire: Object.keys(cire).length > 0 ? cire : outputCire,
+        ranker: readString(row.ranker) ?? readString(outputPayload.ranker) ?? 'classical',
+        quantum_result: row.quantum_result ?? outputPayload.quantum_result ?? null,
         meta: {
             tenant_id: readString(row.tenant_id),
             request_id: requestId,

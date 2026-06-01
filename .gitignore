@@ -36,6 +36,10 @@ supabase_status.txt
 # Logs
 *.log
 
+# Python
+__pycache__/
+*.py[cod]
+
 *.txt
 !docs/**/*.txt
 !requirements.txt

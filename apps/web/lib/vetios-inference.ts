@@ -14,6 +14,7 @@ import {
     INFERENCE_SCHEMA_VERSION,
     computePromptTemplateHash,
 } from '@/lib/inference/lineage';
+import type { InferenceRanker, QuantumInferenceResult } from '@/lib/quantum/inferenceRanking';
 
 export interface InputSignature {
     species: string;
@@ -48,6 +49,8 @@ export interface RunInferenceOptions {
     simulationAgentIndex?: number | null;
     simulationRequestIndex?: number | null;
     parentInferenceEventId?: string | null;
+    ranker?: InferenceRanker;
+    quantumResult?: QuantumInferenceResult | null;
 }
 
 export interface RunInferenceResult {
@@ -64,6 +67,8 @@ export interface RunInferenceResult {
     };
     output_payload: Record<string, unknown>;
     latency_ms: number;
+    ranker: InferenceRanker;
+    quantum_result: QuantumInferenceResult | null;
 }
 
 interface ModelOutput {
@@ -84,6 +89,10 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
     const confidenceScore = calibratedDifferentials[0]?.p
         ?? clampProbability(clinicalOutput.confidence);
     const outputPayload = buildOutputPayload(calibratedDifferentials, confidenceScore, cire, clinicalOutput);
+    const ranker = options.ranker ?? 'classical';
+    const quantumResult = options.quantumResult ?? null;
+    outputPayload.ranker = ranker;
+    outputPayload.quantum_result = quantumResult;
     await attachVisionInferenceIfPresent(outputPayload, options);
     const latencyMs = Date.now() - startTime;
     const persistenceResult = options.persist === false
@@ -107,6 +116,8 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
             simulationAgentIndex: options.simulationAgentIndex,
             simulationRequestIndex: options.simulationRequestIndex,
             parentInferenceEventId: options.parentInferenceEventId,
+            ranker,
+            quantumResult,
         });
 
     return {
@@ -123,6 +134,8 @@ export async function runInference(options: RunInferenceOptions): Promise<RunInf
         },
         output_payload: outputPayload,
         latency_ms: latencyMs,
+        ranker,
+        quantum_result: quantumResult,
     };
 }
 
@@ -324,6 +337,8 @@ async function persistInferenceEvent(
         simulationAgentIndex?: number | null;
         simulationRequestIndex?: number | null;
         parentInferenceEventId?: string | null;
+        ranker: InferenceRanker;
+        quantumResult: QuantumInferenceResult | null;
     },
 ): Promise<{ inferenceEventId: string; clinicalCaseId: string | null }> {
     const observedAt = new Date().toISOString();
@@ -386,6 +401,8 @@ async function persistInferenceEvent(
         contradiction_score: contradictionScore,
         region: readText(input.inputSignature.region) ?? readText(metadata.region) ?? readText(metadata.region_code),
         parent_inference_event_id: input.parentInferenceEventId ?? readText(metadata.parent_inference_event_id),
+        ranker: input.ranker,
+        quantum_result: input.quantumResult,
     };
 
     if (simulationId) {
@@ -435,6 +452,8 @@ const OPTIONAL_INFERENCE_COLUMNS = [
     'contradiction_score',
     'region',
     'parent_inference_event_id',
+    'ranker',
+    'quantum_result',
     'simulation_id',
     'is_synthetic',
     'simulation_agent_index',

@@ -51,6 +51,7 @@ function attachGraphPriors(inputSignature: InputSignature, result: GraphQueryRes
         metadata: {
             ...inputSignature.metadata,
             graph_priors: result.matched_diseases.slice(0, 5).map((disease) => ({
+                id: disease.id,
                 label: disease.label,
                 display_name: disease.display_name,
                 score: disease.score,

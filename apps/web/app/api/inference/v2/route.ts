@@ -302,6 +302,8 @@ export async function POST(req: Request) {
             ?? 0);
         const outputPayload = {
             ...inferenceResult.output_payload,
+            ranker: 'classical',
+            quantum_result: null,
             governance_lineage: {
                 prompt_template_hash: computePromptTemplateHash(),
                 prompt_template_version: DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
@@ -364,6 +366,8 @@ export async function POST(req: Request) {
             species: payload.patient.species,
             confidence_score: inferenceResult.confidence_score ?? null,
             cire: cirePayload,
+            ranker: 'classical',
+            quantum_result: null,
             latency_ms: latencyMs,
             schema_version: 'v2',
             request_id: requestId,
