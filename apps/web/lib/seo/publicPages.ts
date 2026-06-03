@@ -1,9 +1,15 @@
 export const PUBLIC_SEO_PAGES = [
     {
         path: '/',
-        title: 'VetIOS - AI Infrastructure for Veterinary Intelligence',
+        title: 'VetIOS | AI-Native Veterinary Intelligence Infrastructure',
         description: 'Closed-loop veterinary AI infrastructure for inference, outcome learning, simulation, observability, and quantum-ready clinical intelligence.',
         priority: 1,
+    },
+    {
+        path: '/about',
+        title: 'About VetIOS',
+        description: 'Learn what VetIOS is: AI-native veterinary intelligence infrastructure for inference, outcomes, graph intelligence, simulation, and AMR research.',
+        priority: 0.92,
     },
     {
         path: '/veterinary-ai',

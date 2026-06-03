@@ -5,7 +5,7 @@ import { getPublicEvidenceSnapshot } from '@/lib/platform/publicEvidenceSnapshot
 import { getConfiguredSiteOrigin } from '@/lib/site';
 
 export const metadata: Metadata = {
-    title: 'VetIOS - AI Infrastructure for Veterinary Intelligence',
+    title: 'VetIOS | AI-Native Veterinary Intelligence Infrastructure',
     description: 'A closed-loop veterinary AI platform for inference, outcome learning, simulation, observability, graph intelligence, and quantum-ready AMR research.',
     alternates: { canonical: '/' },
     keywords: [
@@ -17,7 +17,7 @@ export const metadata: Metadata = {
         'AMR veterinary surveillance',
     ],
     openGraph: {
-        title: 'VetIOS - AI Infrastructure for Veterinary Intelligence',
+        title: 'VetIOS | AI-Native Veterinary Intelligence Infrastructure',
         description: 'Closed-loop veterinary AI infrastructure for inference, outcome learning, simulation, graph intelligence, and quantum-ready AMR research.',
         url: '/',
         siteName: 'VetIOS',
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
     },
     twitter: {
         card: 'summary_large_image',
-        title: 'VetIOS - AI Infrastructure for Veterinary Intelligence',
+        title: 'VetIOS | AI-Native Veterinary Intelligence Infrastructure',
         description: 'Closed-loop veterinary AI infrastructure for inference, outcome learning, simulation, graph intelligence, and quantum-ready AMR research.',
         images: ['/opengraph-image'],
     },
@@ -42,6 +42,7 @@ export const metadata: Metadata = {
 export default async function Page() {
     const evidenceSnapshot = await getPublicEvidenceSnapshot();
     const siteOrigin = getConfiguredSiteOrigin();
+    const siteUrl = siteOrigin ?? 'https://www.vetios.tech';
 
     return (
         <>
@@ -50,23 +51,34 @@ export default async function Page() {
                     {
                         '@context': 'https://schema.org',
                         '@type': 'Organization',
+                        '@id': `${siteUrl}/#organization`,
                         name: 'VetIOS',
-                        url: siteOrigin ?? 'https://www.vetios.tech',
-                        description: 'Veterinary AI infrastructure for clinical inference, outcome learning, simulation, and quantum-ready research.',
+                        alternateName: 'AI-Native Veterinary Intelligence Infrastructure',
+                        url: siteUrl,
+                        logo: `${siteUrl}/icon.svg`,
+                        image: `${siteUrl}/opengraph-image`,
+                        sameAs: ['https://github.com/Jaybe-123456/VetIOS'],
+                        description: 'VetIOS is AI-native veterinary intelligence infrastructure for clinical inference, outcome learning, simulation, graph intelligence, and quantum-ready AMR research.',
                     },
                     {
                         '@context': 'https://schema.org',
                         '@type': 'WebSite',
+                        '@id': `${siteUrl}/#website`,
                         name: 'VetIOS',
-                        url: siteOrigin ?? 'https://www.vetios.tech',
+                        url: siteUrl,
+                        publisher: { '@id': `${siteUrl}/#organization` },
+                        about: { '@id': `${siteUrl}/about#about` },
                     },
                     {
                         '@context': 'https://schema.org',
                         '@type': 'SoftwareApplication',
+                        '@id': `${siteUrl}/#software`,
                         name: 'VetIOS',
                         applicationCategory: 'Veterinary AI Software',
                         operatingSystem: 'Web',
-                        url: siteOrigin ?? 'https://www.vetios.tech',
+                        url: siteUrl,
+                        brand: { '@id': `${siteUrl}/#organization` },
+                        publisher: { '@id': `${siteUrl}/#organization` },
                         description: 'Closed-loop veterinary AI infrastructure for inference, outcome learning, simulation, graph intelligence, and AMR research.',
                     },
                 ]}

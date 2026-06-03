@@ -26,7 +26,7 @@ export const metadata: Metadata = {
   metadataBase: siteOrigin ? new URL(siteOrigin) : undefined,
   applicationName: 'VetIOS',
   title: {
-    default: 'VetIOS - Veterinary AI Infrastructure',
+    default: 'VetIOS | AI-Native Veterinary Intelligence Infrastructure',
     template: '%s | VetIOS',
   },
   description:
@@ -52,7 +52,7 @@ export const metadata: Metadata = {
         type: 'website',
         url: siteOrigin,
         siteName: 'VetIOS',
-        title: 'VetIOS - Veterinary AI Infrastructure',
+        title: 'VetIOS | AI-Native Veterinary Intelligence Infrastructure',
         description:
           'Closed-loop veterinary AI infrastructure for inference, outcome learning, simulation, graph intelligence, and quantum-ready AMR research.',
         images: [ogImage],
@@ -60,7 +60,7 @@ export const metadata: Metadata = {
     : undefined,
   twitter: {
     card: 'summary_large_image',
-    title: 'VetIOS - Veterinary AI Infrastructure',
+    title: 'VetIOS | AI-Native Veterinary Intelligence Infrastructure',
     description:
       'Closed-loop veterinary AI infrastructure for clinical inference, outcome learning, simulation, and quantum-ready research.',
     images: [ogImage.url],

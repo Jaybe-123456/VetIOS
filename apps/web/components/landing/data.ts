@@ -187,11 +187,12 @@ export const endpointCards = [
 ] as const;
 
 export const footerLinks = [
-    { label: 'Docs', href: '/platform' },
+    { label: 'About', href: '/about' },
+    { label: 'Docs', href: '/docs' },
     { label: 'Privacy', href: '/privacy' },
     { label: 'Terms', href: '/terms' },
-    { label: 'Support', href: 'mailto:johnbruce12g@gmail.com' },
-    { label: 'Contact', href: 'mailto:platform@vetios.tech' },
+    { label: 'Support', href: '/support' },
+    { label: 'Contact', href: '/contact' },
 ] as const;
 
 export const networkPoints = [
