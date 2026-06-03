@@ -15,23 +15,7 @@ export default function robots(): MetadataRoute.Robots {
         rules: {
             userAgent: '*',
             allow: '/',
-            disallow: [
-                '/login',
-                '/signup',
-                '/forgot-password',
-                '/reset-password',
-                '/auth/callback',
-                '/dashboard',
-                '/cases',
-                '/settings',
-                '/outbox',
-                '/telemetry',
-                '/experiments',
-                '/models',
-                '/rag',
-                '/intelligence',
-                '/api/',
-            ],
+            disallow: ['/api/'],
         },
         sitemap: getConfiguredSiteOrigin()
             ? new URL('/sitemap.xml', getConfiguredSiteOrigin()!).toString()
