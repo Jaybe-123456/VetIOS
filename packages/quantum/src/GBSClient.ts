@@ -2,6 +2,8 @@ export interface GBSRankRequest {
   nodes: Array<{ id: string; weight: number }>;
   edges: Array<{ source: string; target: string; weight: number }>;
   top_k?: number;
+  n_samples?: number;
+  n_iterations?: number;
 }
 
 export interface GBSRankResponse {
@@ -10,6 +12,8 @@ export interface GBSRankResponse {
   samples_used: number;
   backend: string;
   latency_ms: number;
+  classical_max_weight?: number;
+  quantum_advantage?: number;
 }
 
 export class GBSClient {

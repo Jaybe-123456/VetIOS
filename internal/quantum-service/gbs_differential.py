@@ -80,6 +80,7 @@ def run_gbs_clique_search(
 
 
 def _sample_with_strawberryfields(adjacency_matrix: np.ndarray, n_samples: int) -> List[List[int]]:
+    _patch_strawberryfields_runtime_compat()
     from strawberryfields.apps import sample
 
     scaled = rescale_for_gbs(adjacency_matrix)
@@ -88,6 +89,7 @@ def _sample_with_strawberryfields(adjacency_matrix: np.ndarray, n_samples: int) 
 
 
 def _postprocess_samples(adjacency_matrix: np.ndarray, samples: Sequence[Sequence[int]], n_iterations: int) -> List[List[int]]:
+    _patch_strawberryfields_runtime_compat()
     from strawberryfields.apps import clique
 
     cliques: List[List[int]] = []
@@ -111,6 +113,17 @@ def _to_networkx_graph(adjacency_matrix: np.ndarray):
         if adjacency_matrix[i, j] > 0:
             graph.add_edge(i, j, weight=float(adjacency_matrix[i, j]))
     return graph
+
+
+def _patch_strawberryfields_runtime_compat() -> None:
+    """Bridge dependency API drift for Strawberry Fields 0.23 on new Python stacks."""
+    try:
+        import scipy.integrate as integrate
+
+        if not hasattr(integrate, "simps") and hasattr(integrate, "simpson"):
+            integrate.simps = integrate.simpson
+    except Exception:
+        return
 
 
 def _exact_weighted_clique(adjacency_matrix: np.ndarray) -> List[int]:

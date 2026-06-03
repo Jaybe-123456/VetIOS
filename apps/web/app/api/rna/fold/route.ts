@@ -56,8 +56,8 @@ export async function POST(req: Request) {
             pathogen_label: normalizeLabel(parsed.data.pathogen_label),
             region: normalizeRegion(parsed.data.region) ?? undefined,
             reference_structure: parsed.data.reference_structure,
-            n_samples: 300,
-            n_iterations: 100,
+            n_samples: quantumSamples(),
+            n_iterations: quantumIterations(),
         });
     } catch (error) {
         console.log(JSON.stringify({
@@ -147,4 +147,14 @@ function normalizeRegion(value: string | undefined): string | null {
 function quantumTimeoutMs(): number {
     const parsed = Number(process.env.QUANTUM_SERVICE_TIMEOUT_MS);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 45_000;
+}
+
+function quantumSamples(): number {
+    const parsed = Number(process.env.QUANTUM_GBS_SAMPLES);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 20;
+}
+
+function quantumIterations(): number {
+    const parsed = Number(process.env.QUANTUM_GBS_ITERATIONS);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 5;
 }

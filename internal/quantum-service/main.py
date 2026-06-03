@@ -32,6 +32,8 @@ class GBSRankRequest(BaseModel):
     nodes: List[GraphNode]
     edges: List[GraphEdge]
     top_k: int = 5
+    n_samples: int = 20
+    n_iterations: int = 5
 
 
 class GBSRankResponse(BaseModel):
@@ -40,6 +42,8 @@ class GBSRankResponse(BaseModel):
     samples_used: int
     backend: str
     latency_ms: int
+    classical_max_weight: float
+    quantum_advantage: float
 
 
 class AMRScreenRequest(BaseModel):
@@ -74,8 +78,8 @@ class QIVSScreenRequest(BaseModel):
     pathogen_label: str
     tau_flexibility: float = 1.5
     epsilon_interaction: float = 0.5
-    n_samples: int = 300
-    n_iterations: int = 100
+    n_samples: int = 20
+    n_iterations: int = 5
     pharmacophores: Optional[PharmacophoreSet] = None
 
 
@@ -104,8 +108,8 @@ class RNAFoldRequest(BaseModel):
     pathogen_label: str
     region: Optional[str] = None
     reference_structure: Optional[str] = None
-    n_samples: int = 300
-    n_iterations: int = 100
+    n_samples: int = 20
+    n_iterations: int = 5
 
 
 class RNAFoldResponse(BaseModel):
@@ -140,6 +144,8 @@ async def rank_graph(request: GBSRankRequest):
     result = run_gbs_differential_search(
         node_ids=node_ids,
         adjacency_matrix=matrix,
+        n_samples=request.n_samples,
+        n_iterations=request.n_iterations,
         top_k=request.top_k,
     )
     return {
@@ -148,6 +154,8 @@ async def rank_graph(request: GBSRankRequest):
         "samples_used": result["samples_used"],
         "backend": result["backend"],
         "latency_ms": result["latency_ms"],
+        "classical_max_weight": result["classical_max_weight"],
+        "quantum_advantage": result["quantum_advantage"],
     }
 
 

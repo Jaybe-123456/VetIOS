@@ -86,8 +86,8 @@ export async function POST(req: Request) {
             pathogen_label: pathogenLabel,
             tau_flexibility: parsed.data.tau_flexibility ?? 1.5,
             epsilon_interaction: parsed.data.epsilon_interaction ?? 0.5,
-            n_samples: 300,
-            n_iterations: 100,
+            n_samples: quantumSamples(),
+            n_iterations: quantumIterations(),
             pharmacophores: parsed.data.pharmacophores as {
                 receptor: PharmacophoreInput[];
                 ligand: PharmacophoreInput[];
@@ -159,4 +159,14 @@ function normalizeLabel(value: string): string {
 function quantumTimeoutMs(): number {
     const parsed = Number(process.env.QUANTUM_SERVICE_TIMEOUT_MS);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 45_000;
+}
+
+function quantumSamples(): number {
+    const parsed = Number(process.env.QUANTUM_GBS_SAMPLES);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 20;
+}
+
+function quantumIterations(): number {
+    const parsed = Number(process.env.QUANTUM_GBS_ITERATIONS);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 5;
 }

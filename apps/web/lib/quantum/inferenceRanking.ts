@@ -137,7 +137,13 @@ export function buildAnonymizedGbsProblem(
     }
 
     return {
-        request: { nodes, edges, top_k: Math.min(5, nodes.length) },
+        request: {
+            nodes,
+            edges,
+            top_k: Math.min(5, nodes.length),
+            n_samples: readPositiveInt(process.env.QUANTUM_GBS_SAMPLES, 20),
+            n_iterations: readPositiveInt(process.env.QUANTUM_GBS_ITERATIONS, 5),
+        },
         mapping,
     };
 }
