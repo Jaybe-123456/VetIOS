@@ -6,6 +6,12 @@ import { getConfiguredSiteOrigin, shouldIndexSite } from '@/lib/site';
 
 const siteOrigin = getConfiguredSiteOrigin();
 const allowIndexing = shouldIndexSite();
+const ogImage = {
+  url: '/opengraph-image',
+  width: 1200,
+  height: 630,
+  alt: 'VetIOS veterinary AI infrastructure',
+};
 
 export const viewport = {
   width: 'device-width',
@@ -49,13 +55,15 @@ export const metadata: Metadata = {
         title: 'VetIOS - Veterinary AI Infrastructure',
         description:
           'Closed-loop veterinary AI infrastructure for inference, outcome learning, simulation, graph intelligence, and quantum-ready AMR research.',
+        images: [ogImage],
       }
     : undefined,
   twitter: {
-    card: 'summary',
+    card: 'summary_large_image',
     title: 'VetIOS - Veterinary AI Infrastructure',
     description:
       'Closed-loop veterinary AI infrastructure for clinical inference, outcome learning, simulation, and quantum-ready research.',
+    images: [ogImage.url],
   },
   robots: allowIndexing
     ? {

@@ -1,9 +1,17 @@
 import { PUBLIC_SEO_PATHS } from '@/lib/seo/publicPages';
 
+const DEFAULT_SITE_ORIGIN = 'https://www.vetios.tech';
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/auth/callback'];
 const PUBLIC_MARKETING_PATHS = [...PUBLIC_SEO_PATHS];
-const PUBLIC_METADATA_PATHS = ['/robots.txt', '/sitemap.xml', '/manifest.webmanifest', '/icon.svg'];
+const PUBLIC_METADATA_PATHS = [
+    '/robots.txt',
+    '/sitemap.xml',
+    '/manifest.webmanifest',
+    '/icon.svg',
+    '/opengraph-image',
+    '/google7e9947396223c1b9.html',
+];
 const PUBLIC_MARKETING_PATH_SET = new Set<string>(PUBLIC_MARKETING_PATHS);
 
 function normalizeConfiguredOrigin(value: string | null | undefined): string | null {
@@ -30,7 +38,7 @@ export function getConfiguredPublicSiteOrigin(): string | null {
 }
 
 export function getConfiguredSiteOrigin(): string | null {
-    return normalizeConfiguredOrigin(process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? null);
+    return normalizeConfiguredOrigin(process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL ?? DEFAULT_SITE_ORIGIN);
 }
 
 export function getConfiguredPublicSiteHost(): string | null {

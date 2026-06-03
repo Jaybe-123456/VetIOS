@@ -6,6 +6,19 @@ export const metadata: Metadata = {
     description: 'Quantum-ready veterinary AI using Gaussian boson sampling for graph ranking, QIVS screening, and AMR RNA folding research.',
     alternates: { canonical: '/quantum-veterinary-ai' },
     keywords: ['quantum veterinary AI', 'Gaussian boson sampling veterinary', 'QIVS veterinary drug discovery', 'AMR RNA folding'],
+    openGraph: {
+        title: 'Quantum Veterinary AI | VetIOS',
+        description: 'Quantum-ready veterinary AI using Gaussian boson sampling for graph ranking, QIVS screening, and AMR RNA folding research.',
+        url: '/quantum-veterinary-ai',
+        type: 'website',
+        images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'VetIOS quantum veterinary AI' }],
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: 'Quantum Veterinary AI | VetIOS',
+        description: 'Quantum-ready veterinary AI for graph ranking, QIVS screening, and AMR RNA folding research.',
+        images: ['/opengraph-image'],
+    },
 };
 
 export default function QuantumVeterinaryAIPage() {

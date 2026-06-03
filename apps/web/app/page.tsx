@@ -22,6 +22,20 @@ export const metadata: Metadata = {
         url: '/',
         siteName: 'VetIOS',
         type: 'website',
+        images: [
+            {
+                url: '/opengraph-image',
+                width: 1200,
+                height: 630,
+                alt: 'VetIOS veterinary AI infrastructure',
+            },
+        ],
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: 'VetIOS - AI Infrastructure for Veterinary Intelligence',
+        description: 'Closed-loop veterinary AI infrastructure for inference, outcome learning, simulation, graph intelligence, and quantum-ready AMR research.',
+        images: ['/opengraph-image'],
     },
 };
 

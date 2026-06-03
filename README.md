@@ -7,11 +7,19 @@
 [![Node.js](https://img.shields.io/badge/node-20.x-339933?logo=node.js&logoColor=white&style=flat-square)](.nvmrc)
 [![pnpm](https://img.shields.io/badge/pnpm-9.14.4-F69220?logo=pnpm&logoColor=white&style=flat-square)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-87%25-3178C6?logo=typescript&logoColor=white&style=flat-square)](package.json)
-[![Vercel](https://img.shields.io/badge/deploy-Vercel-000000?logo=vercel&style=flat-square)](https://vet-ios-web.vercel.app)
+[![Website](https://img.shields.io/badge/website-vetios.tech-6BF7CF?style=flat-square)](https://www.vetios.tech)
 
 VetIOS is a simulation-first, inference-driven platform for structured clinical intelligence and adaptive veterinary diagnostics. It replaces passive veterinary record systems with a computable graph of probabilistic diagnostic reasoning.
 
-**Live demo:** [vet-ios-web.vercel.app](https://vet-ios-web.vercel.app)
+Public links:
+
+- Official site: [vetios.tech](https://www.vetios.tech)
+- Live demo: [vetios.tech/demo](https://www.vetios.tech/demo)
+- Veterinary AI: [vetios.tech/veterinary-ai](https://www.vetios.tech/veterinary-ai)
+- Veterinary Diagnostic AI: [vetios.tech/veterinary-diagnostic-ai](https://www.vetios.tech/veterinary-diagnostic-ai)
+- Quantum Veterinary AI: [vetios.tech/quantum-veterinary-ai](https://www.vetios.tech/quantum-veterinary-ai)
+- Platform: [vetios.tech/platform](https://www.vetios.tech/platform)
+- Docs: [vetios.tech/docs](https://www.vetios.tech/docs)
 
 > **Project status:** Alpha. VetIOS is under active development and should be treated as clinical decision-support infrastructure, not a substitute for licensed veterinary judgment or regulated medical-device workflows.
 
@@ -398,7 +406,7 @@ The adversarial runner lives at [`internal/testing/test_adversarial_regressions.
 
 The web application is deployed to Vercel and designed for serverless scaling.
 
-- Production URL: [https://vet-ios-web.vercel.app](https://vet-ios-web.vercel.app)
+- Production URL: [https://www.vetios.tech](https://www.vetios.tech)
 - CI workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 - Deployment target: Vercel auto-deploy from `main`
 - Database/auth: Supabase PostgreSQL with RLS-backed tenant isolation
@@ -446,7 +454,7 @@ VetIOS is intended to be released under the [MIT License](LICENSE).
 
 ## Links
 
-- Live demo: [https://vet-ios-web.vercel.app](https://vet-ios-web.vercel.app)
+- Live demo: [https://www.vetios.tech/demo](https://www.vetios.tech/demo)
 - GitHub: [https://github.com/Jaybe-123456/VetIOS](https://github.com/Jaybe-123456/VetIOS)
 - License: [MIT](LICENSE)
-- Contact: [https://vet-ios-web.vercel.app/contact](https://vet-ios-web.vercel.app/contact)
+- Contact: [https://www.vetios.tech/contact](https://www.vetios.tech/contact)

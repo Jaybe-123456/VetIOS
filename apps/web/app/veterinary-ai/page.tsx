@@ -6,6 +6,19 @@ export const metadata: Metadata = {
     description: 'VetIOS is veterinary AI infrastructure for clinical inference, outcome learning, simulation, observability, and auditable decision support.',
     alternates: { canonical: '/veterinary-ai' },
     keywords: ['veterinary AI', 'AI veterinary platform', 'veterinary clinical intelligence', 'VetIOS'],
+    openGraph: {
+        title: 'Veterinary AI Platform | VetIOS',
+        description: 'VetIOS is veterinary AI infrastructure for clinical inference, outcome learning, simulation, observability, and auditable decision support.',
+        url: '/veterinary-ai',
+        type: 'website',
+        images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'VetIOS veterinary AI platform' }],
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: 'Veterinary AI Platform | VetIOS',
+        description: 'Veterinary AI infrastructure for clinical inference, outcome learning, simulation, and auditable decision support.',
+        images: ['/opengraph-image'],
+    },
 };
 
 export default function VeterinaryAIPage() {

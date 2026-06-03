@@ -6,6 +6,19 @@ export const metadata: Metadata = {
     description: 'AI-assisted veterinary differential diagnosis with graph priors, CIRE reliability signals, structured inputs, and outcome feedback.',
     alternates: { canonical: '/veterinary-diagnostic-ai' },
     keywords: ['veterinary diagnostic AI', 'AI differential diagnosis', 'veterinary diagnosis software', 'VetIOS'],
+    openGraph: {
+        title: 'Veterinary Diagnostic AI | VetIOS',
+        description: 'AI-assisted veterinary differential diagnosis with graph priors, CIRE reliability signals, structured inputs, and outcome feedback.',
+        url: '/veterinary-diagnostic-ai',
+        type: 'website',
+        images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'VetIOS veterinary diagnostic AI' }],
+    },
+    twitter: {
+        card: 'summary_large_image',
+        title: 'Veterinary Diagnostic AI | VetIOS',
+        description: 'Veterinary differential diagnosis with graph priors, CIRE reliability signals, structured inputs, and outcome feedback.',
+        images: ['/opengraph-image'],
+    },
 };
 
 export default function VeterinaryDiagnosticAIPage() {
