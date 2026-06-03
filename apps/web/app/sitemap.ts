@@ -1,13 +1,6 @@
 import type { MetadataRoute } from 'next';
 import { getConfiguredSiteOrigin } from '@/lib/site';
-
-const PUBLIC_PLATFORM_PATHS = [
-    '/',
-    '/platform',
-    '/developer',
-    '/signup',
-    '/login',
-] as const;
+import { PUBLIC_SEO_PAGES } from '@/lib/seo/publicPages';
 
 export default function sitemap(): MetadataRoute.Sitemap {
     const siteOrigin = getConfiguredSiteOrigin();
@@ -15,8 +8,10 @@ export default function sitemap(): MetadataRoute.Sitemap {
         return [];
     }
 
-    return PUBLIC_PLATFORM_PATHS.map((pathname) => ({
-        url: new URL(pathname, siteOrigin).toString(),
-        lastModified: new Date(),
+    return PUBLIC_SEO_PAGES.map((page) => ({
+        url: new URL(page.path, siteOrigin).toString(),
+        lastModified: new Date('2026-06-03T00:00:00.000Z'),
+        changeFrequency: page.path === '/' ? 'weekly' : 'monthly',
+        priority: page.priority,
     }));
 }

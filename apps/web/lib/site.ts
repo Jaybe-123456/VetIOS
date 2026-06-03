@@ -1,7 +1,10 @@
+import { PUBLIC_SEO_PATHS } from '@/lib/seo/publicPages';
+
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/auth/callback'];
-const PUBLIC_MARKETING_PATHS = ['/', '/demo', '/platform', '/privacy', '/terms', '/docs', '/support', '/contact'];
+const PUBLIC_MARKETING_PATHS = [...PUBLIC_SEO_PATHS];
 const PUBLIC_METADATA_PATHS = ['/robots.txt', '/sitemap.xml', '/manifest.webmanifest', '/icon.svg'];
+const PUBLIC_MARKETING_PATH_SET = new Set<string>(PUBLIC_MARKETING_PATHS);
 
 function normalizeConfiguredOrigin(value: string | null | undefined): string | null {
     const trimmed = value?.trim();
@@ -51,7 +54,7 @@ export function isPublicAuthPath(pathname: string): boolean {
 }
 
 export function isPublicMarketingPath(pathname: string): boolean {
-    return PUBLIC_MARKETING_PATHS.includes(pathname);
+    return PUBLIC_MARKETING_PATH_SET.has(pathname);
 }
 
 export function isPublicMetadataPath(pathname: string): boolean {
@@ -64,15 +67,7 @@ export function isPublicRoutePath(pathname: string): boolean {
 
 export function isShelllessPublicPath(pathname: string): boolean {
     return isPublicAuthPath(pathname)
-        || pathname === '/'
-        || pathname === '/demo'
-        || pathname === '/platform'
-        || pathname.startsWith('/platform/')
-        || pathname === '/privacy'
-        || pathname === '/terms'
-        || pathname === '/docs'
-        || pathname === '/support'
-        || pathname === '/contact';
+        || PUBLIC_SEO_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
 export function shouldRedirectPreviewAuthHost(hostname: string, pathname: string): boolean {

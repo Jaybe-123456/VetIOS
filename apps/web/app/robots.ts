@@ -1,5 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { shouldIndexSite } from '@/lib/site';
+import { getConfiguredSiteOrigin, shouldIndexSite } from '@/lib/site';
 
 export default function robots(): MetadataRoute.Robots {
     if (!shouldIndexSite()) {
@@ -21,9 +21,20 @@ export default function robots(): MetadataRoute.Robots {
                 '/forgot-password',
                 '/reset-password',
                 '/auth/callback',
-                '/platform',
+                '/dashboard',
+                '/cases',
+                '/settings',
+                '/outbox',
+                '/telemetry',
+                '/experiments',
+                '/models',
+                '/rag',
+                '/intelligence',
                 '/api/',
             ],
         },
+        sitemap: getConfiguredSiteOrigin()
+            ? new URL('/sitemap.xml', getConfiguredSiteOrigin()!).toString()
+            : undefined,
     };
 }

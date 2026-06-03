@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
     return {
         name: 'VetIOS',
         short_name: 'VetIOS',
-        description: 'VetIOS clinical intelligence console for veterinary teams.',
+        description: 'Veterinary AI infrastructure for clinical inference, outcome learning, simulation, and quantum-ready AMR research.',
         start_url: '/dashboard',
         display: 'standalone',
         background_color: '#050816',

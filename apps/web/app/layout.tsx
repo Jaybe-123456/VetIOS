@@ -20,13 +20,43 @@ export const metadata: Metadata = {
   metadataBase: siteOrigin ? new URL(siteOrigin) : undefined,
   applicationName: 'VetIOS',
   title: {
-    default: 'VetIOS',
+    default: 'VetIOS - Veterinary AI Infrastructure',
     template: '%s | VetIOS',
   },
   description:
-    'VetIOS clinical intelligence console for veterinary inference, triage, model operations, and outcome learning.',
+    'VetIOS is veterinary AI infrastructure for clinical inference, differential diagnosis, outcome learning, simulation, graph intelligence, and quantum-ready AMR research.',
+  keywords: [
+    'VetIOS',
+    'veterinary AI',
+    'veterinary diagnostic AI',
+    'AI veterinary platform',
+    'veterinary clinical intelligence',
+    'veterinary inference API',
+    'veterinary knowledge graph',
+    'quantum veterinary AI',
+    'AMR veterinary surveillance',
+  ],
   alternates: siteOrigin ? { canonical: '/' } : undefined,
+  creator: 'VetIOS',
+  publisher: 'VetIOS',
+  category: 'Veterinary artificial intelligence software',
   referrer: 'origin-when-cross-origin',
+  openGraph: siteOrigin
+    ? {
+        type: 'website',
+        url: siteOrigin,
+        siteName: 'VetIOS',
+        title: 'VetIOS - Veterinary AI Infrastructure',
+        description:
+          'Closed-loop veterinary AI infrastructure for inference, outcome learning, simulation, graph intelligence, and quantum-ready AMR research.',
+      }
+    : undefined,
+  twitter: {
+    card: 'summary',
+    title: 'VetIOS - Veterinary AI Infrastructure',
+    description:
+      'Closed-loop veterinary AI infrastructure for clinical inference, outcome learning, simulation, and quantum-ready research.',
+  },
   robots: allowIndexing
     ? {
         index: true,
