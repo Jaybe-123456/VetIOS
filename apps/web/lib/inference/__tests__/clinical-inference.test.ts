@@ -101,6 +101,47 @@ describe('clinical inference engine deep upgrade', () => {
         ).toBeLessThan(0.02);
     });
 
+    it('applies a hard species gate before scoring and hides feline-only pathway scores in canine output', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            symptom_vector: ['cough', 'runny nose', 'crackles'],
+            history: {
+                owner_observations: ['No vomiting or diarrhea reported at home.'],
+            },
+        });
+
+        expect(result.species_validation.canonical_species).toBe('canine');
+        expect(result.species_validation.eligible_species).toEqual(['canine']);
+        expect(Object.keys(result.cluster_scores)).not.toContain('feline_upper_respiratory');
+        expect(result.differentials.every((entry) => !entry.condition.toLowerCase().includes('feline'))).toBe(true);
+        expect(result.clinical_intelligence.species_validation.excluded_species).toContain('feline');
+    });
+
+    it('returns clinical intelligence sections for pathway reasoning, calibration, and information gain', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            symptom_vector: ['vomiting', 'lethargy'],
+            history: {
+                owner_observations: ['No abdominal distension observed.'],
+            },
+        });
+
+        const top = result.differentials[0];
+
+        expect(result.clinical_intelligence.pathway_analysis.length).toBeGreaterThan(0);
+        expect(result.clinical_intelligence.mechanism_analysis.length).toBeGreaterThan(0);
+        expect(top?.probability_interval).toBeTruthy();
+        expect(typeof top?.evidence_density).toBe('number');
+        expect(Array.isArray(top?.missing_evidence)).toBe(true);
+        expect(result.reliability_breakdown.composite_reliability_score).toBeGreaterThanOrEqual(0);
+        expect(
+            result.information_gain_engine.next_best_questions.length
+            + result.information_gain_engine.next_best_tests.length,
+        ).toBeGreaterThan(0);
+        expect(result.explainability_report.join(' ')).toContain('Species was resolved');
+        expect(result.causal_memory_update.event).toBe('awaiting_outcome_validation');
+    });
+
     it('routes a cat upper-airway syndrome to FURDC instead of lower-airway disease', () => {
         const result = runClinicalInferenceEngine({
             species: 'cat',
@@ -372,6 +413,9 @@ describe('clinical inference engine deep upgrade', () => {
 
         expect(result.output_payload.inference_engine).toBe('clinical_deterministic_multisystem_v1');
         expect(result.output_payload.multisystem_assessment).toBeTruthy();
+        expect(result.output_payload.species_validation).toMatchObject({ canonical_species: 'canine' });
+        expect(result.output_payload.clinical_intelligence).toBeTruthy();
+        expect(result.output_payload.information_gain_engine).toBeTruthy();
         expect(result.data.differentials[0]?.label).not.toBe('Unknown');
     });
 

@@ -482,10 +482,17 @@ export interface DifferentialEntry {
     name?: string;
     icd_vet_code?: string;
     probability: number;
+    probability_interval?: {
+        low: number;
+        high: number;
+    };
+    evidence_density?: number;
     confidence: DifferentialConfidence;
     determination_basis: DifferentialBasis;
     supporting_evidence: EvidenceEntry[];
     contradicting_evidence: ContradictingEvidenceEntry[];
+    missing_evidence?: EvidenceEntry[];
+    contradiction_score?: number;
     relationship_to_primary?: DifferentialRelationship;
     clinical_urgency: ClinicalUrgency;
     recommended_confirmatory_tests?: string[];
@@ -524,6 +531,89 @@ export interface ContradictionAnalysis {
     contradiction_reasons: string[];
 }
 
+export interface SpeciesValidationReport {
+    input_species: string;
+    canonical_species: Species;
+    eligible_species: Species[];
+    eligible_condition_count: number;
+    excluded_condition_count: number;
+    excluded_species: Species[];
+    gate: string;
+}
+
+export interface PathwayContribution {
+    finding: string;
+    weight: number;
+    reason: string;
+}
+
+export interface PathwayAnalysisEntry {
+    system: string;
+    score: number;
+    contributing_findings: PathwayContribution[];
+}
+
+export interface MechanismAnalysisEntry {
+    system: string;
+    mechanism: string;
+    syndrome: string;
+    score: number;
+    reason: string;
+}
+
+export interface ConfidenceCalibrationReport {
+    probability: number;
+    confidence: number;
+    evidence_density: number;
+    uncertainty_range: {
+        low: number;
+        high: number;
+    };
+    calibration_notes: string[];
+}
+
+export interface ReliabilityBreakdown {
+    input_completeness: number;
+    species_confidence: number;
+    evidence_density: number;
+    diagnostic_separation: number;
+    ontology_match: number;
+    contradiction_burden: number;
+    composite_reliability_score: number;
+}
+
+export interface InformationGainRecommendation {
+    type: 'question' | 'test';
+    prompt: string;
+    expected_uncertainty_reduction: number;
+    resolves: string[];
+    reason: string;
+}
+
+export interface ClinicalIntelligenceReport {
+    species_validation: SpeciesValidationReport;
+    pathway_analysis: PathwayAnalysisEntry[];
+    mechanism_analysis: MechanismAnalysisEntry[];
+    differential_diagnosis: DifferentialEntry[];
+    evidence_for: Record<string, EvidenceEntry[]>;
+    evidence_against: Record<string, ContradictingEvidenceEntry[]>;
+    missing_evidence: Record<string, EvidenceEntry[]>;
+    contradiction_audit: ContradictionAnalysis;
+    confidence_calibration: Record<string, ConfidenceCalibrationReport>;
+    information_gain_engine: {
+        next_best_questions: InformationGainRecommendation[];
+        next_best_tests: InformationGainRecommendation[];
+    };
+    recommended_tests: string[];
+    outcome_learning_hooks: string[];
+    explainability_report: string[];
+    causal_memory_update: {
+        event: string;
+        learning_key: string;
+        update_policy: string;
+    };
+}
+
 export interface AbstainDecision {
     abstain: boolean;
     reason: InferenceAbstainReason;
@@ -560,6 +650,15 @@ export interface InferenceResponse {
     species_gate?: string;
     airway_level?: 'upper' | 'lower' | 'mixed';
     cluster_scores?: Record<string, number>;
+    clinical_intelligence?: ClinicalIntelligenceReport;
+    species_validation?: SpeciesValidationReport;
+    pathway_analysis?: PathwayAnalysisEntry[];
+    mechanism_analysis?: MechanismAnalysisEntry[];
+    confidence_calibration?: Record<string, ConfidenceCalibrationReport>;
+    reliability_breakdown?: ReliabilityBreakdown;
+    information_gain_engine?: ClinicalIntelligenceReport['information_gain_engine'];
+    explainability_report?: string[];
+    causal_memory_update?: ClinicalIntelligenceReport['causal_memory_update'];
 }
 
 export interface SelectedTreatmentPlan {

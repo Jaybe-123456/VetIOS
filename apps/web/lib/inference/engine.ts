@@ -30,6 +30,8 @@ import type {
     AbstainDecision,
     ContradictionAnalysis,
     ClinicalUrgency,
+    ClinicalIntelligenceReport,
+    ConfidenceCalibrationReport,
     ConditionClass,
     ContradictingEvidenceEntry,
     DifferentialBasis,
@@ -37,11 +39,17 @@ import type {
     DifferentialRelationship,
     EvidenceWeight,
     EvidenceEntry,
+    InformationGainRecommendation,
     InferenceExplanation,
     InferenceRequest,
     InferenceResponse,
+    MechanismAnalysisEntry,
+    PathwayAnalysisEntry,
+    PathwayContribution,
+    ReliabilityBreakdown,
     SelectedTreatmentPlan,
     Species,
+    SpeciesValidationReport,
     VeterinaryCondition,
 } from './types';
 
@@ -104,6 +112,15 @@ export interface ClinicalInferenceEngineResult extends InferenceResponse {
         spread: number | null;
     } | null;
     uncertainty_notes: string[];
+    species_validation: SpeciesValidationReport;
+    pathway_analysis: PathwayAnalysisEntry[];
+    mechanism_analysis: MechanismAnalysisEntry[];
+    clinical_intelligence: ClinicalIntelligenceReport;
+    confidence_calibration: Record<string, ConfidenceCalibrationReport>;
+    reliability_breakdown: ReliabilityBreakdown;
+    information_gain_engine: ClinicalIntelligenceReport['information_gain_engine'];
+    explainability_report: string[];
+    causal_memory_update: ClinicalIntelligenceReport['causal_memory_update'];
 }
 
 function collectStringArray(...sources: unknown[]): string[] {
@@ -578,12 +595,17 @@ function buildOutputClusterScores(
     signalProfile: ClinicalSignalProfile,
     routingSummary: RespiratoryRoutingSummary,
 ): Record<string, number> {
-    return {
+    const baseScores: Record<string, number> = {
         ...signalProfile.clusterScores,
-        feline_upper_respiratory: routingSummary.upperRespiratoryScore,
         lower_respiratory: routingSummary.lowerRespiratoryScore,
         systemic: routingSummary.systemicScore,
     };
+
+    if (routingSummary.species === 'feline') {
+        baseScores.feline_upper_respiratory = routingSummary.upperRespiratoryScore;
+    }
+
+    return baseScores;
 }
 
 function isFelineUpperRespiratoryCondition(conditionId: string | undefined): boolean {
@@ -1414,6 +1436,391 @@ function computeDifferentialSpread(entries: DifferentialEntry[]) {
     };
 }
 
+function clamp01(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Number(Math.max(0, Math.min(1, value)).toFixed(3));
+}
+
+function evidenceDensity(entry: DifferentialEntry): number {
+    const supporting = entry.supporting_evidence.length;
+    const contradicting = entry.contradicting_evidence.length;
+    const missing = entry.missing_evidence?.length ?? 0;
+    return clamp01(supporting / Math.max(1, supporting + contradicting + missing));
+}
+
+function addMissingEvidence(entries: DifferentialEntry[]): DifferentialEntry[] {
+    return entries.map((entry) => {
+        const condition = entry.condition_id ? getConditionById(entry.condition_id) : undefined;
+        const observedFindings = new Set([
+            ...entry.supporting_evidence.map((evidence) => evidence.finding),
+            ...entry.contradicting_evidence.map((evidence) => evidence.finding),
+        ]);
+        const missing: EvidenceEntry[] = [];
+
+        for (const rule of condition?.pathognomonic_tests ?? []) {
+            const label = rule.evidence_label ?? rule.test;
+            if (!observedFindings.has(label)) {
+                missing.push({ finding: label, weight: rule.required_for_confirmation ? 'strong' : 'supportive' });
+            }
+        }
+        for (const rule of condition?.supporting_tests ?? []) {
+            const label = rule.evidence_label ?? rule.test;
+            if (!observedFindings.has(label)) {
+                missing.push({ finding: label, weight: 'supportive' });
+            }
+        }
+
+        const density = evidenceDensity({
+            ...entry,
+            missing_evidence: dedupeEvidence(missing),
+        });
+
+        return {
+            ...entry,
+            missing_evidence: dedupeEvidence(missing).slice(0, 6),
+            evidence_density: density,
+            probability_interval: buildProbabilityInterval(entry.probability, density, entry.contradicting_evidence.length),
+        };
+    });
+}
+
+function buildProbabilityInterval(
+    probability: number,
+    density: number,
+    contradictionCount: number,
+): { low: number; high: number } {
+    const width = Math.max(0.04, Math.min(0.32, 0.24 - (density * 0.12) + (contradictionCount * 0.035)));
+    return {
+        low: clamp01(probability - width),
+        high: clamp01(probability + width),
+    };
+}
+
+function contradictionScoreForEntry(entry: DifferentialEntry): number {
+    const hard = entry.contradicting_evidence.filter((evidence) => evidence.weight === 'excludes').length;
+    const weak = entry.contradicting_evidence.length - hard;
+    return clamp01((hard * 0.45) + (weak * 0.16));
+}
+
+function enrichDifferentials(entries: DifferentialEntry[]): DifferentialEntry[] {
+    return addMissingEvidence(entries).map((entry) => ({
+        ...entry,
+        evidence_density: evidenceDensity(entry),
+        contradiction_score: contradictionScoreForEntry(entry),
+        probability_interval: buildProbabilityInterval(
+            entry.probability,
+            evidenceDensity(entry),
+            entry.contradicting_evidence.length,
+        ),
+    }));
+}
+
+function buildSpeciesValidationReport(
+    request: InferenceRequest,
+    routingSummary: RespiratoryRoutingSummary,
+): SpeciesValidationReport {
+    const eligibleConditionCount = getConditionsForSpecies(routingSummary.species).length;
+    const excludedSpecies = (['canine', 'feline', 'bovine', 'ovine', 'caprine', 'equine'] as Species[])
+        .filter((species) => species !== routingSummary.species);
+    const excludedConditionCount = excludedSpecies
+        .reduce((sum, species) => sum + getConditionsForSpecies(species).length, 0);
+
+    return {
+        input_species: request.species,
+        canonical_species: routingSummary.species,
+        eligible_species: [routingSummary.species],
+        eligible_condition_count: eligibleConditionCount,
+        excluded_condition_count: excludedConditionCount,
+        excluded_species: excludedSpecies,
+        gate: `species:${routingSummary.species}:eligible_disease_space_before_scoring`,
+    };
+}
+
+function pathwayContributions(
+    domain: ClinicalSignalDomain,
+    signalProfile: ClinicalSignalProfile,
+): PathwayContribution[] {
+    const contributions: PathwayContribution[] = [];
+    for (const signal of signalProfile.positiveSignals) {
+        if (!domainsForSignal(signal).includes(domain)) continue;
+        contributions.push({
+            finding: formatClinicalSignalLabel(signal),
+            weight: specificityWeight(signal),
+            reason: `${formatClusterLabel(domain)} pathway receives ${specificityForSignal(signal)}-specificity positive evidence.`,
+        });
+    }
+    return contributions.sort((left, right) => right.weight - left.weight);
+}
+
+function buildPathwayAnalysis(
+    signalProfile: ClinicalSignalProfile,
+    routingSummary: RespiratoryRoutingSummary,
+): PathwayAnalysisEntry[] {
+    const systems = (['respiratory', 'gi', 'neuro', 'cardio', 'systemic'] as ClinicalSignalDomain[])
+        .map((domain) => ({
+            system: formatClusterLabel(domain),
+            score: Number((signalProfile.clusterScores[domain] ?? 0).toFixed(3)),
+            contributing_findings: pathwayContributions(domain, signalProfile),
+        }))
+        .filter((entry) => entry.score > 0 || entry.contributing_findings.length > 0);
+
+    if (routingSummary.species === 'feline' && routingSummary.upperRespiratoryScore > 0) {
+        systems.push({
+            system: 'feline upper respiratory',
+            score: Number(routingSummary.upperRespiratoryScore.toFixed(3)),
+            contributing_findings: [
+                ...pathwayContributions('respiratory', signalProfile)
+                    .filter((entry) => UPPER_RESPIRATORY_FAMILIES.has(entry.finding.replace(/ /g, '_')) || /nasal|ocular|conjunctivitis|oral|salivation|sneezing/i.test(entry.finding)),
+            ],
+        });
+    }
+
+    return systems.sort((left, right) => right.score - left.score);
+}
+
+function mechanismForCondition(condition: VeterinaryCondition | undefined): string {
+    switch (condition?.etiological_class) {
+        case 'gastrointestinal_structural':
+            return 'obstruction or inflammatory gastrointestinal dysfunction';
+        case 'respiratory_structural':
+            return 'airway or pulmonary structural dysfunction';
+        case 'cardiovascular_structural':
+            return 'cardiovascular pump or vascular dysfunction';
+        case 'metabolic_endocrine':
+            return 'endocrine or metabolic regulation failure';
+        case 'bacterial':
+        case 'viral':
+        case 'fungal':
+        case 'parasitic_helminth':
+        case 'parasitic_protozoan':
+        case 'parasitic_ectoparasite':
+            return 'infectious pathophysiology';
+        case 'immune_mediated':
+            return 'immune-mediated tissue injury';
+        case 'toxic':
+            return 'toxic insult';
+        case 'traumatic':
+            return 'traumatic injury';
+        default:
+            return 'undifferentiated mechanism';
+    }
+}
+
+function buildMechanismAnalysis(
+    entries: DifferentialEntry[],
+    signalProfile: ClinicalSignalProfile,
+): MechanismAnalysisEntry[] {
+    return entries.slice(0, 5).map((entry) => {
+        const condition = entry.condition_id ? getConditionById(entry.condition_id) : undefined;
+        const system = condition ? determineConditionCluster(condition) : signalProfile.dominantCluster ?? 'systemic';
+        return {
+            system: formatClusterLabel(system),
+            mechanism: mechanismForCondition(condition),
+            syndrome: reportedConditionClass(condition),
+            score: entry.probability,
+            reason: `${entry.condition} is considered after routing through ${formatClusterLabel(system)} signals and ${mechanismForCondition(condition)}.`,
+        };
+    });
+}
+
+function buildConfidenceCalibration(
+    entries: DifferentialEntry[],
+    contradictionAnalysis: ContradictionAnalysis,
+): Record<string, ConfidenceCalibrationReport> {
+    return Object.fromEntries(entries.map((entry) => {
+        const density = evidenceDensity(entry);
+        const interval = entry.probability_interval ?? buildProbabilityInterval(entry.probability, density, entry.contradicting_evidence.length);
+        const contradictionPenalty = Math.max(contradictionAnalysis.contradiction_score, entry.contradiction_score ?? 0);
+        const confidence = computeReportedConfidence(entry.probability, contradictionPenalty);
+        return [entry.condition_id ?? entry.condition, {
+            probability: entry.probability,
+            confidence,
+            evidence_density: density,
+            uncertainty_range: interval,
+            calibration_notes: [
+                density < 0.45 ? 'Evidence density is low; confidence remains intentionally conservative.' : 'Evidence density supports the reported probability.',
+                contradictionPenalty > 0 ? `Contradiction burden reduced confidence by ${Math.round(contradictionPenalty * 100)}%.` : 'No major contradiction burden detected.',
+            ],
+        }];
+    }));
+}
+
+function buildReliabilityBreakdown(
+    request: InferenceRequest,
+    entries: DifferentialEntry[],
+    signalProfile: ClinicalSignalProfile,
+    contradictionAnalysis: ContradictionAnalysis,
+    routingSummary: RespiratoryRoutingSummary,
+): ReliabilityBreakdown {
+    const top = entries[0];
+    const spread = entries[0] && entries[1] ? entries[0].probability - entries[1].probability : 0;
+    const evidence = top ? evidenceDensity(top) : 0;
+    const ontologyMatch = clamp01((signalProfile.positiveSignals.size - signalProfile.ignoredInputs.length) / Math.max(1, signalProfile.positiveSignals.size + signalProfile.ignoredInputs.length));
+    const breakdown = {
+        input_completeness: computeDataCompleteness(request),
+        species_confidence: routingSummary.species === normalizeSpecies(request.species) ? 1 : 0.72,
+        evidence_density: evidence,
+        diagnostic_separation: clamp01(spread * 2.2),
+        ontology_match: ontologyMatch,
+        contradiction_burden: clamp01(1 - contradictionAnalysis.contradiction_score),
+        composite_reliability_score: 0,
+    };
+    breakdown.composite_reliability_score = clamp01(
+        (breakdown.input_completeness * 0.18)
+        + (breakdown.species_confidence * 0.18)
+        + (breakdown.evidence_density * 0.22)
+        + (breakdown.diagnostic_separation * 0.16)
+        + (breakdown.ontology_match * 0.14)
+        + (breakdown.contradiction_burden * 0.12),
+    );
+    return breakdown;
+}
+
+function buildInformationGain(
+    entries: DifferentialEntry[],
+): ClinicalIntelligenceReport['information_gain_engine'] {
+    const topEntries = entries.slice(0, 3);
+    const missing = topEntries.flatMap((entry) => (entry.missing_evidence ?? []).map((evidence) => ({
+        entry,
+        evidence,
+    })));
+    const questions: InformationGainRecommendation[] = [];
+    const tests: InformationGainRecommendation[] = [];
+
+    for (const item of missing) {
+        const isTest = /\b(test|radiograph|ultrasound|pcr|serology|antigen|cbc|glucose|urinalysis|echocardiographic|visualisation|lipase|acth|t4|cytology)\b/i.test(item.evidence.finding);
+        const reduction = clamp01((item.entry.probability * 0.42) + (item.evidence.weight === 'strong' || item.evidence.weight === 'definitive' ? 0.18 : 0.08));
+        const recommendation: InformationGainRecommendation = {
+            type: isTest ? 'test' : 'question',
+            prompt: isTest ? item.evidence.finding : `Is ${item.evidence.finding.toLowerCase()} present?`,
+            expected_uncertainty_reduction: reduction,
+            resolves: [item.entry.condition],
+            reason: `This ${isTest ? 'test' : 'question'} targets missing evidence for ${item.entry.condition}.`,
+        };
+        if (isTest) {
+            tests.push(recommendation);
+        } else {
+            questions.push(recommendation);
+        }
+    }
+
+    if (questions.length === 0 && topEntries[0]) {
+        questions.push({
+            type: 'question',
+            prompt: `Has the patient shown ${topEntries[0].supporting_evidence[0]?.finding.replace(/^Presenting sign:\s*/i, '').toLowerCase() ?? 'progression of the leading signs'}?`,
+            expected_uncertainty_reduction: 0.18,
+            resolves: [topEntries[0].condition],
+            reason: 'Clarifies persistence and progression of the leading pathway.',
+        });
+    }
+
+    return {
+        next_best_questions: questions.sort((left, right) => right.expected_uncertainty_reduction - left.expected_uncertainty_reduction).slice(0, 3),
+        next_best_tests: tests.sort((left, right) => right.expected_uncertainty_reduction - left.expected_uncertainty_reduction).slice(0, 5),
+    };
+}
+
+function buildClinicalIntelligenceReport(input: {
+    request: InferenceRequest;
+    entries: DifferentialEntry[];
+    signalProfile: ClinicalSignalProfile;
+    routingSummary: RespiratoryRoutingSummary;
+    contradictionAnalysis: ContradictionAnalysis;
+    uncertaintyNotes: string[];
+}): ClinicalIntelligenceReport & { reliability_breakdown: ReliabilityBreakdown } {
+    const speciesValidation = buildSpeciesValidationReport(input.request, input.routingSummary);
+    const pathwayAnalysis = buildPathwayAnalysis(input.signalProfile, input.routingSummary);
+    const mechanismAnalysis = buildMechanismAnalysis(input.entries, input.signalProfile);
+    const confidenceCalibration = buildConfidenceCalibration(input.entries, input.contradictionAnalysis);
+    const informationGain = buildInformationGain(input.entries);
+    const recommendedTests = [...new Set(input.entries.slice(0, 5).flatMap((entry) => entry.recommended_confirmatory_tests ?? []))];
+    const reliabilityBreakdown = buildReliabilityBreakdown(
+        input.request,
+        input.entries,
+        input.signalProfile,
+        input.contradictionAnalysis,
+        input.routingSummary,
+    );
+    const evidenceFor = Object.fromEntries(input.entries.map((entry) => [entry.condition_id ?? entry.condition, entry.supporting_evidence]));
+    const evidenceAgainst = Object.fromEntries(input.entries.map((entry) => [entry.condition_id ?? entry.condition, entry.contradicting_evidence]));
+    const missingEvidence = Object.fromEntries(input.entries.map((entry) => [entry.condition_id ?? entry.condition, entry.missing_evidence ?? []]));
+    const top = input.entries[0];
+    const explainability = [
+        `Species was resolved to ${speciesValidation.canonical_species}; incompatible disease spaces were excluded before scoring.`,
+        pathwayAnalysis[0]
+            ? `${pathwayAnalysis[0].system} is the dominant pathway because of ${pathwayAnalysis[0].contributing_findings.map((finding) => finding.finding).slice(0, 3).join(', ') || 'available clinical evidence'}.`
+            : 'No dominant pathway was identified from the supplied signals.',
+        top ? `${top.condition} leads with evidence density ${evidenceDensity(top)} and probability interval ${top.probability_interval?.low}-${top.probability_interval?.high}.` : 'No primary differential was generated.',
+        ...input.uncertaintyNotes,
+    ];
+
+    return {
+        species_validation: speciesValidation,
+        pathway_analysis: pathwayAnalysis,
+        mechanism_analysis: mechanismAnalysis,
+        differential_diagnosis: input.entries,
+        evidence_for: evidenceFor,
+        evidence_against: evidenceAgainst,
+        missing_evidence: missingEvidence,
+        contradiction_audit: input.contradictionAnalysis,
+        confidence_calibration: confidenceCalibration,
+        information_gain_engine: informationGain,
+        recommended_tests: recommendedTests,
+        outcome_learning_hooks: [
+            'Persist prediction lineage in ai_inference_events.',
+            'Attach confirmed diagnosis and treatment response through /api/outcome.',
+            'Update tenant label calibration and clinical case memory after outcome validation.',
+        ],
+        explainability_report: explainability,
+        causal_memory_update: {
+            event: 'awaiting_outcome_validation',
+            learning_key: top?.condition_id ?? top?.condition ?? 'undetermined',
+            update_policy: 'strengthen supported mechanisms and weaken contradicted mechanisms once outcome ground truth is submitted',
+        },
+        reliability_breakdown: reliabilityBreakdown,
+    };
+}
+
+function applyClinicalIntelligence(
+    base: Omit<
+        ClinicalInferenceEngineResult,
+        'species_validation' | 'pathway_analysis' | 'mechanism_analysis' | 'clinical_intelligence' | 'confidence_calibration' | 'reliability_breakdown' | 'information_gain_engine' | 'explainability_report' | 'causal_memory_update'
+    >,
+    request: InferenceRequest,
+    signalProfile: ClinicalSignalProfile,
+    routingSummary: RespiratoryRoutingSummary,
+    contradictionAnalysis: ContradictionAnalysis,
+): ClinicalInferenceEngineResult {
+    const enrichedDifferentials = enrichDifferentials(base.differentials);
+    const uncertaintyNotes = base.uncertainty_notes ?? [];
+    const report = buildClinicalIntelligenceReport({
+        request,
+        entries: enrichedDifferentials,
+        signalProfile,
+        routingSummary,
+        contradictionAnalysis,
+        uncertaintyNotes,
+    });
+
+    return {
+        ...base,
+        differentials: enrichedDifferentials,
+        diagnosis: {
+            ...base.diagnosis,
+            top_differentials: enrichedDifferentials,
+        },
+        species_validation: report.species_validation,
+        pathway_analysis: report.pathway_analysis,
+        mechanism_analysis: report.mechanism_analysis,
+        clinical_intelligence: report,
+        confidence_calibration: report.confidence_calibration,
+        reliability_breakdown: report.reliability_breakdown,
+        information_gain_engine: report.information_gain_engine,
+        explainability_report: report.explainability_report,
+        causal_memory_update: report.causal_memory_update,
+    };
+}
+
 function buildStructuredSummary(
     entries: DifferentialEntry[],
     treatmentPlans: Record<string, SelectedTreatmentPlan>,
@@ -1479,7 +1886,7 @@ export function runClinicalInferenceEngine(
         if (abstainDecision.message) {
             uncertaintyNotes.push(abstainDecision.message);
         }
-        return {
+        const baseResult = {
             differentials: confirmed,
             inference_explanation: explanation,
             diagnosis: buildDiagnosisSummary(confirmed),
@@ -1496,6 +1903,7 @@ export function runClinicalInferenceEngine(
             differential_spread: computeDifferentialSpread(confirmed),
             uncertainty_notes: uncertaintyNotes,
         };
+        return applyClinicalIntelligence(baseResult, request, signalProfile, routingSummary, contradictionAnalysis);
     }
 
     applyAdjustments(states, applySyndromePatterns(request));
@@ -1570,7 +1978,7 @@ export function runClinicalInferenceEngine(
     }
     const outputFeatureImportance = featureImportance(differentials, signalProfile);
 
-    return {
+    const baseResult = {
         differentials,
         inference_explanation: explanation,
         diagnosis: buildDiagnosisSummary(differentials),
@@ -1587,4 +1995,5 @@ export function runClinicalInferenceEngine(
         differential_spread: computeDifferentialSpread(differentials),
         uncertainty_notes: uncertaintyNotes,
     };
+    return applyClinicalIntelligence(baseResult, request, signalProfile, routingSummary, contradictionAnalysis);
 }
