@@ -22,7 +22,7 @@ import { SystemLogConsole, type LogEntry } from '@/components/SystemLogConsole';
 import { isPopulatedPanelValue, panelsToDiagnosticTests } from '@/lib/inference/panel-diagnostics';
 import { fetchWithTimeout } from '@/lib/http/clientRequest';
 
-type InferenceTab = 'analysis' | 'vectors' | 'diagnostics' | 'pathways';
+type InferenceTab = 'analysis' | 'vectors' | 'diagnostics' | 'intelligence' | 'pathways';
 
 interface MLRiskData {
     risk_score: number;
@@ -88,6 +88,31 @@ interface MultisystemAssessmentData {
     airway_level?: string;
     interpretation?: string;
     uncertainty_notes?: string[];
+}
+
+interface ClinicalInfrastructureSnapshot {
+    speciesGate: Array<{ label: string; value: string; tone?: 'accent' | 'warning' | 'danger' | 'muted' | 'cyan' | 'violet' }>;
+    pathways: Array<{ system: string; score: number; findings: string[] }>;
+    mechanisms: Array<{ system: string; mechanism: string; syndrome: string; score: number; reason: string }>;
+    evidenceMap: Array<{
+        condition: string;
+        probability: number;
+        range: string;
+        density: number | null;
+        supports: string[];
+        contradicts: string[];
+        missing: string[];
+    }>;
+    reliability: Array<{ label: string; value: string; score: number | null }>;
+    nextQuestions: Array<{ prompt: string; reduction: number; resolves: string[]; reason: string }>;
+    nextTests: Array<{ prompt: string; reduction: number; resolves: string[]; reason: string }>;
+    surgicalPlan: Array<{ label: string; value: string; tone?: 'accent' | 'warning' | 'danger' | 'muted' | 'cyan' | 'violet' }>;
+    orthopedicPlan: Array<{ label: string; value: string; tone?: 'accent' | 'warning' | 'danger' | 'muted' | 'cyan' | 'violet' }>;
+    longitudinalPlan: Array<{ label: string; value: string; tone?: 'accent' | 'warning' | 'danger' | 'muted' | 'cyan' | 'violet' }>;
+    counterfactuals: Array<{ scenario: string; forecast: string; risk: number | null }>;
+    outcomeHooks: string[];
+    explainability: string[];
+    causalMemory: Array<{ label: string; value: string }>;
 }
 
 interface InferenceState {
@@ -159,6 +184,7 @@ export default function InferenceConsole() {
     const [outcomeState, setOutcomeState] = useState<OutcomeState>({ status: 'idle' });
     const riskModelDefinition = state.riskModelOutput?.definition?.toLowerCase() ?? '';
     const hasAbdominalRiskCalibration = Boolean(state.riskModelOutput) && !riskModelDefinition.includes('non-abdominal');
+    const intelligenceSnapshot = buildClinicalInfrastructureSnapshot(state.responsePayload, state.requestPayload, state.cire);
 
     // ── File reader ──────────────────────────────────────────────────────────
 
@@ -887,6 +913,7 @@ export default function InferenceConsole() {
                     { id: 'analysis', label: 'Analysis', icon: <Binary className="w-4 h-4" /> },
                     { id: 'vectors', label: 'Vectors', icon: <BarChart3 className="w-4 h-4" /> },
                     { id: 'diagnostics', label: 'Diagnostics', icon: <Brain className="w-4 h-4" /> },
+                    { id: 'intelligence', label: 'Intelligence', icon: <HeartPulse className="w-4 h-4" /> },
                     { id: 'pathways', label: 'Pathways', icon: <Workflow className="w-4 h-4" /> },
                 ]}
                 activeTab={activeTab}
@@ -1446,6 +1473,185 @@ export default function InferenceConsole() {
                     </div>
                 )}
 
+                {activeTab === 'intelligence' && (
+                    <div className="max-w-6xl mx-auto space-y-6">
+                        {state.status !== 'success' ? (
+                            <div className="text-muted font-mono text-xs text-center py-12 border border-dashed border-grid">
+                                AWAITING CLINICAL INTELLIGENCE OUTPUT...
+                            </div>
+                        ) : (
+                            <>
+                                <div className="grid grid-cols-1 lg:grid-cols-[1fr,1.2fr] gap-6">
+                                    <ConsoleCard title="Clinical Context & Species Gate" className="border-accent/30">
+                                        <div className="space-y-1">
+                                            {intelligenceSnapshot.speciesGate.map((row) => (
+                                                <DataRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
+                                            ))}
+                                        </div>
+                                    </ConsoleCard>
+
+                                    <ConsoleCard title="Pathophysiology Routing" className="border-cyan-400/30">
+                                        <div className="space-y-4">
+                                            {intelligenceSnapshot.pathways.length > 0 ? intelligenceSnapshot.pathways.slice(0, 5).map((pathway) => (
+                                                <div key={pathway.system} className="space-y-2">
+                                                    <div className="flex justify-between gap-3 font-mono text-xs uppercase">
+                                                        <span className="text-foreground">{pathway.system}</span>
+                                                        <span className="text-accent">{pathway.score.toFixed(2)}</span>
+                                                    </div>
+                                                    <div className="h-2 border border-grid bg-dim overflow-hidden">
+                                                        <div className="h-full bg-accent" style={{ width: `${Math.min(100, pathway.score * 20)}%` }} />
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {pathway.findings.slice(0, 5).map((finding) => (
+                                                            <span key={`${pathway.system}-${finding}`} className="border border-grid bg-black/20 px-2 py-1 font-mono text-[10px] uppercase text-muted">
+                                                                {finding}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )) : (
+                                                <div className="font-mono text-xs text-muted">No pathway routing was returned for this case.</div>
+                                            )}
+                                        </div>
+                                    </ConsoleCard>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                    <ConsoleCard title="Mechanism & Differential Graph" className="border-violet-400/30">
+                                        <div className="space-y-4">
+                                            {intelligenceSnapshot.mechanisms.length > 0 ? intelligenceSnapshot.mechanisms.slice(0, 5).map((entry) => (
+                                                <div key={`${entry.system}-${entry.mechanism}-${entry.score}`} className="border border-grid bg-black/20 p-3">
+                                                    <div className="flex justify-between gap-3 font-mono text-[11px] uppercase">
+                                                        <span className="text-accent">{entry.system}</span>
+                                                        <span className="text-muted">{(entry.score * 100).toFixed(0)}%</span>
+                                                    </div>
+                                                    <div className="mt-2 font-mono text-xs text-foreground">{entry.mechanism}</div>
+                                                    <div className="mt-1 font-mono text-[10px] uppercase tracking-widest text-muted">{entry.syndrome}</div>
+                                                    <p className="mt-3 text-xs leading-relaxed text-muted">{entry.reason}</p>
+                                                </div>
+                                            )) : (
+                                                <div className="font-mono text-xs text-muted">No mechanism analysis was returned for this case.</div>
+                                            )}
+                                        </div>
+                                    </ConsoleCard>
+
+                                    <ConsoleCard title="Evidence Mapping" className="border-yellow-400/30">
+                                        <div className="space-y-4">
+                                            {intelligenceSnapshot.evidenceMap.slice(0, 4).map((entry) => (
+                                                <div key={entry.condition} className="border border-grid bg-black/20 p-3">
+                                                    <div className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px] uppercase">
+                                                        <span className="text-foreground">{entry.condition}</span>
+                                                        <span className="text-accent">{(entry.probability * 100).toFixed(0)}% {entry.range}</span>
+                                                    </div>
+                                                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-[11px]">
+                                                        <EvidenceColumn title="For" items={entry.supports} tone="text-accent" />
+                                                        <EvidenceColumn title="Against" items={entry.contradicts} tone="text-danger" />
+                                                        <EvidenceColumn title="Missing" items={entry.missing} tone="text-yellow-300" />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            {intelligenceSnapshot.evidenceMap.length === 0 ? (
+                                                <div className="font-mono text-xs text-muted">No ranked evidence map was returned for this case.</div>
+                                            ) : null}
+                                        </div>
+                                    </ConsoleCard>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-[1.1fr,0.9fr] gap-6">
+                                    <ConsoleCard title="Diagnostic Planning & Information Gain" className="border-accent/30">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <PlanningColumn title="Next Best Questions" items={intelligenceSnapshot.nextQuestions} />
+                                            <PlanningColumn title="Next Best Tests" items={intelligenceSnapshot.nextTests} />
+                                        </div>
+                                    </ConsoleCard>
+
+                                    <ConsoleCard title="Reliability Breakdown" className="border-accent/30">
+                                        <div className="space-y-3">
+                                            {intelligenceSnapshot.reliability.map((row) => (
+                                                <div key={row.label} className="space-y-1">
+                                                    <div className="flex justify-between gap-3 font-mono text-[10px] uppercase">
+                                                        <span className="text-muted">{row.label}</span>
+                                                        <span className="text-accent">{row.value}</span>
+                                                    </div>
+                                                    {row.score != null ? (
+                                                        <div className="h-1.5 bg-dim border border-grid overflow-hidden">
+                                                            <div className="h-full bg-accent" style={{ width: `${Math.max(0, Math.min(100, row.score * 100))}%` }} />
+                                                        </div>
+                                                    ) : null}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </ConsoleCard>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                                    <ConsoleCard title="Surgical Intelligence" className="border-red-400/30">
+                                        {intelligenceSnapshot.surgicalPlan.map((row) => (
+                                            <DataRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
+                                        ))}
+                                    </ConsoleCard>
+
+                                    <ConsoleCard title="Orthopedic Intelligence" className="border-cyan-400/30">
+                                        {intelligenceSnapshot.orthopedicPlan.map((row) => (
+                                            <DataRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
+                                        ))}
+                                    </ConsoleCard>
+
+                                    <ConsoleCard title="Longitudinal Intelligence" className="border-violet-400/30">
+                                        {intelligenceSnapshot.longitudinalPlan.map((row) => (
+                                            <DataRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
+                                        ))}
+                                    </ConsoleCard>
+                                </div>
+
+                                <div className="grid grid-cols-1 lg:grid-cols-[1fr,1fr] gap-6">
+                                    <ConsoleCard title="Counterfactual Outcome Trees" className="border-orange-400/30">
+                                        <div className="space-y-3">
+                                            {intelligenceSnapshot.counterfactuals.map((entry) => (
+                                                <div key={entry.scenario} className="border border-grid bg-black/20 p-3">
+                                                    <div className="flex justify-between gap-3 font-mono text-[11px] uppercase">
+                                                        <span className="text-foreground">{entry.scenario}</span>
+                                                        <span className={entry.risk != null && entry.risk >= 0.65 ? 'text-danger' : 'text-accent'}>
+                                                            {entry.risk == null ? 'Tracked' : `${(entry.risk * 100).toFixed(0)}% risk`}
+                                                        </span>
+                                                    </div>
+                                                    <p className="mt-2 text-xs leading-relaxed text-muted">{entry.forecast}</p>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </ConsoleCard>
+
+                                    <ConsoleCard title="Causal Memory & Outcome Learning" className="border-accent/30">
+                                        <div className="space-y-4">
+                                            <div className="space-y-1">
+                                                {intelligenceSnapshot.causalMemory.map((row) => (
+                                                    <DataRow key={row.label} label={row.label} value={row.value} />
+                                                ))}
+                                            </div>
+                                            <div className="border border-grid bg-black/20 p-3">
+                                                <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-muted">Outcome Hooks</div>
+                                                <div className="space-y-2 font-mono text-[11px] text-muted">
+                                                    {intelligenceSnapshot.outcomeHooks.map((hook) => (
+                                                        <div key={hook}>- {hook}</div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div className="border border-grid bg-black/20 p-3">
+                                                <div className="mb-2 font-mono text-[10px] uppercase tracking-widest text-muted">Explainability</div>
+                                                <div className="space-y-2 font-mono text-[11px] text-muted">
+                                                    {intelligenceSnapshot.explainability.slice(0, 5).map((line) => (
+                                                        <div key={line}>- {line}</div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </ConsoleCard>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                )}
+
                 {activeTab === 'pathways' && (
                     <div className="max-w-4xl mx-auto space-y-6">
                         {state.status !== 'success' ? (
@@ -1476,6 +1682,212 @@ export default function InferenceConsole() {
             </div>
         </Container>
     );
+}
+
+function EvidenceColumn({ title, items, tone }: { title: string; items: string[]; tone: string }) {
+    return (
+        <div className="min-w-0">
+            <div className={`mb-2 font-mono text-[10px] uppercase tracking-widest ${tone}`}>{title}</div>
+            <div className="space-y-1 font-mono text-[10px] text-muted">
+                {items.length > 0 ? items.slice(0, 4).map((item) => (
+                    <div key={item} className="truncate" title={item}>- {item}</div>
+                )) : (
+                    <div className="italic opacity-60">None recorded</div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+function PlanningColumn({
+    title,
+    items,
+}: {
+    title: string;
+    items: Array<{ prompt: string; reduction: number; resolves: string[]; reason: string }>;
+}) {
+    return (
+        <div className="space-y-3">
+            <div className="font-mono text-[10px] uppercase tracking-widest text-muted">{title}</div>
+            {items.length > 0 ? items.slice(0, 4).map((item) => (
+                <div key={`${title}-${item.prompt}`} className="border border-grid bg-black/20 p-3">
+                    <div className="flex justify-between gap-3 font-mono text-[11px] uppercase">
+                        <span className="text-foreground">{item.prompt}</span>
+                        <span className="text-accent">{(item.reduction * 100).toFixed(0)}%</span>
+                    </div>
+                    <p className="mt-2 text-xs leading-relaxed text-muted">{item.reason}</p>
+                    {item.resolves.length > 0 ? (
+                        <div className="mt-2 font-mono text-[10px] uppercase tracking-widest text-muted">
+                            Resolves: {item.resolves.slice(0, 2).join(', ')}
+                        </div>
+                    ) : null}
+                </div>
+            )) : (
+                <div className="border border-grid bg-black/20 p-3 font-mono text-xs text-muted">
+                    No information-gain item returned.
+                </div>
+            )}
+        </div>
+    );
+}
+
+function buildClinicalInfrastructureSnapshot(
+    outputPayload: Record<string, unknown> | null,
+    requestPayload: Record<string, unknown> | null,
+    cire: CireState | null,
+): ClinicalInfrastructureSnapshot {
+    const output = outputPayload ?? {};
+    const clinicalIntelligence = asRecord(output.clinical_intelligence) ?? {};
+    const speciesValidation = asRecord(output.species_validation)
+        ?? asRecord(clinicalIntelligence.species_validation)
+        ?? {};
+    const diagnosis = asRecord(output.diagnosis) ?? {};
+    const riskAssessment = asRecord(output.risk_assessment) ?? {};
+    const riskModelOutput = asRecord(output.risk_model_output) ?? {};
+    const reliability = asRecord(output.reliability_breakdown)
+        ?? asRecord(clinicalIntelligence.reliability_breakdown)
+        ?? {};
+    const informationGain = asRecord(output.information_gain_engine)
+        ?? asRecord(clinicalIntelligence.information_gain_engine)
+        ?? {};
+    const causalMemory = asRecord(output.causal_memory_update)
+        ?? asRecord(clinicalIntelligence.causal_memory_update)
+        ?? {};
+    const topDifferentials = readRecordArray(diagnosis.top_differentials)
+        .concat(readRecordArray(output.differentials))
+        .filter((entry, index, entries) => {
+            const label = readString(entry.condition) ?? readString(entry.name) ?? readString(entry.label) ?? `entry_${index}`;
+            return entries.findIndex((candidate) => (
+                readString(candidate.condition)
+                ?? readString(candidate.name)
+                ?? readString(candidate.label)
+                ?? ''
+            ) === label) === index;
+        });
+    const top = topDifferentials[0] ?? {};
+    const topLabel = readString(top.condition) ?? readString(top.name) ?? readString(top.label) ?? 'Undetermined';
+    const topProbability = readNumber(top.probability) ?? readNumber(top.p) ?? readNumber(output.confidence_score) ?? 0;
+    const emergencyLevel = readString(riskAssessment.emergency_level) ?? 'ROUTINE';
+    const severityScore = readNumber(riskAssessment.severity_score) ?? topProbability;
+    const operativeRisk = readNumber(riskModelOutput.operative_urgency_risk) ?? severityScore;
+    const catastrophicRisk = readNumber(riskModelOutput.catastrophic_deterioration_risk_6h) ?? severityScore;
+    const requestSpecies = readString(requestPayload?.species) ?? 'unknown';
+    const canonicalSpecies = readString(speciesValidation.canonical_species) ?? requestSpecies;
+    const eligibleSpecies = readStringArray(speciesValidation.eligible_species).join(', ') || canonicalSpecies;
+    const excludedSpecies = readStringArray(speciesValidation.excluded_species);
+    const surgicalSignal = inferSurgicalSignal(topLabel, emergencyLevel, operativeRisk);
+    const orthopedicSignal = inferOrthopedicSignal(topLabel);
+    const chronicSignal = inferLongitudinalSignal(topLabel);
+
+    return {
+        speciesGate: [
+            { label: 'Input Species', value: formatReadableLabel(requestSpecies), tone: 'muted' },
+            { label: 'Canonical Species', value: formatReadableLabel(canonicalSpecies), tone: 'accent' },
+            { label: 'Eligible Disease Space', value: formatReadableLabel(eligibleSpecies), tone: 'accent' },
+            { label: 'Excluded Species', value: excludedSpecies.length > 0 ? excludedSpecies.map(formatReadableLabel).join(', ') : 'None', tone: 'warning' },
+            { label: 'Gate', value: readString(speciesValidation.gate) ?? 'species gate applied before scoring', tone: 'cyan' },
+        ],
+        pathways: readRecordArray(output.pathway_analysis ?? clinicalIntelligence.pathway_analysis).map((entry) => ({
+            system: formatReadableLabel(readString(entry.system) ?? 'unknown'),
+            score: readNumber(entry.score) ?? 0,
+            findings: readRecordArray(entry.contributing_findings)
+                .map((finding) => readString(finding.finding))
+                .filter((finding): finding is string => Boolean(finding)),
+        })),
+        mechanisms: readRecordArray(output.mechanism_analysis ?? clinicalIntelligence.mechanism_analysis).map((entry) => ({
+            system: formatReadableLabel(readString(entry.system) ?? 'unknown'),
+            mechanism: readString(entry.mechanism) ?? 'undifferentiated mechanism',
+            syndrome: readString(entry.syndrome) ?? 'unclassified syndrome',
+            score: readNumber(entry.score) ?? 0,
+            reason: readString(entry.reason) ?? 'Mechanism routed from the current differential set.',
+        })),
+        evidenceMap: topDifferentials.slice(0, 6).map((entry) => {
+            const interval = asRecord(entry.probability_interval);
+            const low = readNumber(interval?.low);
+            const high = readNumber(interval?.high);
+            const label = readString(entry.condition) ?? readString(entry.name) ?? readString(entry.label) ?? 'Unknown';
+            return {
+                condition: formatReadableLabel(label),
+                probability: readNumber(entry.probability) ?? readNumber(entry.p) ?? 0,
+                range: low != null && high != null ? `(${formatPercentNumber(low)}-${formatPercentNumber(high)})` : '',
+                density: readNumber(entry.evidence_density),
+                supports: readEvidenceLabels(entry.supporting_evidence),
+                contradicts: readEvidenceLabels(entry.contradicting_evidence),
+                missing: readEvidenceLabels(entry.missing_evidence),
+            };
+        }),
+        reliability: [
+            reliabilityRow('Input Completeness', reliability.input_completeness),
+            reliabilityRow('Species Confidence', reliability.species_confidence),
+            reliabilityRow('Evidence Density', reliability.evidence_density),
+            reliabilityRow('Diagnostic Separation', reliability.diagnostic_separation),
+            reliabilityRow('Ontology Match', reliability.ontology_match),
+            reliabilityRow('Contradiction Burden', reliability.contradiction_burden),
+            reliabilityRow('Composite Reliability', reliability.composite_reliability_score ?? cire?.phi_hat),
+        ],
+        nextQuestions: readRecommendations(informationGain.next_best_questions),
+        nextTests: readRecommendations(informationGain.next_best_tests),
+        surgicalPlan: [
+            { label: 'Need For Surgery', value: surgicalSignal.need, tone: surgicalSignal.need === 'Likely' ? 'danger' : surgicalSignal.need === 'Possible' ? 'warning' : 'muted' },
+            { label: 'Urgency Score', value: formatPercentNumber(operativeRisk), tone: operativeRisk >= 0.65 ? 'danger' : operativeRisk >= 0.4 ? 'warning' : 'accent' },
+            { label: 'Procedure', value: surgicalSignal.procedure, tone: surgicalSignal.need === 'Likely' ? 'danger' : 'muted' },
+            { label: 'Hospitalization', value: surgicalSignal.hospitalization, tone: 'cyan' },
+            { label: 'Expected Outcome', value: surgicalSignal.outcome, tone: 'accent' },
+        ],
+        orthopedicPlan: [
+            { label: 'Ortho Case', value: orthopedicSignal.detected ? 'Detected' : 'Not primary', tone: orthopedicSignal.detected ? 'cyan' : 'muted' },
+            { label: 'Classification', value: orthopedicSignal.classification, tone: orthopedicSignal.detected ? 'accent' : 'muted' },
+            { label: 'Implant/Support', value: orthopedicSignal.implant, tone: orthopedicSignal.detected ? 'cyan' : 'muted' },
+            { label: 'Healing Probability', value: formatPercentNumber(orthopedicSignal.healingProbability), tone: 'accent' },
+            { label: 'Rehabilitation', value: orthopedicSignal.rehabilitation, tone: 'violet' },
+        ],
+        longitudinalPlan: [
+            { label: 'Trajectory Type', value: chronicSignal.trajectory, tone: chronicSignal.detected ? 'violet' : 'muted' },
+            { label: 'Disease Velocity', value: chronicSignal.velocity, tone: chronicSignal.velocity === 'High' ? 'danger' : chronicSignal.velocity === 'Moderate' ? 'warning' : 'accent' },
+            { label: 'Treatment Response Window', value: chronicSignal.responseWindow, tone: 'cyan' },
+            { label: 'Follow-up Anchor', value: chronicSignal.followUp, tone: 'accent' },
+            { label: 'Deviation Watch', value: chronicSignal.deviationWatch, tone: 'warning' },
+        ],
+        counterfactuals: [
+            {
+                scenario: 'No intervention',
+                forecast: catastrophicRisk >= 0.65
+                    ? 'Deterioration risk is high if the current pathway is not acted on.'
+                    : 'Monitor closely; current evidence does not imply immediate collapse, but uncertainty remains outcome-sensitive.',
+                risk: catastrophicRisk,
+            },
+            {
+                scenario: 'Confirmatory diagnostics completed',
+                forecast: 'Missing evidence would narrow the probability interval and recalibrate the top differential set.',
+                risk: Math.max(0.05, 1 - topProbability),
+            },
+            {
+                scenario: 'Alternative differential is correct',
+                forecast: topDifferentials[1]
+                    ? `${formatReadableLabel(readString(topDifferentials[1].condition) ?? readString(topDifferentials[1].name) ?? readString(topDifferentials[1].label) ?? 'Second differential')} becomes the active care pathway.`
+                    : 'No strong alternative was returned; collect additional evidence before closing the case.',
+                risk: readNumber(topDifferentials[1]?.probability) ?? readNumber(topDifferentials[1]?.p) ?? null,
+            },
+            {
+                scenario: 'Outcome submitted',
+                forecast: 'The case becomes a causal memory node and recalibrates future confidence, near-miss, and treatment-response estimates.',
+                risk: null,
+            },
+        ],
+        outcomeHooks: readStringArray(output.outcome_learning_hooks ?? clinicalIntelligence.outcome_learning_hooks)
+            .concat(['Confirm the actual diagnosis, diagnostics, treatment response, and follow-up trajectory after case closure.'])
+            .filter((hook, index, hooks) => hooks.indexOf(hook) === index)
+            .slice(0, 5),
+        explainability: readStringArray(output.explainability_report ?? clinicalIntelligence.explainability_report)
+            .concat(readStringArray(output.uncertainty_notes))
+            .filter((line, index, lines) => lines.indexOf(line) === index)
+            .slice(0, 8),
+        causalMemory: [
+            { label: 'Memory Event', value: readString(causalMemory.event) ?? 'awaiting_outcome_validation' },
+            { label: 'Learning Key', value: formatReadableLabel(readString(causalMemory.learning_key) ?? topLabel) },
+            { label: 'Update Policy', value: readString(causalMemory.update_policy) ?? 'Update confidence once outcome ground truth is submitted.' },
+        ],
+    };
 }
 
 function cireBadgeLabel(badge: CireState['reliability_badge']) {
@@ -1524,6 +1936,156 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function readRecordArray(value: unknown): Record<string, unknown>[] {
+    return Array.isArray(value)
+        ? value.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry))
+        : [];
+}
+
+function readString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((entry) => typeof entry === 'string' ? entry.trim() : null)
+        .filter((entry): entry is string => Boolean(entry));
+}
+
+function readEvidenceLabels(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((entry) => {
+            if (typeof entry === 'string') return entry;
+            const record = asRecord(entry);
+            return readString(record?.finding)
+                ?? readString(record?.label)
+                ?? readString(record?.test)
+                ?? readString(record?.reason);
+        })
+        .filter((entry): entry is string => Boolean(entry))
+        .map(formatReadableLabel)
+        .filter((entry, index, entries) => entries.indexOf(entry) === index);
+}
+
+function readRecommendations(value: unknown): Array<{ prompt: string; reduction: number; resolves: string[]; reason: string }> {
+    return readRecordArray(value).map((entry) => ({
+        prompt: formatReadableLabel(readString(entry.prompt) ?? 'Collect additional evidence'),
+        reduction: readNumber(entry.expected_uncertainty_reduction) ?? 0,
+        resolves: readStringArray(entry.resolves).map(formatReadableLabel),
+        reason: readString(entry.reason) ?? 'Targets a missing evidence branch in the active differential set.',
+    }));
+}
+
+function reliabilityRow(label: string, value: unknown): { label: string; value: string; score: number | null } {
+    const score = readNumber(value);
+    return {
+        label,
+        value: score == null ? 'Not returned' : formatPercentNumber(score),
+        score,
+    };
+}
+
+function formatPercentNumber(value: number | null): string {
+    if (value == null || !Number.isFinite(value)) return 'N/A';
+    return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+function formatReadableLabel(value: string): string {
+    return value
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .split(' ')
+        .map((word) => {
+            if (/^[A-Z0-9]{2,6}$/.test(word)) return word;
+            if (['ivdd', 'gdv', 'ckd', 'cire', 'pcr', 'cbc'].includes(word.toLowerCase())) return word.toUpperCase();
+            return `${word[0]?.toUpperCase() ?? ''}${word.slice(1).toLowerCase()}`;
+        })
+        .join(' ');
+}
+
+function inferSurgicalSignal(label: string, emergencyLevel: string, operativeRisk: number) {
+    const normalized = label.toLowerCase();
+    const likely = /gdv|volvulus|pyometra|foreign body|obstruction|torsion|hernia|rupture|trauma|fracture|cruciate|luxating|ivdd|tumou?r|splenic/i.test(normalized)
+        || emergencyLevel === 'CRITICAL'
+        || operativeRisk >= 0.7;
+    const possible = likely || operativeRisk >= 0.4 || emergencyLevel === 'HIGH' || emergencyLevel === 'REVIEW';
+    return {
+        need: likely ? 'Likely' : possible ? 'Possible' : 'Not primary',
+        procedure: inferProcedure(label),
+        hospitalization: likely ? '24-72h estimate pending diagnostics' : possible ? 'Observation or referral-dependent' : 'Outpatient or medical pathway likely',
+        outcome: likely ? 'Outcome depends on timing, stabilization, and complication control' : 'Expected outcome primarily follows medical response and diagnostics',
+    };
+}
+
+function inferProcedure(label: string): string {
+    const normalized = label.toLowerCase();
+    if (/gdv|volvulus/.test(normalized)) return 'Emergency gastropexy and gastric decompression';
+    if (/pyometra/.test(normalized)) return 'Ovariohysterectomy after stabilization';
+    if (/foreign body|obstruction/.test(normalized)) return 'Exploratory laparotomy or endoscopic retrieval';
+    if (/splenic|torsion/.test(normalized)) return 'Exploratory surgery with splenic assessment';
+    if (/hernia/.test(normalized)) return 'Hernia repair after stabilization';
+    if (/rupture/.test(normalized)) return 'Emergency repair and contamination control';
+    if (/fracture/.test(normalized)) return 'Fracture stabilization planning';
+    if (/cruciate/.test(normalized)) return 'Stifle stabilization assessment';
+    if (/luxating patella|patella/.test(normalized)) return 'Patellar stabilization assessment';
+    if (/ivdd|spinal/.test(normalized)) return 'Neurologic localization and decompression assessment';
+    if (/tumou?r|mass/.test(normalized)) return 'Resection planning after staging';
+    return 'No specific surgical procedure inferred';
+}
+
+function inferOrthopedicSignal(label: string) {
+    const normalized = label.toLowerCase();
+    const detected = /fracture|femur|tibia|radius|ulna|humerus|pelvis|vertebra|dysplasia|patella|cruciate|ivdd|spinal|atlantoaxial|lameness|orthopedic/.test(normalized);
+    return {
+        detected,
+        classification: detected ? inferOrthopedicClassification(label) : 'No orthopedic primary pathway',
+        implant: detected ? inferOrthopedicImplant(label) : 'Not applicable',
+        healingProbability: detected ? 0.72 : 0.5,
+        rehabilitation: detected ? 'Restricted activity, serial reassessment, and staged rehabilitation' : 'No orthopedic rehabilitation plan generated',
+    };
+}
+
+function inferOrthopedicClassification(label: string): string {
+    const normalized = label.toLowerCase();
+    if (/fracture/.test(normalized)) return 'Fracture pathway - classify by bone, location, openness, displacement, and articular involvement';
+    if (/cruciate/.test(normalized)) return 'Stifle instability pathway';
+    if (/patella/.test(normalized)) return 'Patellar luxation pathway';
+    if (/dysplasia/.test(normalized)) return 'Developmental joint disease pathway';
+    if (/ivdd|spinal/.test(normalized)) return 'Spinal neurologic pathway';
+    return 'Orthopedic pathway';
+}
+
+function inferOrthopedicImplant(label: string): string {
+    const normalized = label.toLowerCase();
+    if (/fracture/.test(normalized)) return 'Plate, screw, pin, external fixator, or hybrid fixation based on imaging';
+    if (/cruciate/.test(normalized)) return 'TPLO, TTA, or extracapsular stabilization assessment';
+    if (/patella/.test(normalized)) return 'Trochlear block recession, tibial crest transposition, soft tissue balancing';
+    if (/ivdd|spinal/.test(normalized)) return 'Surgical decompression assessment if neurologic grade warrants';
+    return 'Procedure-specific implant planning pending imaging';
+}
+
+function inferLongitudinalSignal(label: string) {
+    const normalized = label.toLowerCase();
+    const detected = /ckd|renal|diabetes|heart|cardiac|cancer|neoplas|arthritis|chronic|endocrine|cushing|addison|thyroid/.test(normalized);
+    return {
+        detected,
+        trajectory: detected ? 'Longitudinal disease trajectory' : 'Single-encounter trajectory',
+        velocity: /acute|crisis|shock|sepsis|rupture|gdv|volvulus/.test(normalized) ? 'High' : detected ? 'Moderate' : 'Low',
+        responseWindow: detected ? 'Reassess trend after treatment interval and objective monitoring' : 'Reassess after diagnostic confirmation or symptom change',
+        followUp: detected ? 'Trend labs, imaging, symptoms, medications, and owner-reported function' : 'Attach outcome and follow-up if the case evolves',
+        deviationWatch: detected ? 'Compare progression against similar cases once outcome history accumulates' : 'Watch for unexpected deterioration or non-response',
+    };
 }
 
 function formatApiError(result: unknown, fallback: string): string {
