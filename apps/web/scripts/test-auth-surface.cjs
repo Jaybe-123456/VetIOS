@@ -5,6 +5,7 @@ const ts = require('typescript');
 const appRoot = path.resolve(__dirname, '..');
 const generatedDir = path.join(appRoot, '.generated-tests', 'auth-surface');
 const siteSourcePath = path.join(appRoot, 'lib', 'site.ts');
+const publicPagesSourcePath = path.join(appRoot, 'lib', 'seo', 'publicPages.ts');
 const generatedSitePath = path.join(generatedDir, 'site.cjs');
 
 function assert(condition, message) {
@@ -15,7 +16,13 @@ function assert(condition, message) {
 
 function compileSiteModule() {
     fs.mkdirSync(generatedDir, { recursive: true });
-    const source = fs.readFileSync(siteSourcePath, 'utf8');
+    const publicPagesSource = fs.readFileSync(publicPagesSourcePath, 'utf8');
+    const publicSeoPaths = Array.from(publicPagesSource.matchAll(/path:\s*'([^']+)'/g), match => match[1]);
+    const source = fs.readFileSync(siteSourcePath, 'utf8')
+        .replace(
+            "import { PUBLIC_SEO_PATHS } from '@/lib/seo/publicPages';",
+            `const PUBLIC_SEO_PATHS = ${JSON.stringify(publicSeoPaths)};`,
+        );
     const transpiled = ts.transpileModule(source, {
         compilerOptions: {
             module: ts.ModuleKind.CommonJS,
@@ -59,6 +66,7 @@ function main() {
     assert(site.shouldIndexSite() === false, 'Preview deployments must not be indexed.');
 
     assertFileContains(path.join(appRoot, 'proxy.ts'), 'shouldRedirectPreviewAuthHost');
+    assertFileContains(path.join(appRoot, 'proxy.ts'), "loginUrl.searchParams.set('next'");
     assertFileContains(path.join(appRoot, 'lib', 'auth', 'pageGuard.ts'), "redirect(`/login?next=${encodeURIComponent(nextPath)}`)");
     assertFileContains(path.join(appRoot, 'app', 'dashboard', 'layout.tsx'), "requirePageSession('/dashboard')");
     assertFileContains(path.join(appRoot, 'app', '(console)', 'layout.tsx'), "requirePageSession('/inference')");

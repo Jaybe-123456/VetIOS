@@ -164,6 +164,8 @@ export async function proxy(request: NextRequest) {
     if (!hasAuthCookie && !isPublicRoute) {
         const loginUrl = request.nextUrl.clone();
         loginUrl.pathname = '/login';
+        loginUrl.search = '';
+        loginUrl.searchParams.set('next', `${pathname}${request.nextUrl.search}`);
         return NextResponse.redirect(loginUrl);
     }
 
