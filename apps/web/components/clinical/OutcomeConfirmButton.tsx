@@ -33,12 +33,19 @@ export function OutcomeConfirmButton({
             const response = await fetch('/api/outcome', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
+                credentials: 'same-origin',
                 body: JSON.stringify({
                     request_id: requestId,
                     inference_event_id: inferenceEventId,
                     outcome: {
                         type: 'confirmed_diagnosis',
-                        payload: { label: selectedLabel, confidence: 0.98 },
+                        payload: {
+                            label: selectedLabel,
+                            actual_diagnosis: selectedLabel,
+                            confirmed_diagnosis: selectedLabel,
+                            confidence: 0.98,
+                            label_type: 'expert_reviewed',
+                        },
                         timestamp: new Date().toISOString(),
                     },
                 }),
@@ -76,7 +83,7 @@ export function OutcomeConfirmButton({
             {status === 'saved' ? (
                 <div className="mt-4 flex gap-3 rounded-md border border-accent/35 bg-accent/10 p-3 text-sm text-accent">
                     <CheckCircle2 className="h-4 w-4 shrink-0" />
-                    <span>Thank you. This case is now helping improve future diagnoses.</span>
+                    <span>Confirmed. This case is now helping improve future diagnoses.</span>
                 </div>
             ) : null}
 

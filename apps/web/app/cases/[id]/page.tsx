@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { ClinicalCaseDetailClient } from '@/components/clinical/ClinicalCaseDetailClient';
 import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components/ui/terminal';
-import { getClinicalCaseDetail } from '@/lib/cases/caseWorkflow';
+import { getClinicalCaseDetailByRouteId } from '@/lib/cases/caseWorkflow';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
 export const dynamic = 'force-dynamic';
@@ -22,9 +22,9 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
     }
 
     const { id } = await params;
-    let clinicalCase: Awaited<ReturnType<typeof getClinicalCaseDetail>>;
+    let clinicalCase: Awaited<ReturnType<typeof getClinicalCaseDetailByRouteId>>;
     try {
-        clinicalCase = await getClinicalCaseDetail(getSupabaseServer(), session.tenantId, id);
+        clinicalCase = await getClinicalCaseDetailByRouteId(getSupabaseServer(), session.tenantId, id);
     } catch {
         return (
             <Container>
@@ -45,7 +45,8 @@ export default async function CaseDetailPage({ params }: { params: Promise<{ id:
         return (
             <Container>
                 <PageHeader title="Clinical Case" description="The requested case was not found." />
-                <ConsoleCard title="Not Found">
+                <ConsoleCard title="Case not found">
+                    <p className="mb-4 text-sm text-[hsl(0_0%_72%)]">Case not found.</p>
                     <Link href="/cases">
                         <TerminalButton type="button">Back To Cases</TerminalButton>
                     </Link>

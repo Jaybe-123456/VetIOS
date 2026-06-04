@@ -51,6 +51,10 @@ export interface CaseSummary {
     closed_at: string | null;
     patient_metadata: Record<string, unknown>;
     latest_input_signature: Record<string, unknown>;
+    top_differentials: CaseDifferentialSummary[];
+    recommended_tests: string[];
+    reliability_score: number | null;
+    reliability_label: string;
 }
 
 export interface CaseDetail extends CaseSummary {
@@ -70,6 +74,12 @@ export interface CaseDetail extends CaseSummary {
     latest_inference: Record<string, unknown> | null;
     outcomes: Record<string, unknown>[];
     diagnosis_records: Record<string, unknown>[];
+}
+
+export interface CaseDifferentialSummary {
+    label: string;
+    probability: number;
+    urgency: 'high' | 'medium' | 'low';
 }
 
 export function buildCaseInputSignature(input: CaseIntakeInput): InputSignature {
@@ -145,7 +155,8 @@ export async function listClinicalCases(
         throw new Error(`Failed to list clinical cases: ${error.message}`);
     }
 
-    return (data ?? []).map((row) => mapCaseSummary(row as Record<string, unknown>));
+    const summaries = (data ?? []).map((row) => mapCaseSummary(row as Record<string, unknown>));
+    return Promise.all(summaries.map((summary) => hydrateCaseSummary(client, tenantId, summary)));
 }
 
 export async function getClinicalCaseDetail(
@@ -190,6 +201,38 @@ export async function getClinicalCaseDetail(
         outcomes,
         diagnosis_records: diagnosisRecords,
     };
+}
+
+export async function getClinicalCaseDetailByRouteId(
+    client: SupabaseClient,
+    tenantId: string,
+    routeId: string,
+): Promise<CaseDetail | null> {
+    const inference = await loadInferenceById(client, tenantId, routeId);
+    if (!inference) return getClinicalCaseDetail(client, tenantId, routeId);
+
+    const inferenceId = readText(inference.id) ?? routeId;
+    const caseId = readText(inference.case_id);
+    const outcomeRows = await loadOutcomesForInference(client, tenantId, inferenceId, caseId);
+
+    if (caseId) {
+        const existing = await getClinicalCaseDetail(client, tenantId, caseId);
+        if (existing) {
+            const confirmed = readConfirmedDiagnosisFromInference(inference)
+                ?? readConfirmedDiagnosisFromOutcomes(outcomeRows)
+                ?? existing.confirmed_diagnosis;
+            return {
+                ...existing,
+                case_status: confirmed ? 'closed' : existing.case_status,
+                confirmed_diagnosis: confirmed,
+                latest_inference_event_id: inferenceId,
+                latest_inference: inference,
+                outcomes: outcomeRows.length > 0 ? outcomeRows : existing.outcomes,
+            };
+        }
+    }
+
+    return mapInferenceOnlyCaseDetail(inference, outcomeRows, tenantId, routeId);
 }
 
 export async function updateCaseIntakeSnapshot(
@@ -271,7 +314,336 @@ export function mapCaseSummary(row: Record<string, unknown>): CaseSummary {
         closed_at: readText(row.closed_at) ?? readText(row.resolved_at),
         patient_metadata: metadata,
         latest_input_signature: latestSignature,
+        top_differentials: [],
+        recommended_tests: [],
+        reliability_score: null,
+        reliability_label: 'Needs review',
     };
+}
+
+async function hydrateCaseSummary(
+    client: SupabaseClient,
+    tenantId: string,
+    summary: CaseSummary,
+): Promise<CaseSummary> {
+    const inference = await loadLatestInference(client, tenantId, summary.id, summary.latest_inference_event_id);
+    if (!inference) {
+        return {
+            ...summary,
+            top_differentials: summary.top_diagnosis
+                ? [{
+                    label: summary.top_diagnosis,
+                    probability: summary.diagnosis_confidence ?? 0,
+                    urgency: 'low',
+                }]
+                : [],
+        };
+    }
+
+    const result = deriveCaseResultSummary(inference);
+    return {
+        ...summary,
+        top_diagnosis: summary.top_diagnosis ?? result.topDiagnosis,
+        diagnosis_confidence: summary.diagnosis_confidence ?? result.confidence,
+        top_differentials: result.differentials,
+        recommended_tests: result.recommendedTests,
+        reliability_score: result.reliabilityScore,
+        reliability_label: result.reliabilityLabel,
+    };
+}
+
+async function loadInferenceById(
+    client: SupabaseClient,
+    tenantId: string,
+    inferenceId: string,
+): Promise<Record<string, unknown> | null> {
+    const withCase = await queryInferenceById(client, tenantId, inferenceId, [
+        'id',
+        'tenant_id',
+        'user_id',
+        'clinic_id',
+        'case_id',
+        'model_name',
+        'model_version',
+        'confidence_score',
+        'phi_hat',
+        'input_signature',
+        'output_payload',
+        'differentials',
+        'cire',
+        'uncertainty_metrics',
+        'outcome_confirmed',
+        'confirmed_diagnosis',
+        'created_at',
+    ]);
+
+    if (!withCase.error) {
+        return withCase.data ? withCase.data as unknown as Record<string, unknown> : null;
+    }
+
+    if (isMissingRelationError(withCase.error.message ?? '')) return null;
+
+    if (!isMissingColumnError(withCase.error.message ?? '')) {
+        throw new Error(`Failed to load inference event: ${withCase.error.message}`);
+    }
+
+    const stable = await queryInferenceById(client, tenantId, inferenceId, [
+        'id',
+        'tenant_id',
+        'user_id',
+        'clinic_id',
+        'case_id',
+        'model_name',
+        'model_version',
+        'confidence_score',
+        'input_signature',
+        'output_payload',
+        'created_at',
+    ]);
+
+    if (stable.error) {
+        if (isMissingColumnError(stable.error.message ?? '') || isMissingRelationError(stable.error.message ?? '')) return null;
+        throw new Error(`Failed to load inference event: ${stable.error.message}`);
+    }
+
+    return stable.data ? stable.data as unknown as Record<string, unknown> : null;
+}
+
+function queryInferenceById(
+    client: SupabaseClient,
+    tenantId: string,
+    inferenceId: string,
+    columns: string[],
+) {
+    return client
+        .from('ai_inference_events')
+        .select(columns.join(', '))
+        .eq('tenant_id', tenantId)
+        .eq('id', inferenceId)
+        .maybeSingle();
+}
+
+async function loadOutcomesForInference(
+    client: SupabaseClient,
+    tenantId: string,
+    inferenceEventId: string,
+    caseId: string | null,
+): Promise<Record<string, unknown>[]> {
+    const withLearningColumns = await queryOutcomesForInference(client, tenantId, inferenceEventId, caseId, [
+        'id',
+        'outcome_type',
+        'outcome_payload',
+        'actual_label',
+        'actual_confidence',
+        'calibration_delta',
+        'inference_event_id',
+        'case_id',
+        'created_at',
+    ]);
+
+    if (!withLearningColumns.error) {
+        return (withLearningColumns.data ?? []) as unknown as Record<string, unknown>[];
+    }
+
+    if (isMissingRelationError(withLearningColumns.error.message ?? '')) return [];
+
+    if (!isMissingColumnError(withLearningColumns.error.message ?? '')) {
+        throw new Error(`Failed to load outcomes: ${withLearningColumns.error.message}`);
+    }
+
+    const stableColumns = await queryOutcomesForInference(client, tenantId, inferenceEventId, caseId, [
+        'id',
+        'outcome_type',
+        'outcome_payload',
+        'inference_event_id',
+        'case_id',
+        'created_at',
+    ]);
+
+    if (stableColumns.error) {
+        if (isMissingColumnError(stableColumns.error.message ?? '') || isMissingRelationError(stableColumns.error.message ?? '')) return [];
+        throw new Error(`Failed to load outcomes: ${stableColumns.error.message}`);
+    }
+
+    return (stableColumns.data ?? []) as unknown as Record<string, unknown>[];
+}
+
+function queryOutcomesForInference(
+    client: SupabaseClient,
+    tenantId: string,
+    inferenceEventId: string,
+    caseId: string | null,
+    columns: string[],
+) {
+    let query = client
+        .from('clinical_outcome_events')
+        .select(columns.join(', '))
+        .eq('tenant_id', tenantId);
+
+    if (caseId) {
+        query = query.or(`inference_event_id.eq.${inferenceEventId},case_id.eq.${caseId}`);
+    } else {
+        query = query.eq('inference_event_id', inferenceEventId);
+    }
+
+    return query.order('created_at', { ascending: false }).limit(20);
+}
+
+function mapInferenceOnlyCaseDetail(
+    inference: Record<string, unknown>,
+    outcomes: Record<string, unknown>[],
+    tenantId: string,
+    routeId: string,
+): CaseDetail {
+    const input = asRecord(inference.input_signature);
+    const metadata = asRecord(input.metadata);
+    const output = asRecord(inference.output_payload);
+    const confirmed = readConfirmedDiagnosisFromInference(inference) ?? readConfirmedDiagnosisFromOutcomes(outcomes);
+    const createdAt = readText(inference.created_at) ?? new Date().toISOString();
+    const inferenceId = readText(inference.id) ?? routeId;
+    const species = readText(input.species) ?? readText(metadata.species);
+    const symptoms = readStringArray(input.symptoms, metadata.symptoms);
+    const topSummary = deriveCaseResultSummary(inference);
+
+    return {
+        id: readText(inference.case_id) ?? inferenceId,
+        tenant_id: tenantId,
+        user_id: readText(inference.user_id),
+        clinic_id: readText(inference.clinic_id),
+        created_at: createdAt,
+        updated_at: createdAt,
+        case_status: confirmed ? 'closed' : 'open',
+        patient_name: readText(input.patient_name) ?? readText(metadata.patient_name),
+        species_display: species,
+        species_canonical: species,
+        breed: readText(input.breed) ?? readText(metadata.breed),
+        presenting_complaint: readText(input.presenting_complaint) ?? readText(metadata.presenting_complaint) ?? symptoms[0] ?? null,
+        symptom_summary: symptoms.join(', ') || null,
+        symptoms_normalized: symptoms,
+        top_diagnosis: topSummary.topDiagnosis,
+        confirmed_diagnosis: confirmed,
+        diagnosis_confidence: topSummary.confidence,
+        latest_inference_event_id: inferenceId,
+        latest_outcome_event_id: readText(outcomes[0]?.id),
+        closed_at: confirmed ? readText(outcomes[0]?.created_at) ?? readText(inference.created_at) : null,
+        patient_metadata: metadata,
+        latest_input_signature: input,
+        top_differentials: topSummary.differentials,
+        recommended_tests: topSummary.recommendedTests,
+        reliability_score: topSummary.reliabilityScore,
+        reliability_label: topSummary.reliabilityLabel,
+        history: readText(input.history) ?? readText(metadata.history),
+        duration_text: readText(input.duration_text) ?? readText(metadata.duration_text),
+        sex: readText(input.sex) ?? readText(metadata.sex),
+        age_years: readNumber(input.age_years) ?? readNumber(metadata.age_years),
+        weight_kg: readNumber(input.weight_kg) ?? readNumber(metadata.weight_kg),
+        owner_name: readText(metadata.owner_name),
+        owner_contact: asRecord(metadata.owner_contact),
+        microchip_id: readText(metadata.microchip_id),
+        vitals: asRecord(input.vitals) ?? asRecord(metadata.vitals),
+        physical_exam: asRecord(input.physical_exam) ?? asRecord(metadata.physical_exam),
+        labs: asRecord(input.lab_results) ?? asRecord(metadata.labs),
+        images: Array.isArray(input.diagnostic_images) ? input.diagnostic_images : [],
+        treatments: [],
+        latest_inference: inference,
+        outcomes,
+        diagnosis_records: [],
+    };
+}
+
+function readConfirmedDiagnosisFromInference(inference: Record<string, unknown>): string | null {
+    if (inference.outcome_confirmed !== true) return null;
+    return readText(inference.confirmed_diagnosis);
+}
+
+function readConfirmedDiagnosisFromOutcomes(outcomes: Record<string, unknown>[]): string | null {
+    for (const outcome of outcomes) {
+        const payload = asRecord(outcome.outcome_payload);
+        const label = readText(outcome.actual_label)
+            ?? readText(payload.confirmed_diagnosis)
+            ?? readText(payload.actual_diagnosis)
+            ?? readText(payload.label)
+            ?? readText(payload.diagnosis);
+        if (label) return label;
+    }
+    return null;
+}
+
+function deriveCaseResultSummary(inference: Record<string, unknown>): {
+    topDiagnosis: string | null;
+    confidence: number | null;
+    differentials: CaseDifferentialSummary[];
+    recommendedTests: string[];
+    reliabilityScore: number | null;
+    reliabilityLabel: string;
+} {
+    const output = asRecord(inference.output_payload);
+    const diagnosis = asRecord(output.diagnosis);
+    const rows = Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials
+        : Array.isArray(output.differentials) ? output.differentials : [];
+    const differentials = rows
+        .map((entry) => mapCaseDifferential(asRecord(entry)))
+        .filter((entry): entry is CaseDifferentialSummary => Boolean(entry))
+        .slice(0, 8);
+    const confidence = readNumber(output.confidence_score)
+        ?? readNumber(inference.confidence_score)
+        ?? differentials[0]?.probability
+        ?? null;
+    const reliabilityScore = readReliabilityScore(output);
+    return {
+        topDiagnosis: differentials[0]?.label ?? null,
+        confidence,
+        differentials,
+        recommendedTests: collectRecommendedTests(rows, output),
+        reliabilityScore,
+        reliabilityLabel: reliabilityLabel(reliabilityScore ?? confidence),
+    };
+}
+
+function mapCaseDifferential(entry: Record<string, unknown>): CaseDifferentialSummary | null {
+    const label = readText(entry.condition) ?? readText(entry.name) ?? readText(entry.label);
+    if (!label) return null;
+    return {
+        label,
+        probability: readNumber(entry.probability) ?? readNumber(entry.p) ?? readNumber(entry.confidence) ?? 0,
+        urgency: mapCaseUrgency(readText(entry.clinical_urgency)),
+    };
+}
+
+function collectRecommendedTests(rows: unknown[], output: Record<string, unknown>): string[] {
+    const tests = new Set<string>();
+    for (const row of rows) {
+        const record = asRecord(row);
+        for (const value of readStringArray(record.recommended_confirmatory_tests)) tests.add(value);
+        for (const value of readEvidenceArray(record.missing_evidence)) tests.add(value.replace(/^Test:\s*/i, ''));
+        const groundTruth = asRecord(record.ground_truth_explanation);
+        for (const value of readStringArray(groundTruth.missing_criteria)) tests.add(value);
+    }
+    const summary = asRecord(output.ground_truth_summary);
+    for (const value of readStringArray(summary.missing_confirmatory_tests)) tests.add(value);
+    for (const value of readStringArray(output.recommended_tests)) tests.add(value);
+    return Array.from(tests).slice(0, 6);
+}
+
+function readReliabilityScore(output: Record<string, unknown>): number | null {
+    const reliability = asRecord(output.reliability_breakdown);
+    const cire = asRecord(output.cire);
+    return readNumber(reliability.composite_reliability_score)
+        ?? readNumber(cire.phi_hat);
+}
+
+function reliabilityLabel(value: number | null): string {
+    if (value == null) return 'Needs review';
+    if (value >= 0.75) return 'High reliability';
+    if (value >= 0.5) return 'Moderate reliability';
+    return 'Low reliability';
+}
+
+function mapCaseUrgency(value: string | null): CaseDifferentialSummary['urgency'] {
+    if (value === 'immediate' || value === 'urgent' || value === 'high') return 'high';
+    if (value === 'review' || value === 'medium') return 'medium';
+    return 'low';
 }
 
 async function loadLatestInference(
@@ -476,6 +848,21 @@ function readStringArray(...values: unknown[]): string[] {
             if (normalized) entries.push(normalized);
         }
     }
+    return Array.from(new Set(entries));
+}
+
+function readEvidenceArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    const entries = value
+        .map((entry) => {
+            if (typeof entry === 'string') return normalizeText(entry);
+            const record = asRecord(entry);
+            return normalizeText(record.finding)
+                ?? normalizeText(record.label)
+                ?? normalizeText(record.test)
+                ?? normalizeText(record.reason);
+        })
+        .filter((entry): entry is string => Boolean(entry));
     return Array.from(new Set(entries));
 }
 
