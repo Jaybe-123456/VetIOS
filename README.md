@@ -361,6 +361,28 @@ AI_PROVIDER_DEFAULT_MODEL=gpt-4o-mini
 AI_PROVIDER_EMBEDDING_MODEL=text-embedding-3-small
 ```
 
+### Speculative Decoding
+
+Speculative decoding can reduce latency for LLM-heavy VetIOS paths such as Ask VetIOS and diagnostic image review when the configured generation server supports it. Public OpenAI chat completions do not expose a VetIOS-controlled speculative decoding switch, so VetIOS does not send speculative request fields to `api.openai.com` by default.
+
+For a compatible custom OpenAI-style backend, configure the model server first, then enable VetIOS telemetry/request hints:
+
+```dotenv
+AI_PROVIDER_NAME=vllm
+AI_PROVIDER_BASE_URL=https://your-low-latency-provider.example/v1
+AI_PROVIDER_API_KEY=...
+AI_PROVIDER_DEFAULT_MODEL=vetios-target-model
+
+AI_SPECULATIVE_DECODING_ENABLED=true
+# server = backend already configured out-of-band.
+# top_level or extra_body = send speculative_config request hints to compatible gateways.
+AI_SPECULATIVE_DECODING_MODE=server
+AI_SPECULATIVE_DRAFT_MODEL=vetios-draft-model
+AI_SPECULATIVE_NUM_DRAFT_TOKENS=4
+```
+
+Provider responses include `ensemble_metadata.speculative_decoding` so latency audits can confirm whether the request used server-side speculative decoding or request-body speculation hints.
+
 Optional custom-model validation is available through the Hugging Face-compatible provider hooks used by the AI layer:
 
 ```dotenv

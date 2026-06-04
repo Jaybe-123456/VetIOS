@@ -17,6 +17,11 @@ import {
     shouldUseAiHeuristicFallback,
 } from '@/lib/ai/config';
 import { runWithAiCircuitBreaker } from '@/lib/ai/circuitBreaker';
+import {
+    buildSpeculativeDecodingRequestFields,
+    resolveSpeculativeDecodingPlan,
+    type SpeculativeDecodingPlan,
+} from '@/lib/ai/speculativeDecoding';
 
 const AI_PROVIDER_TIMEOUT_MS = 30_000;
 const AI_PROVIDER_RETRY_BACKOFF_MS = 2_000;
@@ -65,6 +70,12 @@ export interface InferenceOutput {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';
         hf_raw_output?: string;
+        primary_provider?: string;
+        primary_model?: string;
+        primary_latency_ms?: number;
+        speculative_decoding?: SpeculativeDecodingPlan;
+        hf_latency_ms?: number;
+        hf_speculative_decoding?: SpeculativeDecodingPlan;
     };
 }
 
@@ -425,13 +436,18 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
         signal: options?.signal,
     });
 
-    let hfRequest: Promise<any> | null = null;
+    let hfRequest: Promise<ProviderResponse> | null = null;
     if (isHfEnabled()) {
         const hfBaseUrl = getHfProviderBaseUrl();
         const hfApiKey = getHfProviderApiKey();
         const hfModel = getHfProviderModel();
         if (hfBaseUrl && hfApiKey) {
-            hfRequest = performApiRequest(hfBaseUrl, hfApiKey, hfModel, enrichedSystemPrompt, userMessageContent, options?.signal);
+            hfRequest = performApiRequest({
+                name: 'hf_validation',
+                baseUrl: hfBaseUrl,
+                apiKey: hfApiKey,
+                model: hfModel,
+            }, enrichedSystemPrompt, userMessageContent, options?.signal);
         }
     }
 
@@ -454,7 +470,7 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
         return buildFallbackInference(input, contradictionResult, primaryModel, `Primary AI failed: ${primaryResult.error}`);
     }
 
-    const rawContent = primaryResult.choices?.[0]?.message?.content ?? '';
+    const rawContent = primaryResult.data.choices?.[0]?.message?.content ?? '';
     let cleanContent = rawContent.trim();
     if (cleanContent.startsWith('```')) {
         cleanContent = cleanContent.replace(/^```(?:json)?\s*/i, '').replace(/```$/i, '').trim();
@@ -470,11 +486,17 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
     // Inject HF validation if available
     let ensembleMeta: InferenceOutput['ensemble_metadata'] = {
         openai_status: 'success',
-        hf_status: isHfEnabled() ? (hfResult && !('error' in hfResult) ? 'success' : 'failed') : 'disabled'
+        hf_status: isHfEnabled() ? (hfResult && !('error' in hfResult) ? 'success' : 'failed') : 'disabled',
+        primary_provider: primaryResult.metadata.provider_name,
+        primary_model: primaryResult.metadata.model,
+        primary_latency_ms: primaryResult.metadata.latency_ms,
+        speculative_decoding: primaryResult.metadata.speculative_decoding,
     };
 
     if (hfResult && !('error' in hfResult)) {
-        ensembleMeta.hf_raw_output = hfResult.choices[0]?.message?.content;
+        ensembleMeta.hf_raw_output = hfResult.data.choices[0]?.message?.content;
+        ensembleMeta.hf_latency_ms = hfResult.metadata.latency_ms;
+        ensembleMeta.hf_speculative_decoding = hfResult.metadata.speculative_decoding;
         // Optional: Perform cross-model comparison or merge results
         if (parsed.mode === 'clinical' && ensembleMeta.hf_raw_output) {
             try {
@@ -500,24 +522,39 @@ Respond ONLY with valid JSON: { "mode": "general", "answer": "<helpful response>
     };
 }
 
+interface ProviderResponse {
+    data: any;
+    metadata: ProviderCallMetadata;
+}
+
+interface ProviderCallMetadata {
+    provider_name: string;
+    model: string;
+    latency_ms: number;
+    speculative_decoding: SpeculativeDecodingPlan;
+}
+
 async function performApiRequest(
-    baseUrl: string,
-    apiKey: string,
-    model: string,
+    provider: AiProviderDescriptor,
     systemPrompt: string,
     userContent: any[],
     signal?: AbortSignal,
-): Promise<any> {
+): Promise<ProviderResponse> {
     const timedSignal = withTimeoutSignal(signal, AI_PROVIDER_TIMEOUT_MS);
-    const response = await fetch(`${baseUrl}/chat/completions`, {
+    const speculativeDecoding = resolveSpeculativeDecodingPlan({
+        providerName: provider.name,
+        baseUrl: provider.baseUrl,
+    });
+    const startedAt = Date.now();
+    const response = await fetch(`${provider.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
+            Authorization: `Bearer ${provider.apiKey}`,
         },
         signal: timedSignal.signal,
         body: JSON.stringify({
-            model,
+            model: provider.model,
             messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userContent },
@@ -525,6 +562,7 @@ async function performApiRequest(
             temperature: 0.1, // Lower temperature for more consistent clinical results
             max_tokens: 2048,
             response_format: { type: 'json_object' },
+            ...buildSpeculativeDecodingRequestFields(speculativeDecoding),
         }),
     }).catch((error) => {
         if (timedSignal.signal.aborted) {
@@ -540,7 +578,15 @@ async function performApiRequest(
         throw new AiProviderHttpError(response.status, `API error (${response.status}): ${error}`);
     }
 
-    return response.json();
+    return {
+        data: await response.json(),
+        metadata: {
+            provider_name: provider.name,
+            model: provider.model,
+            latency_ms: Date.now() - startedAt,
+            speculative_decoding: speculativeDecoding,
+        },
+    };
 }
 
 async function performApiRequestWithResilience(input: {
@@ -572,7 +618,7 @@ async function callProviderWithRetry(
     systemPrompt: string,
     userContent: any[],
     signal?: AbortSignal,
-): Promise<{ ok: true; data: any } | { ok: false; reason: string }> {
+): Promise<{ ok: true; data: ProviderResponse } | { ok: false; reason: string }> {
     try {
         return {
             ok: true,
@@ -600,12 +646,10 @@ async function callProviderRequest(
     systemPrompt: string,
     userContent: any[],
     signal?: AbortSignal,
-): Promise<any> {
+): Promise<ProviderResponse> {
     const circuitKey = `${provider.name}:${provider.baseUrl}:${provider.model}`;
     return runWithAiCircuitBreaker(circuitKey, () => performApiRequest(
-        provider.baseUrl,
-        provider.apiKey,
-        provider.model,
+        provider,
         systemPrompt,
         userContent,
         signal,
