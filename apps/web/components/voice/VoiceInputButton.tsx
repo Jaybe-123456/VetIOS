@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Loader2, Mic, RotateCcw, Square, X } from 'lucide-react';
+import { Check, Clipboard, Loader2, Mic, RotateCcw, Settings, Square, X } from 'lucide-react';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { fallbackExtractClinicalFields } from '@/lib/voice/extract';
 import type { ExtractedClinicalFields, VoiceExtractResponse, VoiceSurface } from '@/lib/voice/types';
@@ -28,6 +28,7 @@ export function VoiceInputButton({
     const [isExtracting, setIsExtracting] = useState(false);
     const [fields, setFields] = useState<ExtractedClinicalFields | null>(null);
     const [extractError, setExtractError] = useState<string | null>(null);
+    const [copiedSettings, setCopiedSettings] = useState(false);
 
     async function extractTranscript(transcriptOverride?: string) {
         const transcript = (transcriptOverride ?? speech.getTranscript()).trim();
@@ -147,7 +148,20 @@ export function VoiceInputButton({
                                 )}
                             </div>
 
-                            {speech.error ? <Notice tone="danger">{speech.error}</Notice> : null}
+                            {speech.permissionState === 'denied' ? (
+                                <MicrophonePermissionRecovery
+                                    onRetry={() => { void startListening(); }}
+                                    onCopySettings={() => {
+                                        void copyBrowserSettingsUrl().then((copied) => {
+                                            setCopiedSettings(copied);
+                                            if (copied) {
+                                                window.setTimeout(() => setCopiedSettings(false), 2200);
+                                            }
+                                        });
+                                    }}
+                                    copied={copiedSettings}
+                                />
+                            ) : speech.error ? <Notice tone="danger">{speech.error}</Notice> : null}
                             {extractError ? <Notice tone="warning">{extractError}</Notice> : null}
                             {speech.isListening ? (
                                 <div className="flex items-center gap-2 text-xs text-accent">
@@ -274,4 +288,112 @@ function Notice({ children, tone }: { children: React.ReactNode; tone: 'warning'
             {children}
         </div>
     );
+}
+
+function MicrophonePermissionRecovery({
+    onRetry,
+    onCopySettings,
+    copied,
+}: {
+    onRetry: () => void;
+    onCopySettings: () => void;
+    copied: boolean;
+}) {
+    const browser = detectBrowser();
+    return (
+        <div className="rounded-md border border-red-400/30 bg-red-400/10 p-3 text-xs text-red-50">
+            <div className="mb-2 flex items-center gap-2 font-medium text-red-100">
+                <Settings className="h-4 w-4" />
+                Microphone permission is blocked
+            </div>
+            <ol className="list-decimal space-y-1 pl-5 leading-relaxed text-red-50/85">
+                {permissionSteps(browser).map((step) => (
+                    <li key={step}>{step}</li>
+                ))}
+            </ol>
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                    type="button"
+                    onClick={onRetry}
+                    className="rounded-md border border-red-200/25 bg-white/5 px-3 py-2 text-left text-red-50 transition hover:bg-white/10"
+                >
+                    Try again
+                </button>
+                <button
+                    type="button"
+                    onClick={onCopySettings}
+                    className="flex items-center justify-between gap-2 rounded-md border border-red-200/25 bg-white/5 px-3 py-2 text-left text-red-50 transition hover:bg-white/10"
+                >
+                    <span>{copied ? 'Settings address copied' : 'Copy browser settings address'}</span>
+                    <Clipboard className="h-3.5 w-3.5" />
+                </button>
+            </div>
+            <p className="mt-2 leading-relaxed text-red-50/65">
+                Browsers do not allow websites to force-open protected microphone settings or switch browsers automatically.
+                Paste the copied settings address in a new tab if the site controls icon is not visible.
+            </p>
+        </div>
+    );
+}
+
+function detectBrowser(): 'chrome' | 'edge' | 'firefox' | 'safari' | 'other' {
+    const userAgent = navigator.userAgent.toLowerCase();
+    if (userAgent.includes('edg/')) return 'edge';
+    if (userAgent.includes('firefox/')) return 'firefox';
+    if (userAgent.includes('safari/') && !userAgent.includes('chrome/') && !userAgent.includes('chromium/')) return 'safari';
+    if (userAgent.includes('chrome/') || userAgent.includes('chromium/')) return 'chrome';
+    return 'other';
+}
+
+function permissionSteps(browser: ReturnType<typeof detectBrowser>): string[] {
+    if (browser === 'chrome') {
+        return [
+            'Click the site controls icon beside the address bar.',
+            'Set Microphone to Allow for vetios.tech.',
+            'Reload this page, then click Start again.',
+        ];
+    }
+    if (browser === 'edge') {
+        return [
+            'Click the lock or site controls icon beside the address bar.',
+            'Open Permissions for this site and set Microphone to Allow.',
+            'Reload VetIOS, then click Start again.',
+        ];
+    }
+    if (browser === 'firefox') {
+        return [
+            'Click the permissions icon beside the address bar.',
+            'Remove the blocked microphone permission or choose Allow.',
+            'Reload VetIOS, then click Start again.',
+        ];
+    }
+    if (browser === 'safari') {
+        return [
+            'Open Safari Settings, then Websites, then Microphone.',
+            'Set vetios.tech to Allow.',
+            'Reload VetIOS. Chrome or Edge gives more reliable Web Speech support.',
+        ];
+    }
+    return [
+        'Open this site in Chrome or Edge for the most reliable voice mode.',
+        'Allow microphone access for vetios.tech in browser site settings.',
+        'Reload VetIOS, then click Start again.',
+    ];
+}
+
+async function copyBrowserSettingsUrl(): Promise<boolean> {
+    const browser = detectBrowser();
+    const settingsUrl = browser === 'edge'
+        ? 'edge://settings/content/microphone'
+        : browser === 'firefox'
+            ? 'about:preferences#privacy'
+            : browser === 'safari'
+                ? 'Safari Settings > Websites > Microphone'
+                : 'chrome://settings/content/microphone';
+    try {
+        await navigator.clipboard.writeText(settingsUrl);
+        return true;
+    } catch {
+        return false;
+    }
 }

@@ -82,7 +82,14 @@ export function useSpeechRecognition() {
             setTranscript(nextTranscript);
         };
         recognition.onerror = (event) => {
-            setError(event.message ?? event.error ?? 'Speech recognition failed.');
+            if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+                setPermissionState('denied');
+                setError('Microphone permission is blocked for this site.');
+            } else if (event.error === 'no-speech') {
+                setError('No speech was detected. Try again in a quieter space.');
+            } else {
+                setError(event.message ?? event.error ?? 'Speech recognition failed.');
+            }
             setIsListening(false);
         };
         recognition.onend = () => {
