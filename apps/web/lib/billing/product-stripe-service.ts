@@ -57,16 +57,23 @@ export async function resolveProductCheckoutPriceId(planKey: ProductPlanKey): Pr
     );
 }
 
-export function resolveProductPlanFromStripePriceId(priceId: string | null | undefined): ProductPlanKey | null {
-    if (!priceId) return null;
-
+export function resolveProductPlanFromStripePrice(price: Stripe.Price | null | undefined): ProductPlanKey | null {
+    if (!price?.id) return null;
+    const productId = readStripeProductId(price.product);
     for (const [planKey, envKey] of Object.entries(PRODUCT_PRICE_ENV_BY_PLAN)) {
-        if (process.env[envKey] === priceId && isProductPlanKey(planKey)) {
+        const configuredId = process.env[envKey];
+        if ((configuredId === price.id || configuredId === productId) && isProductPlanKey(planKey)) {
             return planKey;
         }
     }
 
     return null;
+}
+
+export async function resolveProductPlanFromStripePriceId(priceId: string | null | undefined): Promise<ProductPlanKey | null> {
+    if (!priceId) return null;
+    const price = await getProductStripeClient().prices.retrieve(priceId);
+    return resolveProductPlanFromStripePrice(price);
 }
 
 export async function createProductCheckoutSession(input: {
@@ -155,7 +162,9 @@ export async function handleProductCheckoutCompleted(session: Stripe.Checkout.Se
 export async function handleProductSubscriptionUpdated(subscription: Stripe.Subscription): Promise<boolean> {
     const metadata = readProductMetadata(subscription.metadata)
         ?? await readProductMetadataFromCustomer(String(subscription.customer));
-    const pricePlan = resolveProductPlanFromStripePriceId(subscription.items.data[0]?.price.id ?? null);
+    const subscriptionPrice = subscription.items.data[0]?.price ?? null;
+    const pricePlan = resolveProductPlanFromStripePrice(subscriptionPrice)
+        ?? await resolveProductPlanFromStripePriceId(subscriptionPrice?.id ?? null);
     const planKey = pricePlan ?? metadata?.planKey;
     const tenantId = metadata?.tenantId;
     const userId = metadata?.userId;
@@ -290,6 +299,11 @@ function readProductMetadata(metadata: Stripe.Metadata | null | undefined): Prod
 }
 
 function readStripeId(value: string | { id?: string } | null): string | null {
+    if (typeof value === 'string') return value;
+    return value?.id ?? null;
+}
+
+function readStripeProductId(value: string | Stripe.Product | Stripe.DeletedProduct | null | undefined): string | null {
     if (typeof value === 'string') return value;
     return value?.id ?? null;
 }
