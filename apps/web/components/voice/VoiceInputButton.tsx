@@ -63,6 +63,11 @@ export function VoiceInputButton({
         await speech.start();
     }
 
+    async function openAndStartListening() {
+        setIsOpen(true);
+        await startListening();
+    }
+
     function stopAndExtract() {
         speech.stop();
         window.setTimeout(() => {
@@ -89,6 +94,11 @@ export function VoiceInputButton({
         setExtractError(null);
     }
 
+    function hidePanel() {
+        speech.stop();
+        setIsOpen(false);
+    }
+
     function resetAll() {
         setFields(null);
         setExtractError(null);
@@ -99,7 +109,13 @@ export function VoiceInputButton({
         <>
             <button
                 type="button"
-                onClick={() => setIsOpen((open) => !open)}
+                onClick={() => {
+                    if (isOpen) {
+                        hidePanel();
+                        return;
+                    }
+                    void openAndStartListening();
+                }}
                 className="fixed bottom-5 right-5 z-[70] flex h-14 w-14 items-center justify-center rounded-full border border-accent/45 bg-accent text-black shadow-[0_0_30px_rgba(0,255,102,0.35)] transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent/60"
                 aria-label={label}
                 title={label}
@@ -118,7 +134,7 @@ export function VoiceInputButton({
                         </div>
                         <button
                             type="button"
-                            onClick={() => setIsOpen(false)}
+                            onClick={hidePanel}
                             className="rounded-md border border-white/10 p-2 text-white/50 transition hover:text-white"
                             aria-label="Close voice input"
                         >
@@ -143,6 +159,8 @@ export function VoiceInputButton({
                                     <span className="text-accent">Requesting microphone permission...</span>
                                 ) : speech.isListening && !speech.transcript ? (
                                     <span className="text-accent">Listening. Speak naturally about the case.</span>
+                                ) : speech.permissionState === 'prompt' ? (
+                                    <span className="text-white/70">Click the voice button or Start. Your browser will ask whether VetIOS can use the microphone.</span>
                                 ) : (
                                     speech.transcript || 'Tap Start and dictate the case in natural clinical language.'
                                 )}
