@@ -6,6 +6,14 @@ import { UploadCloud, File, Image as ImageIcon, Type, Code, AlignLeft, ChevronDo
 import type { InputMode } from '@/lib/input/inputNormalizer';
 import { PanelSelector } from './inference/PanelSelector';
 import type { SystemPanel, Species } from '@vetios/inference-schema';
+import { VoiceInputButton } from '@/components/voice/VoiceInputButton';
+import {
+    buildVoiceClinicalSummary,
+    buildVoiceMetadataText,
+    clinicalFieldsToJsonInput,
+    toAgeYears,
+} from '@/lib/voice/extract';
+import type { ExtractedClinicalFields, VoiceSpecies } from '@/lib/voice/types';
 
 interface InferenceFormProps {
     onSubmit: (e: React.FormEvent<HTMLFormElement>) => void;
@@ -39,8 +47,39 @@ export function InferenceForm({
     const [docFile, setDocFile] = useState<File | null>(null);
     const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
 
+    function applyVoiceFields(fields: ExtractedClinicalFields) {
+        const speciesValue = voiceSpeciesToInferenceSpecies(fields.species);
+        if (speciesValue) onSpeciesChange(speciesValue);
+
+        if (inputMode === 'panels') {
+            writeFieldValue('panel_breed', fields.breed);
+            writeFieldValue('panel_age_years', toAgeYears(fields.age_value, fields.age_unit));
+            writeFieldValue('panel_sex', fields.sex);
+            writeFieldValue('panel_presenting_complaints', fields.symptoms.join(', '));
+            writeFieldValue('panel_duration_days', durationToDays(fields.duration_value, fields.duration_unit));
+            writeFieldValue('panel_history', buildVoiceClinicalSummary(fields));
+            return;
+        }
+
+        if (inputMode === 'freetext') {
+            writeFieldValue('freetext-input', buildVoiceClinicalSummary(fields));
+            return;
+        }
+
+        if (inputMode === 'json') {
+            writeFieldValue('json-input', clinicalFieldsToJsonInput(fields));
+            return;
+        }
+
+        writeFieldValue('species', speciesValue ?? fields.species);
+        writeFieldValue('breed', fields.breed);
+        writeFieldValue('symptoms', fields.symptoms.join(', '));
+        writeFieldValue('metadata', buildVoiceMetadataText(fields));
+    }
+
     return (
         <form onSubmit={onSubmit} className="space-y-6">
+            <VoiceInputButton surface="inference" onExtracted={applyVoiceFields} label="Dictate inference input" />
             {/* ── Mode Selector ── */}
             <div>
                 <TerminalLabel>Input Mode</TerminalLabel>
@@ -308,4 +347,34 @@ export function InferenceForm({
             </TerminalButton>
         </form>
     );
+}
+
+function writeFieldValue(name: string, value: string | number | null | undefined) {
+    if (value == null || value === '') return;
+    const element = document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(`[name="${name}"]`);
+    if (!element) return;
+    element.value = String(value);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function voiceSpeciesToInferenceSpecies(species: VoiceSpecies | undefined): Species | undefined {
+    if (
+        species === 'canine'
+        || species === 'feline'
+        || species === 'equine'
+        || species === 'bovine'
+        || species === 'avian'
+        || species === 'exotic'
+    ) {
+        return species;
+    }
+    return undefined;
+}
+
+function durationToDays(value: number | undefined, unit: string | undefined): number | undefined {
+    if (!value || !unit) return undefined;
+    if (unit === 'hours') return Number((value / 24).toFixed(1));
+    if (unit === 'weeks') return value * 7;
+    return value;
 }

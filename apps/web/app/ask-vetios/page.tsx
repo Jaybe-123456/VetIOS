@@ -15,6 +15,9 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
 import { useState } from 'react';
+import { VoiceInputButton } from '@/components/voice/VoiceInputButton';
+import { buildVoiceClinicalSummary } from '@/lib/voice/extract';
+import type { ExtractedClinicalFields } from '@/lib/voice/types';
 
 type AskVetiosContractResponse = {
     narrative?: string;
@@ -75,6 +78,7 @@ export default function AskVetIOSPage() {
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const [uploading, setUploading] = useState(false);
     const [chatUploads, setChatUploads] = useState<Record<string, UploadResponse[]>>({});
+    const [voiceDraft, setVoiceDraft] = useState<{ id: string; text: string } | null>(null);
 
     // Auto-create first chat
     useEffect(() => {
@@ -191,6 +195,15 @@ export default function AskVetIOSPage() {
     const handleFollowUp = useCallback((prompt: string) => {
         void sendMessage(prompt);
     }, [sendMessage]);
+
+    const handleVoiceDraft = useCallback((fields: ExtractedClinicalFields) => {
+        setVoiceDraft({
+            id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `voice_${Date.now()}`,
+            text: fields.query || buildVoiceClinicalSummary(fields),
+        });
+    }, []);
 
     const handleUploadFile = useCallback(async (file: File) => {
         if (!activeChatId || uploading) return;
@@ -330,6 +343,7 @@ if (!username) return <UsernamePrompt />;
 return (
     
         <div className="h-full min-h-0 w-full flex bg-[#050505] text-white overflow-hidden">
+            <VoiceInputButton surface="ask_vetios" onExtracted={handleVoiceDraft} label="Dictate Ask VetIOS query" />
 
             {/* ── Chat history sidebar ─────────────────────────────────── */}
             <AnimatePresence>
@@ -480,6 +494,7 @@ return (
                             onUploadFile={handleUploadFile}
                             disabled={isLoading}
                             uploadDisabled={uploading}
+                            voiceDraft={voiceDraft}
                         />
                     </div>
                 </div>

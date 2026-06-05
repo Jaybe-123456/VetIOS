@@ -3,6 +3,8 @@
 import { useMemo, useState } from 'react';
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from 'react';
 import { normalizeInferenceInput } from '@/lib/input/inputNormalizer';
+import { VoiceInputButton } from '@/components/voice/VoiceInputButton';
+import type { ExtractedClinicalFields, VoiceAgeUnit, VoiceSex, VoiceSpecies } from '@/lib/voice/types';
 import type { ClinicalInferenceInput } from './clinicalTypes';
 
 interface ClinicalCaseFormProps {
@@ -26,6 +28,29 @@ export function ClinicalCaseForm({ onSubmit, isLoading }: ClinicalCaseFormProps)
         symptoms: !signs.symptoms.trim() ? 'Please describe what you are seeing' : '',
     }), [patient.species, signs.symptoms]);
     const hasErrors = Boolean(errors.species || errors.symptoms);
+
+    function applyVoiceFields(fields: ExtractedClinicalFields) {
+        setPatient((current) => ({
+            ...current,
+            species: speciesToFormValue(fields.species) ?? current.species,
+            breed: fields.breed ?? current.breed,
+            age: ageToFormValue(fields.age_value, fields.age_unit)?.value ?? current.age,
+            ageUnit: ageToFormValue(fields.age_value, fields.age_unit)?.unit ?? current.ageUnit,
+            sex: sexToFormValue(fields.sex) ?? current.sex,
+        }));
+        setSigns((current) => ({
+            ...current,
+            symptoms: fields.symptoms.length > 0 ? fields.symptoms.join(', ') : current.symptoms,
+            duration: fields.duration_value ? String(fields.duration_value) : current.duration,
+            durationUnit: fields.duration_unit ?? current.durationUnit,
+            severity: fields.severity ?? current.severity,
+        }));
+        const labValues = labsToFormValues(fields.labs);
+        if (Object.keys(labValues).length > 0) {
+            setLabs((current) => ({ ...current, ...labValues }));
+        }
+        setTouched((current) => ({ ...current, species: true, symptoms: true }));
+    }
 
     function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -56,6 +81,7 @@ export function ClinicalCaseForm({ onSubmit, isLoading }: ClinicalCaseFormProps)
 
     return (
         <form onSubmit={submit} className="space-y-5">
+            <VoiceInputButton surface="case_intake" onExtracted={applyVoiceFields} label="Dictate case intake" />
             <section className="rounded-lg border border-white/10 bg-white/[0.025] p-4">
                 <StepTitle value="1" title="Tell me about the patient" />
                 <div className="grid gap-3 md:grid-cols-2">
@@ -156,4 +182,43 @@ function numberOrNull(value: string | undefined): number | null {
 
 function splitSymptoms(value: string): string[] {
     return value.split(/,|\n/).map((entry) => entry.trim()).filter(Boolean);
+}
+
+function speciesToFormValue(species: VoiceSpecies | undefined): string | undefined {
+    if (!species || species === 'unknown') return undefined;
+    if (species === 'exotic') return 'Other';
+    return `${species[0]?.toUpperCase() ?? ''}${species.slice(1)}`;
+}
+
+function sexToFormValue(sex: VoiceSex | undefined): string | undefined {
+    if (!sex || sex === 'unknown') return undefined;
+    return sex
+        .split('_')
+        .map((word) => `${word[0]?.toUpperCase() ?? ''}${word.slice(1)}`)
+        .join(' ');
+}
+
+function ageToFormValue(value: number | undefined, unit: VoiceAgeUnit | undefined): { value: string; unit: string } | null {
+    if (!value || !unit) return null;
+    if (unit === 'years') return { value: String(value), unit: 'years' };
+    if (unit === 'months') return { value: String(value), unit: 'months' };
+    const months = Math.max(0.1, Number((value / 30).toFixed(1)));
+    return { value: String(months), unit: 'months' };
+}
+
+function labsToFormValues(labs: Record<string, number> | undefined): Record<string, string> {
+    if (!labs) return {};
+    const mapping: Record<string, string> = {
+        wbc: 'WBC',
+        pcv: 'PCV',
+        hct: 'PCV',
+        bun: 'BUN',
+        creatinine: 'Creatinine',
+        glucose: 'Glucose',
+    };
+    return Object.fromEntries(
+        Object.entries(labs)
+            .map(([key, value]) => [mapping[key.toLowerCase()], String(value)] as const)
+            .filter(([key]) => Boolean(key)),
+    );
 }

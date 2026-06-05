@@ -9,9 +9,10 @@ interface ChatInputProps {
   onUploadFile?: (file: File) => void;
   disabled?: boolean;
   uploadDisabled?: boolean;
+  voiceDraft?: { id: string; text: string } | null;
 }
 
-export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabled }: ChatInputProps) {
+export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabled, voiceDraft }: ChatInputProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -45,6 +46,12 @@ export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabl
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
   }, [input]);
+
+  useEffect(() => {
+    if (!voiceDraft?.text) return;
+    setInput(voiceDraft.text);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [voiceDraft]);
 
   return (
     <div
