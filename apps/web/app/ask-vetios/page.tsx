@@ -205,6 +205,17 @@ export default function AskVetIOSPage() {
         });
     }, []);
 
+    const handleVoiceSubmit = useCallback((fields: ExtractedClinicalFields) => {
+        const text = fields.query || buildVoiceClinicalSummary(fields);
+        setVoiceDraft({
+            id: typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+                ? crypto.randomUUID()
+                : `voice_${Date.now()}`,
+            text,
+        });
+        void sendMessage(text);
+    }, [sendMessage]);
+
     const handleUploadFile = useCallback(async (file: File) => {
         if (!activeChatId || uploading) return;
 
@@ -343,7 +354,14 @@ if (!username) return <UsernamePrompt />;
 return (
     
         <div className="h-full min-h-0 w-full flex bg-[#050505] text-white overflow-hidden">
-            <VoiceInputButton surface="ask_vetios" onExtracted={handleVoiceDraft} label="Dictate Ask VetIOS query" />
+            <VoiceInputButton
+                surface="ask_vetios"
+                onExtracted={handleVoiceDraft}
+                onSubmitExtracted={handleVoiceSubmit}
+                label="Dictate Ask VetIOS query"
+                fillLabel="Fill draft"
+                submitLabel="Ask VetIOS"
+            />
 
             {/* ── Chat history sidebar ─────────────────────────────────── */}
             <AnimatePresence>

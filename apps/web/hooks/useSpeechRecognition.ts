@@ -26,6 +26,7 @@ type SpeechRecognitionLike = {
     continuous: boolean;
     interimResults: boolean;
     lang: string;
+    onstart: (() => void) | null;
     onresult: ((event: SpeechRecognitionEventLike) => void) | null;
     onerror: ((event: { error?: string; message?: string }) => void) | null;
     onend: (() => void) | null;
@@ -49,6 +50,7 @@ export function useSpeechRecognition() {
     const [isListening, setIsListening] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isSupported, setIsSupported] = useState(false);
+    const [permissionState, setPermissionState] = useState<'idle' | 'requesting' | 'granted' | 'denied'>('idle');
 
     useEffect(() => {
         const speechWindow = window as SpeechWindow;
@@ -60,6 +62,10 @@ export function useSpeechRecognition() {
         recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = 'en-US';
+        recognition.onstart = () => {
+            setIsListening(true);
+            setError(null);
+        };
         recognition.onresult = (event) => {
             let interim = '';
             for (let index = event.resultIndex; index < event.results.length; index += 1) {
@@ -85,6 +91,7 @@ export function useSpeechRecognition() {
         recognitionRef.current = recognition;
 
         return () => {
+            recognition.onstart = null;
             recognition.onresult = null;
             recognition.onerror = null;
             recognition.onend = null;
@@ -100,20 +107,38 @@ export function useSpeechRecognition() {
         setError(null);
     }, []);
 
-    const start = useCallback(() => {
+    const requestMicrophonePermission = useCallback(async () => {
+        if (!navigator.mediaDevices?.getUserMedia) {
+            return true;
+        }
+        setPermissionState('requesting');
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            stream.getTracks().forEach((track) => track.stop());
+            setPermissionState('granted');
+            return true;
+        } catch {
+            setPermissionState('denied');
+            setError('Microphone permission was blocked. Allow microphone access in the browser, then try again.');
+            return false;
+        }
+    }, []);
+
+    const start = useCallback(async () => {
         if (!recognitionRef.current) {
             setError('Voice input is not supported by this browser.');
             return;
         }
         reset();
+        const allowed = await requestMicrophonePermission();
+        if (!allowed) return;
         try {
             recognitionRef.current.start();
-            setIsListening(true);
         } catch {
             setError('Microphone capture could not start. Check browser permission and try again.');
             setIsListening(false);
         }
-    }, [reset]);
+    }, [requestMicrophonePermission, reset]);
 
     const stop = useCallback(() => {
         recognitionRef.current?.stop();
@@ -126,6 +151,8 @@ export function useSpeechRecognition() {
         transcript,
         isListening,
         isSupported,
+        isRequestingPermission: permissionState === 'requesting',
+        permissionState,
         error,
         start,
         stop,

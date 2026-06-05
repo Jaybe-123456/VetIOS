@@ -9,10 +9,20 @@ import type { ExtractedClinicalFields, VoiceExtractResponse, VoiceSurface } from
 interface VoiceInputButtonProps {
     surface: VoiceSurface;
     onExtracted: (fields: ExtractedClinicalFields) => void;
+    onSubmitExtracted?: (fields: ExtractedClinicalFields) => void;
     label?: string;
+    fillLabel?: string;
+    submitLabel?: string;
 }
 
-export function VoiceInputButton({ surface, onExtracted, label = 'Voice input' }: VoiceInputButtonProps) {
+export function VoiceInputButton({
+    surface,
+    onExtracted,
+    onSubmitExtracted,
+    label = 'Voice input',
+    fillLabel = 'Fill form',
+    submitLabel = 'Start conversation',
+}: VoiceInputButtonProps) {
     const speech = useSpeechRecognition();
     const [isOpen, setIsOpen] = useState(false);
     const [isExtracting, setIsExtracting] = useState(false);
@@ -46,6 +56,12 @@ export function VoiceInputButton({ surface, onExtracted, label = 'Voice input' }
         }
     }
 
+    async function startListening() {
+        setFields(null);
+        setExtractError(null);
+        await speech.start();
+    }
+
     function stopAndExtract() {
         speech.stop();
         window.setTimeout(() => {
@@ -56,6 +72,16 @@ export function VoiceInputButton({ surface, onExtracted, label = 'Voice input' }
     function fillForm() {
         if (!fields) return;
         onExtracted(fields);
+        closePanel();
+    }
+
+    function submitExtracted() {
+        if (!fields || !onSubmitExtracted) return;
+        onSubmitExtracted(fields);
+        closePanel();
+    }
+
+    function closePanel() {
         setIsOpen(false);
         setFields(null);
         speech.reset();
@@ -85,7 +111,9 @@ export function VoiceInputButton({ surface, onExtracted, label = 'Voice input' }
                     <div className="mb-3 flex items-center justify-between gap-3">
                         <div>
                             <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-accent">Voice Capture</div>
-                            <div className="mt-1 text-xs text-white/55">Review before filling. Nothing is submitted.</div>
+                            <div className="mt-1 text-xs text-white/55">
+                                {onSubmitExtracted ? 'Review before starting the conversation.' : 'Review before filling. Nothing is submitted.'}
+                            </div>
                         </div>
                         <button
                             type="button"
@@ -103,12 +131,30 @@ export function VoiceInputButton({ surface, onExtracted, label = 'Voice input' }
                         </div>
                     ) : (
                         <div className="space-y-3">
-                            <div className="min-h-[96px] rounded-md border border-white/10 bg-black/35 p-3 text-sm leading-relaxed text-white/80">
-                                {speech.transcript || 'Tap start and dictate the case in natural clinical language.'}
+                            <div className={[
+                                'min-h-[110px] rounded-md border p-3 text-sm leading-relaxed transition',
+                                speech.isListening
+                                    ? 'border-accent/45 bg-accent/5 text-white'
+                                    : 'border-white/10 bg-black/35 text-white/80',
+                            ].join(' ')}
+                            >
+                                {speech.isRequestingPermission ? (
+                                    <span className="text-accent">Requesting microphone permission...</span>
+                                ) : speech.isListening && !speech.transcript ? (
+                                    <span className="text-accent">Listening. Speak naturally about the case.</span>
+                                ) : (
+                                    speech.transcript || 'Tap Start and dictate the case in natural clinical language.'
+                                )}
                             </div>
 
                             {speech.error ? <Notice tone="danger">{speech.error}</Notice> : null}
                             {extractError ? <Notice tone="warning">{extractError}</Notice> : null}
+                            {speech.isListening ? (
+                                <div className="flex items-center gap-2 text-xs text-accent">
+                                    <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
+                                    Microphone is live
+                                </div>
+                            ) : null}
 
                             {fields ? (
                                 <div className="rounded-md border border-accent/20 bg-accent/5 p-3">
@@ -118,9 +164,9 @@ export function VoiceInputButton({ surface, onExtracted, label = 'Voice input' }
                             ) : null}
 
                             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                <ActionButton onClick={speech.start} disabled={speech.isListening || isExtracting}>
-                                    <Mic className="h-4 w-4" />
-                                    Start
+                                <ActionButton onClick={() => { void startListening(); }} disabled={speech.isListening || isExtracting || speech.isRequestingPermission}>
+                                    {speech.isRequestingPermission ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
+                                    {speech.isRequestingPermission ? 'Allow' : 'Start'}
                                 </ActionButton>
                                 <ActionButton onClick={stopAndExtract} disabled={!speech.isListening || isExtracting}>
                                     <Square className="h-4 w-4" />
@@ -132,9 +178,20 @@ export function VoiceInputButton({ surface, onExtracted, label = 'Voice input' }
                                 </ActionButton>
                                 <ActionButton onClick={fillForm} disabled={!fields || isExtracting} accent>
                                     {isExtracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                                    Fill form
+                                    {fillLabel}
                                 </ActionButton>
                             </div>
+
+                            {fields && onSubmitExtracted ? (
+                                <button
+                                    type="button"
+                                    onClick={submitExtracted}
+                                    disabled={isExtracting}
+                                    className="w-full rounded-md border border-accent/60 bg-accent px-3 py-2 text-sm font-medium text-black transition hover:bg-accent/90 disabled:opacity-50"
+                                >
+                                    {submitLabel}
+                                </button>
+                            ) : null}
 
                             {!speech.isListening && speech.transcript && !fields ? (
                                 <button
