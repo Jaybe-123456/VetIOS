@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Plus, Search } from 'lucide-react';
+import { ClipboardList, Plus, Search, Sparkles } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import type { CaseSummary } from '@/lib/cases/caseWorkflow';
 import { formatClinicalLabel, formatPercent } from './clinicalTypes';
@@ -19,6 +19,8 @@ export function ClinicalCaseListClient({ cases }: { cases: CaseSummary[] }) {
 
     return (
         <div className="space-y-5">
+            {cases.length === 0 ? <FirstCaseEmptyState /> : null}
+
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="relative max-w-md flex-1">
                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/38" />
@@ -90,6 +92,40 @@ export function ClinicalCaseListClient({ cases }: { cases: CaseSummary[] }) {
                 </div>
             ) : null}
         </div>
+    );
+}
+
+function FirstCaseEmptyState() {
+    return (
+        <section className="rounded-lg border border-accent/24 bg-accent/[0.035] p-5">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
+                        Start here
+                    </div>
+                    <h2 className="mt-2 text-xl font-semibold text-white">Run your first clinical case</h2>
+                    <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/68">
+                        VetIOS only needs species and clinical signs to begin. Add age, duration, sex, or labs when available.
+                    </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                    <Link
+                        href="/cases/new?first_case=1"
+                        className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border border-accent/65 bg-accent/10 px-4 text-sm font-medium text-accent transition hover:bg-accent hover:text-black"
+                    >
+                        <ClipboardList className="h-4 w-4" />
+                        New case
+                    </Link>
+                    <Link
+                        href="/cases/new?template=demo&first_case=1"
+                        className="inline-flex min-h-[44px] items-center justify-center gap-2 rounded-md border border-white/12 px-4 text-sm text-white/72 transition hover:border-white/30 hover:text-white"
+                    >
+                        <Sparkles className="h-4 w-4" />
+                        Try demo draft
+                    </Link>
+                </div>
+            </div>
+        </section>
     );
 }
 

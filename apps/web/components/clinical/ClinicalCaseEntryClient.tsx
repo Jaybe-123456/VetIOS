@@ -1,14 +1,44 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { CheckCircle2, FileText, Sparkles, Stethoscope } from 'lucide-react';
 import { ClinicalCaseForm } from './ClinicalCaseForm';
+import type { ClinicalCaseFormDraft } from './ClinicalCaseForm';
 import type { ClinicalInferenceInput } from './clinicalTypes';
 
-export function ClinicalCaseEntryClient() {
+interface ClinicalCaseEntryClientProps {
+    firstCaseMode?: boolean;
+    useDemoDraft?: boolean;
+}
+
+const DEMO_DRAFT: ClinicalCaseFormDraft = {
+    patient: {
+        species: 'Canine',
+        breed: 'Mixed breed',
+        age: '0.4',
+        ageUnit: 'years',
+        sex: 'Male intact',
+    },
+    signs: {
+        symptoms: 'acute vomiting, bloody diarrhea, lethargy, poor appetite, not fully vaccinated',
+        duration: '2',
+        durationUnit: 'days',
+        severity: 'severe',
+    },
+    labs: {
+        WBC: '3.1',
+        PCV: '48',
+        Glucose: '62',
+    },
+};
+
+export function ClinicalCaseEntryClient({ firstCaseMode = false, useDemoDraft = false }: ClinicalCaseEntryClientProps) {
     const router = useRouter();
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [demoDraftEnabled, setDemoDraftEnabled] = useState(useDemoDraft);
 
     async function submitCase(input: ClinicalInferenceInput) {
         setIsLoading(true);
@@ -37,13 +67,72 @@ export function ClinicalCaseEntryClient() {
 
     return (
         <div className="mx-auto max-w-4xl">
+            {firstCaseMode ? <FirstCaseQuickStart demoDraftEnabled={demoDraftEnabled} /> : null}
             {error ? (
                 <div className="mb-4 rounded-md border border-destructive/45 bg-destructive/10 p-3 text-sm text-destructive">
                     {error}
                 </div>
             ) : null}
-            <ClinicalCaseForm onSubmit={submitCase} isLoading={isLoading} />
+            <ClinicalCaseForm
+                onSubmit={submitCase}
+                isLoading={isLoading}
+                initialDraft={demoDraftEnabled ? DEMO_DRAFT : undefined}
+                onClearDraft={() => setDemoDraftEnabled(false)}
+            />
         </div>
+    );
+}
+
+function FirstCaseQuickStart({ demoDraftEnabled }: { demoDraftEnabled: boolean }) {
+    const steps = [
+        { label: 'Describe patient', icon: <Stethoscope className="h-4 w-4" /> },
+        { label: 'Review differential', icon: <FileText className="h-4 w-4" /> },
+        { label: 'Confirm outcome', icon: <CheckCircle2 className="h-4 w-4" /> },
+    ];
+
+    return (
+        <section className="mb-5 rounded-lg border border-white/10 bg-white/[0.025] p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div>
+                    <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
+                        First case path
+                    </div>
+                    <p className="mt-1 max-w-2xl text-sm leading-relaxed text-white/68">
+                        Start with the minimum clinical facts. VetIOS will produce ranked differentials, reliability, tests, and a case record.
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <Link
+                        href="/cases/new?template=demo&first_case=1"
+                        className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-md border border-accent/55 bg-accent/10 px-3 text-sm font-medium text-accent transition hover:bg-accent hover:text-black"
+                    >
+                        <Sparkles className="h-4 w-4" />
+                        {demoDraftEnabled ? 'Demo loaded' : 'Load demo'}
+                    </Link>
+                    <Link
+                        href="/cases"
+                        className="inline-flex min-h-[40px] items-center justify-center rounded-md border border-white/10 px-3 text-sm text-white/68 transition hover:border-white/25 hover:text-white"
+                    >
+                        My cases
+                    </Link>
+                </div>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                {steps.map((step, index) => (
+                    <div key={step.label} className="flex items-center gap-3 rounded-md border border-white/8 bg-black/20 p-3">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full border border-accent/35 text-accent">
+                            {step.icon}
+                        </span>
+                        <div>
+                            <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/42">
+                                Step {index + 1}
+                            </div>
+                            <div className="text-sm font-medium text-white/82">{step.label}</div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </section>
     );
 }
 

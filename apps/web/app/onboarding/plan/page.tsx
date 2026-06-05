@@ -37,10 +37,25 @@ export default async function OnboardingPlanPage() {
                     </div>
                     <div className="font-mono text-lg text-accent">{summary.plan.displayName}</div>
                 </div>
-                <Link href="/cases" className="ml-auto">
-                    <TerminalButton type="button" variant="secondary">Continue to Cases</TerminalButton>
-                </Link>
+                <div className="ml-auto flex flex-wrap gap-2">
+                    <Link href="/cases/new?first_case=1">
+                        <TerminalButton type="button">Start First Case</TerminalButton>
+                    </Link>
+                    <Link href="/cases/new?template=demo&first_case=1">
+                        <TerminalButton type="button" variant="secondary">Try Demo Draft</TerminalButton>
+                    </Link>
+                </div>
             </div>
+
+            <section className="mb-5 border border-accent/20 bg-accent/[0.035] p-4">
+                <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-accent">
+                    Fastest path
+                </div>
+                <p className="mt-2 max-w-3xl text-sm leading-relaxed text-[hsl(0_0%_74%)]">
+                    You can stay on Free and run a first diagnosis now. Choose a paid plan only when clinic volume,
+                    voice capture, SOAP notes, API access, or research tooling becomes necessary.
+                </p>
+            </section>
 
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {listPublicProductPlans().map((plan) => (
