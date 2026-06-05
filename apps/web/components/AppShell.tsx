@@ -34,7 +34,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         );
     }
 
-    if (pathname === '/cases' || pathname?.startsWith('/cases/')) {
+    if (
+        pathname === '/cases'
+        || pathname?.startsWith('/cases/')
+        || pathname === '/profile'
+        || pathname === '/billing'
+        || pathname?.startsWith('/onboarding/')
+    ) {
         return <ClinicianShell>{children}</ClinicianShell>;
     }
 

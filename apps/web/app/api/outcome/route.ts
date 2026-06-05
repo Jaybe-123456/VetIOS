@@ -24,6 +24,7 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import { recordOutcomeObservability } from '@/lib/telemetry/observability';
 import type { Differential } from '@/lib/cire';
+import { recordProductUsageEvent } from '@/lib/billing/entitlements';
 
 export const runtime = 'nodejs';
 
@@ -399,6 +400,20 @@ export async function POST(req: Request) {
         tenantId,
         requestId,
         startTime,
+    });
+    await recordProductUsageEvent({
+        tenantId,
+        userId: auth.actor.userId,
+        eventType: 'outcome_confirmation',
+        source: 'outcome_api',
+        requestId,
+        metadata: {
+            outcome_event_id: persistedOutcomeId,
+            inference_event_id: body.inference_event_id,
+            clinical_case_id: clinicalCase?.id ?? caseId,
+            prediction_correct: predictionCorrect,
+        },
+        client: supabase,
     });
     return NextResponse.json(responseBody);
 }

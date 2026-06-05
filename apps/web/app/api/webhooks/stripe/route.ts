@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { resolvePlanFromStripePriceId } from '@/lib/billing/stripe-service';
+import {
+    handleProductCheckoutCompleted,
+    handleProductSubscriptionDeleted,
+    handleProductSubscriptionUpdated,
+} from '@/lib/billing/product-stripe-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,8 +35,20 @@ export async function POST(request: Request) {
 
     const client = getSupabaseServer();
 
+    if (event.type === 'checkout.session.completed') {
+        const handled = await handleProductCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
+        if (handled) {
+            return NextResponse.json({ received: true });
+        }
+    }
+
     if (event.type === 'customer.subscription.updated') {
         const subscription = event.data.object as Stripe.Subscription;
+        const handled = await handleProductSubscriptionUpdated(subscription);
+        if (handled) {
+            return NextResponse.json({ received: true });
+        }
+
         const subscriptionRecord = subscription as unknown as Record<string, unknown>;
         const plan = await resolvePlanFromStripePriceId(subscription.items.data[0]?.price.id ?? null);
         await client
@@ -48,6 +65,11 @@ export async function POST(request: Request) {
 
     if (event.type === 'customer.subscription.deleted') {
         const subscription = event.data.object as Stripe.Subscription;
+        const handled = await handleProductSubscriptionDeleted(subscription);
+        if (handled) {
+            return NextResponse.json({ received: true });
+        }
+
         await client
             .from('api_partners')
             .update({ status: 'cancelled' })

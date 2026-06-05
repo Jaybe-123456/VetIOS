@@ -1,10 +1,13 @@
 import { NextResponse } from 'next/server';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import {
     fallbackExtractClinicalFields,
     normalizeExtractedClinicalFields,
 } from '@/lib/voice/extract';
 import type { VoiceSurface } from '@/lib/voice/types';
+import { resolveSessionTenant } from '@/lib/supabaseServer';
+import { recordProductUsageEvent } from '@/lib/billing/entitlements';
 
 export const runtime = 'nodejs';
 export const maxDuration = 20;
@@ -15,6 +18,8 @@ const RequestSchema = z.object({
 });
 
 export async function POST(req: Request) {
+    const requestId = req.headers.get('x-request-id') ?? `voice_${randomUUID()}`;
+    const session = await resolveSessionTenant();
     const parsed = RequestSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) {
         return NextResponse.json({ error: 'invalid_voice_payload' }, { status: 400 });
@@ -22,6 +27,7 @@ export async function POST(req: Request) {
 
     const apiKey = process.env.ANTHROPIC_API_KEY ?? process.env.CLAUDE_API_KEY;
     if (!apiKey) {
+        await recordVoiceUsage(session, requestId, parsed.data.surface, 'local_fallback');
         return NextResponse.json({
             fields: fallbackExtractClinicalFields(parsed.data.transcript),
             source: 'local_fallback',
@@ -30,13 +36,36 @@ export async function POST(req: Request) {
 
     try {
         const fields = await extractWithAnthropic(parsed.data.transcript, parsed.data.surface, apiKey);
+        await recordVoiceUsage(session, requestId, parsed.data.surface, 'anthropic');
         return NextResponse.json({ fields, source: 'anthropic' });
     } catch {
+        await recordVoiceUsage(session, requestId, parsed.data.surface, 'local_fallback');
         return NextResponse.json({
             fields: fallbackExtractClinicalFields(parsed.data.transcript),
             source: 'local_fallback',
         });
     }
+}
+
+async function recordVoiceUsage(
+    session: Awaited<ReturnType<typeof resolveSessionTenant>>,
+    requestId: string,
+    surface: VoiceSurface,
+    source: string,
+) {
+    if (!session) return;
+
+    await recordProductUsageEvent({
+        tenantId: session.tenantId,
+        userId: session.userId,
+        eventType: 'voice_extract',
+        source: 'voice_mode',
+        requestId,
+        metadata: {
+            surface,
+            extraction_source: source,
+        },
+    });
 }
 
 async function extractWithAnthropic(transcript: string, surface: VoiceSurface, apiKey: string) {

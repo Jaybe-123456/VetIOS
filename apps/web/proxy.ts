@@ -55,6 +55,11 @@ function resolveRoleFromRequest(request: NextRequest): PageRole {
 
     const userMetadata = asRecord(claims?.user_metadata);
     const appMetadata = asRecord(claims?.app_metadata);
+    const planRole = readRoleFromPlan(userMetadata.vetios_plan_key) ?? readRoleFromPlan(appMetadata.vetios_plan_key);
+    if (planRole) {
+        return planRole;
+    }
+
     const candidate = readRole(userMetadata.role) ?? readRole(appMetadata.role) ?? readRole(claims?.role);
     return candidate ?? 'clinician';
 }
@@ -226,4 +231,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function readRole(value: unknown): PageRole | null {
     return value === 'admin' || value === 'developer' || value === 'researcher' || value === 'clinician' ? value : null;
+}
+
+function readRoleFromPlan(value: unknown): PageRole | null {
+    if (value === 'developer') return 'developer';
+    if (value === 'research' || value === 'federation' || value === 'enterprise') return 'researcher';
+    return null;
 }

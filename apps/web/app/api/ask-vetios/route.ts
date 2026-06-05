@@ -17,13 +17,14 @@ import { writeAuditLog, buildAuditContext } from '@/lib/protection/auditLog';
 import { getPopulationSignalService } from '@/lib/populationSignal/populationSignalService';
 import { checkOrigin, buildCorsHeaders } from '@/lib/protection/originGuard';
 import { parseAskVetIOSQuery } from '@vetios/ask-vetios';
-import { getSupabaseServer } from '@/lib/supabaseServer';
+import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/service';
 import { buildHeuristicResponse as buildAskVetiosHeuristicResponse, type AskVetiosHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
 } from '@/lib/askVetios/usageBudget';
+import { recordProductUsageEvent } from '@/lib/billing/entitlements';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -49,6 +50,7 @@ export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 32 * 1024 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
+    const session = await resolveSessionTenant();
 
     // ── Origin enforcement ──
     const auditCtx = buildAuditContext(req);
@@ -120,6 +122,7 @@ export async function POST(req: Request) {
         const res = NextResponse.json(attachResponseFingerprint({ ...heuristicBody, query_history_id: queryHistoryId } as Record<string, unknown>, fp), { status: 200 });
         res.headers.set('x-vetios-fingerprint', fp);
         addAskVetiosBudgetHeaders(res.headers, tokenBudget);
+        await recordAskVetiosUsage(session, requestId, heuristicBody.mode, true);
         return withAskVetiosHeaders(res, requestId, startTime);
     }
 
@@ -198,6 +201,7 @@ export async function POST(req: Request) {
             }).catch(() => { /* non-critical — never block the response */ });
         }
 
+        await recordAskVetiosUsage(session, requestId, responseWithHistory.mode, false);
         return res;
 
     } catch (error) {
@@ -219,8 +223,30 @@ export async function POST(req: Request) {
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, metadata: { fallback: true, error: error instanceof Error ? error.message : 'Unknown' }, timestamp: new Date().toISOString() });
         const res = NextResponse.json({ ...fallback, query_history_id: queryHistoryId, _fallback: true }, { status: 200 });
         addAskVetiosBudgetHeaders(res.headers, tokenBudget);
+        await recordAskVetiosUsage(session, requestId, fallback.mode, true);
         return withAskVetiosHeaders(res, requestId, startTime);
     }
+}
+
+async function recordAskVetiosUsage(
+    session: Awaited<ReturnType<typeof resolveSessionTenant>>,
+    requestId: string,
+    mode: unknown,
+    fallback: boolean,
+) {
+    if (!session) return;
+
+    await recordProductUsageEvent({
+        tenantId: session.tenantId,
+        userId: session.userId,
+        eventType: 'ask_vetios',
+        source: 'ask_vetios',
+        requestId,
+        metadata: {
+            mode: typeof mode === 'string' ? mode : null,
+            fallback,
+        },
+    });
 }
 
 function withAskVetiosHeaders(res: NextResponse, requestId: string, startTime: number): NextResponse {

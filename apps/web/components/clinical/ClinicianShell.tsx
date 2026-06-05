@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
-import { ClipboardList, Plus, Stethoscope, Menu, X } from 'lucide-react';
+import { ClipboardList, CreditCard, Plus, Stethoscope, Menu, UserCircle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import UserNav from '@/components/UserNav';
 
@@ -12,9 +12,27 @@ export function ClinicianShell({ children }: { children: ReactNode }) {
     const pathname = usePathname();
     const searchParams = useSearchParams();
     const [drawerOpen, setDrawerOpen] = useState(false);
+    const [canOpenConsole, setCanOpenConsole] = useState(false);
 
     useEffect(() => {
         window.localStorage.setItem('vetios_mode', 'clinician');
+    }, []);
+
+    useEffect(() => {
+        let mounted = true;
+        fetch('/api/account/entitlements', { credentials: 'same-origin' })
+            .then((response) => response.ok ? response.json() : null)
+            .then((payload) => {
+                if (!mounted) return;
+                setCanOpenConsole(payload?.account?.canAccessConsole === true);
+            })
+            .catch(() => {
+                if (mounted) setCanOpenConsole(false);
+            });
+
+        return () => {
+            mounted = false;
+        };
     }, []);
 
     useEffect(() => {
@@ -42,14 +60,22 @@ export function ClinicianShell({ children }: { children: ReactNode }) {
                     <ClinicalNavLink href="/cases" active={pathname === '/cases'} icon={<ClipboardList className="h-4 w-4" />}>
                         My Cases
                     </ClinicalNavLink>
+                    <ClinicalNavLink href="/profile" active={pathname === '/profile'} icon={<UserCircle className="h-4 w-4" />}>
+                        Profile
+                    </ClinicalNavLink>
+                    <ClinicalNavLink href="/billing" active={pathname === '/billing'} icon={<CreditCard className="h-4 w-4" />}>
+                        Billing
+                    </ClinicalNavLink>
                 </nav>
-                <Link
-                    href="/console"
-                    onClick={rememberConsoleMode}
-                    className="mt-auto font-mono text-xs text-[hsl(0_0%_52%)] transition-colors hover:text-accent"
-                >
-                    Console view -&gt;
-                </Link>
+                {canOpenConsole ? (
+                    <Link
+                        href="/console"
+                        onClick={rememberConsoleMode}
+                        className="mt-auto font-mono text-xs text-[hsl(0_0%_52%)] transition-colors hover:text-accent"
+                    >
+                        Console view -&gt;
+                    </Link>
+                ) : null}
             </aside>
 
             {/* ── Mobile Sidebar Drawer ── */}
@@ -91,17 +117,35 @@ export function ClinicianShell({ children }: { children: ReactNode }) {
                             >
                                 My Cases
                             </ClinicalNavLink>
+                            <ClinicalNavLink
+                                href="/profile"
+                                active={pathname === '/profile'}
+                                icon={<UserCircle className="h-4 w-4" />}
+                                onClick={() => setDrawerOpen(false)}
+                            >
+                                Profile
+                            </ClinicalNavLink>
+                            <ClinicalNavLink
+                                href="/billing"
+                                active={pathname === '/billing'}
+                                icon={<CreditCard className="h-4 w-4" />}
+                                onClick={() => setDrawerOpen(false)}
+                            >
+                                Billing
+                            </ClinicalNavLink>
                         </nav>
-                        <Link
-                            href="/console"
-                            onClick={() => {
-                                rememberConsoleMode();
-                                setDrawerOpen(false);
-                            }}
-                            className="mt-auto font-mono text-xs text-[hsl(0_0%_52%)] transition-colors hover:text-accent py-2"
-                        >
-                            Console view -&gt;
-                        </Link>
+                        {canOpenConsole ? (
+                            <Link
+                                href="/console"
+                                onClick={() => {
+                                    rememberConsoleMode();
+                                    setDrawerOpen(false);
+                                }}
+                                className="mt-auto font-mono text-xs text-[hsl(0_0%_52%)] transition-colors hover:text-accent py-2"
+                            >
+                                Console view -&gt;
+                            </Link>
+                        ) : null}
                     </div>
                 </>
             )}
@@ -162,4 +206,3 @@ function ClinicalNavLink({
         </Link>
     );
 }
-

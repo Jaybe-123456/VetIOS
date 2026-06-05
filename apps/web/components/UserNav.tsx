@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react';
 import { getSupabaseBrowser } from '@/lib/supabaseBrowser';
 import type { User } from '@supabase/supabase-js';
-import { LogOut } from 'lucide-react';
+import Link from 'next/link';
+import { CreditCard, LogOut, UserCircle } from 'lucide-react';
+import { PlanUsageBadge } from '@/components/billing/PlanUsageBadge';
 
 export default function UserNav() {
     const [user, setUser] = useState<User | null>(null);
@@ -39,6 +41,38 @@ export default function UserNav() {
 
     return (
         <div className="flex items-center gap-3">
+            <PlanUsageBadge />
+
+            <Link
+                href="/profile"
+                className="
+                    hidden md:flex items-center gap-1.5 px-2.5 py-1.5
+                    font-mono text-[10px] uppercase tracking-[0.14em]
+                    text-[hsl(0_0%_48%)] hover:text-accent
+                    border border-transparent hover:border-accent/30
+                    transition-all
+                "
+                title="Profile"
+            >
+                <UserCircle className="w-3 h-3" />
+                Profile
+            </Link>
+
+            <Link
+                href="/billing"
+                className="
+                    hidden md:flex items-center gap-1.5 px-2.5 py-1.5
+                    font-mono text-[10px] uppercase tracking-[0.14em]
+                    text-[hsl(0_0%_48%)] hover:text-accent
+                    border border-transparent hover:border-accent/30
+                    transition-all
+                "
+                title="Billing"
+            >
+                <CreditCard className="w-3 h-3" />
+                Billing
+            </Link>
+
             {/* Divider */}
             <div className="hidden sm:block w-px h-4 bg-[hsl(0_0%_20%)]" />
 

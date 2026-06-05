@@ -30,6 +30,7 @@ import type { PlatformActor } from '@/lib/platform/types';
 import { getRAGPipeline } from '@/lib/rag/ragPipeline';
 import type { RAGContext } from '@/lib/rag/ragPipeline';
 import { panelsToDiagnosticTests } from '@/lib/inference/panel-diagnostics';
+import { recordProductUsageEvent } from '@/lib/billing/entitlements';
 import {
     DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
     computePromptTemplateHash,
@@ -352,6 +353,19 @@ export async function POST(req: Request) {
             confidenceScore: inferenceResult.confidence_score ?? null,
             contradictionScore,
         }).catch(() => {});
+
+        await recordProductUsageEvent({
+            tenantId,
+            userId: actor.userId,
+            eventType: 'diagnosis',
+            source: 'inference_console',
+            requestId,
+            metadata: {
+                inference_event_id: eventId,
+                schema_version: 'v2',
+            },
+            client: supabase,
+        });
 
         // Build response.
 

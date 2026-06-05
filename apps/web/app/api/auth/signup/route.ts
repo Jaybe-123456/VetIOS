@@ -171,7 +171,7 @@ export async function POST(req: Request) {
                 userId: createdUserId,
                 email,
                 currentMetadata: createdUser.user?.user_metadata ?? {},
-                nextPath: '/inference',
+                nextPath: '/onboarding/plan',
                 fallbackOrigin: new URL(req.url).origin,
                 source: 'password_signup',
             });
@@ -205,8 +205,8 @@ export async function POST(req: Request) {
         }
 
         const verifyPath = verificationSetupFailed
-            ? `${buildVerifyEmailPath('/inference')}&error=verification_setup_failed`
-            : buildVerifyEmailPath('/inference');
+            ? `${buildVerifyEmailPath('/onboarding/plan')}&error=verification_setup_failed`
+            : buildVerifyEmailPath('/onboarding/plan');
 
         return createSignupResponse({
             status: 200,

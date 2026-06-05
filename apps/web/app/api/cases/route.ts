@@ -10,6 +10,7 @@ import {
 import { safeJson } from '@/lib/http/safeJson';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { runInference } from '@/lib/vetios-inference';
+import { recordProductUsageEvent } from '@/lib/billing/entitlements';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -126,6 +127,19 @@ export async function POST(req: Request) {
             { status: 500 },
         );
     }
+
+    await recordProductUsageEvent({
+        tenantId: auth.actor.tenantId,
+        userId: auth.actor.userId,
+        eventType: 'diagnosis',
+        source: 'clinical_case',
+        requestId,
+        metadata: {
+            clinical_case_id: inference.clinical_case_id,
+            inference_event_id: inference.inference_event_id,
+        },
+        client: supabase,
+    });
 
     return NextResponse.json({
         clinical_case_id: inference.clinical_case_id,

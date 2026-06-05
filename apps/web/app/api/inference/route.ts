@@ -28,6 +28,7 @@ import {
     retryAfterResponse,
 } from '@/lib/api/corePipeline';
 import type { InputSignature } from '@/lib/vetios-inference';
+import { recordProductUsageEvent } from '@/lib/billing/entitlements';
 
 export const runtime = 'nodejs';
 
@@ -256,6 +257,21 @@ export async function POST(req: Request) {
             result,
             modelVersion: parsed.data.model.version,
         });
+        if (!simulationContext.isSynthetic) {
+            await recordProductUsageEvent({
+                tenantId,
+                userId: auth.actor.userId,
+                eventType: 'diagnosis',
+                source: 'inference_api',
+                requestId,
+                metadata: {
+                    inference_event_id: result.inference_event_id,
+                    clinical_case_id: result.clinical_case_id,
+                    ranker: result.ranker,
+                },
+                client: supabase,
+            });
+        }
         logApiCompleted({
             event: 'inference.completed',
             route: '/api/inference',

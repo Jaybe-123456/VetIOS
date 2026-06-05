@@ -162,7 +162,7 @@ export default function SignupPage() {
         await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: {
-                redirectTo: buildClientAuthCallbackUrl(window.location.origin),
+                redirectTo: buildClientAuthCallbackUrl(window.location.origin, '/onboarding/plan'),
                 queryParams: normalizedEmail
                     ? { login_hint: normalizedEmail }
                     : undefined,
@@ -201,7 +201,7 @@ export default function SignupPage() {
                                 Account created
                             </div>
                             <p className="font-mono text-[12px] text-[hsl(0_0%_82%)]">
-                                Redirecting you into the VetIOS console.
+                                Redirecting you into VetIOS plan setup.
                             </p>
                         </div>
                     ) : status === 'sent' ? (
