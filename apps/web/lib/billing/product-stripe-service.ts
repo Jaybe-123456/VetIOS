@@ -38,6 +38,25 @@ export function resolveProductStripePriceId(planKey: ProductPlanKey): string | n
     return envKey ? process.env[envKey] ?? null : null;
 }
 
+export async function resolveProductCheckoutPriceId(planKey: ProductPlanKey): Promise<string> {
+    const configuredId = resolveProductStripePriceId(planKey);
+    if (!configuredId) {
+        throw new Error(`Missing product Stripe price for plan ${planKey}.`);
+    }
+
+    if (isStripePriceId(configuredId)) {
+        return configuredId;
+    }
+
+    if (isStripeProductId(configuredId)) {
+        return resolveMonthlyPriceFromProductId(configuredId, planKey);
+    }
+
+    throw new Error(
+        `Invalid Stripe price configuration for plan ${planKey}. Expected a price_ ID or prod_ ID, received ${configuredId}.`,
+    );
+}
+
 export function resolveProductPlanFromStripePriceId(priceId: string | null | undefined): ProductPlanKey | null {
     if (!priceId) return null;
 
@@ -62,12 +81,8 @@ export async function createProductCheckoutSession(input: {
         throw new Error(`Plan ${plan.key} does not use Stripe checkout.`);
     }
 
-    const priceId = resolveProductStripePriceId(plan.key);
-    if (!priceId) {
-        throw new Error(`Missing product Stripe price for plan ${plan.key}.`);
-    }
-
     const stripe = getProductStripeClient();
+    const priceId = await resolveProductCheckoutPriceId(plan.key);
     const client = getSupabaseServer();
     const entitlement = await getOrCreateAccountEntitlement(client, {
         tenantId: input.tenantId,
@@ -277,6 +292,66 @@ function readProductMetadata(metadata: Stripe.Metadata | null | undefined): Prod
 function readStripeId(value: string | { id?: string } | null): string | null {
     if (typeof value === 'string') return value;
     return value?.id ?? null;
+}
+
+function isStripePriceId(value: string): boolean {
+    return value.startsWith('price_');
+}
+
+function isStripeProductId(value: string): boolean {
+    return value.startsWith('prod_');
+}
+
+async function resolveMonthlyPriceFromProductId(productId: string, planKey: ProductPlanKey): Promise<string> {
+    const stripe = getProductStripeClient();
+    const product = await stripe.products.retrieve(productId, {
+        expand: ['default_price'],
+    });
+
+    if ('deleted' in product && product.deleted) {
+        throw new Error(`Stripe product ${productId} for plan ${planKey} has been deleted.`);
+    }
+
+    const defaultPrice = readExpandedPrice(product.default_price);
+    if (isUsableMonthlyPrice(defaultPrice)) {
+        return defaultPrice.id;
+    }
+
+    const defaultPriceId = typeof product.default_price === 'string'
+        ? product.default_price
+        : null;
+    if (defaultPriceId) {
+        const resolvedDefaultPrice = await stripe.prices.retrieve(defaultPriceId);
+        if (isUsableMonthlyPrice(resolvedDefaultPrice)) {
+            return resolvedDefaultPrice.id;
+        }
+    }
+
+    const prices = await stripe.prices.list({
+        product: productId,
+        active: true,
+        type: 'recurring',
+        limit: 20,
+    });
+    const monthlyPrice = prices.data.find((price) => price.recurring?.interval === 'month');
+
+    if (!monthlyPrice) {
+        throw new Error(
+            `Stripe product ${productId} for plan ${planKey} has no active monthly recurring price. Add one in Stripe or set STRIPE_PRODUCT_${planKey.toUpperCase()}_PRICE_ID to a price_ ID.`,
+        );
+    }
+
+    return monthlyPrice.id;
+}
+
+function readExpandedPrice(value: string | Stripe.Price | Stripe.DeletedPrice | null | undefined): Stripe.Price | null {
+    return typeof value === 'object' && value !== null && !('deleted' in value)
+        ? value
+        : null;
+}
+
+function isUsableMonthlyPrice(price: Stripe.Price | null): price is Stripe.Price {
+    return Boolean(price?.active && price.recurring?.interval === 'month');
 }
 
 function mapStripeSubscriptionStatus(status: Stripe.Subscription.Status): ProductEntitlementStatus {
