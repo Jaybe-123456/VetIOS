@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Clipboard, Loader2, Mic, RotateCcw, Settings, Square, X } from 'lucide-react';
+import { Check, Clipboard, Loader2, Mic, RotateCcw, Send, Settings, Square, X } from 'lucide-react';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 import { fallbackExtractClinicalFields } from '@/lib/voice/extract';
 import type { ExtractedClinicalFields, VoiceExtractResponse, VoiceSurface } from '@/lib/voice/types';
@@ -105,32 +105,53 @@ export function VoiceInputButton({
         speech.reset();
     }
 
+    const statusLabel = getVoiceStatusLabel({
+        isRequestingPermission: speech.isRequestingPermission,
+        isListening: speech.isListening,
+        isExtracting,
+        hasFields: Boolean(fields),
+        permissionState: speech.permissionState,
+    });
+    const canReset = Boolean(speech.transcript || fields || extractError);
+
     return (
         <>
             <button
                 type="button"
                 onClick={() => {
-                    if (isOpen) {
-                        hidePanel();
+                    if (!isOpen) {
+                        void openAndStartListening();
                         return;
                     }
-                    void openAndStartListening();
+                    if (speech.isListening) {
+                        stopAndExtract();
+                        return;
+                    }
+                    closePanel();
                 }}
-                className="fixed bottom-5 right-5 z-[70] flex h-14 w-14 items-center justify-center rounded-full border border-accent/45 bg-accent text-black shadow-[0_0_30px_rgba(0,255,102,0.35)] transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent/60"
+                className={[
+                    'fixed bottom-5 right-5 z-[70] flex h-14 w-14 items-center justify-center rounded-full border text-black shadow-[0_0_30px_rgba(0,255,102,0.35)] transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent/60',
+                    speech.isListening ? 'border-accent bg-accent animate-pulse' : 'border-accent/45 bg-accent',
+                ].join(' ')}
                 aria-label={label}
                 title={label}
             >
-                <Mic className="h-5 w-5" />
+                {speech.isListening ? <Square className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
             </button>
 
             {isOpen ? (
-                <section className="fixed bottom-24 right-4 z-[70] w-[min(26rem,calc(100vw-2rem))] rounded-lg border border-white/12 bg-[hsl(0_0%_6%)] p-4 text-white shadow-2xl">
+                <section className="fixed bottom-24 right-4 z-[70] w-[min(25rem,calc(100vw-2rem))] rounded-lg border border-white/12 bg-[hsl(0_0%_6%)] p-3 text-white shadow-2xl">
                     <div className="mb-3 flex items-center justify-between gap-3">
-                        <div>
-                            <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-accent">Voice Capture</div>
-                            <div className="mt-1 text-xs text-white/55">
-                                {onSubmitExtracted ? 'Review before starting the conversation.' : 'Review before filling. Nothing is submitted.'}
-                            </div>
+                        <div className="flex items-center gap-2">
+                            <span className={[
+                                'h-2.5 w-2.5 rounded-full',
+                                speech.isListening ? 'bg-accent animate-pulse' : fields ? 'bg-accent' : 'bg-white/30',
+                            ].join(' ')}
+                            />
+                            <div className="font-mono text-[11px] uppercase tracking-[0.22em] text-white/70">VetIOS Voice</div>
+                        </div>
+                        <div className="ml-auto rounded-full border border-white/10 px-2.5 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-white/50">
+                            {statusLabel}
                         </div>
                         <button
                             type="button"
@@ -149,20 +170,22 @@ export function VoiceInputButton({
                     ) : (
                         <div className="space-y-3">
                             <div className={[
-                                'min-h-[110px] rounded-md border p-3 text-sm leading-relaxed transition',
+                                'min-h-[96px] rounded-md border p-3 text-sm leading-relaxed transition',
                                 speech.isListening
                                     ? 'border-accent/45 bg-accent/5 text-white'
                                     : 'border-white/10 bg-black/35 text-white/80',
                             ].join(' ')}
                             >
                                 {speech.isRequestingPermission ? (
-                                    <span className="text-accent">Requesting microphone permission...</span>
+                                    <VoiceActivity label="Permission" />
                                 ) : speech.isListening && !speech.transcript ? (
-                                    <span className="text-accent">Listening. Speak naturally about the case.</span>
-                                ) : speech.permissionState === 'prompt' ? (
-                                    <span className="text-white/70">Click the voice button or Start. Your browser will ask whether VetIOS can use the microphone.</span>
+                                    <VoiceActivity label="Listening" />
+                                ) : isExtracting ? (
+                                    <VoiceActivity label="Structuring" />
+                                ) : fields && !speech.transcript ? (
+                                    <span className="text-white/70">Clinical fields extracted.</span>
                                 ) : (
-                                    speech.transcript || 'Tap Start and dictate the case in natural clinical language.'
+                                    speech.transcript || <span className="text-white/35">Ready</span>
                                 )}
                             </div>
 
@@ -182,59 +205,57 @@ export function VoiceInputButton({
                             ) : speech.error ? <Notice tone="danger">{speech.error}</Notice> : null}
                             {extractError ? <Notice tone="warning">{extractError}</Notice> : null}
                             {speech.isListening ? (
-                                <div className="flex items-center gap-2 text-xs text-accent">
-                                    <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
-                                    Microphone is live
-                                </div>
+                                <VoiceSignalMeter />
                             ) : null}
 
                             {fields ? (
                                 <div className="rounded-md border border-accent/20 bg-accent/5 p-3">
-                                    <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-accent">Extracted Fields</div>
                                     <Preview fields={fields} />
                                 </div>
                             ) : null}
 
-                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                <ActionButton onClick={() => { void startListening(); }} disabled={speech.isListening || isExtracting || speech.isRequestingPermission}>
-                                    {speech.isRequestingPermission ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
-                                    {speech.isRequestingPermission ? 'Allow' : 'Start'}
-                                </ActionButton>
-                                <ActionButton onClick={stopAndExtract} disabled={!speech.isListening || isExtracting}>
-                                    <Square className="h-4 w-4" />
-                                    Stop
-                                </ActionButton>
-                                <ActionButton onClick={resetAll} disabled={isExtracting || (!speech.transcript && !fields)}>
-                                    <RotateCcw className="h-4 w-4" />
-                                    Reset
-                                </ActionButton>
-                                <ActionButton onClick={fillForm} disabled={!fields || isExtracting} accent>
-                                    {isExtracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                                    {fillLabel}
-                                </ActionButton>
+                            <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2">
+                                    {!speech.isListening ? (
+                                        <IconActionButton
+                                            onClick={() => { void startListening(); }}
+                                            disabled={isExtracting || speech.isRequestingPermission}
+                                            label={speech.isRequestingPermission ? 'Requesting microphone permission' : 'Start voice capture'}
+                                        >
+                                            {speech.isRequestingPermission ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mic className="h-4 w-4" />}
+                                        </IconActionButton>
+                                    ) : (
+                                        <IconActionButton onClick={stopAndExtract} disabled={isExtracting} label="Stop and extract">
+                                            <Square className="h-4 w-4" />
+                                        </IconActionButton>
+                                    )}
+                                    <IconActionButton onClick={resetAll} disabled={isExtracting || !canReset} label="Reset voice capture">
+                                        <RotateCcw className="h-4 w-4" />
+                                    </IconActionButton>
+                                    {!speech.isListening && speech.transcript && !fields ? (
+                                        <IconActionButton
+                                            onClick={() => void extractTranscript()}
+                                            disabled={isExtracting}
+                                            label="Extract clinical fields"
+                                        >
+                                            {isExtracting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                                        </IconActionButton>
+                                    ) : null}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    {fields ? (
+                                        <IconActionButton onClick={fillForm} disabled={isExtracting} accent label={fillLabel}>
+                                            <Check className="h-4 w-4" />
+                                        </IconActionButton>
+                                    ) : null}
+                                    {fields && onSubmitExtracted ? (
+                                        <IconActionButton onClick={submitExtracted} disabled={isExtracting} accent label={submitLabel}>
+                                            <Send className="h-4 w-4" />
+                                        </IconActionButton>
+                                    ) : null}
+                                </div>
                             </div>
 
-                            {fields && onSubmitExtracted ? (
-                                <button
-                                    type="button"
-                                    onClick={submitExtracted}
-                                    disabled={isExtracting}
-                                    className="w-full rounded-md border border-accent/60 bg-accent px-3 py-2 text-sm font-medium text-black transition hover:bg-accent/90 disabled:opacity-50"
-                                >
-                                    {submitLabel}
-                                </button>
-                            ) : null}
-
-                            {!speech.isListening && speech.transcript && !fields ? (
-                                <button
-                                    type="button"
-                                    onClick={() => void extractTranscript()}
-                                    disabled={isExtracting}
-                                    className="w-full rounded-md border border-accent/30 bg-accent/10 px-3 py-2 text-sm text-accent transition hover:bg-accent hover:text-black disabled:opacity-50"
-                                >
-                                    {isExtracting ? 'Extracting...' : 'Extract fields'}
-                                </button>
-                            ) : null}
                         </div>
                     )}
                 </section>
@@ -243,24 +264,28 @@ export function VoiceInputButton({
     );
 }
 
-function ActionButton({
+function IconActionButton({
     children,
     onClick,
     disabled,
     accent = false,
+    label,
 }: {
     children: React.ReactNode;
     onClick: () => void;
     disabled?: boolean;
     accent?: boolean;
+    label: string;
 }) {
     return (
         <button
             type="button"
             onClick={onClick}
             disabled={disabled}
+            aria-label={label}
+            title={label}
             className={[
-                'flex min-h-[40px] items-center justify-center gap-1.5 rounded-md border px-2 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-45',
+                'flex h-10 w-10 items-center justify-center rounded-md border transition disabled:cursor-not-allowed disabled:opacity-45',
                 accent
                     ? 'border-accent/50 bg-accent/15 text-accent hover:bg-accent hover:text-black'
                     : 'border-white/10 bg-white/[0.03] text-white/75 hover:border-white/25 hover:text-white',
@@ -269,6 +294,53 @@ function ActionButton({
             {children}
         </button>
     );
+}
+
+function VoiceActivity({ label }: { label: string }) {
+    return (
+        <div className="flex h-full min-h-[64px] items-center justify-center gap-2 text-accent">
+            <span className="h-2 w-2 rounded-full bg-accent animate-pulse" />
+            <span className="font-mono text-[10px] uppercase tracking-[0.2em]">{label}</span>
+        </div>
+    );
+}
+
+function VoiceSignalMeter() {
+    return (
+        <div className="flex items-center justify-center gap-1" aria-label="Microphone is live">
+            {[14, 22, 30, 18, 26].map((height, index) => (
+                <span
+                    key={height}
+                    className="w-1 rounded-full bg-accent/80 animate-pulse"
+                    style={{
+                        height,
+                        animationDelay: `${index * 90}ms`,
+                    }}
+                />
+            ))}
+        </div>
+    );
+}
+
+function getVoiceStatusLabel({
+    isRequestingPermission,
+    isListening,
+    isExtracting,
+    hasFields,
+    permissionState,
+}: {
+    isRequestingPermission: boolean;
+    isListening: boolean;
+    isExtracting: boolean;
+    hasFields: boolean;
+    permissionState: string;
+}) {
+    if (isRequestingPermission) return 'Permission';
+    if (isListening) return 'Live';
+    if (isExtracting) return 'Parsing';
+    if (hasFields) return 'Ready';
+    if (permissionState === 'denied') return 'Blocked';
+    return 'Standby';
 }
 
 function Preview({ fields }: { fields: ExtractedClinicalFields }) {
