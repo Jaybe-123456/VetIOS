@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
-import { updateAccountPlan } from '@/lib/billing/entitlements';
+import { isBillingSchemaNotReadyError, updateAccountPlan } from '@/lib/billing/entitlements';
 import { createProductCheckoutSession } from '@/lib/billing/product-stripe-service';
 import { getProductPlan, isProductPlanKey } from '@/lib/billing/productPlans';
 import { safeJson } from '@/lib/http/safeJson';
@@ -32,15 +32,22 @@ export async function POST(req: Request) {
     const plan = getProductPlan(parsed.data.plan_key);
 
     if (plan.key === 'free') {
-        await updateAccountPlan({
-            tenantId: session.tenantId,
-            userId: session.userId,
-            planKey: 'free',
-            status: 'active',
-            billingProvider: 'internal',
-            onboardingCompleted: true,
-            client: getSupabaseServer(),
-        });
+        try {
+            await updateAccountPlan({
+                tenantId: session.tenantId,
+                userId: session.userId,
+                planKey: 'free',
+                status: 'active',
+                billingProvider: 'internal',
+                onboardingCompleted: true,
+                client: getSupabaseServer(),
+            });
+        } catch (error) {
+            if (isBillingSchemaNotReadyError(error)) {
+                return billingSchemaPendingResponse(plan);
+            }
+            throw error;
+        }
 
         return NextResponse.json({
             checkout_required: false,
@@ -74,6 +81,10 @@ export async function POST(req: Request) {
             plan,
         });
     } catch (error) {
+        if (isBillingSchemaNotReadyError(error)) {
+            return billingSchemaPendingResponse(plan);
+        }
+
         return NextResponse.json(
             {
                 error: 'checkout_unavailable',
@@ -83,4 +94,15 @@ export async function POST(req: Request) {
             { status: 503 },
         );
     }
+}
+
+function billingSchemaPendingResponse(plan: ReturnType<typeof getProductPlan>) {
+    return NextResponse.json(
+        {
+            error: 'billing_schema_not_ready',
+            message: 'Billing storage is not active on this deployment yet. Apply the VetIOS product entitlement migration in Supabase, then retry.',
+            plan,
+        },
+        { status: 503 },
+    );
 }

@@ -44,6 +44,13 @@ export interface AccountProductSummary {
     canAccessConsole: boolean;
 }
 
+export class BillingSchemaNotReadyError extends Error {
+    constructor(message = 'Billing storage is not active on this deployment yet.') {
+        super(message);
+        this.name = 'BillingSchemaNotReadyError';
+    }
+}
+
 export async function resolveCurrentAccountProductSummary(): Promise<AccountProductSummary | null> {
     const session = await resolveSessionTenant();
     if (!session) return null;
@@ -143,6 +150,9 @@ export async function updateAccountPlan(input: {
         .single();
 
     if (error || !data) {
+        if (isBillingSchemaMissingError(error)) {
+            throw new BillingSchemaNotReadyError();
+        }
         throw new Error(`Failed to update account plan: ${error?.message ?? 'Unknown error'}`);
     }
 
@@ -268,6 +278,25 @@ function buildDefaultEntitlement(tenantId: string, userId: string): AccountEntit
         onboardingCompletedAt: null,
         metadata: {},
     };
+}
+
+export function isBillingSchemaNotReadyError(error: unknown): error is BillingSchemaNotReadyError {
+    return error instanceof BillingSchemaNotReadyError || isBillingSchemaMissingError(error);
+}
+
+function isBillingSchemaMissingError(error: unknown): boolean {
+    const message = error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message?: unknown }).message ?? '')
+            : String(error ?? '');
+
+    return message.includes('account_entitlements')
+        && (
+            message.includes('schema cache')
+            || message.includes('Could not find the table')
+            || message.includes('relation "public.account_entitlements" does not exist')
+        );
 }
 
 async function syncUserMetadataForPlan(

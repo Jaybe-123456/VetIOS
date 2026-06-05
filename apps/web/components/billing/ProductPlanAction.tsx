@@ -41,9 +41,7 @@ export function ProductPlanAction({
 
             if (!response.ok) {
                 setStatus('error');
-                setMessage(typeof payload.message === 'string'
-                    ? payload.message
-                    : 'Checkout is not configured for this plan yet.');
+                setMessage(resolveCheckoutErrorMessage(payload));
                 return;
             }
 
@@ -90,4 +88,19 @@ export function ProductPlanAction({
             ) : null}
         </div>
     );
+}
+
+function resolveCheckoutErrorMessage(payload: unknown): string {
+    if (typeof payload !== 'object' || payload === null) {
+        return 'Checkout is not configured for this plan yet.';
+    }
+
+    const record = payload as Record<string, unknown>;
+    if (record.error === 'billing_schema_not_ready') {
+        return 'Billing storage is still being activated for this deployment. Apply the Supabase billing migration, then retry.';
+    }
+
+    return typeof record.message === 'string'
+        ? record.message
+        : 'Checkout is not configured for this plan yet.';
 }
