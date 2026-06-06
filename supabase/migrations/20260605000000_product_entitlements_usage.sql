@@ -256,7 +256,8 @@ begin
 end;
 $$;
 
-create or replace view public.product_monthly_usage as
+create or replace view public.product_monthly_usage
+with (security_invoker = true) as
 select
     tenant_id,
     event_type,
