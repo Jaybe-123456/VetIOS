@@ -100,6 +100,10 @@ export default async function NetworkLearningPage() {
                                 <MetricRow label="Calibration avg ECE" value={formatPercent(snapshot.federation.calibration_avg_ece)} />
                                 <MetricRow label="Diagnosis candidate" value={snapshot.federation.diagnosis_candidate_version ?? 'NO DATA'} />
                                 <MetricRow label="Severity candidate" value={snapshot.federation.severity_candidate_version ?? 'NO DATA'} />
+                                <MetricRow label="Privacy mode" value={snapshot.federation.privacy_mode?.toUpperCase() ?? 'NO DATA'} />
+                                <MetricRow label="Privacy status" value={snapshot.federation.privacy_status?.toUpperCase() ?? 'NO DATA'} />
+                                <MetricRow label="Privacy participants" value={formatPrivacyParticipants(snapshot.federation.privacy_participant_count, snapshot.federation.privacy_minimum_participants)} />
+                                <MetricRow label="Raw tenant IDs in aggregate" value={snapshot.federation.raw_tenant_ids_in_aggregate === false ? 'NO' : snapshot.federation.raw_tenant_ids_in_aggregate === true ? 'YES' : 'NO DATA'} />
                             </Panel>
 
                         <Panel title="What The Federation Means">
@@ -222,6 +226,14 @@ function MetricRow({ label, value }: { label: string; value: string }) {
 
 function formatPercent(value: number | null): string {
     return value == null ? 'NO DATA' : `${(value * 100).toFixed(1)}%`;
+}
+
+function formatPrivacyParticipants(count: number | null, minimum: number | null): string {
+    if (count == null || minimum == null) {
+        return 'NO DATA';
+    }
+
+    return `${count} / ${minimum}`;
 }
 
 function formatDateTime(value: string): string {

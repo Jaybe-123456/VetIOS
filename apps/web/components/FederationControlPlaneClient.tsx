@@ -44,6 +44,7 @@ export default function FederationControlPlaneClient({ initialSnapshot, tenantId
     const coordinatorMembership = useMemo(() => filteredMemberships.find((membership) => membership.tenant_id === membership.coordinator_tenant_id) ?? filteredMemberships[0] ?? null, [filteredMemberships]);
     const governanceState = useMemo(() => readFederationGovernanceState(coordinatorMembership?.metadata ?? {}), [coordinatorMembership]);
     const activeParticipants = useMemo(() => filteredMemberships.filter((membership) => membership.status === 'active'), [filteredMemberships]);
+    const latestPrivacyManifest = useMemo(() => readPrivacyManifest(snapshot.recent_rounds.find((round) => round.status === 'completed') ?? null), [snapshot.recent_rounds]);
     const missingApprovedTenants = useMemo(() => {
         const activeTenantIds = new Set(activeParticipants.map((membership) => membership.tenant_id));
         return governanceState.policy.approved_tenant_ids.filter((candidate) => !activeTenantIds.has(candidate));
@@ -261,6 +262,9 @@ interface FederationActionResponse {
                     <DataRow label="Benchmark gate" value={formatPercentThreshold(governanceState.policy.minimum_benchmark_pass_rate)} tone={governanceState.policy.minimum_benchmark_pass_rate == null ? 'muted' : 'accent'} />
                     <DataRow label="Calibration gate" value={formatPercentThreshold(governanceState.policy.maximum_calibration_avg_ece)} tone={governanceState.policy.maximum_calibration_avg_ece == null ? 'muted' : 'accent'} />
                     <DataRow label="Shadow participants" value={governanceState.policy.allow_shadow_participants ? 'ALLOWED' : 'BLOCKED'} tone={governanceState.policy.allow_shadow_participants ? 'accent' : 'muted'} />
+                    <DataRow label="Privacy status" value={formatPrivacyStatus(latestPrivacyManifest.status)} tone={latestPrivacyManifest.status === 'privacy_ready' ? 'accent' : 'warning'} />
+                    <DataRow label="Privacy participants" value={formatPrivacyParticipants(latestPrivacyManifest)} />
+                    <DataRow label="Raw tenant IDs" value={formatRawTenantIdStatus(latestPrivacyManifest.rawTenantIdsInAggregate)} tone={latestPrivacyManifest.rawTenantIdsInAggregate === false ? 'accent' : 'warning'} />
                     {governanceState.automation.last_automation_error ? (
                         <div className="mt-4 border border-danger/30 bg-danger/10 px-4 py-3 font-mono text-xs text-danger">
                             {governanceState.automation.last_automation_error}
@@ -358,6 +362,7 @@ function SnapshotRow({ snapshot }: { snapshot: FederationControlPlaneSnapshot['r
 
 function RoundRow({ round }: { round: FederationRoundRecord }) {
     const isDone = round.status === 'completed';
+    const privacyManifest = readPrivacyManifest(round);
     return (
         <div className={`border p-4 rounded-sm ${isDone ? 'border-accent/20 bg-accent/[0.03]' : 'border-white/10 bg-white/[0.02]'}`}>
             <div className="flex items-center gap-2 mb-2">
@@ -373,6 +378,9 @@ function RoundRow({ round }: { round: FederationRoundRecord }) {
                 <DataRow label="Aggregate Rows" value={String(round.aggregate_payload.aggregate_dataset_rows ?? 0)} />
                 <DataRow label="Completed" value={formatTimestamp(round.completed_at)} />
                 <DataRow label="Benchmark Pass Rate" value={formatPercent(round.aggregate_payload.benchmark_pass_rate)} />
+                <DataRow label="Privacy Status" value={formatPrivacyStatus(privacyManifest.status)} tone={privacyManifest.status === 'privacy_ready' ? 'accent' : 'warning'} />
+                <DataRow label="Privacy Participants" value={formatPrivacyParticipants(privacyManifest)} />
+                <DataRow label="Raw Tenant IDs" value={formatRawTenantIdStatus(privacyManifest.rawTenantIdsInAggregate)} tone={privacyManifest.rawTenantIdsInAggregate === false ? 'accent' : 'warning'} />
             </div>
             {round.notes ? <div className="mt-3 font-mono text-xs text-white/45">{round.notes}</div> : null}
         </div>
@@ -424,4 +432,50 @@ function formatPercentThreshold(value: number | null): string {
 
 function parseTenantIds(value: string): string[] {
     return Array.from(new Set(value.split(/[\s,]+/).map((entry) => entry.trim()).filter((entry) => entry.length > 0)));
+}
+
+function readPrivacyManifest(round: FederationRoundRecord | null) {
+    const manifest = asRecord(round?.aggregate_payload.privacy_manifest);
+    return {
+        status: asString(manifest.status),
+        mode: asString(manifest.mode),
+        participantCount: asNumber(manifest.participant_count),
+        minimumParticipants: asNumber(manifest.minimum_privacy_participants),
+        rawTenantIdsInAggregate: typeof manifest.raw_tenant_ids_in_aggregate === 'boolean'
+            ? manifest.raw_tenant_ids_in_aggregate
+            : null,
+    };
+}
+
+function formatPrivacyStatus(value: string | null): string {
+    if (!value) return 'NO DATA';
+    return value.replace(/_/g, ' ').toUpperCase();
+}
+
+function formatPrivacyParticipants(value: ReturnType<typeof readPrivacyManifest>): string {
+    if (value.participantCount == null || value.minimumParticipants == null) return 'NO DATA';
+    return `${value.participantCount} / ${value.minimumParticipants}`;
+}
+
+function formatRawTenantIdStatus(value: boolean | null): string {
+    if (value === false) return 'NO';
+    if (value === true) return 'YES';
+    return 'NO DATA';
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function asString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function asNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
 }

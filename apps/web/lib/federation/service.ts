@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
     FEDERATED_SITE_SNAPSHOTS,
@@ -134,6 +135,11 @@ export interface FederatedPublicSummary {
     minimum_participants: number | null;
     minimum_benchmark_pass_rate: number | null;
     maximum_calibration_avg_ece: number | null;
+    privacy_mode: string | null;
+    privacy_status: string | null;
+    privacy_minimum_participants: number | null;
+    privacy_participant_count: number | null;
+    raw_tenant_ids_in_aggregate: boolean | null;
 }
 
 export interface FederationAutomationExecution {
@@ -662,7 +668,7 @@ export async function runFederationRound(
 
         const diagnosisCandidate = aggregateDiagnosisArtifacts(input.federationKey, roundKey, eligibleParticipants, new Date().toISOString());
         const severityCandidate = aggregateSeverityArtifacts(input.federationKey, roundKey, eligibleParticipants, new Date().toISOString());
-        const aggregatePayload = buildFederationAggregatePayload(eligibleParticipants, diagnosisCandidate, severityCandidate);
+        const aggregatePayload = buildFederationAggregatePayload(input.federationKey, roundKey, eligibleParticipants, diagnosisCandidate, severityCandidate);
         const candidateArtifactPayload = {
             diagnosis: diagnosisCandidate,
             severity: severityCandidate,
@@ -810,6 +816,11 @@ export async function getFederationPublicSummary(
             minimum_participants: null,
             minimum_benchmark_pass_rate: null,
             maximum_calibration_avg_ece: null,
+            privacy_mode: null,
+            privacy_status: null,
+            privacy_minimum_participants: null,
+            privacy_participant_count: null,
+            raw_tenant_ids_in_aggregate: null,
         };
     }
 
@@ -827,6 +838,7 @@ export async function getFederationPublicSummary(
     const aggregateDatasetRows = latestRound
         ? readNumber(latestRound.aggregate_payload.aggregate_dataset_rows) ?? 0
         : latestSnapshots.reduce((sum, snapshot) => sum + snapshot.total_dataset_rows, 0);
+    const privacyManifest = asRecord(latestRound?.aggregate_payload.privacy_manifest);
 
     return {
         active: true,
@@ -848,6 +860,13 @@ export async function getFederationPublicSummary(
         minimum_participants: governance.policy.minimum_participants,
         minimum_benchmark_pass_rate: governance.policy.minimum_benchmark_pass_rate,
         maximum_calibration_avg_ece: governance.policy.maximum_calibration_avg_ece,
+        privacy_mode: readString(privacyManifest.mode),
+        privacy_status: readString(privacyManifest.status),
+        privacy_minimum_participants: readNumber(privacyManifest.minimum_privacy_participants),
+        privacy_participant_count: readNumber(privacyManifest.participant_count),
+        raw_tenant_ids_in_aggregate: typeof privacyManifest.raw_tenant_ids_in_aggregate === 'boolean'
+            ? privacyManifest.raw_tenant_ids_in_aggregate
+            : null,
     };
 }
 
@@ -1311,6 +1330,8 @@ async function insertModelDeltaArtifacts(
 }
 
 function buildFederationAggregatePayload(
+    federationKey: string,
+    roundKey: string,
     participants: Array<{
         snapshot: FederatedSiteSnapshotRecord;
         siteWeight: number;
@@ -1334,7 +1355,47 @@ function buildFederationAggregatePayload(
             diagnosisCandidate ? 'diagnosis' : null,
             severityCandidate ? 'severity' : null,
         ]),
-        source_tenants: participants.map((participant) => participant.snapshot.tenant_id),
+        source_tenant_count: participants.length,
+        source_participant_refs: participants.map((participant) => createParticipantRef(federationKey, roundKey, participant.snapshot.tenant_id)),
+        privacy_manifest: buildFederationPrivacyManifest(federationKey, roundKey, participants),
+    };
+}
+
+function buildFederationPrivacyManifest(
+    federationKey: string,
+    roundKey: string,
+    participants: Array<{
+        snapshot: FederatedSiteSnapshotRecord;
+        siteWeight: number;
+    }>,
+): Record<string, unknown> {
+    const aggregateDatasetRows = participants.reduce((sum, participant) => sum + participant.snapshot.total_dataset_rows, 0);
+    const minimumPrivacyParticipants = 3;
+    const minimumRowsPerParticipant = Math.min(...participants.map((participant) => participant.snapshot.total_dataset_rows));
+    const participantRefs = participants.map((participant) => createParticipantRef(federationKey, roundKey, participant.snapshot.tenant_id));
+    const pass = participants.length >= minimumPrivacyParticipants && minimumRowsPerParticipant >= 10;
+    const failedChecks = [
+        participants.length < minimumPrivacyParticipants ? `participant_count_below_${minimumPrivacyParticipants}` : null,
+        minimumRowsPerParticipant < 10 ? 'site_row_count_below_10' : null,
+    ].filter((check): check is string => check != null);
+
+    return {
+        mode: 'privacy_preflight_v1',
+        status: pass ? 'privacy_ready' : 'privacy_limited',
+        participant_count: participants.length,
+        minimum_privacy_participants: minimumPrivacyParticipants,
+        aggregate_dataset_rows: aggregateDatasetRows,
+        minimum_rows_per_participant: Number.isFinite(minimumRowsPerParticipant) ? minimumRowsPerParticipant : 0,
+        participant_refs: participantRefs,
+        failed_checks: failedChecks,
+        raw_tenant_ids_in_aggregate: false,
+        raw_case_rows_shared: false,
+        patient_identifiers_shared: false,
+        owner_identifiers_shared: false,
+        coordinator_visibility: 'site_delta_artifacts_visible_to_coordinator',
+        next_secure_aggregation_step: pass
+            ? 'eligible_for_masked_update_protocol'
+            : 'increase_participant_count_or_site_support_before_masked_updates',
     };
 }
 
@@ -1431,9 +1492,11 @@ function aggregateDiagnosisArtifacts(
             round_key: roundKey,
             participant_count: inputs.length,
             total_weight: inputs.reduce((sum, input) => sum + input.weight, 0),
-            source_tenants: inputs.map((input) => input.tenantId),
+            source_tenant_count: inputs.length,
+            source_participant_refs: inputs.map((input) => createParticipantRef(federationKey, roundKey, input.tenantId)),
             source_model_versions: inputs.map((input) => input.artifact.model_version),
             aggregation_strategy: 'weighted_mean_v1',
+            privacy_mode: 'privacy_preflight_v1',
         },
     };
 }
@@ -1482,9 +1545,11 @@ function aggregateSeverityArtifacts(
             round_key: roundKey,
             participant_count: inputs.length,
             total_weight: inputs.reduce((sum, input) => sum + input.weight, 0),
-            source_tenants: inputs.map((input) => input.tenantId),
+            source_tenant_count: inputs.length,
+            source_participant_refs: inputs.map((input) => createParticipantRef(federationKey, roundKey, input.tenantId)),
             source_model_versions: inputs.map((input) => input.artifact.model_version),
             aggregation_strategy: 'weighted_mean_v1',
+            privacy_mode: 'privacy_preflight_v1',
         },
     };
 }
@@ -1517,6 +1582,14 @@ function resolveParticipantWeight(
 function createRoundKey(federationKey: string): string {
     const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'z');
     return `${sanitizeSlug(federationKey)}_${stamp}`;
+}
+
+function createParticipantRef(federationKey: string, roundKey: string, tenantId: string): string {
+    const digest = createHash('sha256')
+        .update(`${federationKey}:${roundKey}:${tenantId}`)
+        .digest('hex')
+        .slice(0, 16);
+    return `participant_${digest}`;
 }
 
 function mergeFlatWeightMaps(

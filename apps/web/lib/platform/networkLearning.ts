@@ -38,6 +38,11 @@ export interface PublicNetworkLearningSnapshot {
         minimum_participants: number | null;
         minimum_benchmark_pass_rate: number | null;
         maximum_calibration_avg_ece: number | null;
+        privacy_mode: string | null;
+        privacy_status: string | null;
+        privacy_minimum_participants: number | null;
+        privacy_participant_count: number | null;
+        raw_tenant_ids_in_aggregate: boolean | null;
     };
     recent_datasets: Array<{
         dataset_version: string;
@@ -104,6 +109,11 @@ export async function getPublicNetworkLearningSnapshot(): Promise<PublicNetworkL
                 minimum_participants: null,
                 minimum_benchmark_pass_rate: null,
                 maximum_calibration_avg_ece: null,
+                privacy_mode: null,
+                privacy_status: null,
+                privacy_minimum_participants: null,
+                privacy_participant_count: null,
+                raw_tenant_ids_in_aggregate: null,
             },
             recent_datasets: [],
             recent_benchmarks: [],
