@@ -138,9 +138,12 @@ function ModelCardPanel({ card }: { card: PublicModelCard }) {
                 <div className="mt-3 grid gap-2 text-sm text-slate-300">
                     <MetricRow label="Active certifications" value={String(card.trust_signals.active_certifications)} />
                     <MetricRow label="Accepted attestations" value={String(card.trust_signals.accepted_attestations)} />
+                    <MetricRow label="Signed attestations" value={String(card.trust_signals.signed_attestations)} />
+                    <MetricRow label="Verified signatures" value={String(card.trust_signals.verified_attestations)} />
                     <MetricRow label="Pending trust reviews" value={String(card.trust_signals.pending_reviews)} />
                     <MetricRow label="Issuers" value={card.trust_signals.issuers.join(', ') || 'NO DATA'} />
                     <MetricRow label="Attestors" value={card.trust_signals.attestors.join(', ') || 'NO DATA'} />
+                    <MetricRow label="Signing keys" value={card.trust_signals.signing_key_fingerprints.join(', ') || 'NO DATA'} />
                     <MetricRow label="Intended use" value={card.publication.intended_use ?? 'NO DATA'} />
                 </div>
                 {card.publication.summary_override ? (

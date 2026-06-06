@@ -57,6 +57,14 @@ export default function ModelTrustOperationsClient({
         status: 'accepted',
         evidence_uri: '',
         summary: '',
+        signed_payload_hash: '',
+        signature_algorithm: 'ed25519',
+        signature_hash: '',
+        signature_material: '',
+        signing_key_fingerprint: '',
+        verification_status: 'verified',
+        verified_by: '',
+        verification_notes: '',
     });
 
     const latestPublication = useMemo(() => snapshot.publications[0] ?? null, [snapshot.publications]);
@@ -114,10 +122,12 @@ export default function ModelTrustOperationsClient({
                 description="Publish model cards, attach certifications, and record external attestations so the trust moat is backed by explicit release evidence."
             />
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
                 <SummaryCard icon={<FileCheck2 className="h-4 w-4" />} label="Published Cards" value={snapshot.summary.published_cards} />
                 <SummaryCard icon={<BadgeCheck className="h-4 w-4" />} label="Active Certifications" value={snapshot.summary.active_certifications} />
                 <SummaryCard icon={<Shield className="h-4 w-4" />} label="Accepted Attestations" value={snapshot.summary.accepted_attestations} />
+                <SummaryCard icon={<Shield className="h-4 w-4" />} label="Signed Attestations" value={snapshot.summary.signed_attestations} />
+                <SummaryCard icon={<BadgeCheck className="h-4 w-4" />} label="Verified Signatures" value={snapshot.summary.verified_attestations} />
                 <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Pending Reviews" value={snapshot.summary.pending_reviews} tone={snapshot.summary.pending_reviews > 0 ? 'warning' : 'neutral'} />
             </div>
 
@@ -200,16 +210,32 @@ export default function ModelTrustOperationsClient({
                         <FormField label="Attestation Type" value={attestationDraft.attestation_type} onChange={(value) => setAttestationDraft((current) => ({ ...current, attestation_type: value }))} />
                         <FormField label="Attestor" value={attestationDraft.attestor_name} onChange={(value) => setAttestationDraft((current) => ({ ...current, attestor_name: value }))} />
                         <FormField label="Evidence URI" value={attestationDraft.evidence_uri} onChange={(value) => setAttestationDraft((current) => ({ ...current, evidence_uri: value }))} />
+                        <FormField label="Signed Payload Hash" value={attestationDraft.signed_payload_hash} onChange={(value) => setAttestationDraft((current) => ({ ...current, signed_payload_hash: value }))} />
+                        <FormField label="Signature Algorithm" value={attestationDraft.signature_algorithm} onChange={(value) => setAttestationDraft((current) => ({ ...current, signature_algorithm: value }))} />
+                        <FormField label="Signature Hash" value={attestationDraft.signature_hash} onChange={(value) => setAttestationDraft((current) => ({ ...current, signature_hash: value }))} />
+                        <FormField label="Signature Material" value={attestationDraft.signature_material} onChange={(value) => setAttestationDraft((current) => ({ ...current, signature_material: value }))} />
+                        <FormField label="Signing Key Fingerprint" value={attestationDraft.signing_key_fingerprint} onChange={(value) => setAttestationDraft((current) => ({ ...current, signing_key_fingerprint: value }))} />
+                        <FormField label="Verified By" value={attestationDraft.verified_by} onChange={(value) => setAttestationDraft((current) => ({ ...current, verified_by: value }))} />
                         <SelectField
                             label="Status"
                             value={attestationDraft.status}
                             options={['pending', 'accepted', 'rejected']}
                             onChange={(value) => setAttestationDraft((current) => ({ ...current, status: value }))}
                         />
+                        <SelectField
+                            label="Verification"
+                            value={attestationDraft.verification_status}
+                            options={['unsigned', 'pending', 'verified', 'failed']}
+                            onChange={(value) => setAttestationDraft((current) => ({ ...current, verification_status: value }))}
+                        />
                     </div>
                     <div className="mt-4">
                         <TerminalLabel>Summary</TerminalLabel>
                         <TerminalTextarea value={attestationDraft.summary} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setAttestationDraft((current) => ({ ...current, summary: event.target.value }))} />
+                    </div>
+                    <div className="mt-4">
+                        <TerminalLabel>Verification Notes</TerminalLabel>
+                        <TerminalTextarea value={attestationDraft.verification_notes} onChange={(event: ChangeEvent<HTMLTextAreaElement>) => setAttestationDraft((current) => ({ ...current, verification_notes: event.target.value }))} />
                     </div>
                     <div className="pt-4">
                         <TerminalButton onClick={() => void runAction({ action: 'create_attestation', ...attestationDraft }, 'Attestation created.')}>

@@ -51,6 +51,8 @@ function createEmptySnapshot(): ModelTrustSnapshot {
             published_cards: 0,
             active_certifications: 0,
             accepted_attestations: 0,
+            signed_attestations: 0,
+            verified_attestations: 0,
             pending_reviews: 0,
         },
         refreshed_at: new Date().toISOString(),

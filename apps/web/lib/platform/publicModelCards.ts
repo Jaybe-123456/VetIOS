@@ -45,9 +45,12 @@ export interface PublicModelCard {
     trust_signals: {
         active_certifications: number;
         accepted_attestations: number;
+        signed_attestations: number;
+        verified_attestations: number;
         pending_reviews: number;
         issuers: string[];
         attestors: string[];
+        signing_key_fingerprints: string[];
     };
     updated_at: string;
 }
@@ -174,11 +177,18 @@ function mapPublicCard(
         trust_signals: {
             active_certifications: trust?.certifications.filter((certification) => certification.status === 'active').length ?? 0,
             accepted_attestations: trust?.attestations.filter((attestation) => attestation.status === 'accepted').length ?? 0,
+            signed_attestations: trust?.attestations.filter((attestation) => Boolean(
+                attestation.signature_hash
+                || attestation.signed_payload_hash
+                || attestation.signing_key_fingerprint,
+            )).length ?? 0,
+            verified_attestations: trust?.attestations.filter((attestation) => attestation.verification_status === 'verified').length ?? 0,
             pending_reviews: (trust?.certifications.filter((certification) => certification.status === 'pending').length ?? 0)
                 + (trust?.attestations.filter((attestation) => attestation.status === 'pending').length ?? 0)
                 + (trust?.publication?.publication_status === 'draft' ? 1 : 0),
             issuers: uniqueStrings(trust?.certifications.map((certification) => certification.issuer_name) ?? []),
             attestors: uniqueStrings(trust?.attestations.map((attestation) => attestation.attestor_name) ?? []),
+            signing_key_fingerprints: uniqueStrings(trust?.attestations.map((attestation) => attestation.signing_key_fingerprint ?? '') ?? []),
         },
         updated_at: entry.registry.updated_at,
     };

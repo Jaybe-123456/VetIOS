@@ -257,9 +257,10 @@ export const moatCards: MoatCardDefinition[] = [
             'Registry governance, gate status, blockers, and lineage already exist internally.',
             'A public read-only model card surface is added in this change so the registry can be shared externally.',
             'Publication records, certifications, and attestations now exist behind the trust surface.',
+            'External attestations can now carry signed payload hashes, signature hashes, signing-key fingerprints, and verification status for public trust review.',
         ],
         missingNow: [
-            'Third-party signed attestations and automated evidence ingestion are still not implemented.',
+            'Automated evidence ingestion for third-party attestations is still not implemented.',
         ],
         links: [
             { label: 'Public Model Cards', href: '/platform/model-cards' },

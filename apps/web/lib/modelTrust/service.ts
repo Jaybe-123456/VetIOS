@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { createHash } from 'node:crypto';
 import {
     MODEL_ATTESTATIONS,
     MODEL_CARD_PUBLICATIONS,
@@ -9,6 +10,7 @@ import {
 export type ModelCardPublicationStatus = 'draft' | 'published' | 'retired';
 export type ModelCertificationStatus = 'pending' | 'active' | 'expired' | 'revoked';
 export type ModelAttestationStatus = 'pending' | 'accepted' | 'rejected';
+export type ModelAttestationVerificationStatus = 'unsigned' | 'pending' | 'verified' | 'failed';
 
 export interface ModelRegistryReference {
     registry_id: string;
@@ -64,6 +66,14 @@ export interface ModelAttestationRecord {
     evidence_uri: string | null;
     summary: string;
     attested_at: string | null;
+    signed_payload_hash: string | null;
+    signature_algorithm: string | null;
+    signature_hash: string | null;
+    signing_key_fingerprint: string | null;
+    verification_status: ModelAttestationVerificationStatus;
+    verified_at: string | null;
+    verified_by: string | null;
+    verification_notes: string | null;
     metadata: Record<string, unknown>;
     created_by: string | null;
     created_at: string;
@@ -80,6 +90,8 @@ export interface ModelTrustSnapshot {
         published_cards: number;
         active_certifications: number;
         accepted_attestations: number;
+        signed_attestations: number;
+        verified_attestations: number;
         pending_reviews: number;
     };
     refreshed_at: string;
@@ -114,6 +126,8 @@ export async function getModelTrustSnapshot(
             published_cards: publications.filter((publication) => publication.publication_status === 'published').length,
             active_certifications: certifications.filter((certification) => certification.status === 'active').length,
             accepted_attestations: attestations.filter((attestation) => attestation.status === 'accepted').length,
+            signed_attestations: attestations.filter((attestation) => hasSignatureEvidence(attestation)).length,
+            verified_attestations: attestations.filter((attestation) => attestation.verification_status === 'verified').length,
             pending_reviews: publications.filter((publication) => publication.publication_status === 'draft').length
                 + certifications.filter((certification) => certification.status === 'pending').length
                 + attestations.filter((attestation) => attestation.status === 'pending').length,
@@ -253,33 +267,73 @@ export async function createModelAttestation(
         status?: ModelAttestationStatus;
         evidenceUri?: string | null;
         attestedAt?: string | null;
+        signedPayloadHash?: string | null;
+        signatureAlgorithm?: string | null;
+        signatureHash?: string | null;
+        signatureMaterial?: string | null;
+        signingKeyFingerprint?: string | null;
+        verificationStatus?: ModelAttestationVerificationStatus;
+        verifiedBy?: string | null;
+        verificationNotes?: string | null;
         metadata?: Record<string, unknown>;
     },
 ): Promise<ModelAttestationRecord> {
     const C = MODEL_ATTESTATIONS.COLUMNS;
-    const { data, error } = await client
+    const signatureHash = normalizeOptionalText(input.signatureHash)
+        ?? hashOptionalSecret(input.signatureMaterial);
+    const verificationStatus = input.verificationStatus
+        ?? (signatureHash && input.signingKeyFingerprint ? 'verified' : signatureHash ? 'pending' : 'unsigned');
+    const verifiedAt = verificationStatus === 'verified' ? new Date().toISOString() : null;
+    let payload: Record<string, unknown> = {
+        [C.tenant_id]: input.tenantId,
+        [C.registry_id]: requireText(input.registryId, 'registry_id'),
+        [C.publication_id]: normalizeOptionalText(input.publicationId),
+        [C.attestation_type]: requireText(input.attestationType, 'attestation_type'),
+        [C.attestor_name]: requireText(input.attestorName, 'attestor_name'),
+        [C.summary]: requireText(input.summary, 'summary'),
+        [C.status]: input.status ?? 'pending',
+        [C.evidence_uri]: normalizeOptionalText(input.evidenceUri),
+        [C.attested_at]: normalizeOptionalText(input.attestedAt),
+        [C.signed_payload_hash]: normalizeOptionalText(input.signedPayloadHash),
+        [C.signature_algorithm]: normalizeOptionalText(input.signatureAlgorithm),
+        [C.signature_hash]: signatureHash,
+        [C.signing_key_fingerprint]: normalizeOptionalText(input.signingKeyFingerprint),
+        [C.verification_status]: verificationStatus,
+        [C.verified_at]: verifiedAt,
+        [C.verified_by]: verificationStatus === 'verified' ? normalizeOptionalText(input.verifiedBy) ?? input.actor : null,
+        [C.verification_notes]: normalizeOptionalText(input.verificationNotes),
+        [C.metadata]: input.metadata ?? {},
+        [C.created_by]: input.actor,
+    };
+    let inserted = await client
         .from(MODEL_ATTESTATIONS.TABLE)
-        .insert({
-            [C.tenant_id]: input.tenantId,
-            [C.registry_id]: requireText(input.registryId, 'registry_id'),
-            [C.publication_id]: normalizeOptionalText(input.publicationId),
-            [C.attestation_type]: requireText(input.attestationType, 'attestation_type'),
-            [C.attestor_name]: requireText(input.attestorName, 'attestor_name'),
-            [C.summary]: requireText(input.summary, 'summary'),
-            [C.status]: input.status ?? 'pending',
-            [C.evidence_uri]: normalizeOptionalText(input.evidenceUri),
-            [C.attested_at]: normalizeOptionalText(input.attestedAt),
-            [C.metadata]: input.metadata ?? {},
-            [C.created_by]: input.actor,
-        })
+        .insert(payload)
         .select('*')
         .single();
 
-    if (error || !data) {
-        throw new Error(`Failed to create model attestation: ${error?.message ?? 'Unknown error'}`);
+    if (inserted.error && isMissingColumnError(inserted.error.message ?? '')) {
+        payload = { ...payload };
+        delete payload[C.signed_payload_hash];
+        delete payload[C.signature_algorithm];
+        delete payload[C.signature_hash];
+        delete payload[C.signing_key_fingerprint];
+        delete payload[C.verification_status];
+        delete payload[C.verified_at];
+        delete payload[C.verified_by];
+        delete payload[C.verification_notes];
+
+        inserted = await client
+            .from(MODEL_ATTESTATIONS.TABLE)
+            .insert(payload)
+            .select('*')
+            .single();
     }
 
-    return mapModelAttestation(asRecord(data));
+    if (inserted.error || !inserted.data) {
+        throw new Error(`Failed to create model attestation: ${inserted.error?.message ?? 'Unknown error'}`);
+    }
+
+    return mapModelAttestation(asRecord(inserted.data));
 }
 
 async function listRegistryEntries(
@@ -423,6 +477,14 @@ function mapModelAttestation(row: Record<string, unknown>): ModelAttestationReco
         evidence_uri: readString(row.evidence_uri),
         summary: readString(row.summary) ?? '',
         attested_at: readString(row.attested_at),
+        signed_payload_hash: readString(row.signed_payload_hash),
+        signature_algorithm: readString(row.signature_algorithm),
+        signature_hash: readString(row.signature_hash),
+        signing_key_fingerprint: readString(row.signing_key_fingerprint),
+        verification_status: (readString(row.verification_status) ?? 'unsigned') as ModelAttestationVerificationStatus,
+        verified_at: readString(row.verified_at),
+        verified_by: readString(row.verified_by),
+        verification_notes: readString(row.verification_notes),
         metadata: asRecord(row.metadata),
         created_by: readString(row.created_by),
         created_at: String(row.created_at),
@@ -439,6 +501,21 @@ function requireText(value: string | null | undefined, field: string): string {
 
 function normalizeOptionalText(value: string | null | undefined): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function hashOptionalSecret(value: string | null | undefined): string | null {
+    const normalized = normalizeOptionalText(value);
+    return normalized ? createHash('sha256').update(normalized).digest('hex') : null;
+}
+
+function hasSignatureEvidence(attestation: ModelAttestationRecord): boolean {
+    return Boolean(attestation.signature_hash || attestation.signed_payload_hash || attestation.signing_key_fingerprint);
+}
+
+function isMissingColumnError(message: string): boolean {
+    return message.includes('schema cache')
+        || message.includes('column')
+        || message.includes('Could not find the');
 }
 
 function readString(value: unknown): string | null {

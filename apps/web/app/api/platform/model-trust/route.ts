@@ -47,6 +47,14 @@ type ModelTrustAction =
         evidence_uri?: string | null;
         summary?: string;
         attested_at?: string | null;
+        signed_payload_hash?: string | null;
+        signature_algorithm?: string | null;
+        signature_hash?: string | null;
+        signature_material?: string | null;
+        signing_key_fingerprint?: string | null;
+        verification_status?: 'unsigned' | 'pending' | 'verified' | 'failed';
+        verified_by?: string | null;
+        verification_notes?: string | null;
     };
 
 export async function GET(req: Request) {
@@ -143,6 +151,14 @@ export async function POST(req: Request) {
                 evidenceUri: parsed.data.evidence_uri ?? null,
                 summary: parsed.data.summary ?? '',
                 attestedAt: parsed.data.attested_at ?? null,
+                signedPayloadHash: parsed.data.signed_payload_hash ?? null,
+                signatureAlgorithm: parsed.data.signature_algorithm ?? null,
+                signatureHash: parsed.data.signature_hash ?? null,
+                signatureMaterial: parsed.data.signature_material ?? null,
+                signingKeyFingerprint: parsed.data.signing_key_fingerprint ?? null,
+                verificationStatus: parsed.data.verification_status,
+                verifiedBy: parsed.data.verified_by ?? null,
+                verificationNotes: parsed.data.verification_notes ?? null,
             });
         } else {
             return NextResponse.json({ error: 'Unsupported model-trust action.', request_id: requestId }, { status: 400 });
