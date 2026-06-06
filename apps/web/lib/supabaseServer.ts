@@ -202,7 +202,15 @@ export async function resolveSessionState(): Promise<
         },
     });
 
-    const { data: { user }, error } = await supabase.auth.getUser();
+    let authResult: Awaited<ReturnType<typeof supabase.auth.getUser>>;
+    try {
+        authResult = await supabase.auth.getUser();
+    } catch (error) {
+        console.warn('[auth] session resolution degraded:', error);
+        return { status: 'unauthenticated' };
+    }
+
+    const { data: { user }, error } = authResult;
     if (error || !user) {
         return { status: 'unauthenticated' };
     }

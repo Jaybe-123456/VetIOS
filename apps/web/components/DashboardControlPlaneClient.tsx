@@ -130,8 +130,9 @@ export default function DashboardControlPlaneClient() {
     const [refreshing, setRefreshing] = useState(false);
     const [requestError, setRequestError] = useState<string | null>(null);
     const [pageVisible, setPageVisible] = useState(true);
-    const [telemetryStreamStatus, setTelemetryStreamStatus] = useState<StreamStatus>('connecting');
-    const [topologyStreamStatus, setTopologyStreamStatus] = useState<StreamStatus>('connecting');
+    const [liveStreamsEnabled, setLiveStreamsEnabled] = useState(false);
+    const [telemetryStreamStatus, setTelemetryStreamStatus] = useState<StreamStatus>('disconnected');
+    const [topologyStreamStatus, setTopologyStreamStatus] = useState<StreamStatus>('disconnected');
     const [lastTelemetryUpdate, setLastTelemetryUpdate] = useState<string | null>(null);
     const [lastTopologyUpdate, setLastTopologyUpdate] = useState<string | null>(null);
     const [cireActionState, setCireActionState] = useState<'idle' | 'working'>('idle');
@@ -144,7 +145,10 @@ export default function DashboardControlPlaneClient() {
         }
 
         try {
-            const res = await fetch('/api/settings/control-plane?view=dashboard', { cache: 'no-store' });
+            const res = await fetch('/api/settings/control-plane?view=dashboard', {
+                cache: 'no-store',
+                signal: AbortSignal.timeout(8_000),
+            });
             const data = await res.json() as ControlPlaneDashboardSnapshotResponse | { error?: string };
             const errorMessage = 'error' in data ? data.error : undefined;
             if (!res.ok || !('snapshot' in data)) {
@@ -265,7 +269,10 @@ export default function DashboardControlPlaneClient() {
     }, [refreshSnapshot, refreshCire, refreshLiveData]);
 
     useEffect(() => {
-        if (!pageVisible) return;
+        if (!pageVisible || !liveStreamsEnabled) {
+            setTelemetryStreamStatus('disconnected');
+            return;
+        }
         setTelemetryStreamStatus('connecting');
 
         const source = new EventSource('/telemetry/stream');
@@ -292,10 +299,13 @@ export default function DashboardControlPlaneClient() {
         return () => {
             source.close();
         };
-    }, [pageVisible]);
+    }, [pageVisible, liveStreamsEnabled]);
 
     useEffect(() => {
-        if (!pageVisible) return;
+        if (!pageVisible || !liveStreamsEnabled) {
+            setTopologyStreamStatus('disconnected');
+            return;
+        }
         setTopologyStreamStatus('connecting');
 
         const source = new EventSource('/intelligence/stream?window=24h');
@@ -322,7 +332,7 @@ export default function DashboardControlPlaneClient() {
         return () => {
             source.close();
         };
-    }, [pageVisible]);
+    }, [pageVisible, liveStreamsEnabled]);
 
     const activeAlerts = (snapshot?.alerts ?? []).filter((alert) => !alert.resolved);
     const criticalAlertCount = activeAlerts.filter((alert) => alert.severity === 'critical').length;
@@ -419,13 +429,13 @@ export default function DashboardControlPlaneClient() {
             <div className="mb-4 sm:mb-6 flex flex-col gap-3">
                 <div className="flex flex-wrap items-center gap-2 font-mono text-[10px] sm:text-xs uppercase tracking-[0.2em]">
                     <StatusChip
-                        label={telemetryStreamStatus === 'live' ? 'Telemetry Live' : telemetryStreamStatus === 'connecting' ? 'Telemetry Connecting' : 'Telemetry Disconnected'}
-                        tone={streamTone(telemetryStreamStatus)}
+                        label={!liveStreamsEnabled ? 'Telemetry Paused' : telemetryStreamStatus === 'live' ? 'Telemetry Live' : telemetryStreamStatus === 'connecting' ? 'Telemetry Connecting' : 'Telemetry Disconnected'}
+                        tone={!liveStreamsEnabled ? 'muted' : streamTone(telemetryStreamStatus)}
                         icon={telemetryStreamStatus === 'live' ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
                     />
                     <StatusChip
-                        label={topologyStreamStatus === 'live' ? 'Topology Live' : topologyStreamStatus === 'connecting' ? 'Topology Connecting' : 'Topology Disconnected'}
-                        tone={streamTone(topologyStreamStatus)}
+                        label={!liveStreamsEnabled ? 'Topology Paused' : topologyStreamStatus === 'live' ? 'Topology Live' : topologyStreamStatus === 'connecting' ? 'Topology Connecting' : 'Topology Disconnected'}
+                        tone={!liveStreamsEnabled ? 'muted' : streamTone(topologyStreamStatus)}
                         icon={topologyStreamStatus === 'live' ? <Workflow className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
                     />
                     <StatusChip
@@ -486,13 +496,22 @@ export default function DashboardControlPlaneClient() {
                                 N-UPDATE: <span className="text-foreground">{formatTimestampOrState(lastTopologyUpdate, topologyStreamStatus)}</span>
                             </span>
                         </div>
-                        <div className="flex items-center gap-2 text-accent mt-2 sm:mt-0 drop-shadow-[0_0_3px_rgba(0,255,65,0.5)]">
-                            <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-                            {snapshot?.refreshed_at
-                                ? `SYNCED ${new Date(snapshot.refreshed_at).toLocaleTimeString()}`
-                                : loadingWithoutData
-                                    ? 'CONNECTING...'
-                                    : 'STANDBY'}
+                        <div className="flex flex-wrap items-center gap-3 mt-2 sm:mt-0">
+                            <button
+                                type="button"
+                                onClick={() => setLiveStreamsEnabled((enabled) => !enabled)}
+                                className="border border-[hsl(0_0%_26%)] px-3 py-1 text-[10px] text-[hsl(0_0%_88%)] transition hover:border-accent hover:text-accent"
+                            >
+                                {liveStreamsEnabled ? 'Pause Live Streams' : 'Start Live Streams'}
+                            </button>
+                            <div className="flex items-center gap-2 text-accent drop-shadow-[0_0_3px_rgba(0,255,65,0.5)]">
+                                <div className="w-2 h-2 rounded-full bg-accent animate-pulse" />
+                                {snapshot?.refreshed_at
+                                    ? `SYNCED ${new Date(snapshot.refreshed_at).toLocaleTimeString()}`
+                                    : loadingWithoutData
+                                        ? 'CONNECTING...'
+                                        : 'STANDBY'}
+                            </div>
                         </div>
                     </div>
                 </ConsoleCard>

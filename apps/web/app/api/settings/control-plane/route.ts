@@ -38,6 +38,9 @@ import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const CONTROL_PLANE_READ_TIMEOUT_MS = 8_000;
+const CONTROL_PLANE_USER_CONTEXT_TIMEOUT_MS = 4_000;
+
 type SettingsControlAction =
     | {
         action: 'update_profile';
@@ -124,38 +127,54 @@ export async function GET(req: Request) {
                 auth_mode: 'control_plane_key' as const,
                 principal_label: keyAuth.identity.label,
             }
-            : await resolveUserContext(session);
+            : await withRouteTimeout(
+                resolveUserContext(session),
+                CONTROL_PLANE_USER_CONTEXT_TIMEOUT_MS,
+                'control_plane_user_context_timeout',
+            );
         const currentRole = resolveControlPlaneRole(userContext.user, userContext.auth_mode);
         const permissionSet = buildControlPlanePermissionSet(currentRole);
         let response: NextResponse;
 
         if (view === 'simulation_mode') {
-            const simulationMode = await getControlPlaneSimulationMode(adminClient, actor.tenantId);
+            const simulationMode = await withRouteTimeout(
+                getControlPlaneSimulationMode(adminClient, actor.tenantId),
+                CONTROL_PLANE_READ_TIMEOUT_MS,
+                'control_plane_simulation_mode_timeout',
+            );
             response = NextResponse.json({
                 ...simulationMode,
                 request_id: requestId,
             });
         } else if (view === 'dashboard') {
-            const snapshot = await getDashboardControlPlaneSnapshot({
-                client: adminClient,
-                tenantId: actor.tenantId,
-                observerHeartbeatTimestamp,
-                readOnly: true,
-            });
+            const snapshot = await withRouteTimeout(
+                getDashboardControlPlaneSnapshot({
+                    client: adminClient,
+                    tenantId: actor.tenantId,
+                    observerHeartbeatTimestamp,
+                    readOnly: true,
+                }),
+                CONTROL_PLANE_READ_TIMEOUT_MS,
+                'control_plane_dashboard_timeout',
+            );
             response = NextResponse.json({
                 snapshot,
                 request_id: requestId,
             });
             response.headers.set('Cache-Control', 's-maxage=20, stale-while-revalidate=40');
         } else {
-            const snapshot = await getControlPlaneSnapshot({
-                client: adminClient,
-                tenantId: actor.tenantId,
-                userId: actor.userId,
-                userContext,
-                observerHeartbeatTimestamp,
-                readOnly: true,
-            });
+            const snapshot = await withRouteTimeout(
+                getControlPlaneSnapshot({
+                    client: adminClient,
+                    tenantId: actor.tenantId,
+                    userId: actor.userId,
+                    userContext,
+                    observerHeartbeatTimestamp,
+                    readOnly: true,
+                }),
+                CONTROL_PLANE_READ_TIMEOUT_MS,
+                'control_plane_snapshot_timeout',
+            );
 
             response = NextResponse.json({
                 snapshot: redactControlPlaneSnapshotForPermissions(snapshot, permissionSet),
@@ -175,7 +194,7 @@ export async function GET(req: Request) {
                     request_id: requestId,
                 }
                 : { error: error instanceof Error ? error.message : 'Unknown error', request_id: requestId },
-            { status: error instanceof RegistryControlPlaneError ? error.httpStatus : 500 },
+            { status: error instanceof RegistryControlPlaneError ? error.httpStatus : error instanceof RouteTimeoutError ? 503 : 500 },
         );
     }
 }
@@ -516,6 +535,24 @@ function resolveControlPlaneView(value: string | null) {
         return value;
     }
     return 'full';
+}
+
+class RouteTimeoutError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = 'RouteTimeoutError';
+    }
+}
+
+function withRouteTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new RouteTimeoutError(message)), timeoutMs);
+    });
+
+    return Promise.race([promise, timeout]).finally(() => {
+        if (timeoutId) clearTimeout(timeoutId);
+    });
 }
 
 async function resolvePresentedControlPlaneKey(

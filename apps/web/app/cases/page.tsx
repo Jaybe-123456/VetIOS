@@ -25,8 +25,8 @@ export default async function CasesPage() {
 
     const supabase = getSupabaseServer();
     const [cases, collectionStats] = await Promise.all([
-        listClinicalCases(supabase, session.tenantId),
-        loadConfirmedCaseCollectionStats(supabase, session.tenantId),
+        listClinicalCases(supabase, session.tenantId, { limit: 30 }),
+        loadConfirmedCaseCollectionStats(supabase, session.tenantId, 300),
     ]);
 
     return (

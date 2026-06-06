@@ -9,7 +9,7 @@
  */
 
 import { createServerClient } from '@supabase/ssr';
-import type { EmailOtpType } from '@supabase/supabase-js';
+import type { EmailOtpType, User } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
 import { NextResponse, type NextRequest } from 'next/server';
 import { buildCompletedEmailVerificationMetadata, buildVerifyEmailPath, getEmailVerificationState, isLikelyFirstGoogleSignIn } from '@/lib/auth/emailVerification';
@@ -57,15 +57,29 @@ export async function GET(request: NextRequest) {
             }
         );
 
-        const { error } = code
-            ? await supabase.auth.exchangeCodeForSession(code)
-            : await supabase.auth.verifyOtp({
-                token_hash: tokenHash!,
-                type: emailOtpType!,
-            });
+        let authError: unknown = null;
+        try {
+            const { error } = code
+                ? await supabase.auth.exchangeCodeForSession(code)
+                : await supabase.auth.verifyOtp({
+                    token_hash: tokenHash!,
+                    type: emailOtpType!,
+                });
+            authError = error;
+        } catch (error) {
+            console.error('Auth callback exchange failed:', error);
+            return buildLoginErrorRedirect(origin, 'auth_service_unavailable');
+        }
 
-        if (!error) {
-            const { data: { user } } = await supabase.auth.getUser();
+        if (!authError) {
+            let user: User | null = null;
+            try {
+                const { data: { user: currentUser } } = await supabase.auth.getUser();
+                user = currentUser;
+            } catch (error) {
+                console.error('Auth callback session lookup failed:', error);
+                return buildLoginErrorRedirect(origin, 'auth_session_unavailable');
+            }
 
             if (user) {
                 try {
@@ -112,14 +126,19 @@ export async function GET(request: NextRequest) {
     }
 
     // Auth failed: redirect to login with error
-    return NextResponse.redirect(
-        buildConfiguredAbsoluteUrl('/login', '?error=auth_failed', origin) ?? `${origin}/login?error=auth_failed`,
-    );
+    return buildLoginErrorRedirect(origin, 'auth_failed');
 }
 
 function buildAbsoluteRedirectTarget(pathWithSearch: string, fallbackOrigin: string): string {
     const configuredBase = buildConfiguredAbsoluteUrl('/', '', fallbackOrigin) ?? `${fallbackOrigin}/`;
     return new URL(pathWithSearch, configuredBase).toString();
+}
+
+function buildLoginErrorRedirect(origin: string, error: string): NextResponse {
+    const query = `?error=${encodeURIComponent(error)}`;
+    return NextResponse.redirect(
+        buildConfiguredAbsoluteUrl('/login', query, origin) ?? `${origin}/login${query}`,
+    );
 }
 
 function normalizeEmailOtpType(value: string | null): EmailOtpType | null {

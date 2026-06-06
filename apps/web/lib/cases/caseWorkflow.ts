@@ -155,13 +155,13 @@ export async function listClinicalCases(
 
     const { data, error } = await query
         .order('created_at', { ascending: false })
-        .limit(Math.min(Math.max(filters.limit ?? 100, 1), 250));
+        .limit(Math.min(Math.max(filters.limit ?? 25, 1), 100));
     if (error) {
         throw new Error(`Failed to list clinical cases: ${error.message}`);
     }
 
     const summaries = (data ?? []).map((row) => mapCaseSummary(row as Record<string, unknown>));
-    return Promise.all(summaries.map((summary) => hydrateCaseSummary(client, tenantId, summary)));
+    return hydrateCaseSummaries(client, tenantId, summaries);
 }
 
 export async function getClinicalCaseDetail(
@@ -326,12 +326,27 @@ export function mapCaseSummary(row: Record<string, unknown>): CaseSummary {
     };
 }
 
-async function hydrateCaseSummary(
+async function hydrateCaseSummaries(
     client: SupabaseClient,
     tenantId: string,
+    summaries: CaseSummary[],
+): Promise<CaseSummary[]> {
+    if (summaries.length === 0) return [];
+
+    let inferencesByCaseId = new Map<string, Record<string, unknown>>();
+    try {
+        inferencesByCaseId = await loadLatestInferencesForCaseSummaries(client, tenantId, summaries);
+    } catch (error) {
+        console.warn('[cases] list inference hydration degraded:', error);
+    }
+
+    return summaries.map((summary) => applyCaseSummaryInference(summary, inferencesByCaseId.get(summary.id) ?? null));
+}
+
+function applyCaseSummaryInference(
     summary: CaseSummary,
-): Promise<CaseSummary> {
-    const inference = await loadLatestInference(client, tenantId, summary.id, summary.latest_inference_event_id);
+    inference: Record<string, unknown> | null,
+): CaseSummary {
     if (!inference) {
         return {
             ...summary,
@@ -355,6 +370,152 @@ async function hydrateCaseSummary(
         reliability_score: result.reliabilityScore,
         reliability_label: result.reliabilityLabel,
     };
+}
+
+async function loadLatestInferencesForCaseSummaries(
+    client: SupabaseClient,
+    tenantId: string,
+    summaries: CaseSummary[],
+): Promise<Map<string, Record<string, unknown>>> {
+    const result = new Map<string, Record<string, unknown>>();
+    const latestInferenceIds = Array.from(new Set(
+        summaries
+            .map((summary) => summary.latest_inference_event_id)
+            .filter((value): value is string => Boolean(value)),
+    ));
+
+    if (latestInferenceIds.length > 0) {
+        for (const row of await loadInferenceRowsByIds(client, tenantId, latestInferenceIds)) {
+            const caseId = readText(row.case_id);
+            if (caseId && !result.has(caseId)) {
+                result.set(caseId, row);
+            }
+        }
+    }
+
+    const missingCaseIds = summaries
+        .map((summary) => summary.id)
+        .filter((caseId) => !result.has(caseId));
+    if (missingCaseIds.length > 0) {
+        for (const row of await loadInferenceRowsByCaseIds(client, tenantId, missingCaseIds)) {
+            const caseId = readText(row.case_id);
+            if (caseId && !result.has(caseId)) {
+                result.set(caseId, row);
+            }
+        }
+    }
+
+    return result;
+}
+
+async function loadInferenceRowsByIds(
+    client: SupabaseClient,
+    tenantId: string,
+    inferenceIds: string[],
+): Promise<Record<string, unknown>[]> {
+    const withUncertainty = await queryInferenceRowsByIds(client, tenantId, inferenceIds, CASE_LIST_INFERENCE_COLUMNS);
+    if (!withUncertainty.error) {
+        return (withUncertainty.data ?? []) as unknown as Record<string, unknown>[];
+    }
+
+    if (isMissingRelationError(withUncertainty.error.message ?? '')) return [];
+
+    if (!isMissingColumnError(withUncertainty.error.message ?? '')) {
+        throw new Error(`Failed to batch load inference events: ${withUncertainty.error.message}`);
+    }
+
+    const stableColumns = await queryInferenceRowsByIds(client, tenantId, inferenceIds, CASE_LIST_INFERENCE_STABLE_COLUMNS);
+    if (stableColumns.error) {
+        if (isMissingRelationError(stableColumns.error.message ?? '') || isMissingColumnError(stableColumns.error.message ?? '')) return [];
+        throw new Error(`Failed to batch load inference events: ${stableColumns.error.message}`);
+    }
+
+    return (stableColumns.data ?? []) as unknown as Record<string, unknown>[];
+}
+
+async function loadInferenceRowsByCaseIds(
+    client: SupabaseClient,
+    tenantId: string,
+    caseIds: string[],
+): Promise<Record<string, unknown>[]> {
+    const withUncertainty = await queryInferenceRowsByCaseIds(client, tenantId, caseIds, CASE_LIST_INFERENCE_COLUMNS);
+    if (!withUncertainty.error) {
+        return (withUncertainty.data ?? []) as unknown as Record<string, unknown>[];
+    }
+
+    if (isMissingRelationError(withUncertainty.error.message ?? '')) return [];
+
+    if (!isMissingColumnError(withUncertainty.error.message ?? '')) {
+        throw new Error(`Failed to batch load latest inference events: ${withUncertainty.error.message}`);
+    }
+
+    const stableColumns = await queryInferenceRowsByCaseIds(client, tenantId, caseIds, CASE_LIST_INFERENCE_STABLE_COLUMNS);
+    if (stableColumns.error) {
+        if (isMissingRelationError(stableColumns.error.message ?? '') || isMissingColumnError(stableColumns.error.message ?? '')) return [];
+        throw new Error(`Failed to batch load latest inference events: ${stableColumns.error.message}`);
+    }
+
+    return (stableColumns.data ?? []) as unknown as Record<string, unknown>[];
+}
+
+const CASE_LIST_INFERENCE_COLUMNS = [
+    'id',
+    'case_id',
+    'model_name',
+    'model_version',
+    'prompt_template_hash',
+    'prompt_template_version',
+    'schema_version',
+    'confidence_score',
+    'phi_hat',
+    'output_payload',
+    'cire',
+    'uncertainty_metrics',
+    'inference_latency_ms',
+    'latency_ms',
+    'compute_profile',
+    'outcome_confirmed',
+    'confirmed_diagnosis',
+    'created_at',
+];
+
+const CASE_LIST_INFERENCE_STABLE_COLUMNS = [
+    'id',
+    'case_id',
+    'model_name',
+    'model_version',
+    'confidence_score',
+    'output_payload',
+    'created_at',
+];
+
+function queryInferenceRowsByIds(
+    client: SupabaseClient,
+    tenantId: string,
+    inferenceIds: string[],
+    columns: string[],
+) {
+    return client
+        .from('ai_inference_events')
+        .select(columns.join(', '))
+        .eq('tenant_id', tenantId)
+        .in('id', inferenceIds)
+        .order('created_at', { ascending: false });
+}
+
+function queryInferenceRowsByCaseIds(
+    client: SupabaseClient,
+    tenantId: string,
+    caseIds: string[],
+    columns: string[],
+) {
+    return client
+        .from('ai_inference_events')
+        .select(columns.join(', '))
+        .eq('tenant_id', tenantId)
+        .in('case_id', caseIds)
+        .order('created_at', { ascending: false })
+        .limit(Math.min(caseIds.length * 3, 150));
 }
 
 async function loadInferenceById(

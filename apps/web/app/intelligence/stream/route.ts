@@ -7,8 +7,8 @@ import type { TopologyWindow } from '@/lib/intelligence/types';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const STREAM_INTERVAL_MS = 10_000;
-const STREAM_MAX_LIFETIME_MS = 290_000;
+const STREAM_INTERVAL_MS = 30_000;
+const STREAM_MAX_LIFETIME_MS = 90_000;
 
 export async function GET(req: Request) {
     const session = await resolveSessionTenant();

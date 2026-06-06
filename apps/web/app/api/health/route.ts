@@ -8,8 +8,8 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const DB_TIMEOUT_MS = 900;
-const AI_TIMEOUT_MS = 900;
+const DB_TIMEOUT_MS = 2_500;
+const AI_TIMEOUT_MS = 1_500;
 
 export async function GET() {
     const startedAt = Date.now();
