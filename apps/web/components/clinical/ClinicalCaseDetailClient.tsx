@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { CaseDetail } from '@/lib/cases/caseWorkflow';
 import { OutcomeConfirmButton } from './OutcomeConfirmButton';
+import { MultimodalEvidenceLedger } from './MultimodalEvidenceLedger';
 import { formatCaseNumber, formatClinicalLabel, formatPercent, type ClinicalDiagnosisResult, type ClinicalUrgency } from './clinicalTypes';
 import { generateSOAP } from '@/lib/generateSOAP';
 
@@ -140,6 +141,10 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
                                 Action: {buildActionSentence(result)}
                             </p>
                         </div>
+                    </ClinicalSection>
+
+                    <ClinicalSection title="Multimodal Evidence">
+                        <MultimodalEvidenceLedger clinicalCase={clinicalCase} />
                     </ClinicalSection>
 
                     <ClinicalSection title="Confirm Outcome">
