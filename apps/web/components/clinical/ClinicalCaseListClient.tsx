@@ -3,10 +3,13 @@
 import Link from 'next/link';
 import { ClipboardList, Plus, Search, Sparkles } from 'lucide-react';
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { CaseSummary } from '@/lib/cases/caseWorkflow';
 import { formatClinicalLabel, formatPercent } from './clinicalTypes';
+import { OutcomeConfirmButton } from './OutcomeConfirmButton';
 
 export function ClinicalCaseListClient({ cases }: { cases: CaseSummary[] }) {
+    const router = useRouter();
     const [query, setQuery] = useState('');
     const filtered = useMemo(() => cases.filter((entry) => {
         if (!query.trim()) return true;
@@ -38,9 +41,16 @@ export function ClinicalCaseListClient({ cases }: { cases: CaseSummary[] }) {
             </div>
 
             <div className="grid gap-3">
-                {filtered.map((entry) => (
-                    <Link key={entry.id} href={`/cases/${entry.latest_inference_event_id ?? entry.id}`} className="rounded-lg border border-white/10 bg-white/[0.025] p-4 transition hover:border-accent/40 hover:bg-accent/5">
-                        <div className="flex flex-col gap-4">
+                {filtered.map((entry) => {
+                    const isClosed = entry.case_status === 'closed';
+                    const caseHref = `/cases/${entry.latest_inference_event_id ?? entry.id}`;
+                    const differentials = readCardDifferentials(entry);
+                    const confirmOptions = differentials.map((differential) => differential.label);
+
+                    return (
+                    <article key={entry.id} className="rounded-lg border border-white/10 bg-white/[0.025] p-4 transition hover:border-accent/40 hover:bg-accent/5">
+                        <Link href={caseHref} className="block">
+                            <div className="flex flex-col gap-4">
                             <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between">
                                 <div className="min-w-0 text-lg font-semibold text-white">
                                     {entry.patient_name ?? 'Unnamed patient'}
@@ -52,7 +62,7 @@ export function ClinicalCaseListClient({ cases }: { cases: CaseSummary[] }) {
 
                             <div className="border-y border-white/8 py-3">
                                 <div className="space-y-2.5">
-                                    {readCardDifferentials(entry).slice(0, 3).map((differential, index) => (
+                                    {differentials.slice(0, 3).map((differential, index) => (
                                         <div
                                             key={`${entry.id}-${differential.label}-${index}`}
                                             className="grid gap-2 sm:grid-cols-[36px_minmax(160px,1fr)_minmax(96px,180px)_54px_58px] sm:items-center"
@@ -77,13 +87,27 @@ export function ClinicalCaseListClient({ cases }: { cases: CaseSummary[] }) {
 
                             <div className="flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
                                 <div className="text-white/72">{formatReliability(entry)}</div>
-                                <span className={`inline-flex min-h-[28px] w-fit items-center rounded-full border px-3 text-xs ${entry.case_status === 'closed' ? 'border-accent/40 text-accent' : 'border-white/15 text-white/58'}`}>
-                                    {entry.case_status === 'closed' ? 'Confirmed ✓' : 'Pending'}
+                                <span className={`inline-flex min-h-[28px] w-fit items-center rounded-full border px-3 text-xs ${isClosed ? 'border-accent/40 text-accent' : 'border-white/15 text-white/58'}`}>
+                                    {isClosed ? 'Confirmed' : 'Pending'}
                                 </span>
                             </div>
-                        </div>
-                    </Link>
-                ))}
+                            </div>
+                        </Link>
+                        {!isClosed && entry.latest_inference_event_id ? (
+                            <div className="mt-4 border-t border-white/8 pt-4">
+                                <OutcomeConfirmButton
+                                    inferenceEventId={entry.latest_inference_event_id}
+                                    suggestedLabel={entry.top_diagnosis ?? confirmOptions[0] ?? ''}
+                                    options={confirmOptions}
+                                    compact
+                                    title="Confirm outcome"
+                                    onConfirmed={() => router.refresh()}
+                                />
+                            </div>
+                        ) : null}
+                    </article>
+                    );
+                })}
             </div>
 
             {filtered.length === 0 ? (
@@ -167,13 +191,13 @@ function formatPatientMeta(entry: CaseSummary): string {
         entry.species_display ?? entry.species_canonical ?? 'Species pending',
         age == null ? null : `${age}y`,
         sex ? formatClinicalLabel(sex) : null,
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join(' - ');
 }
 
 function formatReliability(entry: CaseSummary): string {
     const score = entry.reliability_score ?? entry.diagnosis_confidence;
     if (score == null) return 'Reliability: Needs review';
-    return `Reliability: ${formatReliabilityBand(score)} (φ ${score.toFixed(2)})`;
+    return `Reliability: ${formatReliabilityBand(score)} (phi ${score.toFixed(2)})`;
 }
 
 function formatReliabilityBand(score: number): string {
