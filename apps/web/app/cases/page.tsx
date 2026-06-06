@@ -1,6 +1,8 @@
 import Link from 'next/link';
+import { ConfirmedCaseCollectionPanel } from '@/components/clinical/ConfirmedCaseCollectionPanel';
 import { ClinicalCaseListClient } from '@/components/clinical/ClinicalCaseListClient';
 import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components/ui/terminal';
+import { loadConfirmedCaseCollectionStats } from '@/lib/cases/confirmedCaseCollection';
 import { listClinicalCases } from '@/lib/cases/caseWorkflow';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
@@ -21,7 +23,11 @@ export default async function CasesPage() {
         );
     }
 
-    const cases = await listClinicalCases(getSupabaseServer(), session.tenantId);
+    const supabase = getSupabaseServer();
+    const [cases, collectionStats] = await Promise.all([
+        listClinicalCases(supabase, session.tenantId),
+        loadConfirmedCaseCollectionStats(supabase, session.tenantId),
+    ]);
 
     return (
         <Container>
@@ -29,6 +35,9 @@ export default async function CasesPage() {
                 title="My Cases"
                 description="Review recent patients, open a case, or start a new diagnosis."
             />
+            <div className="mb-5">
+                <ConfirmedCaseCollectionPanel stats={collectionStats} />
+            </div>
             <ClinicalCaseListClient cases={cases} />
         </Container>
     );

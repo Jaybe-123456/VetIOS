@@ -37,6 +37,7 @@ export function OutcomeConfirmButton({
     const [customLabel, setCustomLabel] = useState('');
     const [diagnosisMethod, setDiagnosisMethod] = useState<(typeof DIAGNOSIS_METHODS)[number]['value']>('clinical');
     const [notes, setNotes] = useState('');
+    const [allowLearning, setAllowLearning] = useState(true);
     const [requestId] = useState(() => crypto.randomUUID());
     const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [error, setError] = useState<string | null>(null);
@@ -66,6 +67,11 @@ export function OutcomeConfirmButton({
                             clinician_notes: notes.trim() || undefined,
                         },
                         timestamp: new Date().toISOString(),
+                    },
+                    learning_consent: {
+                        deidentified_training: allowLearning,
+                        network_learning: false,
+                        consent_version: 'vetios_learning_consent_v1',
                     },
                 }),
             });
@@ -145,6 +151,21 @@ export function OutcomeConfirmButton({
                     </div>
                 </div>
             ) : null}
+
+            <label className="mt-3 flex items-start gap-3 rounded-md border border-[hsl(0_0%_100%_/_0.08)] bg-black/20 p-3 text-xs leading-relaxed text-[hsl(0_0%_72%)]">
+                <input
+                    type="checkbox"
+                    checked={allowLearning}
+                    disabled={disabled || status === 'saving' || status === 'saved'}
+                    onChange={(event) => setAllowLearning(event.target.checked)}
+                    className="mt-1 accent-[hsl(143_100%_50%)]"
+                />
+                <span>
+                    {compact
+                        ? 'Allow de-identified learning from this confirmed outcome.'
+                        : 'Allow VetIOS to use this confirmed outcome as a de-identified learning signal for this clinical workspace.'}
+                </span>
+            </label>
 
             {status === 'saved' ? (
                 <div className="mt-4 flex gap-3 rounded-md border border-accent/35 bg-accent/10 p-3 text-sm text-accent">
