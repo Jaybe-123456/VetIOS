@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { RefreshCw, Search } from 'lucide-react';
 import { Container, PageHeader } from '@/components/ui/terminal';
 import { DatasetTable, type DatasetColumn } from '@/components/DatasetTable';
+import { RealCaseImportPanel } from '@/components/dataset/RealCaseImportPanel';
 import {
     buildClinicalDatasetExport,
     type ClinicalCaseDatasetRow,
@@ -191,6 +192,8 @@ export function ClinicalDatasetClient({
                     <SummaryCard label="Quarantined %" value={`${summary.invalid_quarantined_pct}%`} tone={summary.invalid_quarantined_pct > 0 ? 'warn' : 'default'} />
                     <SummaryCard label="Calibration Ready" value={`${summary.calibration_readiness_pct}%`} />
                 </div>
+
+                <RealCaseImportPanel onImported={handleRefresh} />
 
                 <div className="flex items-center justify-between gap-4">
                     <div className="flex items-center border-b border-grid font-mono text-xs uppercase tracking-wider">
