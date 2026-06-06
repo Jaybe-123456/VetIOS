@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
-import { ClipboardList, CreditCard, Plus, Stethoscope, Menu, UserCircle, X } from 'lucide-react';
+import { ClipboardList, CreditCard, LockKeyhole, Menu, Plus, ServerCog, Stethoscope, TerminalSquare, UserCircle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import UserNav from '@/components/UserNav';
 
@@ -66,16 +66,14 @@ export function ClinicianShell({ children }: { children: ReactNode }) {
                     <ClinicalNavLink href="/billing" active={pathname === '/billing'} icon={<CreditCard className="h-4 w-4" />}>
                         Billing
                     </ClinicalNavLink>
+                    <ClinicalNavLink href="/console" active={false} icon={<TerminalSquare className="h-4 w-4" />} onClick={rememberConsoleMode}>
+                        <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                            <span>Infra Console</span>
+                            {!canOpenConsole ? <LockKeyhole className="h-3 w-3 shrink-0 opacity-70" /> : null}
+                        </span>
+                    </ClinicalNavLink>
                 </nav>
-                {canOpenConsole ? (
-                    <Link
-                        href="/console"
-                        onClick={rememberConsoleMode}
-                        className="mt-auto font-mono text-xs text-[hsl(0_0%_52%)] transition-colors hover:text-accent"
-                    >
-                        Console view -&gt;
-                    </Link>
-                ) : null}
+                <ConsoleInfrastructureLead canOpenConsole={canOpenConsole} onOpen={rememberConsoleMode} />
             </aside>
 
             {/* ── Mobile Sidebar Drawer ── */}
@@ -133,19 +131,26 @@ export function ClinicianShell({ children }: { children: ReactNode }) {
                             >
                                 Billing
                             </ClinicalNavLink>
-                        </nav>
-                        {canOpenConsole ? (
-                            <Link
+                            <ClinicalNavLink
                                 href="/console"
+                                active={false}
+                                icon={<TerminalSquare className="h-4 w-4" />}
                                 onClick={() => {
                                     rememberConsoleMode();
                                     setDrawerOpen(false);
                                 }}
-                                className="mt-auto font-mono text-xs text-[hsl(0_0%_52%)] transition-colors hover:text-accent py-2"
                             >
-                                Console view -&gt;
-                            </Link>
-                        ) : null}
+                                <span className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                                    <span>Infra Console</span>
+                                    {!canOpenConsole ? <LockKeyhole className="h-3 w-3 shrink-0 opacity-70" /> : null}
+                                </span>
+                            </ClinicalNavLink>
+                        </nav>
+                        <ConsoleInfrastructureLead
+                            canOpenConsole={canOpenConsole}
+                            onOpen={rememberConsoleMode}
+                            onClick={() => setDrawerOpen(false)}
+                        />
                     </div>
                 </>
             )}
@@ -175,6 +180,39 @@ export function ClinicianShell({ children }: { children: ReactNode }) {
                 <main className="min-h-0 flex-1 overflow-auto pb-24 lg:pb-0">{children}</main>
             </div>
         </div>
+    );
+}
+
+function ConsoleInfrastructureLead({
+    canOpenConsole,
+    onOpen,
+    onClick,
+}: {
+    canOpenConsole: boolean;
+    onOpen: () => void;
+    onClick?: () => void;
+}) {
+    return (
+        <Link
+            href="/console"
+            onClick={() => {
+                onOpen();
+                onClick?.();
+            }}
+            className="mt-auto block border border-accent/25 bg-accent/[0.04] p-3 font-mono transition hover:border-accent/60 hover:bg-accent/[0.08]"
+        >
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-accent">
+                <ServerCog className="h-3.5 w-3.5" />
+                Infrastructure layer
+            </div>
+            <div className="mt-2 text-xs leading-relaxed text-[hsl(0_0%_74%)]">
+                Console, telemetry, datasets, model trust, and platform controls.
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3 text-[10px] uppercase tracking-[0.16em] text-[hsl(0_0%_58%)]">
+                <span>{canOpenConsole ? 'Open console' : 'Admin access required'}</span>
+                {!canOpenConsole ? <LockKeyhole className="h-3 w-3" /> : <span>-&gt;</span>}
+            </div>
+        </Link>
     );
 }
 
