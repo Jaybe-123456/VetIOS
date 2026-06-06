@@ -47,6 +47,7 @@ export interface PublicModelCard {
         accepted_attestations: number;
         signed_attestations: number;
         verified_attestations: number;
+        automated_attestations: number;
         pending_reviews: number;
         issuers: string[];
         attestors: string[];
@@ -183,6 +184,7 @@ function mapPublicCard(
                 || attestation.signing_key_fingerprint,
             )).length ?? 0,
             verified_attestations: trust?.attestations.filter((attestation) => attestation.verification_status === 'verified').length ?? 0,
+            automated_attestations: trust?.attestations.filter((attestation) => Boolean(attestation.metadata.ingestion_event_id)).length ?? 0,
             pending_reviews: (trust?.certifications.filter((certification) => certification.status === 'pending').length ?? 0)
                 + (trust?.attestations.filter((attestation) => attestation.status === 'pending').length ?? 0)
                 + (trust?.publication?.publication_status === 'draft' ? 1 : 0),

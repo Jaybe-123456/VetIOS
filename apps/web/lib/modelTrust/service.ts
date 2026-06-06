@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import {
+    MODEL_EVIDENCE_INGESTION_EVENTS,
     MODEL_ATTESTATIONS,
     MODEL_CARD_PUBLICATIONS,
     MODEL_CERTIFICATIONS,
@@ -80,18 +81,51 @@ export interface ModelAttestationRecord {
     updated_at: string;
 }
 
+export interface ModelEvidenceIngestionRecord {
+    id: string;
+    tenant_id: string;
+    registry_id: string;
+    publication_id: string | null;
+    source_system: string;
+    source_ref: string;
+    attestation_type: string;
+    attestor_name: string;
+    evidence_uri: string | null;
+    summary: string;
+    signed_payload_hash: string | null;
+    signature_algorithm: string | null;
+    signature_hash: string | null;
+    signing_key_fingerprint: string | null;
+    verification_status: ModelAttestationVerificationStatus;
+    payload_hash: string;
+    payload: Record<string, unknown>;
+    metadata: Record<string, unknown>;
+    received_at: string;
+    created_at: string;
+}
+
+export interface ModelEvidenceIngestionResult {
+    ingestion: ModelEvidenceIngestionRecord;
+    attestation: ModelAttestationRecord | null;
+    duplicate: boolean;
+    materialization_error: string | null;
+}
+
 export interface ModelTrustSnapshot {
     tenant_id: string;
     registry_entries: ModelRegistryReference[];
     publications: ModelCardPublicationRecord[];
     certifications: ModelCertificationRecord[];
     attestations: ModelAttestationRecord[];
+    evidence_ingestions: ModelEvidenceIngestionRecord[];
     summary: {
         published_cards: number;
         active_certifications: number;
         accepted_attestations: number;
         signed_attestations: number;
         verified_attestations: number;
+        ingested_evidence: number;
+        automated_attestations: number;
         pending_reviews: number;
     };
     refreshed_at: string;
@@ -109,11 +143,12 @@ export async function getModelTrustSnapshot(
     options: { limit?: number } = {},
 ): Promise<ModelTrustSnapshot> {
     const limit = options.limit ?? 24;
-    const [registryEntries, publications, certifications, attestations] = await Promise.all([
+    const [registryEntries, publications, certifications, attestations, evidenceIngestions] = await Promise.all([
         listRegistryEntries(client, tenantId, limit),
         listModelCardPublications(client, tenantId, limit),
         listModelCertifications(client, tenantId, limit),
         listModelAttestations(client, tenantId, limit),
+        listModelEvidenceIngestions(client, tenantId, limit),
     ]);
 
     return {
@@ -122,12 +157,15 @@ export async function getModelTrustSnapshot(
         publications,
         certifications,
         attestations,
+        evidence_ingestions: evidenceIngestions,
         summary: {
             published_cards: publications.filter((publication) => publication.publication_status === 'published').length,
             active_certifications: certifications.filter((certification) => certification.status === 'active').length,
             accepted_attestations: attestations.filter((attestation) => attestation.status === 'accepted').length,
             signed_attestations: attestations.filter((attestation) => hasSignatureEvidence(attestation)).length,
             verified_attestations: attestations.filter((attestation) => attestation.verification_status === 'verified').length,
+            ingested_evidence: evidenceIngestions.length,
+            automated_attestations: attestations.filter((attestation) => readString(attestation.metadata.ingestion_event_id)).length,
             pending_reviews: publications.filter((publication) => publication.publication_status === 'draft').length
                 + certifications.filter((certification) => certification.status === 'pending').length
                 + attestations.filter((attestation) => attestation.status === 'pending').length,
@@ -336,6 +374,138 @@ export async function createModelAttestation(
     return mapModelAttestation(asRecord(inserted.data));
 }
 
+export async function ingestModelAttestationEvidence(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        actor: string | null;
+        registryId?: string | null;
+        publicSlug?: string | null;
+        publicationId?: string | null;
+        sourceSystem: string;
+        sourceRef?: string | null;
+        attestationType: string;
+        attestorName: string;
+        summary: string;
+        evidenceUri?: string | null;
+        signedPayloadHash?: string | null;
+        signatureAlgorithm?: string | null;
+        signatureHash?: string | null;
+        signatureMaterial?: string | null;
+        signingKeyFingerprint?: string | null;
+        verificationStatus?: ModelAttestationVerificationStatus;
+        payload?: Record<string, unknown>;
+        metadata?: Record<string, unknown>;
+    },
+): Promise<ModelEvidenceIngestionResult> {
+    const resolved = await resolveEvidenceTarget(client, {
+        tenantId: input.tenantId,
+        registryId: input.registryId,
+        publicSlug: input.publicSlug,
+        publicationId: input.publicationId,
+    });
+    const C = MODEL_EVIDENCE_INGESTION_EVENTS.COLUMNS;
+    const sourceSystem = requireText(input.sourceSystem, 'source_system');
+    const payload = input.payload ?? {};
+    const payloadHash = createHash('sha256').update(stableStringify(payload)).digest('hex');
+    const sourceRef = normalizeOptionalText(input.sourceRef)
+        ?? createHash('sha256')
+            .update(`${sourceSystem}:${resolved.registryId}:${payloadHash}`)
+            .digest('hex');
+    const signatureHash = normalizeOptionalText(input.signatureHash)
+        ?? hashOptionalSecret(input.signatureMaterial);
+    const verificationStatus = input.verificationStatus
+        ?? (signatureHash && input.signingKeyFingerprint ? 'verified' : signatureHash ? 'pending' : 'unsigned');
+
+    const existing = await findModelEvidenceIngestion(client, input.tenantId, sourceSystem, sourceRef);
+    if (existing) {
+        return {
+            ingestion: existing,
+            attestation: null,
+            duplicate: true,
+            materialization_error: null,
+        };
+    }
+
+    const { data, error } = await client
+        .from(MODEL_EVIDENCE_INGESTION_EVENTS.TABLE)
+        .insert({
+            [C.tenant_id]: input.tenantId,
+            [C.registry_id]: resolved.registryId,
+            [C.publication_id]: resolved.publicationId,
+            [C.source_system]: sourceSystem,
+            [C.source_ref]: sourceRef,
+            [C.attestation_type]: requireText(input.attestationType, 'attestation_type'),
+            [C.attestor_name]: requireText(input.attestorName, 'attestor_name'),
+            [C.evidence_uri]: normalizeOptionalText(input.evidenceUri),
+            [C.summary]: requireText(input.summary, 'summary'),
+            [C.signed_payload_hash]: normalizeOptionalText(input.signedPayloadHash),
+            [C.signature_algorithm]: normalizeOptionalText(input.signatureAlgorithm),
+            [C.signature_hash]: signatureHash,
+            [C.signing_key_fingerprint]: normalizeOptionalText(input.signingKeyFingerprint),
+            [C.verification_status]: verificationStatus,
+            [C.payload_hash]: payloadHash,
+            [C.payload]: payload,
+            [C.metadata]: input.metadata ?? {},
+        })
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        if (isMissingTableError(error?.message ?? '')) {
+            throw new Error('Model evidence ingestion table is missing. Apply migration 20260606010000_model_evidence_ingestion.sql.');
+        }
+        throw new Error(`Failed to ingest model evidence: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    const ingestion = mapModelEvidenceIngestion(asRecord(data));
+    try {
+        const attestation = await createModelAttestation(client, {
+            tenantId: input.tenantId,
+            actor: input.actor,
+            registryId: ingestion.registry_id,
+            publicationId: ingestion.publication_id,
+            attestationType: ingestion.attestation_type,
+            attestorName: ingestion.attestor_name,
+            status: 'pending',
+            evidenceUri: ingestion.evidence_uri,
+            summary: ingestion.summary,
+            attestedAt: ingestion.received_at,
+            signedPayloadHash: ingestion.signed_payload_hash,
+            signatureAlgorithm: ingestion.signature_algorithm,
+            signatureHash: ingestion.signature_hash,
+            signingKeyFingerprint: ingestion.signing_key_fingerprint,
+            verificationStatus: ingestion.verification_status,
+            verifiedBy: ingestion.verification_status === 'verified' ? input.actor ?? 'automated_evidence_ingestion' : null,
+            verificationNotes: ingestion.verification_status === 'verified'
+                ? 'Automated evidence ingestion supplied signature hash and signing-key fingerprint.'
+                : 'Automated evidence ingestion queued this attestation for Trust Ops review.',
+            metadata: {
+                ...(input.metadata ?? {}),
+                ingestion_event_id: ingestion.id,
+                source_system: ingestion.source_system,
+                source_ref: ingestion.source_ref,
+                payload_hash: ingestion.payload_hash,
+                automated_ingestion: true,
+            },
+        });
+
+        return {
+            ingestion,
+            attestation,
+            duplicate: false,
+            materialization_error: null,
+        };
+    } catch (error) {
+        return {
+            ingestion,
+            attestation: null,
+            duplicate: false,
+            materialization_error: error instanceof Error ? error.message : 'Failed to materialize ingested evidence.',
+        };
+    }
+}
+
 async function listRegistryEntries(
     client: SupabaseClient,
     tenantId: string,
@@ -416,6 +586,93 @@ async function listModelAttestations(
     return (data ?? []).map((row) => mapModelAttestation(asRecord(row)));
 }
 
+async function listModelEvidenceIngestions(
+    client: SupabaseClient,
+    tenantId: string,
+    limit: number,
+): Promise<ModelEvidenceIngestionRecord[]> {
+    const C = MODEL_EVIDENCE_INGESTION_EVENTS.COLUMNS;
+    const { data, error } = await client
+        .from(MODEL_EVIDENCE_INGESTION_EVENTS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .order(C.created_at, { ascending: false })
+        .limit(limit);
+
+    if (error) {
+        if (isMissingTableError(error.message)) {
+            return [];
+        }
+        throw new Error(`Failed to list model evidence ingestions: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapModelEvidenceIngestion(asRecord(row)));
+}
+
+async function findModelEvidenceIngestion(
+    client: SupabaseClient,
+    tenantId: string,
+    sourceSystem: string,
+    sourceRef: string,
+): Promise<ModelEvidenceIngestionRecord | null> {
+    const C = MODEL_EVIDENCE_INGESTION_EVENTS.COLUMNS;
+    const { data, error } = await client
+        .from(MODEL_EVIDENCE_INGESTION_EVENTS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .eq(C.source_system, sourceSystem)
+        .eq(C.source_ref, sourceRef)
+        .maybeSingle();
+
+    if (error) {
+        if (isMissingTableError(error.message)) {
+            throw new Error('Model evidence ingestion table is missing. Apply migration 20260606010000_model_evidence_ingestion.sql.');
+        }
+        throw new Error(`Failed to check model evidence idempotency: ${error.message}`);
+    }
+
+    return data ? mapModelEvidenceIngestion(asRecord(data)) : null;
+}
+
+async function resolveEvidenceTarget(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        registryId?: string | null;
+        publicSlug?: string | null;
+        publicationId?: string | null;
+    },
+): Promise<{ registryId: string; publicationId: string | null }> {
+    const publicSlug = normalizeOptionalText(input.publicSlug);
+    if (publicSlug) {
+        const C = MODEL_CARD_PUBLICATIONS.COLUMNS;
+        const { data, error } = await client
+            .from(MODEL_CARD_PUBLICATIONS.TABLE)
+            .select(`${C.id},${C.registry_id}`)
+            .eq(C.tenant_id, input.tenantId)
+            .eq(C.public_slug, publicSlug)
+            .maybeSingle();
+
+        if (error) {
+            throw new Error(`Failed to resolve model-card public slug: ${error.message}`);
+        }
+        if (!data) {
+            throw new Error(`No model-card publication found for public_slug "${publicSlug}".`);
+        }
+
+        const row = asRecord(data);
+        return {
+            registryId: requireText(readString(row.registry_id), 'registry_id'),
+            publicationId: readString(row.id),
+        };
+    }
+
+    return {
+        registryId: requireText(input.registryId ?? null, 'registry_id'),
+        publicationId: normalizeOptionalText(input.publicationId),
+    };
+}
+
 function mapRegistryReference(row: Record<string, unknown>): ModelRegistryReference {
     return {
         registry_id: readString(row.registry_id) ?? 'unknown_registry',
@@ -492,6 +749,31 @@ function mapModelAttestation(row: Record<string, unknown>): ModelAttestationReco
     };
 }
 
+function mapModelEvidenceIngestion(row: Record<string, unknown>): ModelEvidenceIngestionRecord {
+    return {
+        id: String(row.id),
+        tenant_id: readString(row.tenant_id) ?? 'unknown_tenant',
+        registry_id: readString(row.registry_id) ?? 'unknown_registry',
+        publication_id: readString(row.publication_id),
+        source_system: readString(row.source_system) ?? 'unknown_source',
+        source_ref: readString(row.source_ref) ?? 'unknown_ref',
+        attestation_type: readString(row.attestation_type) ?? 'attestation',
+        attestor_name: readString(row.attestor_name) ?? 'Unknown attestor',
+        evidence_uri: readString(row.evidence_uri),
+        summary: readString(row.summary) ?? '',
+        signed_payload_hash: readString(row.signed_payload_hash),
+        signature_algorithm: readString(row.signature_algorithm),
+        signature_hash: readString(row.signature_hash),
+        signing_key_fingerprint: readString(row.signing_key_fingerprint),
+        verification_status: (readString(row.verification_status) ?? 'pending') as ModelAttestationVerificationStatus,
+        payload_hash: readString(row.payload_hash) ?? '',
+        payload: asRecord(row.payload),
+        metadata: asRecord(row.metadata),
+        received_at: String(row.received_at ?? row.created_at ?? new Date().toISOString()),
+        created_at: String(row.created_at ?? row.received_at ?? new Date().toISOString()),
+    };
+}
+
 function requireText(value: string | null | undefined, field: string): string {
     if (!value || value.trim().length === 0) {
         throw new Error(`${field} is required.`);
@@ -516,6 +798,25 @@ function isMissingColumnError(message: string): boolean {
     return message.includes('schema cache')
         || message.includes('column')
         || message.includes('Could not find the');
+}
+
+function isMissingTableError(message: string): boolean {
+    return message.includes('schema cache')
+        || message.includes('relation')
+        || message.includes('Could not find the table');
+}
+
+function stableStringify(value: unknown): string {
+    if (value === null || typeof value !== 'object') {
+        return JSON.stringify(value) ?? 'null';
+    }
+
+    if (Array.isArray(value)) {
+        return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+    }
+
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
 }
 
 function readString(value: unknown): string | null {

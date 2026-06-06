@@ -122,12 +122,14 @@ export default function ModelTrustOperationsClient({
                 description="Publish model cards, attach certifications, and record external attestations so the trust moat is backed by explicit release evidence."
             />
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <SummaryCard icon={<FileCheck2 className="h-4 w-4" />} label="Published Cards" value={snapshot.summary.published_cards} />
                 <SummaryCard icon={<BadgeCheck className="h-4 w-4" />} label="Active Certifications" value={snapshot.summary.active_certifications} />
                 <SummaryCard icon={<Shield className="h-4 w-4" />} label="Accepted Attestations" value={snapshot.summary.accepted_attestations} />
                 <SummaryCard icon={<Shield className="h-4 w-4" />} label="Signed Attestations" value={snapshot.summary.signed_attestations} />
                 <SummaryCard icon={<BadgeCheck className="h-4 w-4" />} label="Verified Signatures" value={snapshot.summary.verified_attestations} />
+                <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Ingested Evidence" value={snapshot.summary.ingested_evidence} />
+                <SummaryCard icon={<Shield className="h-4 w-4" />} label="Automated Attestations" value={snapshot.summary.automated_attestations} />
                 <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Pending Reviews" value={snapshot.summary.pending_reviews} tone={snapshot.summary.pending_reviews > 0 ? 'warning' : 'neutral'} />
             </div>
 
@@ -252,6 +254,42 @@ export default function ModelTrustOperationsClient({
                     )}
                 </ConsoleCard>
             </div>
+
+            <ConsoleCard title="Automated Evidence Intake" className="mt-6">
+                <div className="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                    <div className="space-y-3 font-mono text-xs text-muted">
+                        <DataRow label="Endpoint" value="POST /api/public/model-cards/evidence" />
+                        <DataRow label="Auth" value="x-vetios-evidence-key or Bearer token" />
+                        <DataRow label="Storage" value="Append-only ingestion ledger + pending attestation" />
+                        <p>
+                            Partner evidence is hashed on arrival, deduplicated by source reference,
+                            and queued for Trust Ops review before becoming accepted public evidence.
+                        </p>
+                    </div>
+                    <div className="space-y-3">
+                        {snapshot.evidence_ingestions.length === 0 ? (
+                            <div className="border border-grid bg-dim p-4 font-mono text-xs text-muted">
+                                No automated evidence has been ingested yet.
+                            </div>
+                        ) : snapshot.evidence_ingestions.slice(0, 5).map((event) => (
+                            <div key={event.id} className="border border-grid bg-dim p-4">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <div className="font-mono text-xs uppercase tracking-[0.16em] text-accent">{event.source_system}</div>
+                                    <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-muted">{event.verification_status}</div>
+                                </div>
+                                <div className="mt-2 font-mono text-sm text-foreground">{event.attestor_name}</div>
+                                <div className="mt-1 font-mono text-xs text-muted">{event.summary}</div>
+                                <div className="mt-3 grid gap-2 font-mono text-[11px] text-muted md:grid-cols-2">
+                                    <span>Registry: {event.registry_id}</span>
+                                    <span>Payload: {event.payload_hash.slice(0, 16)}</span>
+                                    <span>Ref: {event.source_ref}</span>
+                                    <span>Received: {new Date(event.received_at).toLocaleString()}</span>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </ConsoleCard>
         </Container>
     );
 }

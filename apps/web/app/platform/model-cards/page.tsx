@@ -140,6 +140,7 @@ function ModelCardPanel({ card }: { card: PublicModelCard }) {
                     <MetricRow label="Accepted attestations" value={String(card.trust_signals.accepted_attestations)} />
                     <MetricRow label="Signed attestations" value={String(card.trust_signals.signed_attestations)} />
                     <MetricRow label="Verified signatures" value={String(card.trust_signals.verified_attestations)} />
+                    <MetricRow label="Automated evidence" value={String(card.trust_signals.automated_attestations)} />
                     <MetricRow label="Pending trust reviews" value={String(card.trust_signals.pending_reviews)} />
                     <MetricRow label="Issuers" value={card.trust_signals.issuers.join(', ') || 'NO DATA'} />
                     <MetricRow label="Attestors" value={card.trust_signals.attestors.join(', ') || 'NO DATA'} />

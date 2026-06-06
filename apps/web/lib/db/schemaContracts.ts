@@ -2005,6 +2005,32 @@ export const MODEL_ATTESTATIONS = {
     },
 } as const;
 
+export const MODEL_EVIDENCE_INGESTION_EVENTS = {
+    TABLE: 'model_evidence_ingestion_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        registry_id: 'registry_id',
+        publication_id: 'publication_id',
+        source_system: 'source_system',
+        source_ref: 'source_ref',
+        attestation_type: 'attestation_type',
+        attestor_name: 'attestor_name',
+        evidence_uri: 'evidence_uri',
+        summary: 'summary',
+        signed_payload_hash: 'signed_payload_hash',
+        signature_algorithm: 'signature_algorithm',
+        signature_hash: 'signature_hash',
+        signing_key_fingerprint: 'signing_key_fingerprint',
+        verification_status: 'verification_status',
+        payload_hash: 'payload_hash',
+        payload: 'payload',
+        metadata: 'metadata',
+        received_at: 'received_at',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const EDGE_BOXES = {
     TABLE: 'edge_boxes',
     COLUMNS: {

@@ -249,7 +249,7 @@ export const moatCards: MoatCardDefinition[] = [
         id: 'public-model-cards',
         company: 'ANTHROPIC',
         themeClass: 'border-[#ef4444] bg-[#341823]',
-        status: 'partial',
+        status: 'implemented',
         title: 'Public Model Cards',
         thesis: 'Transparency as trust moat',
         claim: 'Auditable, certified, trustworthy.',
@@ -258,9 +258,10 @@ export const moatCards: MoatCardDefinition[] = [
             'A public read-only model card surface is added in this change so the registry can be shared externally.',
             'Publication records, certifications, and attestations now exist behind the trust surface.',
             'External attestations can now carry signed payload hashes, signature hashes, signing-key fingerprints, and verification status for public trust review.',
+            'Third-party evidence systems can now submit signed attestation evidence through an authenticated automated ingestion endpoint with idempotent intake and Trust Ops review.',
         ],
         missingNow: [
-            'Automated evidence ingestion for third-party attestations is still not implemented.',
+            'The technical trust surface is implemented; the remaining work is external issuer adoption and real third-party certification partnerships.',
         ],
         links: [
             { label: 'Public Model Cards', href: '/platform/model-cards' },
