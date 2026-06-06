@@ -2,7 +2,7 @@
 
 import type { ReactNode, ChangeEvent } from 'react';
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, CalendarClock, KeyRound, PlugZap, RefreshCw } from 'lucide-react';
+import { Activity, AlertTriangle, CalendarClock, CheckCircle2, KeyRound, PlugZap, RefreshCw, ShieldCheck } from 'lucide-react';
 import {
     ConsoleCard,
     Container,
@@ -134,6 +134,52 @@ interface PassiveSignalActionResponse {
                 <SummaryCard icon={<CalendarClock className="h-4 w-4" />} label="Scheduled Syncs" value={snapshot.summary.scheduled_installations} />
                 <SummaryCard icon={<Activity className="h-4 w-4" />} label="Recent Failures" value={snapshot.summary.recent_failed_syncs} tone={snapshot.summary.recent_failed_syncs > 0 ? 'warning' : 'neutral'} />
             </div>
+
+            <ConsoleCard title="Passive Signal Readiness" className="mt-6">
+                <div className="grid gap-4 lg:grid-cols-[0.75fr_1.25fr]">
+                    <div className="border border-accent/20 bg-accent/[0.03] p-4 rounded-sm">
+                        <div className="flex items-center gap-2">
+                            <ShieldCheck className="h-4 w-4 text-accent" />
+                            <div className="font-mono text-sm font-medium text-white">Network intake coverage</div>
+                        </div>
+                        <div className="mt-4 grid gap-0">
+                            <DataRow label="Ready Types" value={`${snapshot.readiness.ready_connector_types}/${snapshot.readiness.required_connector_types}`} tone="accent" />
+                            <DataRow label="Quiet Types" value={snapshot.readiness.quiet_connector_types} tone={snapshot.readiness.quiet_connector_types > 0 ? 'warning' : 'muted'} />
+                            <DataRow label="Stale Types" value={snapshot.readiness.stale_connector_types} tone={snapshot.readiness.stale_connector_types > 0 ? 'warning' : 'muted'} />
+                            <DataRow label="Missing Types" value={snapshot.readiness.missing_connector_types} tone={snapshot.readiness.missing_connector_types > 0 ? 'danger' : 'muted'} />
+                            <DataRow label="Signals 24h" value={snapshot.readiness.recent_signals_24h} />
+                            <DataRow label="Signals 7d" value={snapshot.readiness.recent_signals_7d} />
+                        </div>
+                    </div>
+
+                    <div className="border border-white/10 bg-white/[0.02] p-4 rounded-sm">
+                        <div className="flex items-center gap-2">
+                            <CheckCircle2 className="h-4 w-4 text-accent" />
+                            <div className="font-mono text-sm font-medium text-white">Privacy contract</div>
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                            {snapshot.readiness.privacy_contract.map((item) => (
+                                <div key={item} className="flex gap-2 font-mono text-xs leading-5 text-white/65">
+                                    <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                                    <span>{item}</span>
+                                </div>
+                            ))}
+                            {snapshot.readiness.privacy_contract.length === 0 ? (
+                                <div className="font-mono text-xs text-muted">No passive-signal privacy contract has been published for this tenant.</div>
+                            ) : null}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                    {snapshot.readiness.coverage.map((row) => (
+                        <CoverageRow key={row.connector_type} row={row} />
+                    ))}
+                    {snapshot.readiness.coverage.length === 0 ? (
+                        <div className="font-mono text-xs text-muted">No connector types are configured for readiness tracking.</div>
+                    ) : null}
+                </div>
+            </ConsoleCard>
 
             <ConsoleCard title="Passive Connector Control" className="mt-6">
                 <div className="flex flex-wrap items-center gap-2">
@@ -296,6 +342,35 @@ function SummaryCard({ icon, label, value, tone = 'neutral' }: { icon: ReactNode
     );
 }
 
+function CoverageRow({ row }: { row: PassiveSignalOperationsSnapshot['readiness']['coverage'][number] }) {
+    const tone = coverageTone(row.status);
+    return (
+        <div className={`border p-4 rounded-sm ${coverageBorderClass(row.status)}`}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                    <div className="font-mono text-sm font-medium text-white">{row.label}</div>
+                    <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-white/45">{row.connector_type}</div>
+                </div>
+                <span className={`inline-flex items-center gap-1 border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] ${coverageBadgeClass(row.status)}`}>
+                    {row.status === 'stale' || row.status === 'missing' ? <AlertTriangle className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                    {row.status}
+                </span>
+            </div>
+            <div className="mt-3 grid gap-x-4 gap-y-0 md:grid-cols-2">
+                <DataRow label="Installs" value={row.installed_connectors} tone={row.installed_connectors > 0 ? 'accent' : 'muted'} />
+                <DataRow label="Sources" value={row.active_sources} tone={row.active_sources > 0 ? 'accent' : 'muted'} />
+                <DataRow label="Events 24h" value={row.recent_events_24h} />
+                <DataRow label="Events 7d" value={row.recent_events_7d} />
+                <DataRow label="Last Event" value={formatTimestamp(row.last_observed_at)} tone={row.last_observed_at ? tone : 'muted'} />
+                <DataRow label="Last Sync" value={formatTimestamp(row.last_synced_at)} tone={row.last_synced_at ? tone : 'muted'} />
+            </div>
+            <div className="mt-3 border-t border-white/10 pt-3 font-mono text-xs leading-5 text-white/60">
+                {row.operator_note}
+            </div>
+        </div>
+    );
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
     return <div><TerminalLabel>{label}</TerminalLabel>{children}</div>;
 }
@@ -360,6 +435,25 @@ function ActionStatePanel({ state }: { state: { status: 'idle' | 'running' | 'su
             ? 'border-accent/30 bg-accent/10 text-accent'
             : 'border-warning/30 bg-warning/10 text-warning';
     return <div className={`mt-4 border px-4 py-3 font-mono text-xs ${tone}`}>{state.message}</div>;
+}
+
+function coverageTone(status: PassiveSignalOperationsSnapshot['readiness']['coverage'][number]['status']): 'accent' | 'warning' | 'danger' | 'muted' {
+    if (status === 'ready') return 'accent';
+    if (status === 'stale' || status === 'quiet') return 'warning';
+    if (status === 'missing') return 'danger';
+    return 'muted';
+}
+
+function coverageBorderClass(status: PassiveSignalOperationsSnapshot['readiness']['coverage'][number]['status']): string {
+    if (status === 'ready') return 'border-accent/25 bg-accent/[0.03]';
+    if (status === 'stale' || status === 'quiet') return 'border-warning/25 bg-warning/[0.03]';
+    return 'border-danger/25 bg-danger/[0.03]';
+}
+
+function coverageBadgeClass(status: PassiveSignalOperationsSnapshot['readiness']['coverage'][number]['status']): string {
+    if (status === 'ready') return 'border-accent/30 bg-accent/10 text-accent';
+    if (status === 'stale' || status === 'quiet') return 'border-warning/30 bg-warning/10 text-warning';
+    return 'border-danger/30 bg-danger/10 text-danger';
 }
 
 function formatTimestamp(value: string | null): string {

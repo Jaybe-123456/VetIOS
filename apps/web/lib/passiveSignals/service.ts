@@ -6,8 +6,9 @@ import {
     updateConnectorInstallation,
     type ConnectorInstallationRecord,
 } from '@/lib/auth/machineAuth';
-import { CONNECTOR_INSTALLATIONS } from '@/lib/db/schemaContracts';
+import { CONNECTOR_INSTALLATIONS, PASSIVE_SIGNAL_EVENTS, SIGNAL_SOURCES } from '@/lib/db/schemaContracts';
 import { dispatchOutboxBatch, enqueueOutboxEvent, getOutboxQueueSnapshot, type ConnectorDeliveryAttemptRecord } from '@/lib/eventPlane/outbox';
+import { passiveSignalConnectors } from '@/lib/platform/passiveSignalCatalog';
 import {
     passiveSignalMarketplace,
     type PassiveConnectorSyncMode,
@@ -34,6 +35,7 @@ export interface PassiveSignalOperationsSnapshot {
     tenant_id: string;
     marketplace: PassiveSignalMarketplaceDefinition[];
     installations: PassiveConnectorInstallationSnapshot[];
+    readiness: PassiveSignalReadinessSnapshot;
     recent_delivery_attempts: ConnectorDeliveryAttemptRecord[];
     summary: {
         marketplace_templates: number;
@@ -42,20 +44,55 @@ export interface PassiveSignalOperationsSnapshot {
         scheduled_installations: number;
         webhook_installations: number;
         recent_failed_syncs: number;
+        ready_connector_types: number;
+        missing_connector_types: number;
+        recent_signals_24h: number;
+        stale_signal_sources: number;
     };
     refreshed_at: string;
+}
+
+export type PassiveSignalCoverageStatus = 'ready' | 'quiet' | 'stale' | 'missing';
+
+export interface PassiveSignalCoverageRow {
+    connector_type: string;
+    label: string;
+    catalog_readiness: 'live' | 'beta' | 'planned';
+    installed_connectors: number;
+    active_sources: number;
+    recent_events_24h: number;
+    recent_events_7d: number;
+    last_observed_at: string | null;
+    last_synced_at: string | null;
+    status: PassiveSignalCoverageStatus;
+    operator_note: string;
+}
+
+export interface PassiveSignalReadinessSnapshot {
+    required_connector_types: number;
+    ready_connector_types: number;
+    quiet_connector_types: number;
+    stale_connector_types: number;
+    missing_connector_types: number;
+    recent_signals_24h: number;
+    recent_signals_7d: number;
+    stale_signal_sources: number;
+    coverage: PassiveSignalCoverageRow[];
+    privacy_contract: string[];
 }
 
 export async function getPassiveSignalOperationsSnapshot(
     client: SupabaseClient,
     tenantId: string,
 ): Promise<PassiveSignalOperationsSnapshot> {
-    const [installations, outboxSnapshot] = await Promise.all([
+    const [installations, outboxSnapshot, signalSources, recentSignals] = await Promise.all([
         listConnectorInstallations(client, tenantId),
         getOutboxQueueSnapshot(client, tenantId, {
             limit: 20,
             handlerKey: 'connector_webhook',
         }),
+        listSignalSources(client, tenantId),
+        listRecentPassiveSignals(client, tenantId),
     ]);
 
     const attemptsByInstallation = new Map<string, ConnectorDeliveryAttemptRecord>();
@@ -69,11 +106,17 @@ export async function getPassiveSignalOperationsSnapshot(
     const installationSnapshots = installations.map((installation) =>
         mapInstallationSnapshot(installation, attemptsByInstallation.get(installation.id) ?? null),
     );
+    const readiness = buildPassiveSignalReadiness({
+        installations: installationSnapshots,
+        signalSources,
+        recentSignals,
+    });
 
     return {
         tenant_id: tenantId,
         marketplace: passiveSignalMarketplace,
         installations: installationSnapshots,
+        readiness,
         recent_delivery_attempts: outboxSnapshot.recent_attempts,
         summary: {
             marketplace_templates: passiveSignalMarketplace.length,
@@ -82,6 +125,10 @@ export async function getPassiveSignalOperationsSnapshot(
             scheduled_installations: installationSnapshots.filter((installation) => installation.scheduler.enabled).length,
             webhook_installations: installationSnapshots.filter((installation) => installation.sync_mode === 'webhook_push').length,
             recent_failed_syncs: outboxSnapshot.recent_attempts.filter((attempt) => attempt.status === 'dead_letter' || attempt.status === 'retryable').length,
+            ready_connector_types: readiness.ready_connector_types,
+            missing_connector_types: readiness.missing_connector_types,
+            recent_signals_24h: readiness.recent_signals_24h,
+            stale_signal_sources: readiness.stale_signal_sources,
         },
         refreshed_at: new Date().toISOString(),
     };
@@ -419,6 +466,176 @@ async function listConnectorInstallationsAcrossTenants(client: SupabaseClient): 
         created_at: String(row.created_at),
         updated_at: String(row.updated_at),
     }));
+}
+
+type SignalSourceRecord = {
+    id: string;
+    source_type: string;
+    status: string;
+    last_synced_at: string | null;
+    updated_at: string | null;
+};
+
+type PassiveSignalEventRecord = {
+    id: string;
+    signal_type: string;
+    observed_at: string;
+    ingestion_status: string;
+    source_id: string | null;
+};
+
+async function listSignalSources(client: SupabaseClient, tenantId: string): Promise<SignalSourceRecord[]> {
+    const C = SIGNAL_SOURCES.COLUMNS;
+    const { data, error } = await client
+        .from(SIGNAL_SOURCES.TABLE)
+        .select(`${C.id},${C.source_type},${C.status},${C.last_synced_at},${C.updated_at}`)
+        .eq(C.tenant_id, tenantId)
+        .order(C.updated_at, { ascending: false })
+        .limit(300);
+
+    if (error) {
+        throw new Error(`Failed to list passive signal sources: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => ({
+        id: String(row.id),
+        source_type: String(row.source_type),
+        status: String(row.status),
+        last_synced_at: normalizeTimestamp(row.last_synced_at),
+        updated_at: normalizeTimestamp(row.updated_at),
+    }));
+}
+
+async function listRecentPassiveSignals(client: SupabaseClient, tenantId: string): Promise<PassiveSignalEventRecord[]> {
+    const C = PASSIVE_SIGNAL_EVENTS.COLUMNS;
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await client
+        .from(PASSIVE_SIGNAL_EVENTS.TABLE)
+        .select(`${C.id},${C.signal_type},${C.observed_at},${C.ingestion_status},${C.source_id}`)
+        .eq(C.tenant_id, tenantId)
+        .gte(C.observed_at, sevenDaysAgo)
+        .order(C.observed_at, { ascending: false })
+        .limit(500);
+
+    if (error) {
+        throw new Error(`Failed to list recent passive signal events: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => ({
+        id: String(row.id),
+        signal_type: String(row.signal_type),
+        observed_at: normalizeTimestamp(row.observed_at) ?? new Date(0).toISOString(),
+        ingestion_status: String(row.ingestion_status),
+        source_id: normalizeOptionalText(row.source_id),
+    }));
+}
+
+function buildPassiveSignalReadiness(input: {
+    installations: PassiveConnectorInstallationSnapshot[];
+    signalSources: SignalSourceRecord[];
+    recentSignals: PassiveSignalEventRecord[];
+}): PassiveSignalReadinessSnapshot {
+    const now = Date.now();
+    const twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+    const staleThreshold = now - 72 * 60 * 60 * 1000;
+    const requiredConnectors = passiveSignalConnectors.filter((connector) => connector.readiness !== 'planned');
+    const staleSignalSources = input.signalSources.filter((source) => {
+        if (source.status !== 'active') return false;
+        if (!source.last_synced_at) return true;
+        return new Date(source.last_synced_at).getTime() < staleThreshold;
+    }).length;
+
+    const coverage = requiredConnectors.map((connector): PassiveSignalCoverageRow => {
+        const installations = input.installations.filter((installation) =>
+            installation.status === 'active'
+            && (installation.supported_connector_types.includes(connector.sourceType)
+                || installation.connector_type === connector.sourceType),
+        );
+        const sources = input.signalSources.filter((source) =>
+            source.source_type === connector.sourceType
+            && source.status === 'active',
+        );
+        const signals = input.recentSignals.filter((signal) => signal.signal_type === connector.sourceType);
+        const recentEvents24h = signals.filter((signal) => new Date(signal.observed_at).getTime() >= twentyFourHoursAgo).length;
+        const lastObservedAt = newestTimestamp(signals.map((signal) => signal.observed_at));
+        const lastSyncedAt = newestTimestamp(sources.map((source) => source.last_synced_at).filter(Boolean));
+        const hasStaleSource = sources.some((source) => {
+            if (!source.last_synced_at) return true;
+            return new Date(source.last_synced_at).getTime() < staleThreshold;
+        });
+        const status = resolveCoverageStatus({
+            installedConnectors: installations.length,
+            activeSources: sources.length,
+            recentEvents7d: signals.length,
+            hasStaleSource,
+        });
+
+        return {
+            connector_type: connector.sourceType,
+            label: connector.label,
+            catalog_readiness: connector.readiness,
+            installed_connectors: installations.length,
+            active_sources: sources.length,
+            recent_events_24h: recentEvents24h,
+            recent_events_7d: signals.length,
+            last_observed_at: lastObservedAt,
+            last_synced_at: lastSyncedAt,
+            status,
+            operator_note: coverageOperatorNote(status),
+        };
+    });
+
+    return {
+        required_connector_types: coverage.length,
+        ready_connector_types: coverage.filter((row) => row.status === 'ready').length,
+        quiet_connector_types: coverage.filter((row) => row.status === 'quiet').length,
+        stale_connector_types: coverage.filter((row) => row.status === 'stale').length,
+        missing_connector_types: coverage.filter((row) => row.status === 'missing').length,
+        recent_signals_24h: input.recentSignals.filter((signal) => new Date(signal.observed_at).getTime() >= twentyFourHoursAgo).length,
+        recent_signals_7d: input.recentSignals.length,
+        stale_signal_sources: staleSignalSources,
+        coverage,
+        privacy_contract: [
+            'Accept only installation-scoped connector credentials or approved service actors.',
+            'Normalize vendor payloads before episode reconciliation.',
+            'Keep raw vendor payloads in passive signal events; surface only normalized facts to clinical workflows.',
+            'Do not require owner contact data, patient names, or microchip IDs for connector readiness.',
+        ],
+    };
+}
+
+function resolveCoverageStatus(input: {
+    installedConnectors: number;
+    activeSources: number;
+    recentEvents7d: number;
+    hasStaleSource: boolean;
+}): PassiveSignalCoverageStatus {
+    if (input.installedConnectors === 0 && input.activeSources === 0) return 'missing';
+    if (input.hasStaleSource) return 'stale';
+    if (input.recentEvents7d > 0) return 'ready';
+    return 'quiet';
+}
+
+function coverageOperatorNote(status: PassiveSignalCoverageStatus): string {
+    if (status === 'ready') return 'Signals are flowing into the outcome network.';
+    if (status === 'stale') return 'Connector exists but one or more sources have not synced recently.';
+    if (status === 'quiet') return 'Connector is installed but no signal arrived in the last seven days.';
+    return 'Install a marketplace connector or create a signal source before expecting passive learning.';
+}
+
+function newestTimestamp(values: Array<string | null | undefined>): string | null {
+    let newest: string | null = null;
+    let newestTime = Number.NEGATIVE_INFINITY;
+    for (const value of values) {
+        const normalized = normalizeTimestamp(value);
+        if (!normalized) continue;
+        const time = new Date(normalized).getTime();
+        if (time > newestTime) {
+            newest = normalized;
+            newestTime = time;
+        }
+    }
+    return newest;
 }
 
 function normalizeSyncMode(value: unknown): PassiveConnectorSyncMode | null {
