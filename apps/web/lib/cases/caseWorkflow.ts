@@ -26,6 +26,7 @@ export interface CaseIntakeInput {
     physical_exam?: Record<string, unknown>;
     labs?: Record<string, unknown>;
     images?: unknown[];
+    voice_context?: Record<string, unknown> | null;
 }
 
 export interface CaseSummary {
@@ -87,6 +88,7 @@ export function buildCaseInputSignature(input: CaseIntakeInput): InputSignature 
         input.presenting_complaint,
         ...input.symptoms,
     ]);
+    const voiceContext = normalizeVoiceContext(input.voice_context);
     const metadata = stripUndefined({
         source: 'case_entry',
         patient_name: normalizeText(input.patient.name),
@@ -103,6 +105,9 @@ export function buildCaseInputSignature(input: CaseIntakeInput): InputSignature 
         physical_exam: asRecord(input.physical_exam),
         labs: asRecord(input.labs),
         images: Array.isArray(input.images) ? input.images : [],
+        voice_context: voiceContext,
+        raw_voice_transcript: readText(voiceContext?.raw_transcript),
+        voice_extraction_confidence: readNumber(voiceContext?.extraction_confidence),
         encounter_payload_v2: {
             presenting_complaint: input.presenting_complaint.trim(),
             symptoms,
@@ -837,6 +842,21 @@ function readNumber(value: unknown): number | null {
 function normalizeNumber(value: unknown): number | null {
     const number = readNumber(value);
     return number == null ? null : number;
+}
+
+function normalizeVoiceContext(value: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+    const record = asRecord(value);
+    if (!record) return null;
+    const notes = readStringArray(record.extraction_notes);
+    const normalized = stripUndefined({
+        raw_transcript: normalizeText(record.raw_transcript),
+        extraction_confidence: normalizeNumber(record.extraction_confidence),
+        extraction_notes: notes.length > 0 ? notes : undefined,
+        source: normalizeText(record.source),
+        captured_at: normalizeText(record.captured_at),
+        fallback_used: typeof record.fallback_used === 'boolean' ? record.fallback_used : undefined,
+    });
+    return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
 function readStringArray(...values: unknown[]): string[] {

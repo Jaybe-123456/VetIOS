@@ -30,12 +30,17 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
             species: clinicalCase.species_display ?? clinicalCase.species_canonical,
             breed: clinicalCase.breed,
             age_years: clinicalCase.age_years,
+            weight_kg: clinicalCase.weight_kg,
             sex: clinicalCase.sex,
             presenting_complaint: clinicalCase.presenting_complaint,
             symptoms: clinicalCase.symptoms_normalized,
             duration_text: clinicalCase.duration_text,
+            severity: readText(clinicalCase.patient_metadata.severity),
             history: clinicalCase.history,
+            vitals: clinicalCase.vitals,
+            physical_exam: clinicalCase.physical_exam,
             labs: clinicalCase.labs,
+            voice_context: asRecord(clinicalCase.patient_metadata.voice_context),
         });
     }, [clinicalCase, result]);
 
@@ -65,7 +70,7 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
     return (
         <main className="mx-auto max-w-5xl space-y-8">
             <Link href="/cases" className="inline-flex text-sm text-white/62 transition hover:text-accent">
-                ← Back to cases
+                Back to cases
             </Link>
 
             <header className="space-y-3 border-b border-white/10 pb-5">
@@ -74,7 +79,7 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
                     <div>{formatPatientMeta(clinicalCase)}</div>
                     <div>{formatDate(clinicalCase.created_at)}</div>
                     <div className={isClosed ? 'text-accent' : 'text-white/62'}>
-                        {isClosed ? 'Confirmed ✓' : 'Pending'}
+                        {isClosed ? 'Confirmed' : 'Pending'}
                     </div>
                 </div>
                 <h1 className="text-2xl font-semibold text-white">
@@ -116,7 +121,7 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
                             <ul className="space-y-3 text-sm text-white/76">
                                 {result.recommended_tests.map((test, index) => (
                                     <li key={`${test}-${index}`} className="flex gap-3">
-                                        <span className="text-white/44">□</span>
+                                        <span className="text-white/44">[ ]</span>
                                         <span>{formatClinicalLabel(test)}</span>
                                     </li>
                                 ))}
@@ -129,10 +134,10 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
                     <ClinicalSection title="Reliability">
                         <div className="space-y-2 text-sm leading-6 text-white/74">
                             <p>
-                                {formatConfidenceBand(result.confidence)} confidence · Reliability score {formatReliabilityScore(result)}
+                                {formatConfidenceBand(result.confidence)} confidence - Reliability score {formatReliabilityScore(result)}
                             </p>
                             <p className="text-accent">
-                                → {buildActionSentence(result)}
+                                Action: {buildActionSentence(result)}
                             </p>
                         </div>
                     </ClinicalSection>
@@ -223,7 +228,7 @@ function formatPatientMeta(clinicalCase: CaseDetail): string {
         clinicalCase.breed,
         clinicalCase.age_years == null ? null : `${clinicalCase.age_years}y`,
         clinicalCase.sex ? formatClinicalLabel(clinicalCase.sex) : null,
-    ].filter(Boolean).join(' · ');
+    ].filter(Boolean).join(' - ');
 }
 
 function formatDate(value: string): string {
@@ -232,7 +237,7 @@ function formatDate(value: string): string {
 }
 
 function UrgencyLabel({ value }: { value: ClinicalUrgency }) {
-    if (value === 'high') return <span className="text-red-300">⚠ HIGH</span>;
+    if (value === 'high') return <span className="text-red-300">HIGH</span>;
     if (value === 'medium') return <span className="text-amber-200">MED</span>;
     return <span className="text-white/60">LOW</span>;
 }

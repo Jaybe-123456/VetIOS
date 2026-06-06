@@ -20,6 +20,15 @@ const OptionalNumber = z.preprocess((value) => {
     return typeof value === 'number' ? value : Number(value);
 }, z.number().finite().nullable()).optional();
 
+const VoiceContextSchema = z.object({
+    raw_transcript: z.string().trim().max(6000).optional().nullable(),
+    extraction_confidence: OptionalNumber,
+    extraction_notes: z.array(z.string().trim().max(500)).max(12).optional().nullable(),
+    source: z.string().trim().max(120).optional().nullable(),
+    captured_at: z.string().trim().max(80).optional().nullable(),
+    fallback_used: z.boolean().optional().nullable(),
+}).optional().nullable();
+
 const CaseIntakeSchema = z.object({
     patient: z.object({
         species: z.string().min(1),
@@ -40,6 +49,7 @@ const CaseIntakeSchema = z.object({
     physical_exam: z.record(z.string(), z.unknown()).default({}),
     labs: z.record(z.string(), z.unknown()).default({}),
     images: z.array(z.unknown()).default([]),
+    voice_context: VoiceContextSchema,
 });
 
 export async function GET(req: Request) {

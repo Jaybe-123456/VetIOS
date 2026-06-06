@@ -35,6 +35,15 @@ export interface ClinicalCaseFormDraft {
     labs?: Record<string, string>;
 }
 
+interface VoiceCaptureContext {
+    raw_transcript: string;
+    extraction_confidence?: number;
+    extraction_notes?: string[];
+    source: 'vetios_voice_mode';
+    captured_at: string;
+    fallback_used?: boolean;
+}
+
 const EMPTY_PATIENT = { species: '', breed: '', age: '', ageUnit: 'years', sex: '' };
 const EMPTY_SIGNS = { symptoms: '', duration: '', durationUnit: 'days', severity: 'moderate' };
 
@@ -44,6 +53,7 @@ export function ClinicalCaseForm({ onSubmit, isLoading, initialDraft, onClearDra
     const [labs, setLabs] = useState<Record<string, string>>(() => initialDraft?.labs ?? {});
     const [files, setFiles] = useState<FileList | null>(null);
     const [touched, setTouched] = useState<Record<string, boolean>>({});
+    const [voiceCapture, setVoiceCapture] = useState<VoiceCaptureContext | null>(null);
     const fileUploadEnabled = process.env.NEXT_PUBLIC_VETIOS_FILE_UPLOAD === 'true';
     const errors = useMemo(() => ({
         species: !patient.species ? "Please select the animal's species" : '',
@@ -53,6 +63,7 @@ export function ClinicalCaseForm({ onSubmit, isLoading, initialDraft, onClearDra
     const readiness = useMemo(() => getReadiness(patient, signs), [patient, signs]);
 
     function applyVoiceFields(fields: ExtractedClinicalFields) {
+        setVoiceCapture(buildVoiceCaptureContext(fields));
         setPatient((current) => ({
             ...current,
             species: speciesToFormValue(fields.species) ?? current.species,
@@ -96,6 +107,7 @@ export function ClinicalCaseForm({ onSubmit, isLoading, initialDraft, onClearDra
                 severity: signs.severity,
                 presenting_complaint: signs.symptoms.trim(),
                 labs: labValues,
+                voice_context: voiceCapture ?? undefined,
                 uploaded_files: files ? Array.from(files).map((file) => file.name) : undefined,
             },
         };
@@ -107,6 +119,7 @@ export function ClinicalCaseForm({ onSubmit, isLoading, initialDraft, onClearDra
         setSigns(EMPTY_SIGNS);
         setLabs({});
         setTouched({});
+        setVoiceCapture(null);
         onClearDraft?.();
     }
 
@@ -314,4 +327,17 @@ function labsToFormValues(labs: Record<string, number> | undefined): Record<stri
             .map(([key, value]) => [mapping[key.toLowerCase()], String(value)] as const)
             .filter(([key]) => Boolean(key)),
     );
+}
+
+function buildVoiceCaptureContext(fields: ExtractedClinicalFields): VoiceCaptureContext | null {
+    const transcript = fields.raw_transcript?.trim();
+    if (!transcript) return null;
+    return {
+        raw_transcript: transcript,
+        extraction_confidence: fields.confidence,
+        extraction_notes: fields.extraction_notes,
+        source: 'vetios_voice_mode',
+        captured_at: new Date().toISOString(),
+        fallback_used: fields.fallback_used,
+    };
 }

@@ -139,6 +139,7 @@ function FirstCaseQuickStart({ demoDraftEnabled }: { demoDraftEnabled: boolean }
 function toCasePayload(input: ClinicalInferenceInput) {
     const metadata = flattenMetadata(input.metadata);
     const diagnosticTests = asRecord(metadata.diagnostic_tests);
+    const voiceContext = normalizeVoiceContext(asRecord(metadata.voice_context));
     const labs = asRecord(input.diagnostic_tests?.labs)
         ?? asRecord(metadata.labs)
         ?? asRecord(diagnosticTests?.labs)
@@ -160,16 +161,36 @@ function toCasePayload(input: ClinicalInferenceInput) {
         physical_exam: {},
         labs,
         images: [],
+        voice_context: voiceContext,
     };
 }
 
 function buildHistory(metadata: Record<string, unknown>, symptomText: string): string | null {
+    const voiceContext = asRecord(metadata.voice_context);
+    const rawVoiceTranscript = readText(voiceContext?.raw_transcript) ?? readText(metadata.raw_voice_transcript);
     const parts = [
         readText(metadata.duration_text) ? `Duration: ${readText(metadata.duration_text)}` : null,
         readText(metadata.severity) ? `Severity: ${readText(metadata.severity)}` : null,
         symptomText ? `Clinical notes: ${symptomText}` : null,
+        rawVoiceTranscript && rawVoiceTranscript !== symptomText ? `Voice transcript: ${rawVoiceTranscript}` : null,
     ].filter(Boolean);
     return parts.length ? parts.join('. ') : null;
+}
+
+function normalizeVoiceContext(value: Record<string, unknown> | null): Record<string, unknown> | null {
+    if (!value) return null;
+    const notes = Array.isArray(value.extraction_notes)
+        ? value.extraction_notes.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+        : [];
+    const normalized = {
+        raw_transcript: readText(value.raw_transcript),
+        extraction_confidence: readNumber(value.extraction_confidence),
+        extraction_notes: notes.length > 0 ? notes : undefined,
+        source: readText(value.source),
+        captured_at: readText(value.captured_at),
+        fallback_used: typeof value.fallback_used === 'boolean' ? value.fallback_used : undefined,
+    };
+    return Object.fromEntries(Object.entries(normalized).filter(([, entry]) => entry !== null && entry !== undefined));
 }
 
 function flattenMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> {
