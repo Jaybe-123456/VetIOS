@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
     CLINIC_OWNER_LINKS,
@@ -6,6 +7,7 @@ import {
     PETPASS_CONSENTS,
     PETPASS_NOTIFICATION_DELIVERIES,
     PETPASS_NOTIFICATION_PREFERENCES,
+    PETPASS_OWNER_INVITATIONS,
     PETPASS_PET_PROFILES,
     PETPASS_TIMELINE_ENTRIES,
 } from '@/lib/db/schemaContracts';
@@ -28,6 +30,8 @@ export type PetPassChannel = 'sms' | 'email' | 'push';
 export type PetPassEntryType = 'visit' | 'result' | 'medication' | 'alert' | 'message' | 'referral';
 export type PetPassVisibility = 'owner_safe' | 'internal';
 export type PetPassDeliveryStatus = 'queued' | 'sent' | 'failed' | 'canceled';
+export type PetPassInvitationStatus = 'pending' | 'accepted' | 'expired' | 'revoked';
+export type PetPassInvitationDeliveryChannel = 'link' | 'email' | 'sms';
 
 export interface OwnerAccountRecord {
     id: string;
@@ -38,6 +42,10 @@ export interface OwnerAccountRecord {
     email: string | null;
     phone: string | null;
     status: OwnerAccountStatus;
+    consumer_identity_hash: string | null;
+    consumer_auth_provider: string | null;
+    consumer_activated_at: string | null;
+    consumer_last_seen_at: string | null;
     metadata: Record<string, unknown>;
     created_by: string | null;
     last_active_at: string | null;
@@ -161,12 +169,90 @@ export interface PetPassNotificationDeliveryRecord {
     updated_at: string;
 }
 
+export interface PetPassOwnerInvitationRecord {
+    id: string;
+    tenant_id: string;
+    owner_account_id: string;
+    pet_profile_id: string | null;
+    clinic_owner_link_id: string | null;
+    token_hash: string;
+    invite_url: string;
+    delivery_channel: PetPassInvitationDeliveryChannel;
+    delivery_address_hash: string | null;
+    status: PetPassInvitationStatus;
+    expires_at: string;
+    accepted_at: string | null;
+    accepted_identity_hash: string | null;
+    accepted_user_agent_hash: string | null;
+    metadata: Record<string, unknown>;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface PetPassIssuedInvitation {
+    invitation: PetPassOwnerInvitationRecord;
+    invite_token: string;
+    invite_url: string;
+}
+
+export interface PetPassInvitationPreview {
+    invitation_id: string;
+    status: PetPassInvitationStatus;
+    expires_at: string;
+    clinic_name: string;
+    owner_display_name: string;
+    pet: {
+        id: string;
+        pet_name: string;
+        species: string | null;
+        breed: string | null;
+        age_display: string | null;
+        risk_state: PetPassRiskState;
+    } | null;
+}
+
+export interface PetPassOwnerAppSnapshot {
+    owner: {
+        id: string;
+        display_name: string;
+        status: OwnerAccountStatus;
+        activated_at: string | null;
+    };
+    pets: Array<{
+        id: string;
+        pet_name: string;
+        species: string | null;
+        breed: string | null;
+        age_display: string | null;
+        risk_state: PetPassRiskState;
+        clinic_name: string | null;
+    }>;
+    clinic_links: Array<{
+        id: string;
+        clinic_name: string;
+        status: ClinicOwnerLinkStatus;
+    }>;
+    timeline: PetPassTimelineItem[];
+    alerts: PetPassAlert[];
+    consents: Array<{
+        consent_type: string;
+        status: PetPassConsentStatus;
+    }>;
+    notification_preferences: Array<{
+        channel: PetPassChannel;
+        notification_type: string;
+        enabled: boolean;
+    }>;
+}
+
 export interface PetPassControlPlaneSnapshot {
     tenant_id: string;
     owners: OwnerAccountRecord[];
     pet_profiles: PetPassPetProfileRecord[];
     owner_pet_links: OwnerPetLinkRecord[];
     clinic_owner_links: ClinicOwnerLinkRecord[];
+    owner_invitations: PetPassOwnerInvitationRecord[];
     consents: PetPassConsentRecord[];
     notification_preferences: PetPassNotificationPreferenceRecord[];
     timeline_entries: PetPassTimelineEntryRecord[];
@@ -175,6 +261,8 @@ export interface PetPassControlPlaneSnapshot {
         owner_accounts: number;
         linked_pets: number;
         clinic_links: number;
+        pending_invitations: number;
+        accepted_invitations: number;
         granted_consents: number;
         active_alerts: number;
         queued_notifications: number;
@@ -192,6 +280,8 @@ export interface PublicPetPassSnapshot extends PetPassPreviewData {
         owner_accounts: number;
         linked_pets: number;
         clinic_links: number;
+        pending_invitations: number;
+        accepted_invitations: number;
         granted_consents: number;
         active_alerts: number;
         queued_notifications: number;
@@ -210,6 +300,7 @@ export async function getPetPassControlPlaneSnapshot(
         petProfiles,
         ownerPetLinks,
         clinicOwnerLinks,
+        ownerInvitations,
         consents,
         notificationPreferences,
         timelineEntries,
@@ -219,6 +310,7 @@ export async function getPetPassControlPlaneSnapshot(
         listPetProfiles(client, tenantId, limit),
         listOwnerPetLinks(client, tenantId, limit),
         listClinicOwnerLinks(client, tenantId, limit),
+        listOwnerInvitations(client, tenantId, limit),
         listConsents(client, tenantId, limit),
         listNotificationPreferences(client, tenantId, limit),
         listTimelineEntries(client, tenantId, limit),
@@ -231,6 +323,7 @@ export async function getPetPassControlPlaneSnapshot(
         pet_profiles: petProfiles,
         owner_pet_links: ownerPetLinks,
         clinic_owner_links: clinicOwnerLinks,
+        owner_invitations: ownerInvitations,
         consents,
         notification_preferences: notificationPreferences,
         timeline_entries: timelineEntries,
@@ -239,6 +332,8 @@ export async function getPetPassControlPlaneSnapshot(
             owner_accounts: owners.length,
             linked_pets: uniqueStrings(ownerPetLinks.map((link) => link.pet_profile_id)).length,
             clinic_links: clinicOwnerLinks.length,
+            pending_invitations: ownerInvitations.filter((invite) => invite.status === 'pending').length,
+            accepted_invitations: ownerInvitations.filter((invite) => invite.status === 'accepted').length,
             granted_consents: consents.filter((consent) => consent.status === 'granted').length,
             active_alerts: timelineEntries.filter((entry) => entry.entry_type === 'alert').length,
             queued_notifications: notificationDeliveries.filter((delivery) => delivery.delivery_status === 'queued').length,
@@ -302,6 +397,11 @@ export async function getPublicPetPassSnapshot(): Promise<PublicPetPassSnapshot>
         alerts: alerts.length > 0 ? alerts : petPassPreview.alerts,
         timeline: timeline.length > 0 ? timeline : petPassPreview.timeline,
         features: [
+            {
+                title: 'Owner invitation acceptance',
+                summary: 'Clinics can now issue hashed one-time PetPass links that activate the owner record and return an owner-safe mobile snapshot.',
+                readiness: 'preview',
+            },
             {
                 title: 'Owner health history',
                 summary: 'Clinic-approved timeline entries are now backed by PetPass timeline storage rather than a static preview.',
@@ -477,6 +577,202 @@ export async function createClinicOwnerLink(
     }
 
     return mapClinicOwnerLink(asRecord(data));
+}
+
+export async function createOwnerInvitation(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        actor: string | null;
+        ownerAccountId: string;
+        clinicOwnerLinkId?: string | null;
+        petProfileId?: string | null;
+        baseUrl?: string | null;
+        deliveryChannel?: PetPassInvitationDeliveryChannel;
+        deliveryAddress?: string | null;
+        expiresAt?: string | null;
+        metadata?: Record<string, unknown>;
+    },
+): Promise<PetPassIssuedInvitation> {
+    const token = createPetPassInviteToken();
+    const baseUrl = normalizeBaseUrl(input.baseUrl);
+    const inviteUrl = `${baseUrl}/petpass/invite?token=${encodeURIComponent(token)}`;
+    const C = PETPASS_OWNER_INVITATIONS.COLUMNS;
+    const { data, error } = await client
+        .from(PETPASS_OWNER_INVITATIONS.TABLE)
+        .insert({
+            [C.tenant_id]: input.tenantId,
+            [C.owner_account_id]: input.ownerAccountId,
+            [C.pet_profile_id]: input.petProfileId ?? null,
+            [C.clinic_owner_link_id]: input.clinicOwnerLinkId ?? null,
+            [C.token_hash]: hashPetPassInviteToken(token),
+            [C.invite_url]: inviteUrl,
+            [C.delivery_channel]: input.deliveryChannel ?? 'link',
+            [C.delivery_address_hash]: hashOptionalIdentity(input.deliveryAddress),
+            [C.status]: 'pending',
+            [C.expires_at]: input.expiresAt ?? twoWeeksFromNow(),
+            [C.metadata]: input.metadata ?? {},
+            [C.created_by]: input.actor,
+        })
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to create PetPass owner invitation: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    return {
+        invitation: mapOwnerInvitation(asRecord(data)),
+        invite_token: token,
+        invite_url: inviteUrl,
+    };
+}
+
+export async function previewOwnerInvitation(
+    client: SupabaseClient,
+    token: string,
+): Promise<PetPassInvitationPreview | null> {
+    const resolved = await resolveOwnerInvitationByToken(client, token);
+    if (!resolved) {
+        return null;
+    }
+
+    return {
+        invitation_id: resolved.invitation.id,
+        status: resolved.invitation.status,
+        expires_at: resolved.invitation.expires_at,
+        clinic_name: resolved.clinicLink?.clinic_name ?? resolved.pet?.clinic_name ?? 'VetIOS clinic',
+        owner_display_name: resolved.owner.preferred_name ?? resolved.owner.full_name,
+        pet: resolved.pet
+            ? {
+                id: resolved.pet.id,
+                pet_name: resolved.pet.pet_name,
+                species: resolved.pet.species,
+                breed: resolved.pet.breed,
+                age_display: resolved.pet.age_display,
+                risk_state: resolved.pet.risk_state,
+            }
+            : null,
+    };
+}
+
+export async function acceptOwnerInvitation(
+    client: SupabaseClient,
+    input: {
+        token: string;
+        identity?: string | null;
+        userAgent?: string | null;
+        consentTypes?: string[];
+        notificationChannel?: PetPassChannel | null;
+        notificationTypes?: string[];
+    },
+): Promise<{
+        invitation: PetPassOwnerInvitationRecord;
+        owner_app: PetPassOwnerAppSnapshot;
+    }> {
+    const resolved = await resolveOwnerInvitationByToken(client, input.token);
+    if (!resolved) {
+        throw new Error('PetPass invitation was not found.');
+    }
+
+    const now = new Date();
+    const expiresAt = new Date(resolved.invitation.expires_at);
+    if (resolved.invitation.status !== 'pending' || Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= now.getTime()) {
+        await markOwnerInvitationExpired(client, resolved.invitation);
+        throw new Error('PetPass invitation has expired or is no longer active.');
+    }
+
+    const identityHash = hashOptionalIdentity(input.identity);
+    const userAgentHash = hashOptionalIdentity(input.userAgent);
+    const IC = PETPASS_OWNER_INVITATIONS.COLUMNS;
+    const acceptedAt = now.toISOString();
+    const { data: inviteData, error: inviteError } = await client
+        .from(PETPASS_OWNER_INVITATIONS.TABLE)
+        .update({
+            [IC.status]: 'accepted',
+            [IC.accepted_at]: acceptedAt,
+            [IC.accepted_identity_hash]: identityHash,
+            [IC.accepted_user_agent_hash]: userAgentHash,
+        })
+        .eq(IC.id, resolved.invitation.id)
+        .eq(IC.status, 'pending')
+        .select('*')
+        .single();
+
+    if (inviteError || !inviteData) {
+        throw new Error(`Failed to accept PetPass invitation: ${inviteError?.message ?? 'Unknown error'}`);
+    }
+
+    const OC = OWNER_ACCOUNTS.COLUMNS;
+    await client
+        .from(OWNER_ACCOUNTS.TABLE)
+        .update({
+            [OC.status]: 'active',
+            [OC.consumer_identity_hash]: identityHash,
+            [OC.consumer_auth_provider]: 'petpass_invite',
+            [OC.consumer_activated_at]: acceptedAt,
+            [OC.consumer_last_seen_at]: acceptedAt,
+            [OC.last_active_at]: acceptedAt,
+        })
+        .eq(OC.tenant_id, resolved.invitation.tenant_id)
+        .eq(OC.id, resolved.invitation.owner_account_id);
+
+    if (resolved.clinicLink) {
+        const CLC = CLINIC_OWNER_LINKS.COLUMNS;
+        await client
+            .from(CLINIC_OWNER_LINKS.TABLE)
+            .update({ [CLC.status]: 'active' })
+            .eq(CLC.tenant_id, resolved.invitation.tenant_id)
+            .eq(CLC.id, resolved.clinicLink.id);
+    }
+
+    if (resolved.pet) {
+        const OPLC = OWNER_PET_LINKS.COLUMNS;
+        await client
+            .from(OWNER_PET_LINKS.TABLE)
+            .update({ [OPLC.status]: 'active' })
+            .eq(OPLC.tenant_id, resolved.invitation.tenant_id)
+            .eq(OPLC.owner_account_id, resolved.invitation.owner_account_id)
+            .eq(OPLC.pet_profile_id, resolved.pet.id);
+    }
+
+    for (const consentType of normalizeConsentTypes(input.consentTypes)) {
+        await recordConsent(client, {
+            tenantId: resolved.invitation.tenant_id,
+            actor: null,
+            ownerAccountId: resolved.invitation.owner_account_id,
+            petProfileId: resolved.pet?.id ?? null,
+            consentType,
+            status: 'granted',
+            grantedAt: acceptedAt,
+            metadata: {
+                source: 'petpass_invite_acceptance',
+                invitation_id: resolved.invitation.id,
+            },
+        });
+    }
+
+    if (input.notificationChannel) {
+        for (const notificationType of normalizeNotificationTypes(input.notificationTypes)) {
+            await upsertNotificationPreference(client, {
+                tenantId: resolved.invitation.tenant_id,
+                ownerAccountId: resolved.invitation.owner_account_id,
+                petProfileId: resolved.pet?.id ?? null,
+                channel: input.notificationChannel,
+                notificationType,
+                enabled: true,
+                metadata: {
+                    source: 'petpass_invite_acceptance',
+                    invitation_id: resolved.invitation.id,
+                },
+            });
+        }
+    }
+
+    return {
+        invitation: mapOwnerInvitation(asRecord(inviteData)),
+        owner_app: await getOwnerAppSnapshot(client, resolved.invitation.tenant_id, resolved.invitation.owner_account_id),
+    };
 }
 
 export async function recordConsent(
@@ -717,6 +1013,147 @@ export async function updateNotificationDeliveryStatus(
     return mapNotificationDelivery(asRecord(data));
 }
 
+export async function getOwnerAppSnapshot(
+    client: SupabaseClient,
+    tenantId: string,
+    ownerAccountId: string,
+): Promise<PetPassOwnerAppSnapshot> {
+    const owner = await getOwnerAccount(client, tenantId, ownerAccountId);
+    if (!owner) {
+        throw new Error('PetPass owner account was not found.');
+    }
+
+    const ownerPetLinks = await listOwnerPetLinksForOwner(client, tenantId, ownerAccountId);
+    const petIds = uniqueStrings(ownerPetLinks.map((link) => link.pet_profile_id));
+    const [pets, clinicLinks, timelineEntries, deliveries, consents, preferences] = await Promise.all([
+        listPetProfilesByIds(client, tenantId, petIds),
+        listClinicOwnerLinksForOwner(client, tenantId, ownerAccountId),
+        listTimelineEntriesForPets(client, tenantId, petIds),
+        listNotificationDeliveriesForOwner(client, tenantId, ownerAccountId),
+        listConsentsForOwner(client, tenantId, ownerAccountId),
+        listNotificationPreferencesForOwner(client, tenantId, ownerAccountId),
+    ]);
+
+    const alerts = toPublicAlerts(deliveries, timelineEntries);
+
+    return {
+        owner: {
+            id: owner.id,
+            display_name: owner.preferred_name ?? owner.full_name,
+            status: owner.status,
+            activated_at: owner.consumer_activated_at,
+        },
+        pets: pets.map((pet) => ({
+            id: pet.id,
+            pet_name: pet.pet_name,
+            species: pet.species,
+            breed: pet.breed,
+            age_display: pet.age_display,
+            risk_state: pet.risk_state,
+            clinic_name: pet.clinic_name,
+        })),
+        clinic_links: clinicLinks.map((link) => ({
+            id: link.id,
+            clinic_name: link.clinic_name,
+            status: link.status,
+        })),
+        timeline: timelineEntries.slice(0, 12).map(mapTimelineEntryToPreview),
+        alerts,
+        consents: consents.map((consent) => ({
+            consent_type: consent.consent_type,
+            status: consent.status,
+        })),
+        notification_preferences: preferences.map((preference) => ({
+            channel: preference.channel,
+            notification_type: preference.notification_type,
+            enabled: preference.enabled,
+        })),
+    };
+}
+
+async function resolveOwnerInvitationByToken(
+    client: SupabaseClient,
+    token: string,
+): Promise<{
+        invitation: PetPassOwnerInvitationRecord;
+        owner: OwnerAccountRecord;
+        pet: PetPassPetProfileRecord | null;
+        clinicLink: ClinicOwnerLinkRecord | null;
+    } | null> {
+    const normalizedToken = normalizeOptionalText(token);
+    if (!normalizedToken) {
+        return null;
+    }
+
+    const C = PETPASS_OWNER_INVITATIONS.COLUMNS;
+    const { data, error } = await client
+        .from(PETPASS_OWNER_INVITATIONS.TABLE)
+        .select('*')
+        .eq(C.token_hash, hashPetPassInviteToken(normalizedToken))
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to load PetPass invitation: ${error.message}`);
+    }
+    if (!data) {
+        return null;
+    }
+
+    const invitation = mapOwnerInvitation(asRecord(data));
+    const expiresAt = new Date(invitation.expires_at);
+    if (invitation.status === 'pending' && (!Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now())) {
+        return {
+            invitation: await markOwnerInvitationExpired(client, invitation),
+            owner: await requireOwnerAccount(client, invitation.tenant_id, invitation.owner_account_id),
+            pet: invitation.pet_profile_id ? await getPetProfile(client, invitation.tenant_id, invitation.pet_profile_id) : null,
+            clinicLink: invitation.clinic_owner_link_id ? await getClinicOwnerLink(client, invitation.tenant_id, invitation.clinic_owner_link_id) : null,
+        };
+    }
+
+    return {
+        invitation,
+        owner: await requireOwnerAccount(client, invitation.tenant_id, invitation.owner_account_id),
+        pet: invitation.pet_profile_id ? await getPetProfile(client, invitation.tenant_id, invitation.pet_profile_id) : null,
+        clinicLink: invitation.clinic_owner_link_id ? await getClinicOwnerLink(client, invitation.tenant_id, invitation.clinic_owner_link_id) : null,
+    };
+}
+
+async function markOwnerInvitationExpired(
+    client: SupabaseClient,
+    invitation: PetPassOwnerInvitationRecord,
+): Promise<PetPassOwnerInvitationRecord> {
+    if (invitation.status !== 'pending') {
+        return invitation;
+    }
+
+    const C = PETPASS_OWNER_INVITATIONS.COLUMNS;
+    const { data, error } = await client
+        .from(PETPASS_OWNER_INVITATIONS.TABLE)
+        .update({ [C.status]: 'expired' })
+        .eq(C.id, invitation.id)
+        .eq(C.status, 'pending')
+        .select('*')
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to expire PetPass invitation: ${error.message}`);
+    }
+
+    return data ? mapOwnerInvitation(asRecord(data)) : invitation;
+}
+
+async function requireOwnerAccount(
+    client: SupabaseClient,
+    tenantId: string,
+    ownerAccountId: string,
+): Promise<OwnerAccountRecord> {
+    const owner = await getOwnerAccount(client, tenantId, ownerAccountId);
+    if (!owner) {
+        throw new Error('PetPass owner account was not found.');
+    }
+    return owner;
+}
+
 async function listOwnerAccounts(
     client: SupabaseClient,
     tenantId: string,
@@ -791,6 +1228,25 @@ async function listClinicOwnerLinks(
     }
 
     return (data ?? []).map((row) => mapClinicOwnerLink(asRecord(row)));
+}
+
+async function listOwnerInvitations(
+    client: SupabaseClient,
+    tenantId: string,
+    limit: number,
+): Promise<PetPassOwnerInvitationRecord[]> {
+    const { data, error } = await client
+        .from(PETPASS_OWNER_INVITATIONS.TABLE)
+        .select('*')
+        .eq(PETPASS_OWNER_INVITATIONS.COLUMNS.tenant_id, tenantId)
+        .order(PETPASS_OWNER_INVITATIONS.COLUMNS.created_at, { ascending: false })
+        .limit(limit);
+
+    if (error) {
+        throw new Error(`Failed to list PetPass owner invitations: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapOwnerInvitation(asRecord(row)));
 }
 
 async function listConsents(
@@ -869,6 +1325,190 @@ async function listNotificationDeliveries(
     return (data ?? []).map((row) => mapNotificationDelivery(asRecord(row)));
 }
 
+async function getPetProfile(
+    client: SupabaseClient,
+    tenantId: string,
+    petProfileId: string,
+): Promise<PetPassPetProfileRecord | null> {
+    const { data, error } = await client
+        .from(PETPASS_PET_PROFILES.TABLE)
+        .select('*')
+        .eq(PETPASS_PET_PROFILES.COLUMNS.tenant_id, tenantId)
+        .eq(PETPASS_PET_PROFILES.COLUMNS.id, petProfileId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to load PetPass pet profile: ${error.message}`);
+    }
+
+    return data ? mapPetProfile(asRecord(data)) : null;
+}
+
+async function getClinicOwnerLink(
+    client: SupabaseClient,
+    tenantId: string,
+    clinicOwnerLinkId: string,
+): Promise<ClinicOwnerLinkRecord | null> {
+    const { data, error } = await client
+        .from(CLINIC_OWNER_LINKS.TABLE)
+        .select('*')
+        .eq(CLINIC_OWNER_LINKS.COLUMNS.tenant_id, tenantId)
+        .eq(CLINIC_OWNER_LINKS.COLUMNS.id, clinicOwnerLinkId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to load PetPass clinic-owner link: ${error.message}`);
+    }
+
+    return data ? mapClinicOwnerLink(asRecord(data)) : null;
+}
+
+async function listOwnerPetLinksForOwner(
+    client: SupabaseClient,
+    tenantId: string,
+    ownerAccountId: string,
+): Promise<OwnerPetLinkRecord[]> {
+    const { data, error } = await client
+        .from(OWNER_PET_LINKS.TABLE)
+        .select('*')
+        .eq(OWNER_PET_LINKS.COLUMNS.tenant_id, tenantId)
+        .eq(OWNER_PET_LINKS.COLUMNS.owner_account_id, ownerAccountId)
+        .in(OWNER_PET_LINKS.COLUMNS.status, ['active', 'invited'])
+        .order(OWNER_PET_LINKS.COLUMNS.linked_at, { ascending: false });
+
+    if (error) {
+        throw new Error(`Failed to list owner PetPass links: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapOwnerPetLink(asRecord(row)));
+}
+
+async function listPetProfilesByIds(
+    client: SupabaseClient,
+    tenantId: string,
+    petProfileIds: string[],
+): Promise<PetPassPetProfileRecord[]> {
+    if (petProfileIds.length === 0) {
+        return [];
+    }
+
+    const { data, error } = await client
+        .from(PETPASS_PET_PROFILES.TABLE)
+        .select('*')
+        .eq(PETPASS_PET_PROFILES.COLUMNS.tenant_id, tenantId)
+        .in(PETPASS_PET_PROFILES.COLUMNS.id, petProfileIds)
+        .order(PETPASS_PET_PROFILES.COLUMNS.updated_at, { ascending: false });
+
+    if (error) {
+        throw new Error(`Failed to list owner PetPass pets: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapPetProfile(asRecord(row)));
+}
+
+async function listClinicOwnerLinksForOwner(
+    client: SupabaseClient,
+    tenantId: string,
+    ownerAccountId: string,
+): Promise<ClinicOwnerLinkRecord[]> {
+    const { data, error } = await client
+        .from(CLINIC_OWNER_LINKS.TABLE)
+        .select('*')
+        .eq(CLINIC_OWNER_LINKS.COLUMNS.tenant_id, tenantId)
+        .eq(CLINIC_OWNER_LINKS.COLUMNS.owner_account_id, ownerAccountId)
+        .order(CLINIC_OWNER_LINKS.COLUMNS.updated_at, { ascending: false });
+
+    if (error) {
+        throw new Error(`Failed to list owner clinic links: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapClinicOwnerLink(asRecord(row)));
+}
+
+async function listTimelineEntriesForPets(
+    client: SupabaseClient,
+    tenantId: string,
+    petProfileIds: string[],
+): Promise<PetPassTimelineEntryRecord[]> {
+    if (petProfileIds.length === 0) {
+        return [];
+    }
+
+    const { data, error } = await client
+        .from(PETPASS_TIMELINE_ENTRIES.TABLE)
+        .select('*')
+        .eq(PETPASS_TIMELINE_ENTRIES.COLUMNS.tenant_id, tenantId)
+        .eq(PETPASS_TIMELINE_ENTRIES.COLUMNS.visibility, 'owner_safe')
+        .in(PETPASS_TIMELINE_ENTRIES.COLUMNS.pet_profile_id, petProfileIds)
+        .order(PETPASS_TIMELINE_ENTRIES.COLUMNS.occurred_at, { ascending: false })
+        .limit(24);
+
+    if (error) {
+        throw new Error(`Failed to list owner PetPass timeline: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapTimelineEntry(asRecord(row)));
+}
+
+async function listNotificationDeliveriesForOwner(
+    client: SupabaseClient,
+    tenantId: string,
+    ownerAccountId: string,
+): Promise<PetPassNotificationDeliveryRecord[]> {
+    const { data, error } = await client
+        .from(PETPASS_NOTIFICATION_DELIVERIES.TABLE)
+        .select('*')
+        .eq(PETPASS_NOTIFICATION_DELIVERIES.COLUMNS.tenant_id, tenantId)
+        .eq(PETPASS_NOTIFICATION_DELIVERIES.COLUMNS.owner_account_id, ownerAccountId)
+        .order(PETPASS_NOTIFICATION_DELIVERIES.COLUMNS.scheduled_at, { ascending: false })
+        .limit(24);
+
+    if (error) {
+        throw new Error(`Failed to list owner notification deliveries: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapNotificationDelivery(asRecord(row)));
+}
+
+async function listConsentsForOwner(
+    client: SupabaseClient,
+    tenantId: string,
+    ownerAccountId: string,
+): Promise<PetPassConsentRecord[]> {
+    const { data, error } = await client
+        .from(PETPASS_CONSENTS.TABLE)
+        .select('*')
+        .eq(PETPASS_CONSENTS.COLUMNS.tenant_id, tenantId)
+        .eq(PETPASS_CONSENTS.COLUMNS.owner_account_id, ownerAccountId)
+        .order(PETPASS_CONSENTS.COLUMNS.created_at, { ascending: false })
+        .limit(24);
+
+    if (error) {
+        throw new Error(`Failed to list owner consents: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapConsent(asRecord(row)));
+}
+
+async function listNotificationPreferencesForOwner(
+    client: SupabaseClient,
+    tenantId: string,
+    ownerAccountId: string,
+): Promise<PetPassNotificationPreferenceRecord[]> {
+    const { data, error } = await client
+        .from(PETPASS_NOTIFICATION_PREFERENCES.TABLE)
+        .select('*')
+        .eq(PETPASS_NOTIFICATION_PREFERENCES.COLUMNS.tenant_id, tenantId)
+        .eq(PETPASS_NOTIFICATION_PREFERENCES.COLUMNS.owner_account_id, ownerAccountId)
+        .order(PETPASS_NOTIFICATION_PREFERENCES.COLUMNS.updated_at, { ascending: false });
+
+    if (error) {
+        throw new Error(`Failed to list owner notification preferences: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapNotificationPreference(asRecord(row)));
+}
+
 function mapOwnerAccount(row: Record<string, unknown>): OwnerAccountRecord {
     return {
         id: String(row.id),
@@ -879,6 +1519,10 @@ function mapOwnerAccount(row: Record<string, unknown>): OwnerAccountRecord {
         email: readString(row.email),
         phone: readString(row.phone),
         status: (readString(row.status) ?? 'active') as OwnerAccountStatus,
+        consumer_identity_hash: readString(row.consumer_identity_hash),
+        consumer_auth_provider: readString(row.consumer_auth_provider),
+        consumer_activated_at: readString(row.consumer_activated_at),
+        consumer_last_seen_at: readString(row.consumer_last_seen_at),
         metadata: asRecord(row.metadata),
         created_by: readString(row.created_by),
         last_active_at: readString(row.last_active_at),
@@ -938,6 +1582,29 @@ function mapClinicOwnerLink(row: Record<string, unknown>): ClinicOwnerLinkRecord
         linked_by: readString(row.linked_by),
         linked_at: String(row.linked_at ?? row.created_at),
         metadata: asRecord(row.metadata),
+        created_at: String(row.created_at),
+        updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapOwnerInvitation(row: Record<string, unknown>): PetPassOwnerInvitationRecord {
+    return {
+        id: String(row.id),
+        tenant_id: readString(row.tenant_id) ?? 'unknown_tenant',
+        owner_account_id: readString(row.owner_account_id) ?? 'unknown_owner',
+        pet_profile_id: readString(row.pet_profile_id),
+        clinic_owner_link_id: readString(row.clinic_owner_link_id),
+        token_hash: readString(row.token_hash) ?? '',
+        invite_url: readString(row.invite_url) ?? '',
+        delivery_channel: normalizeInvitationDeliveryChannel(readString(row.delivery_channel)) ?? 'link',
+        delivery_address_hash: readString(row.delivery_address_hash),
+        status: normalizeInvitationStatus(readString(row.status)) ?? 'pending',
+        expires_at: String(row.expires_at ?? row.created_at),
+        accepted_at: readString(row.accepted_at),
+        accepted_identity_hash: readString(row.accepted_identity_hash),
+        accepted_user_agent_hash: readString(row.accepted_user_agent_hash),
+        metadata: asRecord(row.metadata),
+        created_by: readString(row.created_by),
         created_at: String(row.created_at),
         updated_at: String(row.updated_at ?? row.created_at),
     };
@@ -1080,11 +1747,83 @@ function extractActionLabel(metadata: Record<string, unknown>, index: number): s
     return index === 0 ? 'Open PetPass' : 'Review update';
 }
 
+function createPetPassInviteToken(): string {
+    return randomBytes(32).toString('base64url');
+}
+
+function hashPetPassInviteToken(token: string): string {
+    return createHash('sha256')
+        .update(`petpass_invite:${token.trim()}`)
+        .digest('hex');
+}
+
+function hashOptionalIdentity(value: unknown): string | null {
+    const normalized = normalizeOptionalText(value)?.toLowerCase();
+    if (!normalized) {
+        return null;
+    }
+
+    return createHash('sha256')
+        .update(`petpass_identity:${normalized}`)
+        .digest('hex');
+}
+
+function normalizeBaseUrl(value: string | null | undefined): string {
+    const normalized = normalizeOptionalText(value) ?? process.env.NEXT_PUBLIC_SITE_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? 'https://www.vetios.tech';
+    return normalized.replace(/\/+$/, '');
+}
+
+function twoWeeksFromNow(): string {
+    return new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function normalizeConsentTypes(values: string[] | undefined): string[] {
+    const normalized = new Set(
+        (values ?? [])
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0),
+    );
+
+    if (normalized.size === 0) {
+        normalized.add('petpass_terms');
+        normalized.add('owner_health_history_access');
+    }
+
+    return [...normalized];
+}
+
+function normalizeNotificationTypes(values: string[] | undefined): string[] {
+    const normalized = new Set(
+        (values ?? [])
+            .map((value) => value.trim())
+            .filter((value) => value.length > 0),
+    );
+
+    if (normalized.size === 0) {
+        normalized.add('care_alert');
+        normalized.add('visit_summary');
+    }
+
+    return [...normalized];
+}
+
+function normalizeInvitationStatus(value: string | null): PetPassInvitationStatus | null {
+    return value === 'pending' || value === 'accepted' || value === 'expired' || value === 'revoked'
+        ? value
+        : null;
+}
+
+function normalizeInvitationDeliveryChannel(value: string | null): PetPassInvitationDeliveryChannel | null {
+    return value === 'link' || value === 'email' || value === 'sms' ? value : null;
+}
+
 function createEmptyNetworkSummary(): PublicPetPassSnapshot['network_summary'] {
     return {
         owner_accounts: 0,
         linked_pets: 0,
         clinic_links: 0,
+        pending_invitations: 0,
+        accepted_invitations: 0,
         granted_consents: 0,
         active_alerts: 0,
         queued_notifications: 0,

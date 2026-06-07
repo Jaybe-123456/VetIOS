@@ -51,10 +51,13 @@ function createEmptySnapshot(): PetPassControlPlaneSnapshot {
         notification_preferences: [],
         timeline_entries: [],
         notification_deliveries: [],
+        owner_invitations: [],
         summary: {
             owner_accounts: 0,
             linked_pets: 0,
             clinic_links: 0,
+            pending_invitations: 0,
+            accepted_invitations: 0,
             granted_consents: 0,
             active_alerts: 0,
             queued_notifications: 0,

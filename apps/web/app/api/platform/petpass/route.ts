@@ -17,6 +17,7 @@ import {
     createClinicOwnerLink,
     createNotificationDelivery,
     createOwnerAccount,
+    createOwnerInvitation,
     createPetProfile,
     createTimelineEntry,
     getPetPassControlPlaneSnapshot,
@@ -30,6 +31,7 @@ import {
     type PetPassConsentStatus,
     type PetPassDeliveryStatus,
     type PetPassEntryType,
+    type PetPassInvitationDeliveryChannel,
     type PetPassRiskState,
     type PetPassVisibility,
 } from '@/lib/petpass/service';
@@ -78,6 +80,16 @@ type PetPassAction =
         status?: ClinicOwnerLinkStatus | null;
         invite_token?: string | null;
         invite_expires_at?: string | null;
+        metadata?: Record<string, unknown>;
+    }
+    | {
+        action: 'create_owner_invitation';
+        owner_account_id?: string | null;
+        pet_profile_id?: string | null;
+        clinic_owner_link_id?: string | null;
+        delivery_channel?: PetPassInvitationDeliveryChannel | null;
+        delivery_address?: string | null;
+        expires_at?: string | null;
         metadata?: Record<string, unknown>;
     }
     | {
@@ -261,6 +273,23 @@ export async function POST(req: Request) {
                     inviteToken: normalizeOptionalText(clinicBody.invite_token),
                     inviteExpiresAt: normalizeOptionalText(clinicBody.invite_expires_at),
                     metadata: asRecord(clinicBody.metadata),
+                }),
+            };
+        } else if (action === 'create_owner_invitation') {
+            const inviteBody = body.data as Extract<PetPassAction, { action: 'create_owner_invitation' }>;
+            const url = new URL(req.url);
+            result = {
+                owner_invitation: await createOwnerInvitation(adminClient, {
+                    tenantId: authContext.tenantId,
+                    actor: authContext.userId,
+                    ownerAccountId: requireText(inviteBody.owner_account_id, 'owner_account_id'),
+                    petProfileId: normalizeOptionalText(inviteBody.pet_profile_id),
+                    clinicOwnerLinkId: normalizeOptionalText(inviteBody.clinic_owner_link_id),
+                    baseUrl: `${url.protocol}//${url.host}`,
+                    deliveryChannel: normalizeInvitationDeliveryChannel(inviteBody.delivery_channel) ?? 'link',
+                    deliveryAddress: normalizeOptionalText(inviteBody.delivery_address),
+                    expiresAt: normalizeOptionalText(inviteBody.expires_at),
+                    metadata: asRecord(inviteBody.metadata),
                 }),
             };
         } else if (action === 'record_consent') {
@@ -476,6 +505,10 @@ function normalizeVisibility(value: unknown): PetPassVisibility | null {
 
 function normalizeDeliveryStatus(value: unknown): PetPassDeliveryStatus | null {
     return value === 'queued' || value === 'sent' || value === 'failed' || value === 'canceled' ? value : null;
+}
+
+function normalizeInvitationDeliveryChannel(value: unknown): PetPassInvitationDeliveryChannel | null {
+    return value === 'link' || value === 'email' || value === 'sms' ? value : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

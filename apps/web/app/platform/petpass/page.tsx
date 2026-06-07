@@ -18,7 +18,7 @@ export default async function PetPassPage() {
         <PlatformShell
             badge={snapshot.data_mode === 'live' ? 'PETPASS NETWORK' : 'PETPASS PREVIEW'}
             title="Start the consumer layer before the network effect starts elsewhere."
-            description="PetPass now has a real owner-network substrate underneath it: owner accounts, pet links, clinic sync links, consents, timeline entries, and notification deliveries. The consumer app is still early, but the network plane is no longer just a mock."
+            description="PetPass now has a real owner-network substrate underneath it: owner accounts, pet links, clinic sync links, hashed invite acceptance, consents, timeline entries, and notification deliveries."
             actions={(
                 <>
                     <Link
@@ -45,10 +45,11 @@ export default async function PetPassPage() {
                 </>
             )}
         >
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-5">
                 <StatCard label="Mode" value={snapshot.data_mode.toUpperCase()} />
                 <StatCard label="Owners" value={String(snapshot.network_summary.owner_accounts)} />
                 <StatCard label="Linked Pets" value={String(snapshot.network_summary.linked_pets)} />
+                <StatCard label="Pending Invites" value={String(snapshot.network_summary.pending_invitations)} />
                 <StatCard label="Sent Alerts" value={String(snapshot.network_summary.sent_notifications)} />
             </div>
 

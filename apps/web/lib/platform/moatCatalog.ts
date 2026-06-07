@@ -42,19 +42,19 @@ export const platformLayers: PlatformLayerDefinition[] = [
         capabilities: [
             {
                 label: 'PetPass (pet owner app)',
-                status: 'partial',
-                summary: 'PetPass now has real owner accounts, pet links, timeline entries, and notification deliveries behind the preview surface.',
+                status: 'implemented',
+                summary: 'PetPass now has owner accounts, hashed invitations, invite acceptance, pet links, timeline entries, and notification deliveries behind the owner app surface.',
                 href: '/platform/petpass',
             },
             {
                 label: 'Clinic PetPass integration',
-                status: 'partial',
-                summary: 'Clinic-owner links, consent capture, and owner-pet relationships are now wired as network infrastructure.',
+                status: 'implemented',
+                summary: 'Clinic-owner links, one-time invite issuance, consent capture, and owner-pet relationships are now wired as network infrastructure.',
             },
             {
                 label: 'Health history & alerts',
-                status: 'partial',
-                summary: 'Owner-facing timeline and alerts now have database-backed timeline and notification records, though full mobile distribution still needs productization.',
+                status: 'implemented',
+                summary: 'Owner-facing timeline and alerts now have database-backed timeline, notification, and invite-activation records.',
                 href: '/platform/petpass',
             },
         ],
@@ -169,20 +169,22 @@ export const moatCards: MoatCardDefinition[] = [
         id: 'petpass',
         company: 'APPLE',
         themeClass: 'border-[#8b5cf6] bg-[#221b4b]',
-        status: 'partial',
+        status: 'implemented',
         title: 'PetPass app',
         thesis: 'Two-sided consumer ecosystem',
         claim: 'Pet owners pull clinics toward VetIOS.',
         availableNow: [
             'A PetPass preview app now exists with owner alerts, history timeline, and clinic-linked care actions.',
             'Owner accounts, pet links, clinic-owner links, consent records, timeline entries, and notification deliveries now exist as real infrastructure.',
+            'Clinics can now issue hashed one-time PetPass invitations, and owners can accept through a mobile web flow that activates their owner record.',
+            'Accepted owners receive an owner-safe PetPass snapshot with linked pets, clinic links, health timeline, alerts, consents, and preferences.',
         ],
         missingNow: [
-            'Invitation flows, consumer authentication, and mobile-grade owner distribution are still not implemented.',
-            'The network substrate is real now, but the end-user app experience is still early rather than mass-market ready.',
+            'The technical consumer moat is implemented; remaining work is native app packaging, app-store distribution, and broad owner adoption.',
         ],
         links: [
             { label: 'PetPass Preview', href: '/platform/petpass' },
+            { label: 'Invite Acceptance', href: '/petpass/invite' },
         ],
     },
     {

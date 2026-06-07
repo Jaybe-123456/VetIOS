@@ -1414,6 +1414,10 @@ export const OWNER_ACCOUNTS = {
         email: 'email',
         phone: 'phone',
         status: 'status',
+        consumer_identity_hash: 'consumer_identity_hash',
+        consumer_auth_provider: 'consumer_auth_provider',
+        consumer_activated_at: 'consumer_activated_at',
+        consumer_last_seen_at: 'consumer_last_seen_at',
         metadata: 'metadata',
         created_by: 'created_by',
         last_active_at: 'last_active_at',
@@ -1935,6 +1939,30 @@ export const PARTNER_SERVICE_ACCOUNT_LINKS = {
         environment: 'environment',
         created_by: 'created_by',
         created_at: 'created_at',
+    },
+} as const;
+
+export const PETPASS_OWNER_INVITATIONS = {
+    TABLE: 'petpass_owner_invitations',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        owner_account_id: 'owner_account_id',
+        pet_profile_id: 'pet_profile_id',
+        clinic_owner_link_id: 'clinic_owner_link_id',
+        token_hash: 'token_hash',
+        invite_url: 'invite_url',
+        delivery_channel: 'delivery_channel',
+        delivery_address_hash: 'delivery_address_hash',
+        status: 'status',
+        expires_at: 'expires_at',
+        accepted_at: 'accepted_at',
+        accepted_identity_hash: 'accepted_identity_hash',
+        accepted_user_agent_hash: 'accepted_user_agent_hash',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
     },
 } as const;
 
