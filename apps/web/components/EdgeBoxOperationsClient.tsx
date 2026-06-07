@@ -16,6 +16,7 @@ import {
 import { fetchWithTimeout } from '@/lib/http/clientRequest';
 import type {
     EdgeBoxControlPlaneSnapshot,
+    EdgeBoxDeviceCredentialRecord,
     EdgeBoxRecord,
     EdgeSyncArtifactRecord,
     EdgeSyncJobRecord,
@@ -62,8 +63,16 @@ export default function EdgeBoxOperationsClient({
         content_hash: '',
         size_bytes: '0',
     });
+    const [authDraft, setAuthDraft] = useState({
+        edge_box_id: initialSnapshot.edge_boxes[0]?.id ?? '',
+        credential_id: initialSnapshot.device_credentials[0]?.id ?? '',
+    });
 
     const latestBox = useMemo(() => snapshot.edge_boxes[0] ?? null, [snapshot.edge_boxes]);
+    const selectedCredential = useMemo(
+        () => snapshot.device_credentials.find((credential) => credential.id === authDraft.credential_id) ?? snapshot.device_credentials[0] ?? null,
+        [authDraft.credential_id, snapshot.device_credentials],
+    );
 
     async function refreshSnapshot() {
         setRefreshing(true);
@@ -77,6 +86,7 @@ export default function EdgeBoxOperationsClient({
                 edge_box?: EdgeBoxRecord;
                 provisioning_token?: string;
                 sync_endpoint?: string;
+                device_credential?: EdgeBoxDeviceCredentialRecord;
                 error?: string;
             };
             if (!res.ok || !data.snapshot) {
@@ -109,6 +119,7 @@ export default function EdgeBoxOperationsClient({
                 edge_box?: EdgeBoxRecord;
                 provisioning_token?: string;
                 sync_endpoint?: string;
+                device_credential?: EdgeBoxDeviceCredentialRecord;
                 error?: string;
             };
             if (!res.ok || !data.snapshot) {
@@ -119,6 +130,10 @@ export default function EdgeBoxOperationsClient({
             if (nextSnapshot.edge_boxes[0]?.id) {
                 setJobDraft((current) => ({ ...current, edge_box_id: current.edge_box_id || nextSnapshot.edge_boxes[0].id }));
                 setArtifactDraft((current) => ({ ...current, edge_box_id: current.edge_box_id || nextSnapshot.edge_boxes[0].id }));
+                setAuthDraft((current) => ({ ...current, edge_box_id: current.edge_box_id || nextSnapshot.edge_boxes[0].id }));
+            }
+            if (nextSnapshot.device_credentials[0]?.id) {
+                setAuthDraft((current) => ({ ...current, credential_id: current.credential_id || nextSnapshot.device_credentials[0].id }));
             }
             if (data.edge_box && data.provisioning_token) {
                 setProvisioning({
@@ -164,9 +179,11 @@ export default function EdgeBoxOperationsClient({
                 description="Provision offline nodes, stage sync artifacts, and queue edge synchronization so the infrastructure moat extends beyond always-online clinics."
             />
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-6">
                 <SummaryCard icon={<HardDrive className="h-4 w-4" />} label="Online Nodes" value={snapshot.summary.online_nodes} />
                 <SummaryCard icon={<Router className="h-4 w-4" />} label="Degraded Nodes" value={snapshot.summary.degraded_nodes} tone={snapshot.summary.degraded_nodes > 0 ? 'warning' : 'neutral'} />
+                <SummaryCard icon={<Router className="h-4 w-4" />} label="Active Keys" value={snapshot.summary.active_device_credentials} />
+                <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Expiring Keys" value={snapshot.summary.expiring_device_credentials} tone={snapshot.summary.expiring_device_credentials > 0 ? 'warning' : 'neutral'} />
                 <SummaryCard icon={<RefreshCw className="h-4 w-4" />} label="Queued Jobs" value={snapshot.summary.queued_jobs} />
                 <SummaryCard icon={<Boxes className="h-4 w-4" />} label="Staged Artifacts" value={snapshot.summary.staged_artifacts} />
             </div>
@@ -191,6 +208,57 @@ export default function EdgeBoxOperationsClient({
                     </div>
                 )}
             </ConsoleCard>
+
+            <div className="mt-6 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+                <ConsoleCard title="Device Auth Hardening" className={EDGE_CARD_CLASS}>
+                    <div className="grid gap-4 md:grid-cols-2">
+                        <EdgeBoxSelect
+                            label="Edge Box"
+                            value={authDraft.edge_box_id}
+                            edgeBoxes={snapshot.edge_boxes}
+                            onChange={(value) => setAuthDraft((current) => ({ ...current, edge_box_id: value }))}
+                        />
+                        <CredentialSelect
+                            label="Credential"
+                            value={authDraft.credential_id}
+                            credentials={snapshot.device_credentials}
+                            onChange={(value) => setAuthDraft((current) => ({ ...current, credential_id: value }))}
+                        />
+                    </div>
+                    <div className="mt-4 border border-[hsl(0_0%_28%)] bg-[hsl(0_0%_8%)] p-3 font-mono text-xs leading-6 text-[hsl(0_0%_78%)]">
+                        Device tokens are returned once, stored only as SHA-256 hashes, and can be rotated or revoked without changing queued sync work.
+                    </div>
+                    <div className="mt-4 flex flex-wrap gap-2">
+                        <TerminalButton
+                            onClick={() => void runAction({
+                                action: 'rotate_device_credential',
+                                edge_box_id: authDraft.edge_box_id,
+                            }, 'Edge device credential rotated. Store the new token on the edge node.')}
+                            disabled={!authDraft.edge_box_id}
+                        >
+                            Rotate Device Token
+                        </TerminalButton>
+                        <TerminalButton
+                            variant="secondary"
+                            onClick={() => void runAction({
+                                action: 'revoke_device_credential',
+                                credential_id: authDraft.credential_id,
+                            }, 'Edge device credential revoked.')}
+                            disabled={!authDraft.credential_id}
+                        >
+                            Revoke Credential
+                        </TerminalButton>
+                    </div>
+                </ConsoleCard>
+
+                <ConsoleCard title="Selected Credential" className={EDGE_CARD_CLASS}>
+                    {selectedCredential ? (
+                        <CredentialDetail credential={selectedCredential} edgeBoxes={snapshot.edge_boxes} />
+                    ) : (
+                        <div className={EDGE_EMPTY_CLASS}>No device credentials issued yet.</div>
+                    )}
+                </ConsoleCard>
+            </div>
 
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
                 <ConsoleCard title="Register Edge Box" className={EDGE_CARD_CLASS}>
@@ -294,6 +362,16 @@ export default function EdgeBoxOperationsClient({
             </div>
 
             <div className="mt-6 grid gap-6 xl:grid-cols-2">
+                <ConsoleCard title="Device Credentials" className={EDGE_CARD_CLASS}>
+                    {snapshot.device_credentials.length === 0 ? (
+                        <div className={EDGE_EMPTY_CLASS}>No hardened edge device credentials issued yet.</div>
+                    ) : (
+                        <div className="space-y-3">
+                            {snapshot.device_credentials.slice(0, 12).map((credential) => <CredentialRow key={credential.id} credential={credential} edgeBoxes={snapshot.edge_boxes} />)}
+                        </div>
+                    )}
+                </ConsoleCard>
+
                 <ConsoleCard title="Sync Job Queue" className={EDGE_CARD_CLASS}>
                     {snapshot.sync_jobs.length === 0 ? (
                         <div className={EDGE_EMPTY_CLASS}>No edge sync jobs queued.</div>
@@ -303,7 +381,9 @@ export default function EdgeBoxOperationsClient({
                         </div>
                     )}
                 </ConsoleCard>
+            </div>
 
+            <div className="mt-6 grid gap-6 xl:grid-cols-2">
                 <ConsoleCard title="Artifact Staging" className={EDGE_CARD_CLASS}>
                     {snapshot.sync_artifacts.length === 0 ? (
                         <div className={EDGE_EMPTY_CLASS}>No edge artifacts staged.</div>
@@ -418,6 +498,39 @@ function EdgeBoxSelect({
     );
 }
 
+function CredentialSelect({
+    label,
+    value,
+    credentials,
+    onChange,
+}: {
+    label: string;
+    value: string;
+    credentials: EdgeBoxDeviceCredentialRecord[];
+    onChange: (value: string) => void;
+}) {
+    if (credentials.length === 0) {
+        return <FormField label={`${label} ID`} value={value} onChange={onChange} />;
+    }
+
+    return (
+        <div>
+            <TerminalLabel>{label}</TerminalLabel>
+            <select
+                value={value}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => onChange(event.target.value)}
+                className={EDGE_SELECT_CLASS}
+            >
+                {credentials.map((credential) => (
+                    <option key={credential.id} value={credential.id}>
+                        {credential.key_prefix} / {credential.status}
+                    </option>
+                ))}
+            </select>
+        </div>
+    );
+}
+
 function EdgeBoxDetail({ edgeBox }: { edgeBox: EdgeBoxRecord }) {
     return (
         <>
@@ -429,6 +542,40 @@ function EdgeBoxDetail({ edgeBox }: { edgeBox: EdgeBoxRecord }) {
             <DataRow label="Software" value={edgeBox.software_version ?? 'NO DATA'} />
             <DataRow label="Heartbeat" value={edgeBox.last_heartbeat_at ?? 'NO DATA'} />
         </>
+    );
+}
+
+function CredentialDetail({ credential, edgeBoxes }: { credential: EdgeBoxDeviceCredentialRecord; edgeBoxes: EdgeBoxRecord[] }) {
+    const edgeBox = edgeBoxes.find((box) => box.id === credential.edge_box_id);
+    return (
+        <>
+            <DataRow label="Credential" value={credential.key_prefix} />
+            <DataRow label="Node" value={edgeBox ? `${edgeBox.node_name} / ${edgeBox.site_label}` : credential.edge_box_id} />
+            <DataRow label="Status" value={credential.status.toUpperCase()} tone={credential.status === 'active' ? 'accent' : 'warning'} />
+            <DataRow label="Issued" value={credential.issued_reason} />
+            <DataRow label="Expires" value={credential.expires_at ? formatTimestamp(credential.expires_at) : 'NO EXPIRY'} tone={credential.expires_at ? 'warning' : 'muted'} />
+            <DataRow label="Last Used" value={credential.last_used_at ? formatTimestamp(credential.last_used_at) : 'NO DATA'} />
+            <DataRow label="Last Action" value={credential.last_used_action ?? 'NO DATA'} />
+            <DataRow label="Scopes" value={credential.scopes.join(', ') || 'NO SCOPES'} />
+        </>
+    );
+}
+
+function CredentialRow({ credential, edgeBoxes }: { credential: EdgeBoxDeviceCredentialRecord; edgeBoxes: EdgeBoxRecord[] }) {
+    const edgeBox = edgeBoxes.find((box) => box.id === credential.edge_box_id);
+    return (
+        <div className={EDGE_ROW_CLASS}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-mono text-sm font-semibold text-[hsl(0_0%_98%)]">{credential.key_prefix}</div>
+                <StatusPill status={credential.status} />
+            </div>
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+                <DataRow label="Node" value={edgeBox ? `${edgeBox.node_name} / ${edgeBox.site_label}` : credential.edge_box_id} />
+                <DataRow label="Reason" value={credential.issued_reason} />
+                <DataRow label="Expires" value={credential.expires_at ? formatTimestamp(credential.expires_at) : 'NO EXPIRY'} />
+                <DataRow label="Last Used" value={credential.last_used_at ? formatTimestamp(credential.last_used_at) : 'NO DATA'} tone={credential.last_used_at ? 'accent' : 'muted'} />
+            </div>
+        </div>
     );
 }
 

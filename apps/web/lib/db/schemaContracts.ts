@@ -2148,6 +2148,29 @@ export const EDGE_BOXES = {
     },
 } as const;
 
+export const EDGE_BOX_DEVICE_CREDENTIALS = {
+    TABLE: 'edge_box_device_credentials',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        edge_box_id: 'edge_box_id',
+        key_prefix: 'key_prefix',
+        token_hash: 'token_hash',
+        status: 'status',
+        issued_reason: 'issued_reason',
+        scopes: 'scopes',
+        expires_at: 'expires_at',
+        last_used_at: 'last_used_at',
+        last_used_action: 'last_used_action',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        revoked_by: 'revoked_by',
+        revoked_at: 'revoked_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
 export const EDGE_SYNC_JOBS = {
     TABLE: 'edge_sync_jobs',
     COLUMNS: {

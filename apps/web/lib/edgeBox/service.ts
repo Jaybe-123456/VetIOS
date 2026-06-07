@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+    EDGE_BOX_DEVICE_CREDENTIALS,
     EDGE_BOXES,
     EDGE_SYNC_ARTIFACTS,
     EDGE_SYNC_JOBS,
@@ -16,6 +17,9 @@ export type EdgeSyncDirection = 'cloud_to_edge' | 'edge_to_cloud';
 export type EdgeSyncJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled';
 export type EdgeArtifactType = 'model_bundle' | 'dataset_delta' | 'config_bundle' | 'telemetry_archive';
 export type EdgeArtifactStatus = 'staged' | 'synced' | 'failed' | 'expired';
+export type EdgeDeviceCredentialStatus = 'active' | 'rotated' | 'revoked' | 'expired';
+export type EdgeDeviceCredentialIssueReason = 'provisioning' | 'rotation' | 'recovery';
+export type EdgeDeviceCredentialAction = 'heartbeat' | 'pull_jobs' | 'ack_job' | 'provisioning_check' | 'sync_request';
 
 export interface EdgeBoxRecord {
     id: string;
@@ -65,14 +69,37 @@ export interface EdgeSyncArtifactRecord {
     updated_at: string;
 }
 
+export interface EdgeBoxDeviceCredentialRecord {
+    id: string;
+    tenant_id: string;
+    edge_box_id: string;
+    key_prefix: string;
+    status: EdgeDeviceCredentialStatus;
+    issued_reason: EdgeDeviceCredentialIssueReason;
+    scopes: string[];
+    expires_at: string | null;
+    last_used_at: string | null;
+    last_used_action: string | null;
+    metadata: Record<string, unknown>;
+    created_by: string | null;
+    revoked_by: string | null;
+    revoked_at: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
 export interface EdgeBoxControlPlaneSnapshot {
     tenant_id: string;
     edge_boxes: EdgeBoxRecord[];
+    device_credentials: EdgeBoxDeviceCredentialRecord[];
     sync_jobs: EdgeSyncJobRecord[];
     sync_artifacts: EdgeSyncArtifactRecord[];
     summary: {
         online_nodes: number;
         degraded_nodes: number;
+        active_device_credentials: number;
+        expiring_device_credentials: number;
+        revoked_device_credentials: number;
         queued_jobs: number;
         failed_jobs: number;
         staged_artifacts: number;
@@ -92,6 +119,14 @@ export interface PublicEdgeBoxSnapshot {
 
 export interface EdgeBoxProvisioningResult {
     edge_box: EdgeBoxRecord;
+    device_credential: EdgeBoxDeviceCredentialRecord | null;
+    provisioning_token: string;
+    sync_endpoint: string;
+}
+
+export interface EdgeBoxCredentialIssueResult {
+    edge_box: EdgeBoxRecord;
+    device_credential: EdgeBoxDeviceCredentialRecord;
     provisioning_token: string;
     sync_endpoint: string;
 }
@@ -117,20 +152,30 @@ export async function getEdgeBoxControlPlaneSnapshot(
     options: { limit?: number } = {},
 ): Promise<EdgeBoxControlPlaneSnapshot> {
     const limit = options.limit ?? 24;
-    const [edgeBoxes, syncJobs, syncArtifacts] = await Promise.all([
+    const [edgeBoxes, deviceCredentials, syncJobs, syncArtifacts] = await Promise.all([
         listEdgeBoxes(client, tenantId, limit),
+        listEdgeDeviceCredentials(client, tenantId, limit),
         listEdgeSyncJobs(client, tenantId, limit),
         listEdgeSyncArtifacts(client, tenantId, limit),
     ]);
+    const expiringCutoff = Date.now() + 30 * 24 * 60 * 60 * 1000;
 
     return {
         tenant_id: tenantId,
         edge_boxes: edgeBoxes,
+        device_credentials: deviceCredentials,
         sync_jobs: syncJobs,
         sync_artifacts: syncArtifacts,
         summary: {
             online_nodes: edgeBoxes.filter((box) => box.status === 'online').length,
             degraded_nodes: edgeBoxes.filter((box) => box.status === 'degraded' || box.status === 'offline').length,
+            active_device_credentials: deviceCredentials.filter((credential) => credential.status === 'active').length,
+            expiring_device_credentials: deviceCredentials.filter((credential) => (
+                credential.status === 'active'
+                && credential.expires_at != null
+                && new Date(credential.expires_at).getTime() <= expiringCutoff
+            )).length,
+            revoked_device_credentials: deviceCredentials.filter((credential) => credential.status === 'revoked' || credential.status === 'rotated').length,
             queued_jobs: syncJobs.filter((job) => job.status === 'queued' || job.status === 'running').length,
             failed_jobs: syncJobs.filter((job) => job.status === 'failed').length,
             staged_artifacts: syncArtifacts.filter((artifact) => artifact.status === 'staged').length,
@@ -149,6 +194,9 @@ export async function getPublicEdgeBoxSnapshot(): Promise<PublicEdgeBoxSnapshot>
             summary: {
                 online_nodes: 0,
                 degraded_nodes: 0,
+                active_device_credentials: 0,
+                expiring_device_credentials: 0,
+                revoked_device_credentials: 0,
                 queued_jobs: 0,
                 failed_jobs: 0,
                 staged_artifacts: 0,
@@ -178,6 +226,9 @@ export async function getPublicEdgeBoxSnapshot(): Promise<PublicEdgeBoxSnapshot>
             summary: {
                 online_nodes: 0,
                 degraded_nodes: 0,
+                active_device_credentials: 0,
+                expiring_device_credentials: 0,
+                revoked_device_credentials: 0,
                 queued_jobs: 0,
                 failed_jobs: 0,
                 staged_artifacts: 0,
@@ -233,6 +284,22 @@ export async function createEdgeBox(
     }
 
     const edgeBox = mapEdgeBox(asRecord(data));
+    const deviceCredential = await issueEdgeDeviceCredential(client, {
+        tenantId: input.tenantId,
+        actor: input.actor,
+        edgeBox,
+        token: provisioningToken,
+        reason: 'provisioning',
+        metadata: {
+            sync_endpoint: EDGE_SYNC_ENDPOINT,
+            issued_from: 'edge_box_registration',
+        },
+    }).catch((credentialError) => {
+        if (isMissingEdgeCredentialTableError(credentialError)) {
+            return null;
+        }
+        throw credentialError;
+    });
     await recordEdgeControlAction(client, {
         tenantId: input.tenantId,
         actor: input.actor,
@@ -247,9 +314,122 @@ export async function createEdgeBox(
 
     return {
         edge_box: edgeBox,
+        device_credential: deviceCredential,
         provisioning_token: provisioningToken,
         sync_endpoint: EDGE_SYNC_ENDPOINT,
     };
+}
+
+export async function rotateEdgeBoxDeviceCredential(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        actor: string | null;
+        edgeBoxId: string;
+        reason?: EdgeDeviceCredentialIssueReason;
+    },
+): Promise<EdgeBoxCredentialIssueResult> {
+    const edgeBox = await requireEdgeBoxForTenant(client, input.tenantId, input.edgeBoxId);
+    const provisioningToken = generateProvisioningToken();
+    const deviceCredential = await issueEdgeDeviceCredential(client, {
+        tenantId: input.tenantId,
+        actor: input.actor,
+        edgeBox,
+        token: provisioningToken,
+        reason: input.reason ?? 'rotation',
+        metadata: {
+            sync_endpoint: EDGE_SYNC_ENDPOINT,
+            issued_from: 'control_plane_rotation',
+        },
+    });
+    const C = EDGE_BOXES.COLUMNS;
+    const { data, error } = await client
+        .from(EDGE_BOXES.TABLE)
+        .update({
+            [C.metadata]: {
+                ...edgeBox.metadata,
+                [EDGE_AUTH_TOKEN_METADATA_KEY]: hashEdgeToken(provisioningToken),
+                provisioning_token_rotated_at: new Date().toISOString(),
+                sync_endpoint: EDGE_SYNC_ENDPOINT,
+                device_auth_hardened: true,
+                active_device_credential_id: deviceCredential.id,
+            },
+        })
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.id, edgeBox.id)
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to rotate edge box credential metadata: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    const updatedEdgeBox = mapEdgeBox(asRecord(data));
+    await recordEdgeControlAction(client, {
+        tenantId: input.tenantId,
+        actor: input.actor,
+        actionType: 'edge_device_credential_rotated',
+        targetType: 'edge_box_device_credential',
+        targetId: deviceCredential.id,
+        metadata: {
+            edge_box_id: edgeBox.id,
+            key_prefix: deviceCredential.key_prefix,
+            expires_at: deviceCredential.expires_at,
+        },
+    });
+
+    return {
+        edge_box: updatedEdgeBox,
+        device_credential: deviceCredential,
+        provisioning_token: provisioningToken,
+        sync_endpoint: EDGE_SYNC_ENDPOINT,
+    };
+}
+
+export async function revokeEdgeBoxDeviceCredential(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        actor: string | null;
+        credentialId: string;
+    },
+): Promise<EdgeBoxDeviceCredentialRecord> {
+    const existing = await requireEdgeDeviceCredentialForTenant(client, input.tenantId, input.credentialId);
+    const C = EDGE_BOX_DEVICE_CREDENTIALS.COLUMNS;
+    const now = new Date().toISOString();
+    const { data, error } = await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .update({
+            [C.status]: 'revoked',
+            [C.revoked_by]: input.actor,
+            [C.revoked_at]: now,
+            [C.metadata]: {
+                ...existing.metadata,
+                revoked_from: 'control_plane',
+            },
+        })
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.id, existing.id)
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to revoke edge box credential: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    const credential = mapEdgeDeviceCredential(asRecord(data));
+    await recordEdgeControlAction(client, {
+        tenantId: input.tenantId,
+        actor: input.actor,
+        actionType: 'edge_device_credential_revoked',
+        targetType: 'edge_box_device_credential',
+        targetId: credential.id,
+        metadata: {
+            edge_box_id: credential.edge_box_id,
+            key_prefix: credential.key_prefix,
+        },
+    });
+    return credential;
 }
 
 export async function queueEdgeSyncJob(
@@ -427,6 +607,7 @@ export async function authenticateEdgeBox(
     input: {
         edgeBoxId: string;
         token: string;
+        action?: EdgeDeviceCredentialAction;
     },
 ): Promise<EdgeBoxRecord> {
     const C = EDGE_BOXES.COLUMNS;
@@ -444,6 +625,38 @@ export async function authenticateEdgeBox(
     }
 
     const row = asRecord(data);
+    const tokenHash = hashEdgeToken(input.token);
+    let credentialLedgerAvailable = true;
+    const credential = await findActiveEdgeDeviceCredential(client, {
+        edgeBoxId: String(row.id),
+        tokenHash,
+    }).catch((credentialError) => {
+        if (isMissingEdgeCredentialTableError(credentialError)) {
+            credentialLedgerAvailable = false;
+            return null;
+        }
+        throw credentialError;
+    });
+    if (credential) {
+        if (credential.expires_at && new Date(credential.expires_at).getTime() <= Date.now()) {
+            await expireEdgeDeviceCredential(client, credential).catch(() => undefined);
+            throw unauthorizedEdgeBoxError();
+        }
+        await markEdgeDeviceCredentialUsed(client, credential, input.action ?? 'sync_request').catch(() => undefined);
+        return mapEdgeBox(row);
+    }
+    if (credentialLedgerAvailable) {
+        const hasCredentialLedger = await edgeBoxHasCredentialLedger(client, String(row.id)).catch((ledgerError) => {
+            if (isMissingEdgeCredentialTableError(ledgerError)) {
+                return false;
+            }
+            throw ledgerError;
+        });
+        if (hasCredentialLedger) {
+            throw unauthorizedEdgeBoxError();
+        }
+    }
+
     const metadata = asRecord(row.metadata);
     const expectedHash = readString(metadata[EDGE_AUTH_TOKEN_METADATA_KEY]);
     if (!expectedHash || !compareEdgeTokenHash(input.token, expectedHash)) {
@@ -462,7 +675,11 @@ export async function pullEdgeSyncWork(
         limit?: number;
     },
 ): Promise<EdgeSyncPullResult> {
-    const edgeBox = await authenticateEdgeBox(client, input);
+    const edgeBox = await authenticateEdgeBox(client, {
+        edgeBoxId: input.edgeBoxId,
+        token: input.token,
+        action: 'pull_jobs',
+    });
     const heartbeat = await updateEdgeHeartbeat(client, {
         tenantId: edgeBox.tenant_id,
         edgeBoxId: edgeBox.id,
@@ -538,7 +755,11 @@ export async function acknowledgeEdgeSyncJob(
         syncedArtifactIds?: string[];
     },
 ): Promise<EdgeSyncAckResult> {
-    const edgeBox = await authenticateEdgeBox(client, input);
+    const edgeBox = await authenticateEdgeBox(client, {
+        edgeBoxId: input.edgeBoxId,
+        token: input.token,
+        action: 'ack_job',
+    });
     const C = EDGE_SYNC_JOBS.COLUMNS;
     const now = new Date().toISOString();
     const { data, error } = await client
@@ -620,6 +841,27 @@ async function listEdgeBoxes(
     return (data ?? []).map((row) => mapEdgeBox(asRecord(row)));
 }
 
+async function listEdgeDeviceCredentials(
+    client: SupabaseClient,
+    tenantId: string,
+    limit: number,
+): Promise<EdgeBoxDeviceCredentialRecord[]> {
+    const C = EDGE_BOX_DEVICE_CREDENTIALS.COLUMNS;
+    const { data, error } = await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .order(C.updated_at, { ascending: false })
+        .limit(limit * 2);
+
+    if (error) {
+        if (isMissingEdgeCredentialTableError(error)) return [];
+        throw new Error(`Failed to list edge box device credentials: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapEdgeDeviceCredential(asRecord(row)));
+}
+
 async function listEdgeSyncJobs(
     client: SupabaseClient,
     tenantId: string,
@@ -673,6 +915,27 @@ function mapEdgeBox(row: Record<string, unknown>): EdgeBoxRecord {
         last_sync_at: readString(row.last_sync_at),
         metadata: sanitizeEdgeBoxMetadata(asRecord(row.metadata)),
         created_by: readString(row.created_by),
+        created_at: String(row.created_at),
+        updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapEdgeDeviceCredential(row: Record<string, unknown>): EdgeBoxDeviceCredentialRecord {
+    return {
+        id: String(row.id),
+        tenant_id: readString(row.tenant_id) ?? 'unknown_tenant',
+        edge_box_id: readString(row.edge_box_id) ?? 'unknown_edge_box',
+        key_prefix: readString(row.key_prefix) ?? 'unknown_prefix',
+        status: normalizeEdgeDeviceCredentialStatus(row.status),
+        issued_reason: normalizeEdgeDeviceCredentialIssueReason(row.issued_reason),
+        scopes: readStringArray(row.scopes),
+        expires_at: readString(row.expires_at),
+        last_used_at: readString(row.last_used_at),
+        last_used_action: readString(row.last_used_action),
+        metadata: asRecord(row.metadata),
+        created_by: readString(row.created_by),
+        revoked_by: readString(row.revoked_by),
+        revoked_at: readString(row.revoked_at),
         created_at: String(row.created_at),
         updated_at: String(row.updated_at ?? row.created_at),
     };
@@ -735,6 +998,159 @@ async function requireEdgeBoxForTenant(
     }
 
     return mapEdgeBox(asRecord(data));
+}
+
+async function requireEdgeDeviceCredentialForTenant(
+    client: SupabaseClient,
+    tenantId: string,
+    credentialId: string,
+): Promise<EdgeBoxDeviceCredentialRecord> {
+    const C = EDGE_BOX_DEVICE_CREDENTIALS.COLUMNS;
+    const { data, error } = await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .eq(C.id, requireText(credentialId, 'credential_id'))
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to load edge box credential: ${error.message}`);
+    }
+    if (!data) {
+        throw new Error('Edge box credential not found for this tenant.');
+    }
+
+    return mapEdgeDeviceCredential(asRecord(data));
+}
+
+async function issueEdgeDeviceCredential(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        actor: string | null;
+        edgeBox: EdgeBoxRecord;
+        token: string;
+        reason: EdgeDeviceCredentialIssueReason;
+        metadata?: Record<string, unknown>;
+    },
+): Promise<EdgeBoxDeviceCredentialRecord> {
+    const C = EDGE_BOX_DEVICE_CREDENTIALS.COLUMNS;
+    const now = new Date().toISOString();
+    const tokenHash = hashEdgeToken(input.token);
+    const keyPrefix = extractEdgeTokenPrefix(input.token);
+
+    const { error: rotateError } = await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .update({
+            [C.status]: 'rotated',
+            [C.revoked_by]: input.actor,
+            [C.revoked_at]: now,
+        })
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.edge_box_id, input.edgeBox.id)
+        .eq(C.status, 'active');
+
+    if (rotateError && !isMissingEdgeCredentialTableError(rotateError)) {
+        throw new Error(`Failed to rotate existing edge credentials: ${rotateError.message}`);
+    }
+    if (rotateError && isMissingEdgeCredentialTableError(rotateError)) {
+        throw rotateError;
+    }
+
+    const { data, error } = await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .insert({
+            [C.tenant_id]: input.tenantId,
+            [C.edge_box_id]: input.edgeBox.id,
+            [C.key_prefix]: keyPrefix,
+            [C.token_hash]: tokenHash,
+            [C.status]: 'active',
+            [C.issued_reason]: input.reason,
+            [C.scopes]: ['edge:heartbeat', 'edge:sync:pull', 'edge:sync:ack'],
+            [C.expires_at]: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+            [C.metadata]: {
+                ...(input.metadata ?? {}),
+                node_name: input.edgeBox.node_name,
+                site_label: input.edgeBox.site_label,
+            },
+            [C.created_by]: input.actor,
+        })
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to issue edge box credential: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    return mapEdgeDeviceCredential(asRecord(data));
+}
+
+async function findActiveEdgeDeviceCredential(
+    client: SupabaseClient,
+    input: {
+        edgeBoxId: string;
+        tokenHash: string;
+    },
+): Promise<EdgeBoxDeviceCredentialRecord | null> {
+    const C = EDGE_BOX_DEVICE_CREDENTIALS.COLUMNS;
+    const { data, error } = await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .select('*')
+        .eq(C.edge_box_id, input.edgeBoxId)
+        .eq(C.token_hash, input.tokenHash)
+        .eq(C.status, 'active')
+        .maybeSingle();
+
+    if (error) {
+        throw error;
+    }
+    return data ? mapEdgeDeviceCredential(asRecord(data)) : null;
+}
+
+async function edgeBoxHasCredentialLedger(client: SupabaseClient, edgeBoxId: string): Promise<boolean> {
+    const C = EDGE_BOX_DEVICE_CREDENTIALS.COLUMNS;
+    const { data, error } = await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .select(C.id)
+        .eq(C.edge_box_id, edgeBoxId)
+        .limit(1);
+
+    if (error) {
+        throw error;
+    }
+    return (data ?? []).length > 0;
+}
+
+async function markEdgeDeviceCredentialUsed(
+    client: SupabaseClient,
+    credential: EdgeBoxDeviceCredentialRecord,
+    action: EdgeDeviceCredentialAction,
+): Promise<void> {
+    const C = EDGE_BOX_DEVICE_CREDENTIALS.COLUMNS;
+    await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .update({
+            [C.last_used_at]: new Date().toISOString(),
+            [C.last_used_action]: action,
+        })
+        .eq(C.id, credential.id);
+}
+
+async function expireEdgeDeviceCredential(
+    client: SupabaseClient,
+    credential: EdgeBoxDeviceCredentialRecord,
+): Promise<void> {
+    const C = EDGE_BOX_DEVICE_CREDENTIALS.COLUMNS;
+    await client
+        .from(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        .update({
+            [C.status]: 'expired',
+            [C.metadata]: {
+                ...credential.metadata,
+                expired_at: new Date().toISOString(),
+            },
+        })
+        .eq(C.id, credential.id);
 }
 
 async function enqueueEdgeSyncOutboxEvent(
@@ -803,11 +1219,21 @@ function buildEdgeSyncPayload(payload: Record<string, unknown>, edgeBox: EdgeBox
 }
 
 function generateProvisioningToken(): string {
-    return `vetios_edge_${randomBytes(24).toString('base64url')}`;
+    const keyPrefix = randomBytes(5).toString('hex');
+    return `vetios_edge_${keyPrefix}_${randomBytes(32).toString('base64url')}`;
 }
 
 function hashEdgeToken(token: string): string {
     return createHash('sha256').update(requireText(token, 'edge_token')).digest('hex');
+}
+
+function extractEdgeTokenPrefix(token: string): string {
+    const normalized = requireText(token, 'edge_token');
+    const parts = normalized.split('_');
+    if (parts.length >= 4 && parts[0] === 'vetios' && parts[1] === 'edge') {
+        return parts[2].slice(0, 32);
+    }
+    return createHash('sha256').update(normalized).digest('hex').slice(0, 10);
 }
 
 function compareEdgeTokenHash(token: string, expectedHash: string): boolean {
@@ -849,6 +1275,18 @@ function normalizeEdgeArtifactType(value: string): EdgeArtifactType {
     throw new Error('Invalid edge artifact_type.');
 }
 
+function normalizeEdgeDeviceCredentialStatus(value: unknown): EdgeDeviceCredentialStatus {
+    return value === 'active' || value === 'rotated' || value === 'revoked' || value === 'expired'
+        ? value
+        : 'active';
+}
+
+function normalizeEdgeDeviceCredentialIssueReason(value: unknown): EdgeDeviceCredentialIssueReason {
+    return value === 'provisioning' || value === 'rotation' || value === 'recovery'
+        ? value
+        : 'provisioning';
+}
+
 function normalizeContentHash(value: string): string {
     const normalized = requireText(value, 'content_hash').replace(/^sha256:/i, '').toLowerCase();
     if (!/^[a-f0-9]{64}$/.test(normalized)) {
@@ -872,8 +1310,24 @@ function readString(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+function readStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function isMissingEdgeCredentialTableError(error: unknown): boolean {
+    const message = error instanceof Error
+        ? error.message
+        : typeof error === 'object' && error !== null && 'message' in error
+            ? String((error as { message?: unknown }).message ?? '')
+            : String(error ?? '');
+    return message.includes(EDGE_BOX_DEVICE_CREDENTIALS.TABLE)
+        || message.includes('Could not find the table')
+        || message.includes('schema cache');
 }

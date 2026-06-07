@@ -131,8 +131,8 @@ export const platformLayers: PlatformLayerDefinition[] = [
             },
             {
                 label: 'Edge Box (offline)',
-                status: 'partial',
-                summary: 'Edge boxes now have a registry, sync jobs, and staged artifacts, though full field deployment and device auth still need hardening.',
+                status: 'implemented',
+                summary: 'Edge boxes now have registry, sync jobs, staged artifacts, hashed device credentials, rotation, revocation, expiry, and sync-auth last-use telemetry.',
                 href: '/platform/edge-box',
             },
         ],

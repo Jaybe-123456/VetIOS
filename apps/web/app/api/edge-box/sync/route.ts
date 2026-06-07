@@ -55,7 +55,7 @@ export async function POST(req: Request) {
     const client = getSupabaseServer();
     try {
         if (parsed.data.action === 'heartbeat') {
-            const edgeBox = await authenticateEdgeBox(client, { edgeBoxId, token });
+            const edgeBox = await authenticateEdgeBox(client, { edgeBoxId, token, action: 'heartbeat' });
             const next = await updateEdgeHeartbeat(client, {
                 tenantId: edgeBox.tenant_id,
                 edgeBoxId: edgeBox.id,

@@ -6,6 +6,8 @@ import {
     getEdgeBoxControlPlaneSnapshot,
     queueEdgeSyncJob,
     registerEdgeArtifact,
+    revokeEdgeBoxDeviceCredential,
+    rotateEdgeBoxDeviceCredential,
     updateEdgeHeartbeat,
 } from '@/lib/edgeBox/service';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -46,6 +48,14 @@ type EdgeBoxAction =
         edge_box_id?: string;
         status?: 'provisioning' | 'online' | 'degraded' | 'offline' | 'retired';
         software_version?: string | null;
+    }
+    | {
+        action: 'rotate_device_credential';
+        edge_box_id?: string;
+    }
+    | {
+        action: 'revoke_device_credential';
+        credential_id?: string;
     };
 
 export async function GET(req: Request) {
@@ -143,6 +153,19 @@ export async function POST(req: Request) {
                 status: parsed.data.status ?? 'online',
                 softwareVersion: parsed.data.software_version ?? null,
                 actor: context.userId,
+            });
+        } else if (parsed.data.action === 'rotate_device_credential') {
+            result = await rotateEdgeBoxDeviceCredential(client, {
+                tenantId: context.tenantId,
+                actor: context.userId,
+                edgeBoxId: parsed.data.edge_box_id ?? '',
+                reason: 'rotation',
+            }) as unknown as Record<string, unknown>;
+        } else if (parsed.data.action === 'revoke_device_credential') {
+            result.device_credential = await revokeEdgeBoxDeviceCredential(client, {
+                tenantId: context.tenantId,
+                actor: context.userId,
+                credentialId: parsed.data.credential_id ?? '',
             });
         } else {
             return NextResponse.json({ error: 'Unsupported edge-box action.', request_id: requestId }, { status: 400 });

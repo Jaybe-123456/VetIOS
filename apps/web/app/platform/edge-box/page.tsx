@@ -18,7 +18,7 @@ export default async function EdgeBoxPage() {
         <PlatformShell
             badge="EDGE BOX"
             title="Offline clinics still stay on the network."
-            description="Edge Box extends VetIOS beyond always-online clinics with node registration, staged artifacts, and queued cloud-edge synchronization."
+            description="Edge Box extends VetIOS beyond always-online clinics with node registration, hardened device credentials, staged artifacts, and queued cloud-edge synchronization."
             actions={(
                 <Link
                     href="/api/public/edge-box"
@@ -29,9 +29,11 @@ export default async function EdgeBoxPage() {
                 </Link>
             )}
         >
-            <div className="grid gap-4 md:grid-cols-4">
+            <div className="grid gap-4 md:grid-cols-6">
                 <StatCard label="Online nodes" value={String(snapshot.summary.online_nodes)} />
                 <StatCard label="Degraded nodes" value={String(snapshot.summary.degraded_nodes)} />
+                <StatCard label="Active keys" value={String(snapshot.summary.active_device_credentials)} />
+                <StatCard label="Expiring keys" value={String(snapshot.summary.expiring_device_credentials)} />
                 <StatCard label="Queued jobs" value={String(snapshot.summary.queued_jobs)} />
                 <StatCard label="Staged artifacts" value={String(snapshot.summary.staged_artifacts)} />
             </div>

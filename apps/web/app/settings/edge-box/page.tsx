@@ -44,11 +44,15 @@ function createEmptySnapshot(): EdgeBoxControlPlaneSnapshot {
     return {
         tenant_id: 'dev_tenant_001',
         edge_boxes: [],
+        device_credentials: [],
         sync_jobs: [],
         sync_artifacts: [],
         summary: {
             online_nodes: 0,
             degraded_nodes: 0,
+            active_device_credentials: 0,
+            expiring_device_credentials: 0,
+            revoked_device_credentials: 0,
             queued_jobs: 0,
             failed_jobs: 0,
             staged_artifacts: 0,
