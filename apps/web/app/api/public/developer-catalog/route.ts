@@ -4,6 +4,7 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { safeJson } from '@/lib/http/safeJson';
 import { requirePublicPlatformDetailAccess } from '@/lib/platform/publicAccess';
 import { resolvePublicCatalogTenant } from '@/lib/platform/publicTenant';
+import { getDeveloperContractSummary } from '@/lib/platform/developerContract';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
@@ -23,8 +24,12 @@ export async function GET(req: Request) {
     if (blocked) return blocked;
 
     const snapshot = await getPublicDeveloperPlatformSnapshot();
+    const url = new URL(req.url);
+    const baseUrl = `${url.protocol}//${url.host}`;
+
     return NextResponse.json({
         generated_at: new Date().toISOString(),
+        contract: getDeveloperContractSummary(baseUrl),
         endpoints: snapshot.endpoints,
         api_products: snapshot.api_products,
         snapshot,

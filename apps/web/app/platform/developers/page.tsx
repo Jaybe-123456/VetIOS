@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ArrowRight, Braces, Code2 } from 'lucide-react';
+import { ArrowRight, Braces, Code2, FileJson } from 'lucide-react';
 import { PlatformShell } from '@/components/platform/PlatformShell';
 import { PublicDeveloperOnboardingForm } from '@/components/platform/PublicDeveloperOnboardingForm';
 import { getPublicDeveloperPlatformSnapshot } from '@/lib/developerPlatform/service';
+import { getDeveloperContractSummary } from '@/lib/platform/developerContract';
 
 export const metadata: Metadata = {
     title: 'Developers',
@@ -14,17 +15,25 @@ export const dynamic = 'force-dynamic';
 
 export default async function DevelopersPage() {
     const snapshot = await getPublicDeveloperPlatformSnapshot();
+    const contract = getDeveloperContractSummary();
 
     return (
         <PlatformShell
             badge="DEVELOPER API"
             title="A partner platform, not just an internal endpoint list."
-            description="The core VetIOS APIs already exist. This surface now adds published API products and self-serve onboarding intake so partner integration can move from internal-only to productized."
+            description="The core VetIOS APIs now have published products, self-serve onboarding intake, quota-metered partner credentials, lifecycle analytics, and a versioned external contract."
             actions={(
                 <>
                     <Link
-                        href="/api/public/developer-catalog"
+                        href="/api/public/developer-contract"
                         className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+                    >
+                        JSON contract
+                        <FileJson className="h-4 w-4" />
+                    </Link>
+                    <Link
+                        href="/api/public/developer-catalog"
+                        className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white transition hover:border-white/30 hover:bg-white/10"
                     >
                         JSON catalog
                         <Braces className="h-4 w-4" />
@@ -41,8 +50,8 @@ export default async function DevelopersPage() {
         >
             <div className="grid gap-4 md:grid-cols-3">
                 <SummaryCard label="Documented endpoints" value={String(snapshot.endpoints.length)} />
+                <SummaryCard label="Contract version" value={contract.version} />
                 <SummaryCard label="Published products" value={String(snapshot.summary.published_products)} />
-                <SummaryCard label="Active partners" value={String(snapshot.summary.active_partners)} />
             </div>
 
             {!snapshot.configured ? (
@@ -138,8 +147,31 @@ export default async function DevelopersPage() {
                 </div>
 
                 <div className="space-y-6">
+                    <div className="rounded-[24px] border border-emerald-400/20 bg-emerald-400/10 p-6">
+                        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-200">Versioned contract</div>
+                        <p className="mt-3 text-sm leading-7 text-emerald-50/85">
+                            Partner integrations can now pin against the VetIOS {contract.version} contract, inspect quota headers, and validate API-key scopes before writing production traffic.
+                        </p>
+                        <div className="mt-5 grid gap-3 text-sm">
+                            <Link
+                                href="/api/public/developer-contract"
+                                className="inline-flex items-center justify-between rounded-2xl border border-emerald-300/20 bg-black/20 px-4 py-3 text-emerald-50 transition hover:border-emerald-200/40 hover:bg-black/30"
+                            >
+                                JSON developer contract
+                                <FileJson className="h-4 w-4" />
+                            </Link>
+                            <Link
+                                href="/api-spec/openapi-v1.yaml"
+                                className="inline-flex items-center justify-between rounded-2xl border border-emerald-300/20 bg-black/20 px-4 py-3 text-emerald-50 transition hover:border-emerald-200/40 hover:bg-black/30"
+                            >
+                                OpenAPI YAML
+                                <Braces className="h-4 w-4" />
+                            </Link>
+                        </div>
+                    </div>
                     <PublicDeveloperOnboardingForm />
                     <SummaryCard label="Open requests" value={String(snapshot.summary.pending_requests)} />
+                    <SummaryCard label="Active partners" value={String(snapshot.summary.active_partners)} />
                     <SummaryCard label="Tenant source" value={snapshot.tenant_id ?? 'NOT CONFIGURED'} />
                 </div>
             </section>
