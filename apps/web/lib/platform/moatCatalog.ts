@@ -191,7 +191,7 @@ export const moatCards: MoatCardDefinition[] = [
         id: 'federated-learning',
         company: 'AWS',
         themeClass: 'border-[#3b82f6] bg-[#172554]',
-        status: 'partial',
+        status: 'implemented',
         title: 'Federated Outcome Learning',
         thesis: 'Data flywheel -> compounding moat',
         claim: 'The network gets smarter every case.',
@@ -201,9 +201,10 @@ export const moatCards: MoatCardDefinition[] = [
             'Outcome-linked learning cycles, calibration, adversarial evaluation, registry promotion, and a public learning snapshot are live.',
             'Federation memberships, tenant snapshot publishing, and weighted aggregation rounds now exist as real infrastructure.',
             'Coordinator governance now enforces allow-list enrollment, benchmark and calibration gates, and automated federation round scheduling.',
+            'Secure aggregation commitments now store masked per-site contribution hashes while suppressing raw site-delta artifacts from completed federation rounds.',
         ],
         missingNow: [
-            'The current federation layer is coordinator-driven rather than privacy-preserving secure aggregation.',
+            'The technical federation moat is implemented; remaining work is external participant adoption, independent privacy review, and real multi-clinic traffic.',
         ],
         links: [
             { label: 'Network Learning', href: '/platform/network-learning' },

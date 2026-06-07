@@ -114,10 +114,12 @@ interface FederationActionResponse {
     return (
         <Container className="max-w-[1600px]">
             <PageHeader title="FEDERATION CONTROL" description="Cross-clinic memberships, governance, scheduler automation, and weighted aggregation rounds for the federated outcome-learning moat." />
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-6">
                 <SummaryCard icon={<Network className="h-4 w-4" />} label="Federations" value={snapshot.summary.active_federations} />
                 <SummaryCard icon={<Users className="h-4 w-4" />} label="Participants" value={snapshot.summary.visible_participants} />
                 <SummaryCard icon={<BrainCircuit className="h-4 w-4" />} label="Completed Rounds" value={snapshot.summary.completed_rounds} />
+                <SummaryCard icon={<ShieldCheck className="h-4 w-4" />} label="Secure Rounds" value={snapshot.summary.secure_rounds} />
+                <SummaryCard icon={<ShieldCheck className="h-4 w-4" />} label="Masked Commits" value={snapshot.summary.secure_contributions} />
                 <SummaryCard icon={<ShieldCheck className="h-4 w-4" />} label="Stale Snapshots" value={snapshot.summary.stale_snapshots} tone={snapshot.summary.stale_snapshots > 0 ? 'warning' : 'neutral'} />
             </div>
 
@@ -263,8 +265,11 @@ interface FederationActionResponse {
                     <DataRow label="Calibration gate" value={formatPercentThreshold(governanceState.policy.maximum_calibration_avg_ece)} tone={governanceState.policy.maximum_calibration_avg_ece == null ? 'muted' : 'accent'} />
                     <DataRow label="Shadow participants" value={governanceState.policy.allow_shadow_participants ? 'ALLOWED' : 'BLOCKED'} tone={governanceState.policy.allow_shadow_participants ? 'accent' : 'muted'} />
                     <DataRow label="Privacy status" value={formatPrivacyStatus(latestPrivacyManifest.status)} tone={latestPrivacyManifest.status === 'privacy_ready' ? 'accent' : 'warning'} />
+                    <DataRow label="Secure aggregation" value={formatPrivacyStatus(latestPrivacyManifest.secureStatus)} tone={latestPrivacyManifest.secureStatus === 'secure_aggregation_ready' ? 'accent' : 'warning'} />
+                    <DataRow label="Masked commitments" value={latestPrivacyManifest.secureContributionCount == null ? 'NO DATA' : String(latestPrivacyManifest.secureContributionCount)} tone={latestPrivacyManifest.secureContributionCount != null && latestPrivacyManifest.secureContributionCount > 0 ? 'accent' : 'warning'} />
                     <DataRow label="Privacy participants" value={formatPrivacyParticipants(latestPrivacyManifest)} />
                     <DataRow label="Raw tenant IDs" value={formatRawTenantIdStatus(latestPrivacyManifest.rawTenantIdsInAggregate)} tone={latestPrivacyManifest.rawTenantIdsInAggregate === false ? 'accent' : 'warning'} />
+                    <DataRow label="Raw site deltas" value={formatRawTenantIdStatus(latestPrivacyManifest.rawSiteDeltasStored)} tone={latestPrivacyManifest.rawSiteDeltasStored === false ? 'accent' : 'warning'} />
                     {governanceState.automation.last_automation_error ? (
                         <div className="mt-4 border border-danger/30 bg-danger/10 px-4 py-3 font-mono text-xs text-danger">
                             {governanceState.automation.last_automation_error}
@@ -291,6 +296,10 @@ interface FederationActionResponse {
 
             <div className="mt-6">
                 <ConsoleCard title="Recent Model Delta Artifacts">{snapshot.recent_artifacts.length === 0 ? <EmptyState text="No model delta artifacts have been stored yet." /> : <div className="space-y-4">{snapshot.recent_artifacts.slice(0, 12).map((artifact) => <ArtifactRow key={artifact.id} artifact={artifact} />)}</div>}</ConsoleCard>
+            </div>
+
+            <div className="mt-6">
+                <ConsoleCard title="Secure Aggregation Commitments">{snapshot.recent_secure_contributions.length === 0 ? <EmptyState text="No masked secure aggregation commitments have been stored yet." /> : <div className="space-y-4">{snapshot.recent_secure_contributions.slice(0, 16).map((contribution) => <SecureContributionRow key={contribution.id} contribution={contribution} />)}</div>}</ConsoleCard>
             </div>
         </Container>
     );
@@ -349,7 +358,7 @@ function SnapshotRow({ snapshot }: { snapshot: FederationControlPlaneSnapshot['r
                 <div className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
                 <div className="font-mono text-sm text-white font-medium">{snapshot.federation_key}</div>
             </div>
-            <div className="font-mono text-[10px] text-white/45 mb-3 break-all">{snapshot.tenant_id} · dataset {snapshot.dataset_version ?? 'NO DATA'}</div>
+            <div className="font-mono text-[10px] text-white/45 mb-3 break-all">{snapshot.tenant_id} - dataset {snapshot.dataset_version ?? 'NO DATA'}</div>
             <div className="grid gap-0 md:grid-cols-2">
                 <DataRow label="Rows" value={snapshot.total_dataset_rows.toLocaleString('en-US')} />
                 <DataRow label="Benchmarks" value={String(snapshot.benchmark_reports)} />
@@ -379,8 +388,11 @@ function RoundRow({ round }: { round: FederationRoundRecord }) {
                 <DataRow label="Completed" value={formatTimestamp(round.completed_at)} />
                 <DataRow label="Benchmark Pass Rate" value={formatPercent(round.aggregate_payload.benchmark_pass_rate)} />
                 <DataRow label="Privacy Status" value={formatPrivacyStatus(privacyManifest.status)} tone={privacyManifest.status === 'privacy_ready' ? 'accent' : 'warning'} />
+                <DataRow label="Secure Aggregation" value={formatPrivacyStatus(privacyManifest.secureStatus)} tone={privacyManifest.secureStatus === 'secure_aggregation_ready' ? 'accent' : 'warning'} />
+                <DataRow label="Masked Commitments" value={privacyManifest.secureContributionCount == null ? 'NO DATA' : String(privacyManifest.secureContributionCount)} />
                 <DataRow label="Privacy Participants" value={formatPrivacyParticipants(privacyManifest)} />
                 <DataRow label="Raw Tenant IDs" value={formatRawTenantIdStatus(privacyManifest.rawTenantIdsInAggregate)} tone={privacyManifest.rawTenantIdsInAggregate === false ? 'accent' : 'warning'} />
+                <DataRow label="Raw Site Deltas" value={formatRawTenantIdStatus(privacyManifest.rawSiteDeltasStored)} tone={privacyManifest.rawSiteDeltasStored === false ? 'accent' : 'warning'} />
             </div>
             {round.notes ? <div className="mt-3 font-mono text-xs text-white/45">{round.notes}</div> : null}
         </div>
@@ -400,6 +412,24 @@ function ArtifactRow({ artifact }: { artifact: ModelDeltaArtifactRecord }) {
                 <DataRow label="Tenant" value={artifact.tenant_id ?? 'aggregate'} />
                 <DataRow label="Dataset" value={artifact.dataset_version ?? 'NO DATA'} />
                 <DataRow label="Created" value={formatTimestamp(artifact.created_at)} />
+            </div>
+        </div>
+    );
+}
+
+function SecureContributionRow({ contribution }: { contribution: FederationControlPlaneSnapshot['recent_secure_contributions'][number] }) {
+    return (
+        <div className="border border-accent/20 bg-accent/[0.03] p-4 rounded-sm">
+            <div className="flex items-center gap-2 mb-2">
+                <div className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                <div className="font-mono text-sm text-white font-medium">{contribution.contribution_role} / {contribution.masking_protocol}</div>
+            </div>
+            <div className="font-mono text-[10px] text-white/45 mb-3 break-all">{contribution.participant_ref}</div>
+            <div className="grid gap-0 md:grid-cols-2">
+                <DataRow label="Round" value={contribution.federation_round_id} />
+                <DataRow label="Payload commit" value={<span className="break-all">{contribution.payload_commitment_hash.slice(0, 24)}</span>} />
+                <DataRow label="Mask commit" value={<span className="break-all">{contribution.mask_commitment_hash.slice(0, 24)}</span>} />
+                <DataRow label="Accepted" value={formatTimestamp(contribution.accepted_at)} />
             </div>
         </div>
     );
@@ -436,14 +466,22 @@ function parseTenantIds(value: string): string[] {
 
 function readPrivacyManifest(round: FederationRoundRecord | null) {
     const manifest = asRecord(round?.aggregate_payload.privacy_manifest);
+    const secureAggregation = asRecord(round?.aggregate_payload.secure_aggregation);
     return {
         status: asString(manifest.status),
         mode: asString(manifest.mode),
         participantCount: asNumber(manifest.participant_count),
         minimumParticipants: asNumber(manifest.minimum_privacy_participants),
+        secureStatus: asString(secureAggregation.status) ?? asString(manifest.secure_aggregation_status),
+        secureContributionCount: asNumber(secureAggregation.contribution_count) ?? asNumber(manifest.secure_contribution_count),
         rawTenantIdsInAggregate: typeof manifest.raw_tenant_ids_in_aggregate === 'boolean'
             ? manifest.raw_tenant_ids_in_aggregate
             : null,
+        rawSiteDeltasStored: typeof secureAggregation.raw_site_delta_artifacts_stored === 'boolean'
+            ? secureAggregation.raw_site_delta_artifacts_stored
+            : typeof manifest.raw_site_delta_artifacts_stored === 'boolean'
+                ? manifest.raw_site_delta_artifacts_stored
+                : null,
     };
 }
 

@@ -18,7 +18,7 @@ export default async function NetworkLearningPage() {
         <PlatformShell
             badge="NETWORK LEARNING"
             title="Show the flywheel, not just the slogan."
-            description="This surface exposes the learning-loop evidence behind VetIOS: dataset versions, benchmark reports, calibration reports, audit activity, and now the first live federation layer for participating clinics."
+            description="This surface exposes the learning-loop evidence behind VetIOS: dataset versions, benchmark reports, calibration reports, audit activity, secure aggregation commitments, and the live federation layer for participating clinics."
             actions={(
                 <>
                     <Link
@@ -83,7 +83,7 @@ export default async function NetworkLearningPage() {
                                     This page makes that loop inspectable outside the operator console.
                                 </p>
                                 <p>
-                                    The federation substrate now supports tenant memberships, coordinator governance, automated allow-list enrollment, scheduled rounds, and weighted aggregation. The next frontier is stronger privacy-preserving exchange.
+                                    The federation substrate now supports tenant memberships, coordinator governance, automated allow-list enrollment, scheduled rounds, weighted aggregation, and masked secure-aggregation commitments that suppress raw site-delta artifacts.
                                 </p>
                             </div>
                         </div>
@@ -102,8 +102,11 @@ export default async function NetworkLearningPage() {
                                 <MetricRow label="Severity candidate" value={snapshot.federation.severity_candidate_version ?? 'NO DATA'} />
                                 <MetricRow label="Privacy mode" value={snapshot.federation.privacy_mode?.toUpperCase() ?? 'NO DATA'} />
                                 <MetricRow label="Privacy status" value={snapshot.federation.privacy_status?.toUpperCase() ?? 'NO DATA'} />
+                                <MetricRow label="Secure aggregation" value={snapshot.federation.secure_aggregation_status?.toUpperCase() ?? 'NO DATA'} />
+                                <MetricRow label="Masked commitments" value={snapshot.federation.secure_contribution_count == null ? 'NO DATA' : String(snapshot.federation.secure_contribution_count)} />
                                 <MetricRow label="Privacy participants" value={formatPrivacyParticipants(snapshot.federation.privacy_participant_count, snapshot.federation.privacy_minimum_participants)} />
                                 <MetricRow label="Raw tenant IDs in aggregate" value={snapshot.federation.raw_tenant_ids_in_aggregate === false ? 'NO' : snapshot.federation.raw_tenant_ids_in_aggregate === true ? 'YES' : 'NO DATA'} />
+                                <MetricRow label="Raw site deltas stored" value={snapshot.federation.raw_site_delta_artifacts_stored === false ? 'NO' : snapshot.federation.raw_site_delta_artifacts_stored === true ? 'YES' : 'NO DATA'} />
                             </Panel>
 
                         <Panel title="What The Federation Means">
@@ -112,7 +115,7 @@ export default async function NetworkLearningPage() {
                                     Participating clinics can now publish site snapshots, enroll through coordinator governance, and run weighted federation rounds that aggregate champion artifact structure into a network candidate.
                                 </p>
                                 <p>
-                                    Automated round scheduling, allow-list enrollment, and benchmark-calibration gates are now live. This still does not replace deeper privacy-preserving secure aggregation, but it moves VetIOS from a tenant-only loop into a real federation control plane.
+                                    Automated round scheduling, allow-list enrollment, benchmark-calibration gates, and masked contribution commitments are now live. VetIOS can operate as a network learning plane without publishing raw site identifiers or raw per-site delta artifacts in the aggregate output.
                                 </p>
                             </div>
                         </Panel>
@@ -124,7 +127,7 @@ export default async function NetworkLearningPage() {
                                 <RowCard
                                     key={`${dataset.dataset_version}:${dataset.dataset_kind}:${dataset.created_at}`}
                                     title={dataset.dataset_version}
-                                    detail={`${dataset.dataset_kind} • ${dataset.row_count.toLocaleString('en-US')} rows`}
+                                    detail={`${dataset.dataset_kind} - ${dataset.row_count.toLocaleString('en-US')} rows`}
                                     meta={formatDateTime(dataset.created_at)}
                                 />
                             )) : <EmptyState text="No dataset versions published yet." />}
@@ -134,8 +137,8 @@ export default async function NetworkLearningPage() {
                             {snapshot.recent_benchmarks.length > 0 ? snapshot.recent_benchmarks.map((benchmark) => (
                                 <RowCard
                                     key={`${benchmark.benchmark_family}:${benchmark.task_type}:${benchmark.created_at}`}
-                                    title={`${benchmark.benchmark_family} • ${benchmark.pass_status}`}
-                                    detail={`${benchmark.task_type}${benchmark.summary_score == null ? '' : ` • score ${benchmark.summary_score.toFixed(2)}`}`}
+                                    title={`${benchmark.benchmark_family} - ${benchmark.pass_status}`}
+                                    detail={`${benchmark.task_type}${benchmark.summary_score == null ? '' : ` - score ${benchmark.summary_score.toFixed(2)}`}`}
                                     meta={formatDateTime(benchmark.created_at)}
                                 />
                             )) : <EmptyState text="No benchmark reports published yet." />}
@@ -146,7 +149,7 @@ export default async function NetworkLearningPage() {
                                 <RowCard
                                     key={`${calibration.task_type}:${calibration.created_at}`}
                                     title={calibration.task_type}
-                                    detail={`ECE ${formatPercent(calibration.ece_score)} • Brier ${formatPercent(calibration.brier_score)}`}
+                                    detail={`ECE ${formatPercent(calibration.ece_score)} - Brier ${formatPercent(calibration.brier_score)}`}
                                     meta={formatDateTime(calibration.created_at)}
                                 />
                             )) : <EmptyState text="No calibration reports published yet." />}

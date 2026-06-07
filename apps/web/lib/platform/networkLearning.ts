@@ -42,6 +42,9 @@ export interface PublicNetworkLearningSnapshot {
         privacy_status: string | null;
         privacy_minimum_participants: number | null;
         privacy_participant_count: number | null;
+        secure_aggregation_status: string | null;
+        secure_contribution_count: number | null;
+        raw_site_delta_artifacts_stored: boolean | null;
         raw_tenant_ids_in_aggregate: boolean | null;
     };
     recent_datasets: Array<{
@@ -113,6 +116,9 @@ export async function getPublicNetworkLearningSnapshot(): Promise<PublicNetworkL
                 privacy_status: null,
                 privacy_minimum_participants: null,
                 privacy_participant_count: null,
+                secure_aggregation_status: null,
+                secure_contribution_count: null,
+                raw_site_delta_artifacts_stored: null,
                 raw_tenant_ids_in_aggregate: null,
             },
             recent_datasets: [],

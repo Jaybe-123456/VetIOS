@@ -1403,6 +1403,26 @@ export const MODEL_DELTA_ARTIFACTS = {
     },
 } as const;
 
+export const FEDERATED_SECURE_AGGREGATION_CONTRIBUTIONS = {
+    TABLE: 'federated_secure_aggregation_contributions',
+    COLUMNS: {
+        id: 'id',
+        federation_round_id: 'federation_round_id',
+        federation_key: 'federation_key',
+        coordinator_tenant_id: 'coordinator_tenant_id',
+        tenant_id: 'tenant_id',
+        participant_ref: 'participant_ref',
+        contribution_role: 'contribution_role',
+        masking_protocol: 'masking_protocol',
+        payload_commitment_hash: 'payload_commitment_hash',
+        mask_commitment_hash: 'mask_commitment_hash',
+        masked_payload_summary: 'masked_payload_summary',
+        public_summary: 'public_summary',
+        accepted_at: 'accepted_at',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const OWNER_ACCOUNTS = {
     TABLE: 'owner_accounts',
     COLUMNS: {

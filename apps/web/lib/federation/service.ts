@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+    FEDERATED_SECURE_AGGREGATION_CONTRIBUTIONS,
     FEDERATED_SITE_SNAPSHOTS,
     FEDERATION_MEMBERSHIPS,
     FEDERATION_ROUNDS,
@@ -97,12 +98,32 @@ export interface ModelDeltaArtifactRecord {
     created_at: string;
 }
 
+export type SecureAggregationContributionRole = 'diagnosis' | 'severity' | 'support';
+
+export interface SecureAggregationContributionRecord {
+    id: string;
+    federation_round_id: string;
+    federation_key: string;
+    coordinator_tenant_id: string;
+    tenant_id: string;
+    participant_ref: string;
+    contribution_role: SecureAggregationContributionRole;
+    masking_protocol: string;
+    payload_commitment_hash: string;
+    mask_commitment_hash: string;
+    masked_payload_summary: Record<string, unknown>;
+    public_summary: Record<string, unknown>;
+    accepted_at: string;
+    created_at: string;
+}
+
 export interface FederationControlPlaneSnapshot {
     tenant_id: string;
     memberships: FederationMembershipRecord[];
     recent_site_snapshots: FederatedSiteSnapshotRecord[];
     recent_rounds: FederationRoundRecord[];
     recent_artifacts: ModelDeltaArtifactRecord[];
+    recent_secure_contributions: SecureAggregationContributionRecord[];
     summary: {
         active_memberships: number;
         coordinator_memberships: number;
@@ -110,6 +131,8 @@ export interface FederationControlPlaneSnapshot {
         visible_participants: number;
         stale_snapshots: number;
         completed_rounds: number;
+        secure_rounds: number;
+        secure_contributions: number;
         latest_round_completed_at: string | null;
     };
     refreshed_at: string;
@@ -139,6 +162,9 @@ export interface FederatedPublicSummary {
     privacy_status: string | null;
     privacy_minimum_participants: number | null;
     privacy_participant_count: number | null;
+    secure_aggregation_status: string | null;
+    secure_contribution_count: number | null;
+    raw_site_delta_artifacts_stored: boolean | null;
     raw_tenant_ids_in_aggregate: boolean | null;
 }
 
@@ -151,6 +177,7 @@ export interface FederationAutomationExecution {
     published_snapshots: FederatedSiteSnapshotRecord[];
     round: FederationRoundRecord | null;
     artifacts: ModelDeltaArtifactRecord[];
+    secure_contributions: SecureAggregationContributionRecord[];
     skipped_reason: string | null;
 }
 
@@ -174,6 +201,9 @@ export async function getFederationControlPlaneSnapshot(
     const artifacts = rounds.length > 0
         ? await listModelDeltaArtifactsForRounds(client, rounds.slice(0, 10).map((round) => round.id), 40)
         : [];
+    const secureContributions = rounds.length > 0
+        ? await listSecureAggregationContributionsForRounds(client, rounds.slice(0, 10).map((round) => round.id), 80)
+        : [];
 
     const activeMemberships = memberships.filter((membership) => membership.status === 'active');
     const latestRound = rounds.find((round) => round.completed_at != null) ?? null;
@@ -184,6 +214,7 @@ export async function getFederationControlPlaneSnapshot(
         recent_site_snapshots: snapshots,
         recent_rounds: rounds,
         recent_artifacts: artifacts,
+        recent_secure_contributions: secureContributions,
         summary: {
             active_memberships: activeMemberships.length,
             coordinator_memberships: memberships.filter((membership) => membership.coordinator_tenant_id === tenantId).length,
@@ -191,6 +222,8 @@ export async function getFederationControlPlaneSnapshot(
             visible_participants: uniqueStrings(activeMemberships.map((membership) => membership.tenant_id)).length,
             stale_snapshots: snapshots.filter((snapshot) => isStaleTimestamp(snapshot.created_at, 24)).length,
             completed_rounds: rounds.filter((round) => round.status === 'completed').length,
+            secure_rounds: rounds.filter((round) => asRecord(round.aggregate_payload.secure_aggregation).status === 'secure_aggregation_ready').length,
+            secure_contributions: secureContributions.length,
             latest_round_completed_at: latestRound?.completed_at ?? null,
         },
         refreshed_at: new Date().toISOString(),
@@ -363,6 +396,7 @@ export async function runFederationAutomation(
             published_snapshots: [],
             round: null,
             artifacts: [],
+            secure_contributions: [],
             skipped_reason: governance.auto_run_rounds
                 ? 'Federation round is not due yet for this schedule.'
                 : 'Automatic federation rounds are disabled for this federation.',
@@ -397,6 +431,7 @@ export async function runFederationAutomation(
             published_snapshots: result.published_snapshots,
             round: result.round,
             artifacts: result.artifacts,
+            secure_contributions: result.secure_contributions,
             skipped_reason: null,
         };
     } catch (error) {
@@ -563,6 +598,7 @@ export async function runFederationRound(
     round: FederationRoundRecord;
     published_snapshots: FederatedSiteSnapshotRecord[];
     artifacts: ModelDeltaArtifactRecord[];
+    secure_contributions: SecureAggregationContributionRecord[];
 }> {
     let memberships = await listActiveMembershipsByFederation(client, input.federationKey);
     if (memberships.length === 0) {
@@ -666,9 +702,10 @@ export async function runFederationRound(
             );
         }
 
+        const secureAggregation = buildSecureAggregationManifest(input.federationKey, roundKey, eligibleParticipants);
         const diagnosisCandidate = aggregateDiagnosisArtifacts(input.federationKey, roundKey, eligibleParticipants, new Date().toISOString());
         const severityCandidate = aggregateSeverityArtifacts(input.federationKey, roundKey, eligibleParticipants, new Date().toISOString());
-        const aggregatePayload = buildFederationAggregatePayload(input.federationKey, roundKey, eligibleParticipants, diagnosisCandidate, severityCandidate);
+        const aggregatePayload = buildFederationAggregatePayload(input.federationKey, roundKey, eligibleParticipants, diagnosisCandidate, severityCandidate, secureAggregation);
         const candidateArtifactPayload = {
             diagnosis: diagnosisCandidate,
             severity: severityCandidate,
@@ -688,12 +725,25 @@ export async function runFederationRound(
                     snapshot_max_age_hours: snapshotMaxAgeHours,
                 },
                 excluded_participants: excludedParticipants,
+                secure_aggregation: secureAggregation,
             },
             candidate_artifact_payload: candidateArtifactPayload,
             completed_at: new Date().toISOString(),
         });
 
-        const siteArtifacts = eligibleParticipants.flatMap((participant) => {
+        const secureContributionRecords = await insertSecureAggregationContributions(
+            client,
+            buildSecureAggregationContributionRecords({
+                roundId: completedRound.id,
+                federationKey: completedRound.federation_key,
+                coordinatorTenantId: completedRound.coordinator_tenant_id,
+                roundKey,
+                participants: eligibleParticipants,
+            }),
+        );
+
+        const siteArtifacts = shouldStoreRawSiteDeltaArtifacts()
+            ? eligibleParticipants.flatMap((participant) => {
             const artifacts: Array<Omit<ModelDeltaArtifactRecord, 'id' | 'created_at'>> = [];
             if (participant.diagnosisChampion) {
                 artifacts.push(buildSiteDeltaArtifactRecord({
@@ -730,7 +780,8 @@ export async function runFederationRound(
                 }));
             }
             return artifacts;
-        });
+        })
+            : [];
 
         const aggregateArtifacts = [
             ...(diagnosisCandidate ? [buildAggregateCandidateArtifactRecord({
@@ -778,6 +829,7 @@ export async function runFederationRound(
             round: completedRound,
             published_snapshots: publishedSnapshots,
             artifacts: artifactRecords,
+            secure_contributions: secureContributionRecords,
         };
     } catch (error) {
         await updateFederationRound(client, round.id, {
@@ -820,6 +872,9 @@ export async function getFederationPublicSummary(
             privacy_status: null,
             privacy_minimum_participants: null,
             privacy_participant_count: null,
+            secure_aggregation_status: null,
+            secure_contribution_count: null,
+            raw_site_delta_artifacts_stored: null,
             raw_tenant_ids_in_aggregate: null,
         };
     }
@@ -839,6 +894,7 @@ export async function getFederationPublicSummary(
         ? readNumber(latestRound.aggregate_payload.aggregate_dataset_rows) ?? 0
         : latestSnapshots.reduce((sum, snapshot) => sum + snapshot.total_dataset_rows, 0);
     const privacyManifest = asRecord(latestRound?.aggregate_payload.privacy_manifest);
+    const secureAggregation = asRecord(latestRound?.aggregate_payload.secure_aggregation);
 
     return {
         active: true,
@@ -864,6 +920,11 @@ export async function getFederationPublicSummary(
         privacy_status: readString(privacyManifest.status),
         privacy_minimum_participants: readNumber(privacyManifest.minimum_privacy_participants),
         privacy_participant_count: readNumber(privacyManifest.participant_count),
+        secure_aggregation_status: readString(secureAggregation.status),
+        secure_contribution_count: readNumber(secureAggregation.contribution_count),
+        raw_site_delta_artifacts_stored: typeof secureAggregation.raw_site_delta_artifacts_stored === 'boolean'
+            ? secureAggregation.raw_site_delta_artifacts_stored
+            : null,
         raw_tenant_ids_in_aggregate: typeof privacyManifest.raw_tenant_ids_in_aggregate === 'boolean'
             ? privacyManifest.raw_tenant_ids_in_aggregate
             : null,
@@ -1329,6 +1390,47 @@ async function insertModelDeltaArtifacts(
     return (data ?? []).map((row) => mapModelDeltaArtifact(asRecord(row)));
 }
 
+async function listSecureAggregationContributionsForRounds(
+    client: SupabaseClient,
+    roundIds: string[],
+    limit: number,
+): Promise<SecureAggregationContributionRecord[]> {
+    if (roundIds.length === 0) return [];
+    const C = FEDERATED_SECURE_AGGREGATION_CONTRIBUTIONS.COLUMNS;
+    const { data, error } = await client
+        .from(FEDERATED_SECURE_AGGREGATION_CONTRIBUTIONS.TABLE)
+        .select('*')
+        .in(C.federation_round_id, roundIds)
+        .order(C.created_at, { ascending: false })
+        .limit(limit);
+
+    if (error) {
+        throw new Error(`Failed to list secure aggregation contributions: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapSecureAggregationContribution(asRecord(row)));
+}
+
+async function insertSecureAggregationContributions(
+    client: SupabaseClient,
+    records: Array<Omit<SecureAggregationContributionRecord, 'id' | 'created_at'>>,
+): Promise<SecureAggregationContributionRecord[]> {
+    if (records.length === 0) return [];
+    const C = FEDERATED_SECURE_AGGREGATION_CONTRIBUTIONS.COLUMNS;
+    const { data, error } = await client
+        .from(FEDERATED_SECURE_AGGREGATION_CONTRIBUTIONS.TABLE)
+        .upsert(records, {
+            onConflict: `${C.federation_round_id},${C.tenant_id},${C.contribution_role}`,
+        })
+        .select('*');
+
+    if (error) {
+        throw new Error(`Failed to create secure aggregation contributions: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapSecureAggregationContribution(asRecord(row)));
+}
+
 function buildFederationAggregatePayload(
     federationKey: string,
     roundKey: string,
@@ -1338,6 +1440,7 @@ function buildFederationAggregatePayload(
     }>,
     diagnosisCandidate: DiagnosisModelArtifact | null,
     severityCandidate: SeverityModelArtifact | null,
+    secureAggregation: Record<string, unknown>,
 ): Record<string, unknown> {
     const benchmarkPassRate = averageNumbers(
         participants.map((participant) => readNumber(participant.snapshot.support_summary.benchmark_pass_rate)),
@@ -1357,7 +1460,7 @@ function buildFederationAggregatePayload(
         ]),
         source_tenant_count: participants.length,
         source_participant_refs: participants.map((participant) => createParticipantRef(federationKey, roundKey, participant.snapshot.tenant_id)),
-        privacy_manifest: buildFederationPrivacyManifest(federationKey, roundKey, participants),
+        privacy_manifest: buildFederationPrivacyManifest(federationKey, roundKey, participants, secureAggregation),
     };
 }
 
@@ -1368,6 +1471,7 @@ function buildFederationPrivacyManifest(
         snapshot: FederatedSiteSnapshotRecord;
         siteWeight: number;
     }>,
+    secureAggregation: Record<string, unknown>,
 ): Record<string, unknown> {
     const aggregateDatasetRows = participants.reduce((sum, participant) => sum + participant.snapshot.total_dataset_rows, 0);
     const minimumPrivacyParticipants = 3;
@@ -1392,11 +1496,139 @@ function buildFederationPrivacyManifest(
         raw_case_rows_shared: false,
         patient_identifiers_shared: false,
         owner_identifiers_shared: false,
-        coordinator_visibility: 'site_delta_artifacts_visible_to_coordinator',
+        coordinator_visibility: 'masked_commitments_and_aggregate_candidates_only',
+        masking_protocol: readString(secureAggregation.masking_protocol) ?? 'pairwise_masked_commitment_v1',
+        secure_aggregation_status: readString(secureAggregation.status),
+        secure_contribution_count: readNumber(secureAggregation.contribution_count),
+        raw_site_delta_artifacts_stored: false,
         next_secure_aggregation_step: pass
-            ? 'eligible_for_masked_update_protocol'
+            ? 'continue_collecting_masked_commitments_and_external_privacy_review'
             : 'increase_participant_count_or_site_support_before_masked_updates',
     };
+}
+
+function buildSecureAggregationManifest(
+    federationKey: string,
+    roundKey: string,
+    participants: Array<{
+        snapshot: FederatedSiteSnapshotRecord;
+        diagnosisChampion: ModelRegistryEntryRecord | null;
+        severityChampion: ModelRegistryEntryRecord | null;
+        siteWeight: number;
+    }>,
+): Record<string, unknown> {
+    const contributionCount = participants.reduce((sum, participant) => {
+        return sum
+            + (participant.diagnosisChampion ? 1 : 0)
+            + (participant.severityChampion ? 1 : 0)
+            + 1;
+    }, 0);
+    const minimumPrivacyParticipants = 3;
+    const minimumRowsPerParticipant = Math.min(...participants.map((participant) => participant.snapshot.total_dataset_rows));
+    const ready = participants.length >= minimumPrivacyParticipants && minimumRowsPerParticipant >= 10;
+
+    return {
+        mode: 'secure_aggregation_v1',
+        status: ready ? 'secure_aggregation_ready' : 'secure_aggregation_limited',
+        masking_protocol: 'pairwise_masked_commitment_v1',
+        participant_count: participants.length,
+        contribution_count: contributionCount,
+        minimum_privacy_participants: minimumPrivacyParticipants,
+        participant_refs: participants.map((participant) => createParticipantRef(federationKey, roundKey, participant.snapshot.tenant_id)),
+        payload_commitment: createCommitmentHash(federationKey, roundKey, 'aggregate_payload', participants.map((participant) => participant.snapshot.tenant_id)),
+        raw_site_delta_artifacts_stored: false,
+        coordinator_visibility: 'commitment_hashes_only_for_site_updates',
+    };
+}
+
+function buildSecureAggregationContributionRecords(input: {
+    roundId: string;
+    federationKey: string;
+    coordinatorTenantId: string;
+    roundKey: string;
+    participants: Array<{
+        snapshot: FederatedSiteSnapshotRecord;
+        diagnosisChampion: ModelRegistryEntryRecord | null;
+        severityChampion: ModelRegistryEntryRecord | null;
+        siteWeight: number;
+    }>;
+}): Array<Omit<SecureAggregationContributionRecord, 'id' | 'created_at'>> {
+    const acceptedAt = new Date().toISOString();
+    return input.participants.flatMap((participant) => {
+        const participantRef = createParticipantRef(input.federationKey, input.roundKey, participant.snapshot.tenant_id);
+        const common = {
+            federation_round_id: input.roundId,
+            federation_key: input.federationKey,
+            coordinator_tenant_id: input.coordinatorTenantId,
+            tenant_id: participant.snapshot.tenant_id,
+            participant_ref: participantRef,
+            masking_protocol: 'pairwise_masked_commitment_v1',
+            accepted_at: acceptedAt,
+        };
+        const records: Array<Omit<SecureAggregationContributionRecord, 'id' | 'created_at'>> = [
+            {
+                ...common,
+                contribution_role: 'support',
+                payload_commitment_hash: createContributionCommitment(input.federationKey, input.roundKey, participant.snapshot.tenant_id, 'support', participant.snapshot.snapshot_payload),
+                mask_commitment_hash: createMaskCommitment(input.federationKey, input.roundKey, participant.snapshot.tenant_id, 'support'),
+                masked_payload_summary: {
+                    total_dataset_rows: participant.snapshot.total_dataset_rows,
+                    benchmark_reports: participant.snapshot.benchmark_reports,
+                    calibration_reports: participant.snapshot.calibration_reports,
+                    site_weight_bucket: bucketSiteWeight(participant.siteWeight),
+                },
+                public_summary: {
+                    participant_ref: participantRef,
+                    contribution_role: 'support',
+                    total_dataset_rows: participant.snapshot.total_dataset_rows,
+                },
+            },
+        ];
+
+        if (participant.diagnosisChampion) {
+            records.push({
+                ...common,
+                contribution_role: 'diagnosis',
+                payload_commitment_hash: createContributionCommitment(input.federationKey, input.roundKey, participant.snapshot.tenant_id, 'diagnosis', participant.diagnosisChampion.artifact_payload),
+                mask_commitment_hash: createMaskCommitment(input.federationKey, input.roundKey, participant.snapshot.tenant_id, 'diagnosis'),
+                masked_payload_summary: {
+                    model_version_hash: hashValue(participant.diagnosisChampion.model_version),
+                    dataset_version_hash: hashValue(participant.diagnosisChampion.training_dataset_version),
+                    site_weight_bucket: bucketSiteWeight(participant.siteWeight),
+                },
+                public_summary: {
+                    participant_ref: participantRef,
+                    contribution_role: 'diagnosis',
+                    task_type: 'diagnosis',
+                },
+            });
+        }
+
+        if (participant.severityChampion) {
+            records.push({
+                ...common,
+                contribution_role: 'severity',
+                payload_commitment_hash: createContributionCommitment(input.federationKey, input.roundKey, participant.snapshot.tenant_id, 'severity', participant.severityChampion.artifact_payload),
+                mask_commitment_hash: createMaskCommitment(input.federationKey, input.roundKey, participant.snapshot.tenant_id, 'severity'),
+                masked_payload_summary: {
+                    model_version_hash: hashValue(participant.severityChampion.model_version),
+                    dataset_version_hash: hashValue(participant.severityChampion.training_dataset_version),
+                    site_weight_bucket: bucketSiteWeight(participant.siteWeight),
+                },
+                public_summary: {
+                    participant_ref: participantRef,
+                    contribution_role: 'severity',
+                    task_type: 'severity',
+                },
+            });
+        }
+
+        return records;
+    });
+}
+
+function shouldStoreRawSiteDeltaArtifacts(): boolean {
+    return process.env.VETIOS_FEDERATION_STORE_RAW_SITE_DELTAS === 'true';
 }
 
 function buildSiteDeltaArtifactRecord(input: {
@@ -1496,7 +1728,7 @@ function aggregateDiagnosisArtifacts(
             source_participant_refs: inputs.map((input) => createParticipantRef(federationKey, roundKey, input.tenantId)),
             source_model_versions: inputs.map((input) => input.artifact.model_version),
             aggregation_strategy: 'weighted_mean_v1',
-            privacy_mode: 'privacy_preflight_v1',
+            privacy_mode: 'secure_aggregation_v1',
         },
     };
 }
@@ -1549,7 +1781,7 @@ function aggregateSeverityArtifacts(
             source_participant_refs: inputs.map((input) => createParticipantRef(federationKey, roundKey, input.tenantId)),
             source_model_versions: inputs.map((input) => input.artifact.model_version),
             aggregation_strategy: 'weighted_mean_v1',
-            privacy_mode: 'privacy_preflight_v1',
+            privacy_mode: 'secure_aggregation_v1',
         },
     };
 }
@@ -1590,6 +1822,71 @@ function createParticipantRef(federationKey: string, roundKey: string, tenantId:
         .digest('hex')
         .slice(0, 16);
     return `participant_${digest}`;
+}
+
+function createContributionCommitment(
+    federationKey: string,
+    roundKey: string,
+    tenantId: string,
+    role: SecureAggregationContributionRole,
+    payload: unknown,
+): string {
+    return createCommitmentHash(federationKey, roundKey, role, [
+        tenantId,
+        stableStringify(payload),
+    ]);
+}
+
+function createMaskCommitment(
+    federationKey: string,
+    roundKey: string,
+    tenantId: string,
+    role: SecureAggregationContributionRole,
+): string {
+    return createCommitmentHash(federationKey, roundKey, `mask:${role}`, [
+        tenantId,
+        createParticipantRef(federationKey, roundKey, tenantId),
+    ]);
+}
+
+function createCommitmentHash(
+    federationKey: string,
+    roundKey: string,
+    label: string,
+    values: unknown[],
+): string {
+    return createHash('sha256')
+        .update(stableStringify({
+            federation_key: federationKey,
+            round_key: roundKey,
+            label,
+            values,
+        }))
+        .digest('hex');
+}
+
+function hashValue(value: unknown): string | null {
+    if (value == null) return null;
+    return createHash('sha256').update(String(value)).digest('hex').slice(0, 24);
+}
+
+function bucketSiteWeight(value: number): string {
+    if (!Number.isFinite(value)) return 'unknown';
+    if (value < 25) return 'lt_25';
+    if (value < 100) return '25_99';
+    if (value < 500) return '100_499';
+    return 'gte_500';
+}
+
+function stableStringify(value: unknown): string {
+    if (value == null || typeof value !== 'object') {
+        return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+        return `[${value.map((entry) => stableStringify(entry)).join(',')}]`;
+    }
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
 }
 
 function mergeFlatWeightMaps(
@@ -1736,6 +2033,25 @@ function mapModelDeltaArtifact(row: Record<string, unknown>): ModelDeltaArtifact
         dataset_version: readString(row.dataset_version),
         artifact_payload: asRecord(row.artifact_payload),
         summary: asRecord(row.summary),
+        created_at: String(row.created_at),
+    };
+}
+
+function mapSecureAggregationContribution(row: Record<string, unknown>): SecureAggregationContributionRecord {
+    return {
+        id: String(row.id),
+        federation_round_id: readString(row.federation_round_id) ?? 'unknown_round',
+        federation_key: readString(row.federation_key) ?? 'unknown_federation',
+        coordinator_tenant_id: readString(row.coordinator_tenant_id) ?? 'unknown_tenant',
+        tenant_id: readString(row.tenant_id) ?? 'unknown_tenant',
+        participant_ref: readString(row.participant_ref) ?? 'participant_unknown',
+        contribution_role: (readString(row.contribution_role) ?? 'support') as SecureAggregationContributionRole,
+        masking_protocol: readString(row.masking_protocol) ?? 'pairwise_masked_commitment_v1',
+        payload_commitment_hash: readString(row.payload_commitment_hash) ?? '',
+        mask_commitment_hash: readString(row.mask_commitment_hash) ?? '',
+        masked_payload_summary: asRecord(row.masked_payload_summary),
+        public_summary: asRecord(row.public_summary),
+        accepted_at: String(row.accepted_at ?? row.created_at),
         created_at: String(row.created_at),
     };
 }
