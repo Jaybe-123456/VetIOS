@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight, PlugZap } from 'lucide-react';
 import { PlatformShell } from '@/components/platform/PlatformShell';
+import { nativeVendorAdapters } from '@/lib/platform/nativeVendorAdapters';
 import { passiveSignalConnectors } from '@/lib/platform/passiveSignalCatalog';
 import { passiveSignalMarketplace } from '@/lib/platform/passiveSignalMarketplace';
 
@@ -15,7 +16,7 @@ export default function PassiveSignalsPage() {
         <PlatformShell
             badge="PASSIVE SIGNAL ENGINE"
             title="Turn clinic work into clinical signal without asking the team to type everything twice."
-            description="VetIOS already normalizes passive connector events into episode-aware signals. This surface now publishes both the normalized connector types and the connector marketplace packs that schedule vendor sync at fleet scale."
+            description="VetIOS normalizes passive connector events into episode-aware signals. This surface publishes normalized connector types, marketplace packs, and native vendor adapter paths for direct PIMS, lab, pharmacy, and imaging integrations."
             actions={(
                 <>
                     <Link
@@ -35,11 +36,52 @@ export default function PassiveSignalsPage() {
                 </>
             )}
         >
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-4">
                 <SummaryCard label="Supported connectors" value={String(passiveSignalConnectors.filter((connector) => connector.readiness === 'live').length)} />
                 <SummaryCard label="Marketplace packs" value={String(passiveSignalMarketplace.length)} />
+                <SummaryCard label="Native adapters" value={String(nativeVendorAdapters.length)} />
                 <SummaryCard label="Scheduled vendors" value={String(passiveSignalMarketplace.filter((connector) => connector.sync_mode === 'scheduled_pull').length)} />
             </div>
+
+            <section className="mt-10 grid gap-6 xl:grid-cols-2">
+                {nativeVendorAdapters.map((adapter) => (
+                    <article key={adapter.adapter_key} className="rounded-[24px] border border-white/10 bg-white/[0.04] p-6">
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <div className="inline-flex items-center gap-2 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+                                    <PlugZap className="h-3.5 w-3.5" />
+                                    {adapter.vendor_name}
+                                </div>
+                                <h2 className="mt-4 text-xl font-semibold text-white">{adapter.display_name}</h2>
+                            </div>
+                            <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${
+                                adapter.readiness === 'live'
+                                    ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-200'
+                                    : adapter.readiness === 'beta'
+                                        ? 'border-amber-400/20 bg-amber-400/10 text-amber-200'
+                                        : 'border-rose-400/20 bg-rose-400/10 text-rose-200'
+                            }`}>
+                                {adapter.readiness}
+                            </span>
+                        </div>
+                        <p className="mt-4 text-sm leading-7 text-slate-300">{adapter.summary}</p>
+                        <div className="mt-5 grid gap-4 md:grid-cols-2">
+                            <MetricCard label="Adapter type" value={adapter.adapter_type} />
+                            <MetricCard label="Auth" value={adapter.auth_protocol} />
+                            <MetricCard label="Sync mode" value={adapter.sync_mode} />
+                            <MetricCard label="Connector types" value={adapter.supported_connector_types.join(', ')} />
+                        </div>
+                        <div className="mt-5 rounded-2xl border border-white/8 bg-black/20 p-4">
+                            <div className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Privacy guardrails</div>
+                            <div className="mt-3 space-y-2">
+                                {adapter.privacy_notes.map((note) => (
+                                    <div key={note} className="text-sm leading-6 text-slate-300">{note}</div>
+                                ))}
+                            </div>
+                        </div>
+                    </article>
+                ))}
+            </section>
 
             <section className="mt-10 grid gap-6 xl:grid-cols-2">
                 {passiveSignalMarketplace.map((connector) => (

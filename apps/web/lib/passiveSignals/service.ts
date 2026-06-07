@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
     createConnectorInstallationWithCredential,
@@ -6,14 +7,82 @@ import {
     updateConnectorInstallation,
     type ConnectorInstallationRecord,
 } from '@/lib/auth/machineAuth';
-import { CONNECTOR_INSTALLATIONS, PASSIVE_SIGNAL_EVENTS, SIGNAL_SOURCES } from '@/lib/db/schemaContracts';
+import {
+    CONNECTOR_INSTALLATIONS,
+    PASSIVE_NATIVE_VENDOR_CONNECTIONS,
+    PASSIVE_NATIVE_VENDOR_SYNC_RUNS,
+    PASSIVE_SIGNAL_EVENTS,
+    SIGNAL_SOURCES,
+} from '@/lib/db/schemaContracts';
 import { dispatchOutboxBatch, enqueueOutboxEvent, getOutboxQueueSnapshot, type ConnectorDeliveryAttemptRecord } from '@/lib/eventPlane/outbox';
+import {
+    getNativeVendorAdapter,
+    nativeVendorAdapters,
+    type NativeVendorAdapterDefinition,
+    type NativeVendorAuthProtocol,
+} from '@/lib/platform/nativeVendorAdapters';
 import { passiveSignalConnectors } from '@/lib/platform/passiveSignalCatalog';
 import {
     passiveSignalMarketplace,
     type PassiveConnectorSyncMode,
     type PassiveSignalMarketplaceDefinition,
 } from '@/lib/platform/passiveSignalMarketplace';
+
+export type NativeVendorConnectionStatus = 'authorization_required' | 'active' | 'paused' | 'revoked' | 'error';
+export type NativeVendorSyncRunReason = 'manual' | 'scheduled' | 'authorization_callback' | 'backfill';
+export type NativeVendorSyncRunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'skipped';
+
+export interface NativeVendorConnectionRecord {
+    id: string;
+    tenant_id: string;
+    adapter_key: string;
+    connector_installation_id: string | null;
+    vendor_name: string;
+    vendor_account_ref: string | null;
+    auth_protocol: NativeVendorAuthProtocol;
+    status: NativeVendorConnectionStatus;
+    authorization_state_hash: string | null;
+    credential_ref_hash: string | null;
+    requested_scopes: string[];
+    adapter_runtime_url: string | null;
+    supported_connector_types: string[];
+    sync_mode: PassiveConnectorSyncMode;
+    interval_hours: number | null;
+    next_sync_at: string | null;
+    last_authorized_at: string | null;
+    last_sync_at: string | null;
+    last_sync_status: string | null;
+    metadata: Record<string, unknown>;
+    created_by: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface NativeVendorSyncRunRecord {
+    id: string;
+    tenant_id: string;
+    native_connection_id: string;
+    connector_installation_id: string | null;
+    adapter_key: string;
+    run_reason: NativeVendorSyncRunReason;
+    status: NativeVendorSyncRunStatus;
+    requested_at: string;
+    started_at: string | null;
+    finished_at: string | null;
+    events_ingested: number;
+    outbox_event_id: string | null;
+    error_message: string | null;
+    metadata: Record<string, unknown>;
+    created_at: string;
+}
+
+export interface IssuedNativeVendorConnection {
+    connection: NativeVendorConnectionRecord;
+    connector_installation: ConnectorInstallationRecord | null;
+    generated_api_key: string | null;
+    authorization_state: string;
+    authorization_url: string | null;
+}
 
 export interface PassiveConnectorInstallationSnapshot extends ConnectorInstallationRecord {
     marketplace_template: PassiveSignalMarketplaceDefinition | null;
@@ -34,12 +103,19 @@ export interface PassiveConnectorInstallationSnapshot extends ConnectorInstallat
 export interface PassiveSignalOperationsSnapshot {
     tenant_id: string;
     marketplace: PassiveSignalMarketplaceDefinition[];
+    native_adapters: NativeVendorAdapterDefinition[];
     installations: PassiveConnectorInstallationSnapshot[];
+    native_connections: NativeVendorConnectionRecord[];
+    recent_native_sync_runs: NativeVendorSyncRunRecord[];
     readiness: PassiveSignalReadinessSnapshot;
     recent_delivery_attempts: ConnectorDeliveryAttemptRecord[];
     summary: {
         marketplace_templates: number;
         live_templates: number;
+        native_adapter_templates: number;
+        native_active_connections: number;
+        native_authorization_required: number;
+        native_queued_syncs: number;
         active_installations: number;
         scheduled_installations: number;
         webhook_installations: number;
@@ -85,7 +161,7 @@ export async function getPassiveSignalOperationsSnapshot(
     client: SupabaseClient,
     tenantId: string,
 ): Promise<PassiveSignalOperationsSnapshot> {
-    const [installations, outboxSnapshot, signalSources, recentSignals] = await Promise.all([
+    const [installations, outboxSnapshot, signalSources, recentSignals, nativeConnections, nativeSyncRuns] = await Promise.all([
         listConnectorInstallations(client, tenantId),
         getOutboxQueueSnapshot(client, tenantId, {
             limit: 20,
@@ -93,6 +169,8 @@ export async function getPassiveSignalOperationsSnapshot(
         }),
         listSignalSources(client, tenantId),
         listRecentPassiveSignals(client, tenantId),
+        listNativeVendorConnections(client, tenantId),
+        listNativeVendorSyncRuns(client, tenantId),
     ]);
 
     const attemptsByInstallation = new Map<string, ConnectorDeliveryAttemptRecord>();
@@ -115,12 +193,19 @@ export async function getPassiveSignalOperationsSnapshot(
     return {
         tenant_id: tenantId,
         marketplace: passiveSignalMarketplace,
+        native_adapters: nativeVendorAdapters,
         installations: installationSnapshots,
+        native_connections: nativeConnections,
+        recent_native_sync_runs: nativeSyncRuns,
         readiness,
         recent_delivery_attempts: outboxSnapshot.recent_attempts,
         summary: {
             marketplace_templates: passiveSignalMarketplace.length,
             live_templates: passiveSignalMarketplace.filter((template) => template.readiness === 'live').length,
+            native_adapter_templates: nativeVendorAdapters.length,
+            native_active_connections: nativeConnections.filter((connection) => connection.status === 'active').length,
+            native_authorization_required: nativeConnections.filter((connection) => connection.status === 'authorization_required').length,
+            native_queued_syncs: nativeSyncRuns.filter((run) => run.status === 'queued' || run.status === 'running').length,
             active_installations: installationSnapshots.filter((installation) => installation.status === 'active').length,
             scheduled_installations: installationSnapshots.filter((installation) => installation.scheduler.enabled).length,
             webhook_installations: installationSnapshots.filter((installation) => installation.sync_mode === 'webhook_push').length,
@@ -230,6 +315,261 @@ export async function configurePassiveConnectorInstallation(input: {
             },
         },
     });
+}
+
+export async function createNativeVendorConnection(input: {
+    client: SupabaseClient;
+    tenantId: string;
+    actor: string | null;
+    adapterKey: string;
+    vendorAccountRef?: string | null;
+    connectorInstallationId?: string | null;
+    adapterRuntimeUrl?: string | null;
+    intervalHours?: number | null;
+    requestedScopes?: string[];
+    redirectUri?: string | null;
+}): Promise<IssuedNativeVendorConnection> {
+    const adapter = requireNativeVendorAdapter(input.adapterKey);
+    const authorizationState = createNativeAuthorizationState();
+    const intervalHours = normalizePositiveInteger(input.intervalHours) ?? adapter.default_interval_hours;
+    const connector = input.connectorInstallationId
+        ? {
+            installation: await requireConnectorInstallation(input.client, input.tenantId, input.connectorInstallationId),
+            apiKey: null,
+        }
+        : await createConnectorInstallationWithCredential({
+            client: input.client,
+            tenantId: input.tenantId,
+            actor: input.actor,
+            installationName: `${adapter.display_name} native connection`,
+            connectorType: adapter.supported_connector_types[0] ?? 'pims_sync',
+            vendorName: adapter.vendor_name,
+            vendorAccountRef: normalizeOptionalText(input.vendorAccountRef),
+            label: `${adapter.display_name} native runtime key`,
+            scopes: ['signals:connect', 'signals:ingest'],
+            metadata: {
+                passive_signal: {
+                    native_adapter_key: adapter.adapter_key,
+                    native_adapter: true,
+                    supported_connector_types: adapter.supported_connector_types,
+                    sync_mode: adapter.sync_mode,
+                    auth_strategy: adapter.auth_protocol,
+                    scheduler: {
+                        enabled: adapter.sync_mode === 'scheduled_pull',
+                        interval_hours: intervalHours,
+                        next_sync_at: intervalHours != null ? new Date(Date.now() + intervalHours * 60 * 60 * 1000).toISOString() : null,
+                        last_sync_requested_at: null,
+                        last_sync_status: null,
+                    },
+                },
+            },
+        });
+    const runtimeUrl = normalizeOptionalText(input.adapterRuntimeUrl);
+    const scopes = normalizeScopes(input.requestedScopes, adapter);
+    const now = new Date().toISOString();
+    const C = PASSIVE_NATIVE_VENDOR_CONNECTIONS.COLUMNS;
+    const { data, error } = await input.client
+        .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
+        .insert({
+            [C.tenant_id]: input.tenantId,
+            [C.adapter_key]: adapter.adapter_key,
+            [C.connector_installation_id]: connector.installation.id,
+            [C.vendor_name]: adapter.vendor_name,
+            [C.vendor_account_ref]: normalizeOptionalText(input.vendorAccountRef),
+            [C.auth_protocol]: adapter.auth_protocol,
+            [C.status]: adapter.auth_protocol === 'oauth2_pkce' ? 'authorization_required' : 'active',
+            [C.authorization_state_hash]: hashSecret(authorizationState),
+            [C.credential_ref_hash]: null,
+            [C.requested_scopes]: scopes,
+            [C.adapter_runtime_url]: runtimeUrl,
+            [C.supported_connector_types]: adapter.supported_connector_types,
+            [C.sync_mode]: adapter.sync_mode,
+            [C.interval_hours]: intervalHours,
+            [C.next_sync_at]: adapter.sync_mode === 'scheduled_pull' && intervalHours != null
+                ? new Date(Date.now() + intervalHours * 60 * 60 * 1000).toISOString()
+                : null,
+            [C.last_authorized_at]: adapter.auth_protocol === 'oauth2_pkce' ? null : now,
+            [C.last_sync_status]: 'not_started',
+            [C.metadata]: {
+                adapter_type: adapter.adapter_type,
+                vendor_contract_required: adapter.vendor_contract_required,
+                redirect_uri: normalizeOptionalText(input.redirectUri),
+                authorization_state_issued_at: now,
+                setup_steps: adapter.setup_steps,
+            },
+            [C.created_by]: input.actor,
+        })
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to create native vendor connection: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    const connection = mapNativeVendorConnection(asRecord(data));
+    return {
+        connection,
+        connector_installation: connector.installation,
+        generated_api_key: connector.apiKey,
+        authorization_state: authorizationState,
+        authorization_url: buildNativeAuthorizationUrl(adapter, {
+            state: authorizationState,
+            redirectUri: normalizeOptionalText(input.redirectUri),
+            scopes,
+        }),
+    };
+}
+
+export async function acceptNativeVendorAuthorizationCallback(input: {
+    client: SupabaseClient;
+    state: string;
+    code?: string | null;
+    error?: string | null;
+}): Promise<NativeVendorConnectionRecord> {
+    const stateHash = hashSecret(input.state);
+    const C = PASSIVE_NATIVE_VENDOR_CONNECTIONS.COLUMNS;
+    const { data: existing, error: lookupError } = await input.client
+        .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
+        .select('*')
+        .eq(C.authorization_state_hash, stateHash)
+        .maybeSingle();
+
+    if (lookupError) {
+        throw new Error(`Failed to resolve native vendor authorization state: ${lookupError.message}`);
+    }
+    if (!existing) {
+        throw new Error('Native vendor authorization state was not found.');
+    }
+
+    const now = new Date().toISOString();
+    const status: NativeVendorConnectionStatus = input.error ? 'error' : 'active';
+    const { data, error } = await input.client
+        .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
+        .update({
+            [C.status]: status,
+            [C.credential_ref_hash]: input.code ? hashSecret(input.code) : asRecord(existing).credential_ref_hash ?? null,
+            [C.last_authorized_at]: status === 'active' ? now : null,
+            [C.last_sync_status]: status === 'active' ? 'authorized' : 'authorization_error',
+            [C.metadata]: {
+                ...asRecord(asRecord(existing).metadata),
+                authorization_callback_at: now,
+                authorization_error: normalizeOptionalText(input.error),
+                authorization_code_received: Boolean(input.code),
+            },
+        })
+        .eq(C.id, String(asRecord(existing).id))
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to update native vendor authorization: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    return mapNativeVendorConnection(asRecord(data));
+}
+
+export async function queueNativeVendorSync(input: {
+    client: SupabaseClient;
+    tenantId: string;
+    nativeConnectionId: string;
+    reason: NativeVendorSyncRunReason;
+    dispatchNow?: boolean;
+}): Promise<{
+    connection: NativeVendorConnectionRecord;
+    sync_run: NativeVendorSyncRunRecord;
+}> {
+    const connection = await requireNativeVendorConnection(input.client, input.tenantId, input.nativeConnectionId);
+    if (connection.status !== 'active') {
+        throw new Error('Native vendor connection must be active before sync can run.');
+    }
+
+    const run = await insertNativeVendorSyncRun(input.client, {
+        tenantId: input.tenantId,
+        connection,
+        reason: input.reason,
+        status: 'queued',
+        metadata: {
+            supported_connector_types: connection.supported_connector_types,
+            adapter_runtime_configured: Boolean(connection.adapter_runtime_url),
+        },
+    });
+
+    let outboxEventId: string | null = null;
+    if (connection.adapter_runtime_url) {
+        const event = await enqueueOutboxEvent(input.client, {
+            tenantId: input.tenantId,
+            topic: 'native_vendor.sync_requested',
+            handlerKey: 'connector_webhook',
+            targetType: 'connector_webhook',
+            targetRef: connection.connector_installation_id,
+            idempotencyKey: `native-vendor-sync:${run.id}`,
+            payload: {
+                native_sync_run_id: run.id,
+                native_connection_id: connection.id,
+                adapter_key: connection.adapter_key,
+                vendor_name: connection.vendor_name,
+                vendor_account_ref: connection.vendor_account_ref,
+                requested_at: run.requested_at,
+                supported_connector_types: connection.supported_connector_types,
+            },
+            metadata: {
+                webhook_url: connection.adapter_runtime_url,
+                native_vendor_adapter: true,
+                adapter_key: connection.adapter_key,
+                vendor_name: connection.vendor_name,
+            },
+            maxAttempts: 4,
+        });
+        outboxEventId = event.event.id;
+    }
+
+    const completedRun = outboxEventId
+        ? await updateNativeVendorSyncRunOutbox(input.client, run, outboxEventId)
+        : run;
+
+    await touchNativeVendorConnectionAfterSyncRequest(input.client, connection, completedRun);
+
+    if (input.dispatchNow !== false && outboxEventId) {
+        await dispatchOutboxBatch(input.client, {
+            workerId: `native-vendor-sync:${connection.id}:${Date.now().toString(36)}`,
+            tenantId: input.tenantId,
+            batchSize: 10,
+        });
+    }
+
+    return {
+        connection,
+        sync_run: completedRun,
+    };
+}
+
+export async function runDueNativeVendorSyncs(input: {
+    client: SupabaseClient;
+    tenantId?: string | null;
+    actor: string | null;
+}): Promise<NativeVendorSyncRunRecord[]> {
+    const connections = input.tenantId
+        ? await listNativeVendorConnections(input.client, input.tenantId)
+        : await listNativeVendorConnectionsAcrossTenants(input.client);
+    const now = Date.now();
+    const queued: NativeVendorSyncRunRecord[] = [];
+
+    for (const connection of connections) {
+        if (connection.status !== 'active') continue;
+        if (connection.sync_mode !== 'scheduled_pull') continue;
+        if (!connection.next_sync_at) continue;
+        if (new Date(connection.next_sync_at).getTime() > now) continue;
+        const result = await queueNativeVendorSync({
+            client: input.client,
+            tenantId: connection.tenant_id,
+            nativeConnectionId: connection.id,
+            reason: 'scheduled',
+            dispatchNow: false,
+        });
+        queued.push(result.sync_run);
+    }
+
+    return queued;
 }
 
 export async function requestPassiveConnectorSync(input: {
@@ -468,6 +808,198 @@ async function listConnectorInstallationsAcrossTenants(client: SupabaseClient): 
     }));
 }
 
+async function requireConnectorInstallation(
+    client: SupabaseClient,
+    tenantId: string,
+    connectorInstallationId: string,
+): Promise<ConnectorInstallationRecord> {
+    const installation = await getConnectorInstallation(client, tenantId, connectorInstallationId);
+    if (!installation) {
+        throw new Error('Connector installation was not found.');
+    }
+    return installation;
+}
+
+function requireNativeVendorAdapter(adapterKey: string): NativeVendorAdapterDefinition {
+    const adapter = getNativeVendorAdapter(adapterKey);
+    if (!adapter) {
+        throw new Error('Native vendor adapter was not found.');
+    }
+    return adapter;
+}
+
+async function listNativeVendorConnections(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<NativeVendorConnectionRecord[]> {
+    const C = PASSIVE_NATIVE_VENDOR_CONNECTIONS.COLUMNS;
+    const { data, error } = await client
+        .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .order(C.updated_at, { ascending: false })
+        .limit(200);
+
+    if (error) {
+        if (isMissingNativeVendorTableError(error.message)) return [];
+        throw new Error(`Failed to list native vendor connections: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapNativeVendorConnection(asRecord(row)));
+}
+
+async function listNativeVendorConnectionsAcrossTenants(client: SupabaseClient): Promise<NativeVendorConnectionRecord[]> {
+    const C = PASSIVE_NATIVE_VENDOR_CONNECTIONS.COLUMNS;
+    const { data, error } = await client
+        .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
+        .select('*')
+        .order(C.updated_at, { ascending: false })
+        .limit(500);
+
+    if (error) {
+        if (isMissingNativeVendorTableError(error.message)) return [];
+        throw new Error(`Failed to list native vendor connections across tenants: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapNativeVendorConnection(asRecord(row)));
+}
+
+async function requireNativeVendorConnection(
+    client: SupabaseClient,
+    tenantId: string,
+    nativeConnectionId: string,
+): Promise<NativeVendorConnectionRecord> {
+    const C = PASSIVE_NATIVE_VENDOR_CONNECTIONS.COLUMNS;
+    const { data, error } = await client
+        .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .eq(C.id, nativeConnectionId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to load native vendor connection: ${error.message}`);
+    }
+    if (!data) {
+        throw new Error('Native vendor connection was not found.');
+    }
+
+    return mapNativeVendorConnection(asRecord(data));
+}
+
+async function listNativeVendorSyncRuns(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<NativeVendorSyncRunRecord[]> {
+    const C = PASSIVE_NATIVE_VENDOR_SYNC_RUNS.COLUMNS;
+    const { data, error } = await client
+        .from(PASSIVE_NATIVE_VENDOR_SYNC_RUNS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .order(C.requested_at, { ascending: false })
+        .limit(80);
+
+    if (error) {
+        if (isMissingNativeVendorTableError(error.message)) return [];
+        throw new Error(`Failed to list native vendor sync runs: ${error.message}`);
+    }
+
+    return (data ?? []).map((row) => mapNativeVendorSyncRun(asRecord(row)));
+}
+
+async function insertNativeVendorSyncRun(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        connection: NativeVendorConnectionRecord;
+        reason: NativeVendorSyncRunReason;
+        status: NativeVendorSyncRunStatus;
+        metadata?: Record<string, unknown>;
+    },
+): Promise<NativeVendorSyncRunRecord> {
+    const C = PASSIVE_NATIVE_VENDOR_SYNC_RUNS.COLUMNS;
+    const { data, error } = await client
+        .from(PASSIVE_NATIVE_VENDOR_SYNC_RUNS.TABLE)
+        .insert({
+            [C.tenant_id]: input.tenantId,
+            [C.native_connection_id]: input.connection.id,
+            [C.connector_installation_id]: input.connection.connector_installation_id,
+            [C.adapter_key]: input.connection.adapter_key,
+            [C.run_reason]: input.reason,
+            [C.status]: input.status,
+            [C.requested_at]: new Date().toISOString(),
+            [C.metadata]: input.metadata ?? {},
+        })
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to create native vendor sync run: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    return mapNativeVendorSyncRun(asRecord(data));
+}
+
+async function updateNativeVendorSyncRunOutbox(
+    client: SupabaseClient,
+    run: NativeVendorSyncRunRecord,
+    outboxEventId: string,
+): Promise<NativeVendorSyncRunRecord> {
+    const C = PASSIVE_NATIVE_VENDOR_SYNC_RUNS.COLUMNS;
+    const { data, error } = await client
+        .from(PASSIVE_NATIVE_VENDOR_SYNC_RUNS.TABLE)
+        .update({
+            [C.outbox_event_id]: outboxEventId,
+            [C.metadata]: {
+                ...run.metadata,
+                outbox_event_id: outboxEventId,
+            },
+        })
+        .eq(C.id, run.id)
+        .select('*')
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to attach native vendor sync run to outbox: ${error?.message ?? 'Unknown error'}`);
+    }
+
+    return mapNativeVendorSyncRun(asRecord(data));
+}
+
+async function touchNativeVendorConnectionAfterSyncRequest(
+    client: SupabaseClient,
+    connection: NativeVendorConnectionRecord,
+    run: NativeVendorSyncRunRecord,
+): Promise<void> {
+    const intervalHours = connection.interval_hours;
+    const C = PASSIVE_NATIVE_VENDOR_CONNECTIONS.COLUMNS;
+    const nextSyncAt = connection.sync_mode === 'scheduled_pull' && intervalHours != null
+        ? new Date(Date.now() + intervalHours * 60 * 60 * 1000).toISOString()
+        : connection.next_sync_at;
+    const { error } = await client
+        .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
+        .update({
+            [C.last_sync_status]: run.outbox_event_id ? 'queued_outbox' : 'queued_waiting_for_adapter_runtime',
+            [C.next_sync_at]: nextSyncAt,
+            [C.metadata]: {
+                ...connection.metadata,
+                last_sync_run_id: run.id,
+                last_sync_requested_at: run.requested_at,
+            },
+        })
+        .eq(C.id, connection.id);
+
+    if (error) {
+        throw new Error(`Failed to update native vendor connection scheduler: ${error.message}`);
+    }
+}
+
+function isMissingNativeVendorTableError(message: string): boolean {
+    return message.includes('passive_native_vendor_')
+        || message.includes('Could not find the table')
+        || message.includes('schema cache');
+}
+
 type SignalSourceRecord = {
     id: string;
     source_type: string;
@@ -597,6 +1129,7 @@ function buildPassiveSignalReadiness(input: {
         coverage,
         privacy_contract: [
             'Accept only installation-scoped connector credentials or approved service actors.',
+            'For native vendor adapters, store OAuth/API credential hashes only; never persist raw tokens or authorization codes.',
             'Normalize vendor payloads before episode reconciliation.',
             'Keep raw vendor payloads in passive signal events; surface only normalized facts to clinical workflows.',
             'Do not require owner contact data, patient names, or microchip IDs for connector readiness.',
@@ -684,4 +1217,115 @@ function readBoolean(value: unknown): boolean {
     if (typeof value === 'boolean') return value;
     if (typeof value === 'string') return value === 'true';
     return false;
+}
+
+function mapNativeVendorConnection(row: Record<string, unknown>): NativeVendorConnectionRecord {
+    return {
+        id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        adapter_key: String(row.adapter_key),
+        connector_installation_id: normalizeOptionalText(row.connector_installation_id),
+        vendor_name: normalizeOptionalText(row.vendor_name) ?? 'Unknown vendor',
+        vendor_account_ref: normalizeOptionalText(row.vendor_account_ref),
+        auth_protocol: normalizeNativeAuthProtocol(row.auth_protocol),
+        status: normalizeNativeConnectionStatus(row.status),
+        authorization_state_hash: normalizeOptionalText(row.authorization_state_hash),
+        credential_ref_hash: normalizeOptionalText(row.credential_ref_hash),
+        requested_scopes: asStringArray(row.requested_scopes),
+        adapter_runtime_url: normalizeOptionalText(row.adapter_runtime_url),
+        supported_connector_types: asStringArray(row.supported_connector_types),
+        sync_mode: normalizeSyncMode(row.sync_mode) ?? 'scheduled_pull',
+        interval_hours: normalizePositiveInteger(row.interval_hours),
+        next_sync_at: normalizeTimestamp(row.next_sync_at),
+        last_authorized_at: normalizeTimestamp(row.last_authorized_at),
+        last_sync_at: normalizeTimestamp(row.last_sync_at),
+        last_sync_status: normalizeOptionalText(row.last_sync_status),
+        metadata: asRecord(row.metadata),
+        created_by: normalizeOptionalText(row.created_by),
+        created_at: String(row.created_at),
+        updated_at: String(row.updated_at ?? row.created_at),
+    };
+}
+
+function mapNativeVendorSyncRun(row: Record<string, unknown>): NativeVendorSyncRunRecord {
+    return {
+        id: String(row.id),
+        tenant_id: String(row.tenant_id),
+        native_connection_id: String(row.native_connection_id),
+        connector_installation_id: normalizeOptionalText(row.connector_installation_id),
+        adapter_key: String(row.adapter_key),
+        run_reason: normalizeNativeSyncReason(row.run_reason),
+        status: normalizeNativeSyncStatus(row.status),
+        requested_at: String(row.requested_at ?? row.created_at),
+        started_at: normalizeTimestamp(row.started_at),
+        finished_at: normalizeTimestamp(row.finished_at),
+        events_ingested: normalizePositiveInteger(row.events_ingested) ?? 0,
+        outbox_event_id: normalizeOptionalText(row.outbox_event_id),
+        error_message: normalizeOptionalText(row.error_message),
+        metadata: asRecord(row.metadata),
+        created_at: String(row.created_at),
+    };
+}
+
+function normalizeNativeAuthProtocol(value: unknown): NativeVendorAuthProtocol {
+    return value === 'oauth2_pkce' || value === 'oauth2_client_credentials' || value === 'api_key' || value === 'sftp_drop'
+        ? value
+        : 'api_key';
+}
+
+function normalizeNativeConnectionStatus(value: unknown): NativeVendorConnectionStatus {
+    return value === 'active' || value === 'paused' || value === 'revoked' || value === 'error' || value === 'authorization_required'
+        ? value
+        : 'authorization_required';
+}
+
+function normalizeNativeSyncReason(value: unknown): NativeVendorSyncRunReason {
+    return value === 'manual' || value === 'scheduled' || value === 'authorization_callback' || value === 'backfill'
+        ? value
+        : 'manual';
+}
+
+function normalizeNativeSyncStatus(value: unknown): NativeVendorSyncRunStatus {
+    return value === 'queued' || value === 'running' || value === 'succeeded' || value === 'failed' || value === 'skipped'
+        ? value
+        : 'queued';
+}
+
+function normalizeScopes(scopes: string[] | undefined, adapter: NativeVendorAdapterDefinition): string[] {
+    const supplied = Array.isArray(scopes)
+        ? scopes.map((scope) => scope.trim()).filter((scope) => scope.length > 0)
+        : [];
+    if (supplied.length > 0) return Array.from(new Set(supplied));
+    return adapter.supported_connector_types.map((type) => `signals:${type}`);
+}
+
+function createNativeAuthorizationState(): string {
+    return randomBytes(32).toString('base64url');
+}
+
+function hashSecret(value: string): string {
+    return createHash('sha256').update(value).digest('hex');
+}
+
+function buildNativeAuthorizationUrl(
+    adapter: NativeVendorAdapterDefinition,
+    input: {
+        state: string;
+        redirectUri: string | null;
+        scopes: string[];
+    },
+): string | null {
+    if (adapter.auth_protocol !== 'oauth2_pkce') return null;
+    const baseUrl = process.env.VETIOS_NATIVE_VENDOR_AUTH_BASE_URL?.trim();
+    if (!baseUrl) return null;
+    const url = new URL(baseUrl);
+    url.searchParams.set('adapter_key', adapter.adapter_key);
+    url.searchParams.set('vendor', adapter.vendor_name);
+    url.searchParams.set('response_type', 'code');
+    url.searchParams.set('state', input.state);
+    url.searchParams.set('scope', input.scopes.join(' '));
+    if (input.redirectUri) {
+        url.searchParams.set('redirect_uri', input.redirectUri);
+    }
+    return url.toString();
 }

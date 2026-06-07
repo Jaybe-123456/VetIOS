@@ -41,11 +41,18 @@ function createEmptySnapshot(): PassiveSignalOperationsSnapshot {
     return {
         tenant_id: 'dev_tenant_001',
         marketplace: [],
+        native_adapters: [],
         installations: [],
+        native_connections: [],
+        recent_native_sync_runs: [],
         recent_delivery_attempts: [],
         summary: {
             marketplace_templates: 0,
             live_templates: 0,
+            native_adapter_templates: 0,
+            native_active_connections: 0,
+            native_authorization_required: 0,
+            native_queued_syncs: 0,
             active_installations: 0,
             scheduled_installations: 0,
             webhook_installations: 0,

@@ -12,7 +12,12 @@ import {
     TerminalInput,
     TerminalLabel,
 } from '@/components/ui/terminal';
-import type { PassiveSignalOperationsSnapshot, PassiveConnectorInstallationSnapshot } from '@/lib/passiveSignals/service';
+import type {
+    NativeVendorConnectionRecord,
+    NativeVendorSyncRunRecord,
+    PassiveConnectorInstallationSnapshot,
+    PassiveSignalOperationsSnapshot,
+} from '@/lib/passiveSignals/service';
 
 export default function PassiveSignalOperationsClient({
     initialSnapshot,
@@ -26,6 +31,8 @@ export default function PassiveSignalOperationsClient({
     const [generatedKey, setGeneratedKey] = useState<string | null>(null);
     const [selectedMarketplaceId, setSelectedMarketplaceId] = useState(initialSnapshot.marketplace[0]?.id ?? '');
     const [selectedInstallationId, setSelectedInstallationId] = useState(initialSnapshot.installations[0]?.id ?? '');
+    const [selectedNativeAdapterKey, setSelectedNativeAdapterKey] = useState(initialSnapshot.native_adapters[0]?.adapter_key ?? '');
+    const [selectedNativeConnectionId, setSelectedNativeConnectionId] = useState(initialSnapshot.native_connections[0]?.id ?? '');
     const [actionState, setActionState] = useState<{ status: 'idle' | 'running' | 'success' | 'error'; message: string }>({
         status: 'idle',
         message: '',
@@ -45,6 +52,12 @@ export default function PassiveSignalOperationsClient({
         scheduler_enabled: 'true',
         status: 'active',
     });
+    const [nativeDraft, setNativeDraft] = useState({
+        vendor_account_ref: '',
+        adapter_runtime_url: '',
+        interval_hours: '',
+        redirect_uri: '',
+    });
 
     const selectedTemplate = useMemo(
         () => snapshot.marketplace.find((template) => template.id === selectedMarketplaceId) ?? snapshot.marketplace[0] ?? null,
@@ -53,6 +66,14 @@ export default function PassiveSignalOperationsClient({
     const selectedInstallation = useMemo(
         () => snapshot.installations.find((installation) => installation.id === selectedInstallationId) ?? snapshot.installations[0] ?? null,
         [selectedInstallationId, snapshot.installations],
+    );
+    const selectedNativeAdapter = useMemo(
+        () => snapshot.native_adapters.find((adapter) => adapter.adapter_key === selectedNativeAdapterKey) ?? snapshot.native_adapters[0] ?? null,
+        [selectedNativeAdapterKey, snapshot.native_adapters],
+    );
+    const selectedNativeConnection = useMemo(
+        () => snapshot.native_connections.find((connection) => connection.id === selectedNativeConnectionId) ?? snapshot.native_connections[0] ?? null,
+        [selectedNativeConnectionId, snapshot.native_connections],
     );
 
     useEffect(() => {
@@ -82,6 +103,8 @@ interface PassiveSignalActionResponse {
     snapshot?: PassiveSignalOperationsSnapshot;
     error?: string;
     generated_api_key?: string;
+    native_authorization_state?: string;
+    native_authorization_url?: string | null;
 }
 
     async function refreshSnapshot() {
@@ -115,7 +138,12 @@ interface PassiveSignalActionResponse {
             }
             setSnapshot(data.snapshot);
             setGeneratedKey(typeof data.generated_api_key === 'string' ? data.generated_api_key : null);
-            setActionState({ status: 'success', message: successMessage });
+            const nativeAuth = typeof data.native_authorization_url === 'string'
+                ? ` Authorization URL: ${data.native_authorization_url}`
+                : typeof data.native_authorization_state === 'string'
+                    ? ` Authorization state: ${data.native_authorization_state}`
+                    : '';
+            setActionState({ status: 'success', message: `${successMessage}${nativeAuth}` });
         } catch (error) {
             setActionState({ status: 'error', message: error instanceof Error ? error.message : 'Passive-signal operation failed.' });
         }
@@ -125,12 +153,14 @@ interface PassiveSignalActionResponse {
         <Container className="max-w-[1600px]">
             <PageHeader
                 title="PASSIVE SIGNAL OPS"
-                description="Install connector marketplace packs, switch from legacy shared-secret ingest to installation credentials, and run scheduled syncs through the passive signal engine."
+                description="Install connector marketplace packs, create native vendor connections, switch from legacy shared-secret ingest to installation credentials, and run scheduled syncs through the passive signal engine."
             />
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-6">
                 <SummaryCard icon={<PlugZap className="h-4 w-4" />} label="Marketplace Packs" value={snapshot.summary.marketplace_templates} />
+                <SummaryCard icon={<PlugZap className="h-4 w-4" />} label="Native Adapters" value={snapshot.summary.native_adapter_templates} />
                 <SummaryCard icon={<KeyRound className="h-4 w-4" />} label="Active Installs" value={snapshot.summary.active_installations} />
+                <SummaryCard icon={<KeyRound className="h-4 w-4" />} label="Native Active" value={snapshot.summary.native_active_connections} />
                 <SummaryCard icon={<CalendarClock className="h-4 w-4" />} label="Scheduled Syncs" value={snapshot.summary.scheduled_installations} />
                 <SummaryCard icon={<Activity className="h-4 w-4" />} label="Recent Failures" value={snapshot.summary.recent_failed_syncs} tone={snapshot.summary.recent_failed_syncs > 0 ? 'warning' : 'neutral'} />
             </div>
@@ -190,6 +220,10 @@ interface PassiveSignalActionResponse {
                     <TerminalButton variant="secondary" onClick={() => void runAction({ action: 'run_due_syncs' }, 'Queued all due passive connector syncs.')}>
                         <CalendarClock className="mr-2 h-3 w-3" />
                         Run Due Syncs
+                    </TerminalButton>
+                    <TerminalButton variant="secondary" onClick={() => void runAction({ action: 'run_due_native_vendor_syncs' }, 'Queued all due native vendor syncs.')}>
+                        <CalendarClock className="mr-2 h-3 w-3" />
+                        Run Native Due
                     </TerminalButton>
                     <div className="font-mono text-xs text-muted">Tenant: {tenantId}</div>
                 </div>
@@ -303,6 +337,82 @@ interface PassiveSignalActionResponse {
                 </ConsoleCard>
             </div>
 
+            <div className="mt-6 grid gap-6 xl:grid-cols-2">
+                <ConsoleCard title="Native Vendor Adapter">
+                    <Field label="Native Adapter">
+                        <Select value={selectedNativeAdapterKey} onChange={(event: ChangeEvent<HTMLSelectElement>) => setSelectedNativeAdapterKey(event.target.value)}>
+                            {snapshot.native_adapters.map((adapter) => (
+                                <option key={adapter.adapter_key} value={adapter.adapter_key}>{adapter.display_name}</option>
+                            ))}
+                        </Select>
+                    </Field>
+                    <div className="mt-4 grid gap-4 md:grid-cols-2">
+                        <Field label="Vendor Account Ref"><TerminalInput value={nativeDraft.vendor_account_ref} onChange={(event: ChangeEvent<HTMLInputElement>) => setNativeDraft((current) => ({ ...current, vendor_account_ref: event.target.value }))} /></Field>
+                        <Field label="Adapter Runtime URL"><TerminalInput value={nativeDraft.adapter_runtime_url} onChange={(event: ChangeEvent<HTMLInputElement>) => setNativeDraft((current) => ({ ...current, adapter_runtime_url: event.target.value }))} /></Field>
+                        <Field label="Interval Hours"><TerminalInput value={nativeDraft.interval_hours} onChange={(event: ChangeEvent<HTMLInputElement>) => setNativeDraft((current) => ({ ...current, interval_hours: event.target.value }))} /></Field>
+                        <Field label="Redirect URI"><TerminalInput value={nativeDraft.redirect_uri} onChange={(event: ChangeEvent<HTMLInputElement>) => setNativeDraft((current) => ({ ...current, redirect_uri: event.target.value }))} placeholder="/api/signals/connect/native/callback" /></Field>
+                    </div>
+                    {selectedNativeAdapter ? (
+                        <div className="mt-4 border border-accent/30 bg-accent/5 p-4 rounded-sm">
+                            <div className="font-mono text-sm text-white font-medium">{selectedNativeAdapter.display_name}</div>
+                            <div className="mt-1.5 font-mono text-xs text-white/60 leading-5">{selectedNativeAdapter.summary}</div>
+                            <div className="mt-3 grid gap-0 md:grid-cols-2">
+                                <DataRow label="Vendor" value={selectedNativeAdapter.vendor_name} tone="accent" />
+                                <DataRow label="Auth" value={selectedNativeAdapter.auth_protocol} />
+                                <DataRow label="Readiness" value={selectedNativeAdapter.readiness} />
+                                <DataRow label="Types" value={selectedNativeAdapter.supported_connector_types.join(', ')} />
+                            </div>
+                        </div>
+                    ) : null}
+                    <div className="pt-4">
+                        <TerminalButton
+                            onClick={() => selectedNativeAdapter && void runAction({
+                                action: 'create_native_vendor_connection',
+                                adapter_key: selectedNativeAdapter.adapter_key,
+                                vendor_account_ref: nativeDraft.vendor_account_ref,
+                                adapter_runtime_url: nativeDraft.adapter_runtime_url,
+                                interval_hours: nativeDraft.interval_hours,
+                                redirect_uri: nativeDraft.redirect_uri,
+                            }, 'Native vendor connection created.')}
+                            disabled={!selectedNativeAdapter}
+                        >
+                            Create Native Connection
+                        </TerminalButton>
+                    </div>
+                </ConsoleCard>
+
+                <ConsoleCard title="Native Connection Sync">
+                    <Field label="Native Connection">
+                        <Select value={selectedNativeConnectionId} onChange={(event: ChangeEvent<HTMLSelectElement>) => setSelectedNativeConnectionId(event.target.value)}>
+                            {snapshot.native_connections.map((connection) => (
+                                <option key={connection.id} value={connection.id}>{connection.vendor_name} / {connection.adapter_key}</option>
+                            ))}
+                        </Select>
+                    </Field>
+                    {selectedNativeConnection ? (
+                        <>
+                            <div className="mt-4 border border-accent/30 bg-accent/5 p-4 rounded-sm">
+                                <DataRow label="Status" value={selectedNativeConnection.status} tone={selectedNativeConnection.status === 'active' ? 'accent' : 'warning'} />
+                                <DataRow label="Runtime URL" value={selectedNativeConnection.adapter_runtime_url ? 'CONFIGURED' : 'MISSING'} tone={selectedNativeConnection.adapter_runtime_url ? 'accent' : 'warning'} />
+                                <DataRow label="Next Sync" value={formatTimestamp(selectedNativeConnection.next_sync_at)} />
+                                <DataRow label="Last Sync" value={selectedNativeConnection.last_sync_status ?? 'NO DATA'} />
+                            </div>
+                            <div className="mt-4 flex flex-wrap gap-2">
+                                <TerminalButton variant="secondary" onClick={() => void runAction({
+                                    action: 'queue_native_vendor_sync',
+                                    native_connection_id: selectedNativeConnection.id,
+                                    reason: 'manual',
+                                }, 'Native vendor sync queued.')}>
+                                    Queue Native Sync
+                                </TerminalButton>
+                            </div>
+                        </>
+                    ) : (
+                        <div className="mt-4 font-mono text-xs text-muted">No native vendor connections yet.</div>
+                    )}
+                </ConsoleCard>
+            </div>
+
             <div className="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
                 <ConsoleCard title="Installed Connectors">
                     <div className="space-y-4">
@@ -322,6 +432,30 @@ interface PassiveSignalActionResponse {
                         ))}
                         {snapshot.recent_delivery_attempts.length === 0 && (
                             <div className="font-mono text-xs text-muted">No connector webhook deliveries have been attempted yet.</div>
+                        )}
+                    </div>
+                </ConsoleCard>
+            </div>
+
+            <div className="mt-6 grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+                <ConsoleCard title="Native Vendor Connections">
+                    <div className="space-y-4">
+                        {snapshot.native_connections.map((connection) => (
+                            <NativeConnectionRow key={connection.id} connection={connection} />
+                        ))}
+                        {snapshot.native_connections.length === 0 && (
+                            <div className="font-mono text-xs text-muted">No native vendor connections have been provisioned yet.</div>
+                        )}
+                    </div>
+                </ConsoleCard>
+
+                <ConsoleCard title="Native Sync Runs">
+                    <div className="space-y-4">
+                        {snapshot.recent_native_sync_runs.map((run) => (
+                            <NativeSyncRunRow key={run.id} run={run} />
+                        ))}
+                        {snapshot.recent_native_sync_runs.length === 0 && (
+                            <div className="font-mono text-xs text-muted">No native vendor sync runs have been queued yet.</div>
                         )}
                     </div>
                 </ConsoleCard>
@@ -422,6 +556,50 @@ function AttemptRow({ attempt }: { attempt: PassiveSignalOperationsSnapshot['rec
                 <div className="md:col-span-2">
                     <DataRow label="Error" value={attempt.error_message ?? 'NO ERROR'} />
                 </div>
+            </div>
+        </div>
+    );
+}
+
+function NativeConnectionRow({ connection }: { connection: NativeVendorConnectionRecord }) {
+    const isActive = connection.status === 'active';
+    return (
+        <div className={`border p-4 rounded-sm ${isActive ? 'border-accent/20 bg-accent/[0.03]' : 'border-warning/20 bg-warning/[0.03]'}`}>
+            <div className="flex items-center gap-2 mb-2">
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isActive ? 'bg-accent' : 'bg-warning'}`} />
+                <div className="font-mono text-sm text-white font-medium">{connection.vendor_name}</div>
+            </div>
+            <div className="flex flex-wrap gap-2 mb-3">
+                <span className={`font-mono text-[10px] uppercase tracking-[0.18em] border px-2 py-0.5 rounded-full ${isActive ? 'text-accent border-accent/30 bg-accent/10' : 'text-warning border-warning/30 bg-warning/10'}`}>{connection.status}</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/60 border border-white/10 px-2 py-0.5 rounded-full">{connection.auth_protocol}</span>
+                <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/60 border border-white/10 px-2 py-0.5 rounded-full">{connection.sync_mode}</span>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+                <DataRow label="Adapter" value={connection.adapter_key} />
+                <DataRow label="Runtime" value={connection.adapter_runtime_url ? 'CONFIGURED' : 'MISSING'} tone={connection.adapter_runtime_url ? 'accent' : 'warning'} />
+                <DataRow label="Next Sync" value={formatTimestamp(connection.next_sync_at)} />
+                <DataRow label="Last Authorized" value={formatTimestamp(connection.last_authorized_at)} />
+            </div>
+        </div>
+    );
+}
+
+function NativeSyncRunRow({ run }: { run: NativeVendorSyncRunRecord }) {
+    const isQueued = run.status === 'queued' || run.status === 'running';
+    const isOk = run.status === 'succeeded';
+    return (
+        <div className={`border p-4 rounded-sm ${isOk ? 'border-accent/20 bg-accent/[0.03]' : isQueued ? 'border-warning/20 bg-warning/[0.03]' : 'border-danger/20 bg-danger/[0.03]'}`}>
+            <div className="flex items-center gap-2 mb-2">
+                <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${isOk ? 'bg-accent' : isQueued ? 'bg-warning' : 'bg-danger'}`} />
+                <div className="font-mono text-sm text-white font-medium">{run.adapter_key}</div>
+            </div>
+            <div className="grid gap-2 md:grid-cols-2">
+                <DataRow label="Status" value={run.status} tone={isOk ? 'accent' : isQueued ? 'warning' : 'danger'} />
+                <DataRow label="Reason" value={run.run_reason} />
+                <DataRow label="Events" value={run.events_ingested} />
+                <DataRow label="Requested" value={formatTimestamp(run.requested_at)} />
+                <DataRow label="Outbox" value={run.outbox_event_id ? 'QUEUED' : 'NO RUNTIME'} tone={run.outbox_event_id ? 'accent' : 'warning'} />
+                <DataRow label="Error" value={run.error_message ?? 'NO ERROR'} />
             </div>
         </div>
     );

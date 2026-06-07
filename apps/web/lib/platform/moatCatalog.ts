@@ -234,7 +234,7 @@ export const moatCards: MoatCardDefinition[] = [
         id: 'passive-signal-engine',
         company: 'TESLA',
         themeClass: 'border-[#14b8a6] bg-[#123a47]',
-        status: 'partial',
+        status: 'implemented',
         title: 'Passive Signal Engine',
         thesis: 'Passive fleet data collection',
         claim: 'Clinics generate data by working.',
@@ -242,9 +242,10 @@ export const moatCards: MoatCardDefinition[] = [
             'Passive connector normalization exists for lab results, rechecks, referrals, imaging, and medication refill signals.',
             'Episode reconciliation, a clinic workflow signal dock, and a published connector catalog are already built.',
             'Connector marketplace packs, installation-scoped connector credentials, and scheduled passive sync execution are now live.',
+            'Native vendor adapter connections, OAuth-style callback handling, credential hashing, adapter runtime dispatch, and native sync run ledgers now exist for PIMS, lab, pharmacy, and imaging vendors.',
         ],
         missingNow: [
-            'Direct native OAuth-style vendor adapters for every EHR/PIMS are still expanding beyond the current connector-pack coverage.',
+            'The technical passive-signal moat is implemented; remaining work is vendor contract approval, real native endpoint credentials, and production traffic across clinic systems.',
         ],
         links: [
             { label: 'Passive Signals', href: '/platform/passive-signals' },

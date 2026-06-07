@@ -963,6 +963,56 @@ export const CONNECTOR_INSTALLATIONS = {
     },
 } as const;
 
+export const PASSIVE_NATIVE_VENDOR_CONNECTIONS = {
+    TABLE: 'passive_native_vendor_connections',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        adapter_key: 'adapter_key',
+        connector_installation_id: 'connector_installation_id',
+        vendor_name: 'vendor_name',
+        vendor_account_ref: 'vendor_account_ref',
+        auth_protocol: 'auth_protocol',
+        status: 'status',
+        authorization_state_hash: 'authorization_state_hash',
+        credential_ref_hash: 'credential_ref_hash',
+        requested_scopes: 'requested_scopes',
+        adapter_runtime_url: 'adapter_runtime_url',
+        supported_connector_types: 'supported_connector_types',
+        sync_mode: 'sync_mode',
+        interval_hours: 'interval_hours',
+        next_sync_at: 'next_sync_at',
+        last_authorized_at: 'last_authorized_at',
+        last_sync_at: 'last_sync_at',
+        last_sync_status: 'last_sync_status',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const PASSIVE_NATIVE_VENDOR_SYNC_RUNS = {
+    TABLE: 'passive_native_vendor_sync_runs',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        native_connection_id: 'native_connection_id',
+        connector_installation_id: 'connector_installation_id',
+        adapter_key: 'adapter_key',
+        run_reason: 'run_reason',
+        status: 'status',
+        requested_at: 'requested_at',
+        started_at: 'started_at',
+        finished_at: 'finished_at',
+        events_ingested: 'events_ingested',
+        outbox_event_id: 'outbox_event_id',
+        error_message: 'error_message',
+        metadata: 'metadata',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const API_CREDENTIALS = {
     TABLE: 'api_credentials',
     COLUMNS: {

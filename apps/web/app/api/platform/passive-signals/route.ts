@@ -9,11 +9,16 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import {
+    acceptNativeVendorAuthorizationCallback,
     configurePassiveConnectorInstallation,
+    createNativeVendorConnection,
     getPassiveSignalOperationsSnapshot,
     installMarketplacePassiveConnector,
+    queueNativeVendorSync,
     requestPassiveConnectorSync,
     runDuePassiveConnectorSyncs,
+    runDueNativeVendorSyncs,
+    type NativeVendorSyncRunReason,
 } from '@/lib/passiveSignals/service';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
@@ -43,6 +48,30 @@ type PassiveSignalsAction =
     }
     | {
         action: 'run_due_syncs';
+    }
+    | {
+        action: 'create_native_vendor_connection';
+        adapter_key?: string;
+        vendor_account_ref?: string | null;
+        connector_installation_id?: string | null;
+        adapter_runtime_url?: string | null;
+        interval_hours?: number | string | null;
+        requested_scopes?: string[];
+        redirect_uri?: string | null;
+    }
+    | {
+        action: 'authorize_native_vendor_connection';
+        state?: string | null;
+        code?: string | null;
+        error?: string | null;
+    }
+    | {
+        action: 'queue_native_vendor_sync';
+        native_connection_id?: string;
+        reason?: NativeVendorSyncRunReason | null;
+    }
+    | {
+        action: 'run_due_native_vendor_syncs';
     };
 
 export const runtime = 'nodejs';
@@ -151,6 +180,50 @@ export async function POST(req: Request) {
                     actor: authContext.userId,
                 }),
             };
+        } else if (parsed.data.action === 'create_native_vendor_connection') {
+            const created = await createNativeVendorConnection({
+                client: adminClient,
+                tenantId: authContext.tenantId,
+                actor: authContext.userId,
+                adapterKey: requireText(parsed.data.adapter_key, 'adapter_key'),
+                vendorAccountRef: parsed.data.vendor_account_ref ?? null,
+                connectorInstallationId: parsed.data.connector_installation_id ?? null,
+                adapterRuntimeUrl: parsed.data.adapter_runtime_url ?? null,
+                intervalHours: normalizePositiveInteger(parsed.data.interval_hours),
+                requestedScopes: parsed.data.requested_scopes,
+                redirectUri: parsed.data.redirect_uri ?? null,
+            });
+            result = {
+                native_connection: created.connection,
+                connector_installation: created.connector_installation,
+                generated_api_key: created.generated_api_key,
+                native_authorization_state: created.authorization_state,
+                native_authorization_url: created.authorization_url,
+            };
+        } else if (parsed.data.action === 'authorize_native_vendor_connection') {
+            result = {
+                native_connection: await acceptNativeVendorAuthorizationCallback({
+                    client: adminClient,
+                    state: requireText(parsed.data.state ?? undefined, 'state'),
+                    code: parsed.data.code ?? null,
+                    error: parsed.data.error ?? null,
+                }),
+            };
+        } else if (parsed.data.action === 'queue_native_vendor_sync') {
+            result = await queueNativeVendorSync({
+                client: adminClient,
+                tenantId: authContext.tenantId,
+                nativeConnectionId: requireText(parsed.data.native_connection_id, 'native_connection_id'),
+                reason: normalizeNativeSyncReason(parsed.data.reason) ?? 'manual',
+            });
+        } else if (parsed.data.action === 'run_due_native_vendor_syncs') {
+            result = {
+                native_sync_runs: await runDueNativeVendorSyncs({
+                    client: adminClient,
+                    tenantId: authContext.tenantId,
+                    actor: authContext.userId,
+                }),
+            };
         } else {
             return NextResponse.json({ error: 'Unsupported passive-signals action.', request_id: requestId }, { status: 400 });
         }
@@ -231,4 +304,10 @@ function normalizeInstallationStatus(value: unknown): 'active' | 'paused' | 'rev
     return value === 'active' || value === 'paused' || value === 'revoked'
         ? value
         : undefined;
+}
+
+function normalizeNativeSyncReason(value: unknown): NativeVendorSyncRunReason | null {
+    return value === 'manual' || value === 'scheduled' || value === 'authorization_callback' || value === 'backfill'
+        ? value
+        : null;
 }
