@@ -39,6 +39,13 @@ export default async function DevelopersPage() {
                         <Braces className="h-4 w-4" />
                     </Link>
                     <Link
+                        href="/api/public/developer-openapi.yaml"
+                        className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white transition hover:border-white/30 hover:bg-white/10"
+                    >
+                        OpenAPI YAML
+                        <Code2 className="h-4 w-4" />
+                    </Link>
+                    <Link
                         href="/settings"
                         className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm text-white transition hover:border-white/30 hover:bg-white/10"
                     >
@@ -161,11 +168,18 @@ export default async function DevelopersPage() {
                                 <FileJson className="h-4 w-4" />
                             </Link>
                             <Link
-                                href="/api-spec/openapi-v1.yaml"
+                                href="/api/public/developer-openapi.yaml"
                                 className="inline-flex items-center justify-between rounded-2xl border border-emerald-300/20 bg-black/20 px-4 py-3 text-emerald-50 transition hover:border-emerald-200/40 hover:bg-black/30"
                             >
-                                OpenAPI YAML
+                                Generated OpenAPI YAML
                                 <Braces className="h-4 w-4" />
+                            </Link>
+                            <Link
+                                href="/api/public/developer-openapi"
+                                className="inline-flex items-center justify-between rounded-2xl border border-emerald-300/20 bg-black/20 px-4 py-3 text-emerald-50 transition hover:border-emerald-200/40 hover:bg-black/30"
+                            >
+                                OpenAPI JSON
+                                <FileJson className="h-4 w-4" />
                             </Link>
                         </div>
                     </div>

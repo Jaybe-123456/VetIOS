@@ -131,13 +131,18 @@ export const partnerContractEndpoints: ContractEndpoint[] = [
 ];
 
 export function getDeveloperContract(baseUrl = 'https://www.vetios.tech') {
+    const openApiJsonUrl = `${baseUrl}/api/public/developer-openapi`;
+    const openApiYamlUrl = `${baseUrl}/api/public/developer-openapi.yaml`;
+
     return {
         contract_key: DEVELOPER_CONTRACT_KEY,
         version: DEVELOPER_CONTRACT_VERSION,
         status: 'published',
         generated_at: new Date().toISOString(),
         base_url: baseUrl,
-        openapi_url: `${baseUrl}/api-spec/openapi-v1.yaml`,
+        openapi_url: openApiYamlUrl,
+        openapi_json_url: openApiJsonUrl,
+        openapi_yaml_url: openApiYamlUrl,
         json_contract_url: `${baseUrl}/api/public/developer-contract`,
         auth: {
             scheme: 'Bearer',
@@ -165,22 +170,27 @@ export function getDeveloperContract(baseUrl = 'https://www.vetios.tech') {
             { name: 'enterprise', requests_per_minute: 1000, requests_per_month: 5000000, burst_allowance: 200 },
         ],
         endpoints: partnerContractEndpoints,
-        openapi: buildOpenApiDocument(baseUrl),
+        openapi: getDeveloperOpenApiDocument(baseUrl),
     };
 }
 
 export function getDeveloperContractSummary(baseUrl = 'https://www.vetios.tech') {
+    const openApiJsonUrl = `${baseUrl}/api/public/developer-openapi`;
+    const openApiYamlUrl = `${baseUrl}/api/public/developer-openapi.yaml`;
+
     return {
         contract_key: DEVELOPER_CONTRACT_KEY,
         version: DEVELOPER_CONTRACT_VERSION,
         status: 'published',
         endpoint_count: partnerContractEndpoints.length,
-        openapi_url: `${baseUrl}/api-spec/openapi-v1.yaml`,
+        openapi_url: openApiYamlUrl,
+        openapi_json_url: openApiJsonUrl,
+        openapi_yaml_url: openApiYamlUrl,
         json_contract_url: `${baseUrl}/api/public/developer-contract`,
     };
 }
 
-function buildOpenApiDocument(baseUrl: string): Record<string, unknown> {
+export function getDeveloperOpenApiDocument(baseUrl = 'https://www.vetios.tech'): Record<string, unknown> {
     const paths: Record<string, unknown> = {};
 
     for (const endpoint of partnerContractEndpoints) {
@@ -198,6 +208,8 @@ function buildOpenApiDocument(baseUrl: string): Record<string, unknown> {
             version: DEVELOPER_CONTRACT_VERSION,
             description: 'Versioned external contract for VetIOS partner clinical intelligence APIs.',
         },
+        'x-vetios-contract-key': DEVELOPER_CONTRACT_KEY,
+        'x-vetios-contract-version': DEVELOPER_CONTRACT_VERSION,
         servers: [{ url: baseUrl, description: 'Production' }],
         security: [{ PartnerApiKey: [] }],
         paths,
@@ -238,6 +250,10 @@ function buildOpenApiDocument(baseUrl: string): Record<string, unknown> {
             },
         },
     };
+}
+
+export function getDeveloperOpenApiYaml(baseUrl = 'https://www.vetios.tech'): string {
+    return `${toYaml(getDeveloperOpenApiDocument(baseUrl)).trimEnd()}\n`;
 }
 
 function buildOperation(endpoint: ContractEndpoint): Record<string, unknown> {
@@ -300,4 +316,49 @@ function readRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function toYaml(value: unknown, indent = 0): string {
+    const pad = ' '.repeat(indent);
+
+    if (Array.isArray(value)) {
+        if (value.length === 0) return '[]';
+        return value
+            .filter((item) => typeof item !== 'undefined')
+            .map((item) => {
+                if (isScalar(item)) return `${pad}- ${formatScalar(item)}`;
+                const nested = toYaml(item, indent + 2);
+                return `${pad}-\n${nested}`;
+            })
+            .join('\n');
+    }
+
+    if (value && typeof value === 'object') {
+        const entries = Object.entries(value as Record<string, unknown>)
+            .filter(([, entryValue]) => typeof entryValue !== 'undefined');
+        if (entries.length === 0) return '{}';
+        return entries
+            .map(([key, entryValue]) => {
+                if (isScalar(entryValue)) {
+                    return `${pad}${key}: ${formatScalar(entryValue)}`;
+                }
+                return `${pad}${key}:\n${toYaml(entryValue, indent + 2)}`;
+            })
+            .join('\n');
+    }
+
+    return `${pad}${formatScalar(value)}`;
+}
+
+function isScalar(value: unknown): boolean {
+    return value == null
+        || typeof value === 'string'
+        || typeof value === 'number'
+        || typeof value === 'boolean';
+}
+
+function formatScalar(value: unknown): string {
+    if (value == null) return 'null';
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    return JSON.stringify(String(value));
 }

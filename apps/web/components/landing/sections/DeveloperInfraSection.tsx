@@ -25,7 +25,7 @@ export default function DeveloperInfraSection() {
                         api.vetios.tech/v1
                     </code>
                     — see the{' '}
-                    <Link className="text-[#9AE4D1] underline decoration-[#38DCC6]/40 underline-offset-4 hover:text-white" href="/api-spec/openapi-v1.yaml">
+                    <Link className="text-[#9AE4D1] underline decoration-[#38DCC6]/40 underline-offset-4 hover:text-white" href="/api/public/developer-openapi.yaml">
                         OpenAPI specification
                     </Link>
                     {' '}or{' '}

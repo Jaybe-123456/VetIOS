@@ -244,7 +244,7 @@ export const moatCards: MoatCardDefinition[] = [
             'A public developer portal, published API products, and endpoint catalog now document the integration surface.',
             'Self-serve onboarding intake and admin-issued partner machine credentials now exist in the control plane.',
             'Partner billing plans, quota counters, billable usage events, lifecycle analytics, and rate-limit headers now live in the normal migration chain.',
-            'A versioned public developer contract now exposes API auth, scopes, quota headers, plans, endpoint examples, and OpenAPI lineage.',
+            'A versioned public developer contract now exposes API auth, scopes, quota headers, plans, endpoint examples, and generated JSON/YAML OpenAPI from the same source of truth.',
         ],
         missingNow: [
             'The technical moat is implemented; the remaining work is external SDK distribution, partner adoption, and production traffic validation.',

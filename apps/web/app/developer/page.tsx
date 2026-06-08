@@ -13,7 +13,7 @@ export default function DeveloperPage() {
             actions={(
                 <>
                     <Link
-                        href="/api-spec/openapi-v1.yaml"
+                        href="/api/public/developer-openapi.yaml"
                         className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
                     >
                         OpenAPI spec
@@ -72,7 +72,7 @@ export default function DeveloperPage() {
                 </p>
                 <div className="mt-5">
                     <Link
-                        href="/api-spec/openapi-v1.yaml"
+                        href="/api/public/developer-openapi.yaml"
                         className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-sm text-cyan-100 transition hover:border-cyan-300/35 hover:bg-cyan-400/15"
                     >
                         Open full API schema
