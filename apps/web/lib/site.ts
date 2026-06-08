@@ -6,6 +6,7 @@ const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/re
 const PUBLIC_MARKETING_PATHS = [...PUBLIC_SEO_PATHS];
 const PUBLIC_PLATFORM_PATHS = [
     '/platform/model-cards',
+    '/platform/population-intelligence',
 ];
 const PUBLIC_METADATA_PATHS = [
     '/robots.txt',

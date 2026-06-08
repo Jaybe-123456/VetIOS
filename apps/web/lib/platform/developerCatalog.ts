@@ -193,4 +193,16 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             'Summarizes dataset versions, benchmark runs, calibration reports, and audit activity.',
         ],
     },
+    {
+        id: 'public-population-intelligence',
+        method: 'GET',
+        path: '/api/public/population-intelligence',
+        auth: 'public',
+        readiness: 'public',
+        purpose: 'Read-only aggregate population-health advisory feed for public-health safe disease surveillance.',
+        notes: [
+            'Suppresses low-support signals below the minimum clinic threshold.',
+            'Excludes tenant IDs, clinic identifiers, patient identifiers, owner identifiers, and inference event IDs.',
+        ],
+    },
 ];

@@ -9,6 +9,7 @@ const navItems = [
     { href: '/platform/developers', label: 'Developers' },
     { href: '/platform/passive-signals', label: 'Passive Signals' },
     { href: '/platform/network-learning', label: 'Network Learning' },
+    { href: '/platform/population-intelligence', label: 'Population Intelligence' },
     { href: '/platform/petpass', label: 'PetPass' },
     { href: '/platform/edge-box', label: 'Edge Box' },
 ];

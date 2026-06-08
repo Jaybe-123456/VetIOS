@@ -135,6 +135,12 @@ export const platformLayers: PlatformLayerDefinition[] = [
                 summary: 'Edge boxes now have registry, sync jobs, staged artifacts, hashed device credentials, rotation, revocation, expiry, and sync-auth last-use telemetry.',
                 href: '/platform/edge-box',
             },
+            {
+                label: 'Population Intelligence',
+                status: 'implemented',
+                summary: 'Aggregate outbreak signals now produce privacy-gated public-health advisories with minimum clinic thresholds and public JSON output.',
+                href: '/platform/population-intelligence',
+            },
         ],
     },
 ];
@@ -273,6 +279,29 @@ export const moatCards: MoatCardDefinition[] = [
             { label: 'Public Model Cards', href: '/platform/model-cards' },
             { label: 'Trust Ops', href: '/settings/model-trust' },
             { label: 'Registry Control Plane', href: '/models' },
+        ],
+    },
+    {
+        id: 'population-intelligence',
+        company: 'BLOOMBERG',
+        themeClass: 'border-[#06b6d4] bg-[#123047]',
+        status: 'implemented',
+        title: 'Population Intelligence',
+        thesis: 'Proprietary signal network',
+        claim: 'Aggregate case flow becomes regional disease intelligence.',
+        availableNow: [
+            'Population disease signals, outbreak detection, and heatmap generation already operate across de-identified case flow.',
+            'Public-health advisories now publish only aggregate signals that meet a minimum clinic threshold.',
+            'A public API and platform page expose advisory summaries, severity, affected region/species, recommended actions, and privacy boundaries.',
+            'The advisory ledger is append-only, so public population intelligence has auditable publication lineage.',
+        ],
+        missingNow: [
+            'The technical population-intelligence moat is implemented; remaining work is larger clinic coverage, association adoption, and public-health partner validation.',
+        ],
+        links: [
+            { label: 'Population Intelligence', href: '/platform/population-intelligence' },
+            { label: 'Public Feed', href: '/api/public/population-intelligence' },
+            { label: 'Internal Report', href: '/api/population-signal/report' },
         ],
     },
 ];
