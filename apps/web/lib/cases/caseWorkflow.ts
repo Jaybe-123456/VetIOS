@@ -4,6 +4,10 @@ import {
     loadClinicalMultimodalArtifacts,
     type ClinicalMultimodalArtifact,
 } from '@/lib/multimodal/artifactLedger';
+import {
+    loadPatientTimelineForCase,
+    type PatientTimelineSummary,
+} from '@/lib/clinicalMemory/patientTimeline';
 
 export type CaseStatus = 'open' | 'closed' | 'referred';
 export type DiagnosisMethod = 'clinical' | 'lab_confirmed' | 'imaging_confirmed' | 'pathology' | 'response_to_treatment';
@@ -38,6 +42,7 @@ export interface CaseSummary {
     tenant_id: string;
     user_id: string | null;
     clinic_id: string | null;
+    patient_id: string | null;
     created_at: string;
     updated_at: string;
     case_status: CaseStatus;
@@ -80,6 +85,7 @@ export interface CaseDetail extends CaseSummary {
     outcomes: Record<string, unknown>[];
     diagnosis_records: Record<string, unknown>[];
     multimodal_artifacts: ClinicalMultimodalArtifact[];
+    patient_timeline: PatientTimelineSummary;
 }
 
 export interface CaseDifferentialSummary {
@@ -192,6 +198,22 @@ export async function getClinicalCaseDetail(
     const outcomes = await loadOutcomes(client, tenantId, summary.id);
     const diagnosisRecords = await loadDiagnosisRecords(client, tenantId, summary.id);
     const multimodalArtifacts = await loadClinicalMultimodalArtifacts(client, tenantId, summary.id);
+    const patientTimeline = await loadPatientTimelineForCase(client, {
+        tenantId,
+        caseId: summary.id,
+        patientId: summary.patient_id,
+        patientName: summary.patient_name,
+        microchipId: readText(row.microchip_id) ?? readText(summary.patient_metadata.microchip_id),
+        species: summary.species_display ?? summary.species_canonical,
+        breed: summary.breed,
+        createdAt: summary.created_at,
+        presentingComplaint: summary.presenting_complaint,
+        confirmedDiagnosis: summary.confirmed_diagnosis,
+        topDiagnosis: summary.top_diagnosis,
+        diagnosisConfidence: summary.diagnosis_confidence,
+        latestInferenceEventId: summary.latest_inference_event_id,
+        latestOutcomeEventId: summary.latest_outcome_event_id,
+    });
 
     return {
         ...summary,
@@ -212,6 +234,7 @@ export async function getClinicalCaseDetail(
         outcomes,
         diagnosis_records: diagnosisRecords,
         multimodal_artifacts: multimodalArtifacts,
+        patient_timeline: patientTimeline,
     };
 }
 
@@ -304,6 +327,7 @@ export function mapCaseSummary(row: Record<string, unknown>): CaseSummary {
         tenant_id: String(row.tenant_id),
         user_id: readText(row.user_id),
         clinic_id: readText(row.clinic_id),
+        patient_id: readText(row.patient_id),
         created_at: String(row.created_at),
         updated_at: String(row.updated_at),
         case_status: statusText === 'closed' || statusText === 'referred'
@@ -689,6 +713,7 @@ function mapInferenceOnlyCaseDetail(
         tenant_id: tenantId,
         user_id: readText(inference.user_id),
         clinic_id: readText(inference.clinic_id),
+        patient_id: readText(input.patient_id) ?? readText(metadata.patient_id),
         created_at: createdAt,
         updated_at: createdAt,
         case_status: confirmed ? 'closed' : 'open',
@@ -728,6 +753,17 @@ function mapInferenceOnlyCaseDetail(
         outcomes,
         diagnosis_records: [],
         multimodal_artifacts: [],
+        patient_timeline: {
+            patient_key: '',
+            patient_id: readText(input.patient_id) ?? readText(metadata.patient_id),
+            total_events: 0,
+            confirmed_diagnoses: 0,
+            longitudinal_visits: 0,
+            last_event_at: null,
+            active_conditions: [],
+            timeline_summary: 'No patient timeline is available for this inference-only case.',
+            events: [],
+        },
     };
 }
 

@@ -26,6 +26,7 @@ import { recordOutcomeObservability } from '@/lib/telemetry/observability';
 import type { Differential } from '@/lib/cire';
 import { recordProductUsageEvent } from '@/lib/billing/entitlements';
 import { persistClinicalMultimodalArtifacts } from '@/lib/multimodal/artifactLedger';
+import { persistPatientTimelineEvent } from '@/lib/clinicalMemory/patientTimeline';
 
 export const runtime = 'nodejs';
 
@@ -367,6 +368,21 @@ export async function POST(req: Request) {
         latestInputSignature: clinicalCase?.latest_input_signature ?? inputSignature,
     });
 
+    const patientTimelineLedger = await persistPatientTimelineEventIfPossible(supabase, {
+        tenantId,
+        caseId,
+        inferenceEventId: body.inference_event_id,
+        outcomeEventId: persistedOutcomeId,
+        actualLabel,
+        predictedLabel,
+        diagnosisConfidence: readNumber((inferenceEvent as Record<string, unknown>).confidence_score),
+        predictionCorrect,
+        calibrationDelta,
+        occurredAt: body.outcome.timestamp,
+        clinicalCase,
+        inputSignature,
+    });
+
     const derivedUpdates = await runDerivedOutcomeUpdates(supabase, {
         tenantId,
         inferenceEventId: body.inference_event_id,
@@ -401,12 +417,14 @@ export async function POST(req: Request) {
             diagnosis_record_id: diagnosisRecord.id,
             case_closed: caseClosure.closed,
             multimodal_artifact_ledger: multimodalArtifactLedger,
+            patient_timeline_ledger: patientTimelineLedger,
             warnings: [
                 ...derivedUpdates.warnings,
                 ...[
                     diagnosisRecord.warning,
                     caseClosure.warning,
                     multimodalArtifactLedger.warning,
+                    patientTimelineLedger.warning,
                 ].filter((entry): entry is string => Boolean(entry)),
             ],
         },
@@ -434,6 +452,71 @@ export async function POST(req: Request) {
         client: supabase,
     });
     return NextResponse.json(responseBody);
+}
+
+async function persistPatientTimelineEventIfPossible(
+    supabase: SupabaseClient,
+    input: {
+        tenantId: string;
+        caseId: string | null;
+        inferenceEventId: string;
+        outcomeEventId: string;
+        actualLabel: string;
+        predictedLabel: string | null;
+        diagnosisConfidence: number | null;
+        predictionCorrect: boolean | null;
+        calibrationDelta: number;
+        occurredAt: string;
+        clinicalCase: ClinicalCaseRecord | null;
+        inputSignature: Record<string, unknown>;
+    },
+): Promise<{ attempted: number; inserted: number; warning: string | null }> {
+    const caseId = readText(input.caseId);
+    if (!caseId) return { attempted: 0, inserted: 0, warning: null };
+
+    const metadata = asRecord(input.inputSignature.metadata);
+    try {
+        return await persistPatientTimelineEvent(supabase, {
+            tenantId: input.tenantId,
+            caseId,
+            patientId: input.clinicalCase?.patient_id
+                ?? readText(input.inputSignature.patient_id)
+                ?? readText(metadata.patient_id),
+            patientName: readText(metadata.patient_name),
+            microchipId: readText(metadata.microchip_id),
+            species: input.clinicalCase?.species_display
+                ?? input.clinicalCase?.species_canonical
+                ?? readText(input.inputSignature.species)
+                ?? readText(metadata.species),
+            breed: input.clinicalCase?.breed ?? readText(input.inputSignature.breed) ?? readText(metadata.breed),
+            createdAt: input.clinicalCase?.created_at,
+            presentingComplaint: readText(metadata.presenting_complaint) ?? readText(input.inputSignature.presenting_complaint),
+            confirmedDiagnosis: input.actualLabel,
+            topDiagnosis: input.predictedLabel,
+            diagnosisConfidence: input.diagnosisConfidence,
+            latestInferenceEventId: input.inferenceEventId,
+            latestOutcomeEventId: input.outcomeEventId,
+            inferenceEventId: input.inferenceEventId,
+            outcomeEventId: input.outcomeEventId,
+            eventType: 'confirmed_diagnosis',
+            eventTitle: 'Confirmed diagnosis',
+            eventSummary: `Confirmed diagnosis recorded: ${input.actualLabel}.`,
+            eventPayload: {
+                confirmed_diagnosis: input.actualLabel,
+                predicted_diagnosis: input.predictedLabel,
+                prediction_correct: input.predictionCorrect,
+                calibration_delta: input.calibrationDelta,
+            },
+            occurredAt: input.occurredAt,
+            sourceModule: 'clinical_outcome_closure',
+        });
+    } catch (error) {
+        return {
+            attempted: 0,
+            inserted: 0,
+            warning: `clinic_patient_timeline_events: ${error instanceof Error ? error.message : 'timeline persistence failed'}`,
+        };
+    }
 }
 
 async function persistMultimodalArtifactsIfPossible(

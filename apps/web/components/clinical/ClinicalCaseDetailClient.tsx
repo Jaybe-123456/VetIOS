@@ -7,6 +7,7 @@ import type { CaseDetail } from '@/lib/cases/caseWorkflow';
 import { OutcomeConfirmButton } from './OutcomeConfirmButton';
 import { MultimodalEvidenceLedger } from './MultimodalEvidenceLedger';
 import { ModelTrustPanel } from './ModelTrustPanel';
+import { PatientTimelinePanel } from './PatientTimelinePanel';
 import { formatCaseNumber, formatClinicalLabel, formatPercent, type ClinicalDiagnosisResult, type ClinicalUrgency } from './clinicalTypes';
 import { generateSOAP } from '@/lib/generateSOAP';
 
@@ -142,6 +143,10 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
                                 Action: {buildActionSentence(result)}
                             </p>
                         </div>
+                    </ClinicalSection>
+
+                    <ClinicalSection title="Patient Timeline">
+                        <PatientTimelinePanel clinicalCase={clinicalCase} />
                     </ClinicalSection>
 
                     <ClinicalSection title="Model Trust">

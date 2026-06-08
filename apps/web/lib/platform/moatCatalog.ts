@@ -78,6 +78,12 @@ export const platformLayers: PlatformLayerDefinition[] = [
                 href: '/outcome',
             },
             {
+                label: 'Patient Timeline Memory',
+                status: 'implemented',
+                summary: 'Case detail pages now surface longitudinal patient context, confirmed diagnosis history, and append-only timeline events.',
+                href: '/cases',
+            },
+            {
                 label: 'Adversarial Sim',
                 status: 'implemented',
                 summary: 'Simulation and adversarial stress workflows are already exposed in-product.',
@@ -152,6 +158,28 @@ export const platformLayers: PlatformLayerDefinition[] = [
 ];
 
 export const moatCards: MoatCardDefinition[] = [
+    {
+        id: 'switching-cost',
+        company: 'EPIC',
+        themeClass: 'border-[#10b981] bg-[#12352b]',
+        status: 'implemented',
+        title: 'Clinical Memory Switching Cost',
+        thesis: 'Longitudinal context makes VetIOS hard to leave',
+        claim: 'The more cases a clinic closes, the more patient memory VetIOS owns.',
+        availableNow: [
+            'Case detail pages now show a patient timeline with current case context, confirmed diagnosis events, and longitudinal visit records.',
+            'Outcome confirmation now writes append-only patient timeline events tied to a hashed patient key rather than raw patient or owner identifiers.',
+            'The timeline ledger groups future visits by stable de-identified patient identity and carries event type, summary, source module, and clinical payload lineage.',
+            'The clinical workspace now presents longitudinal memory next to reliability, model trust, multimodal evidence, outcome closure, and SOAP output.',
+        ],
+        missingNow: [
+            'The technical switching-cost moat is implemented; remaining work is deeper historical imports, PIMS record backfill, enterprise export controls, and months of real clinic usage.',
+        ],
+        links: [
+            { label: 'Clinical Cases', href: '/cases' },
+            { label: 'Longitudinal API', href: '/api/longitudinal' },
+        ],
+    },
     {
         id: 'multimodal-dataset',
         company: 'DATADOG',
