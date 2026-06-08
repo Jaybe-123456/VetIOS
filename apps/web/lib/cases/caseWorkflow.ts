@@ -1,5 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { InputSignature } from '@/lib/vetios-inference';
+import {
+    loadClinicalMultimodalArtifacts,
+    type ClinicalMultimodalArtifact,
+} from '@/lib/multimodal/artifactLedger';
 
 export type CaseStatus = 'open' | 'closed' | 'referred';
 export type DiagnosisMethod = 'clinical' | 'lab_confirmed' | 'imaging_confirmed' | 'pathology' | 'response_to_treatment';
@@ -75,6 +79,7 @@ export interface CaseDetail extends CaseSummary {
     latest_inference: Record<string, unknown> | null;
     outcomes: Record<string, unknown>[];
     diagnosis_records: Record<string, unknown>[];
+    multimodal_artifacts: ClinicalMultimodalArtifact[];
 }
 
 export interface CaseDifferentialSummary {
@@ -186,6 +191,7 @@ export async function getClinicalCaseDetail(
     const latestInference = await loadLatestInference(client, tenantId, summary.id, summary.latest_inference_event_id);
     const outcomes = await loadOutcomes(client, tenantId, summary.id);
     const diagnosisRecords = await loadDiagnosisRecords(client, tenantId, summary.id);
+    const multimodalArtifacts = await loadClinicalMultimodalArtifacts(client, tenantId, summary.id);
 
     return {
         ...summary,
@@ -205,6 +211,7 @@ export async function getClinicalCaseDetail(
         latest_inference: latestInference,
         outcomes,
         diagnosis_records: diagnosisRecords,
+        multimodal_artifacts: multimodalArtifacts,
     };
 }
 
@@ -720,6 +727,7 @@ function mapInferenceOnlyCaseDetail(
         latest_inference: inference,
         outcomes,
         diagnosis_records: [],
+        multimodal_artifacts: [],
     };
 }
 

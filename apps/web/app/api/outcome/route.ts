@@ -25,6 +25,7 @@ import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
 import { recordOutcomeObservability } from '@/lib/telemetry/observability';
 import type { Differential } from '@/lib/cire';
 import { recordProductUsageEvent } from '@/lib/billing/entitlements';
+import { persistClinicalMultimodalArtifacts } from '@/lib/multimodal/artifactLedger';
 
 export const runtime = 'nodejs';
 
@@ -354,6 +355,18 @@ export async function POST(req: Request) {
         })
         : { closed: false, warning: null };
 
+    const multimodalArtifactLedger = await persistMultimodalArtifactsIfPossible(supabase, {
+        tenantId,
+        caseId,
+        inferenceEventId: body.inference_event_id,
+        outcomeEventId: persistedOutcomeId,
+        confirmedDiagnosis: actualLabel,
+        labelType: readText(requestOutcomePayload.label_type) ?? 'expert_reviewed',
+        labeledAt: body.outcome.timestamp,
+        patientMetadata: clinicalCase?.patient_metadata ?? asRecord(inputSignature.metadata),
+        latestInputSignature: clinicalCase?.latest_input_signature ?? inputSignature,
+    });
+
     const derivedUpdates = await runDerivedOutcomeUpdates(supabase, {
         tenantId,
         inferenceEventId: body.inference_event_id,
@@ -387,9 +400,14 @@ export async function POST(req: Request) {
             ...derivedUpdates,
             diagnosis_record_id: diagnosisRecord.id,
             case_closed: caseClosure.closed,
+            multimodal_artifact_ledger: multimodalArtifactLedger,
             warnings: [
                 ...derivedUpdates.warnings,
-                ...[diagnosisRecord.warning, caseClosure.warning].filter((entry): entry is string => Boolean(entry)),
+                ...[
+                    diagnosisRecord.warning,
+                    caseClosure.warning,
+                    multimodalArtifactLedger.warning,
+                ].filter((entry): entry is string => Boolean(entry)),
             ],
         },
         request_id: requestId,
@@ -416,6 +434,46 @@ export async function POST(req: Request) {
         client: supabase,
     });
     return NextResponse.json(responseBody);
+}
+
+async function persistMultimodalArtifactsIfPossible(
+    supabase: SupabaseClient,
+    input: {
+        tenantId: string;
+        caseId: string | null;
+        inferenceEventId: string;
+        outcomeEventId: string;
+        confirmedDiagnosis: string;
+        labelType: string;
+        labeledAt: string;
+        patientMetadata: Record<string, unknown>;
+        latestInputSignature: Record<string, unknown>;
+    },
+): Promise<{ attempted: number; inserted: number; warning: string | null }> {
+    const caseId = readUuid(input.caseId);
+    if (!caseId) {
+        return { attempted: 0, inserted: 0, warning: null };
+    }
+
+    try {
+        return await persistClinicalMultimodalArtifacts(supabase, {
+            tenantId: input.tenantId,
+            caseId,
+            inferenceEventId: input.inferenceEventId,
+            outcomeEventId: input.outcomeEventId,
+            confirmedDiagnosis: input.confirmedDiagnosis,
+            labelType: input.labelType,
+            labeledAt: input.labeledAt,
+            patientMetadata: input.patientMetadata,
+            latestInputSignature: input.latestInputSignature,
+        });
+    } catch (error) {
+        return {
+            attempted: 0,
+            inserted: 0,
+            warning: `clinical_multimodal_artifacts: ${error instanceof Error ? error.message : 'artifact persistence failed'}`,
+        };
+    }
 }
 
 async function recordOutcomeTelemetry(input: {

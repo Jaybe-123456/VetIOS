@@ -98,6 +98,12 @@ export const platformLayers: PlatformLayerDefinition[] = [
                 href: '/dataset',
             },
             {
+                label: 'Multimodal Artifact Ledger',
+                status: 'implemented',
+                summary: 'Confirmed cases now produce de-identified, append-only evidence artifacts from labs, vitals, exam facts, imaging references, and voice capture.',
+                href: '/cases',
+            },
+            {
                 label: 'Experiment Track',
                 status: 'implemented',
                 summary: 'Dataset versions, hyperparameter records, model lineage, and comparisons now operate as one reproducible AI research stack.',
@@ -146,6 +152,28 @@ export const platformLayers: PlatformLayerDefinition[] = [
 ];
 
 export const moatCards: MoatCardDefinition[] = [
+    {
+        id: 'multimodal-dataset',
+        company: 'DATADOG',
+        themeClass: 'border-[#a855f7] bg-[#25153c]',
+        status: 'implemented',
+        title: 'Multimodal Dataset Moat',
+        thesis: 'Workflow evidence becomes proprietary training data',
+        claim: 'Every confirmed case can compound the dataset beyond text-only notes.',
+        availableNow: [
+            'Case detail pages now surface a de-identified multimodal artifact ledger instead of only showing attached evidence.',
+            'Outcome confirmation now creates append-only artifact rows for labs, vitals, physical exam facts, imaging references, voice capture, and diagnostic documents.',
+            'Voice transcripts and imaging references are hashed or summarized before storage, while owner identifiers, contacts, microchip IDs, URLs, and raw transcripts are suppressed.',
+            'Artifact rows carry label status, confirmed diagnosis lineage, evidence quality score, source citations, and immutable audit behavior.',
+        ],
+        missingNow: [
+            'The technical multimodal moat is implemented; remaining work is higher-volume clinic usage, richer image/lab ingestion partnerships, and external dataset validation.',
+        ],
+        links: [
+            { label: 'Clinical Cases', href: '/cases' },
+            { label: 'Dataset Workspace', href: '/dataset' },
+        ],
+    },
     {
         id: 'developer-api',
         company: 'NVIDIA',
