@@ -78,6 +78,12 @@ export const platformLayers: PlatformLayerDefinition[] = [
                 href: '/outcome',
             },
             {
+                label: 'Outcome Data Snapshot Ledger',
+                status: 'implemented',
+                summary: 'Confirmed-case collection now writes append-only daily snapshots for validation readiness, closure rate, label coverage, and de-identified learning signals.',
+                href: '/cases',
+            },
+            {
                 label: 'Patient Timeline Memory',
                 status: 'implemented',
                 summary: 'Case detail pages now surface longitudinal patient context, confirmed diagnosis history, and append-only timeline events.',
@@ -158,6 +164,29 @@ export const platformLayers: PlatformLayerDefinition[] = [
 ];
 
 export const moatCards: MoatCardDefinition[] = [
+    {
+        id: 'outcome-data',
+        company: 'TESLA',
+        themeClass: 'border-[#34d399] bg-[#11352b]',
+        status: 'implemented',
+        title: 'Outcome Data Flywheel',
+        thesis: 'Confirmed diagnoses become a proprietary validation asset',
+        claim: 'Each closed case strengthens VetIOS calibration, benchmark evidence, and future learning loops.',
+        availableNow: [
+            'Clinical cases already collect confirmed diagnoses, pending outcomes, label coverage, and learning-ready counts in the workspace.',
+            'A daily append-only outcome snapshot ledger now stores validation progress, closure rates, overdue backlog, top labels, and de-identified learning signals.',
+            'The case-closure cron now writes outcome moat snapshots even when no open-case alert is needed, creating durable longitudinal evidence.',
+            'A clinical API now exposes the latest snapshot and live counters with explicit privacy boundaries for patient names, owner contacts, microchip IDs, and raw symptom text.',
+        ],
+        missingNow: [
+            'The technical outcome-data moat is implemented; remaining work is higher-volume real clinic usage, external validation cohorts, and measured confirmation-rate lift over time.',
+        ],
+        links: [
+            { label: 'Clinical Cases', href: '/cases' },
+            { label: 'Outcome Data API', href: '/api/clinical/outcome-data' },
+            { label: 'Outcome Closure', href: '/outcome' },
+        ],
+    },
     {
         id: 'switching-cost',
         company: 'EPIC',

@@ -1,7 +1,14 @@
 import type { ConfirmedCaseCollectionStats } from '@/lib/cases/confirmedCaseCollection';
+import type { OutcomeDataSnapshot } from '@/lib/cases/outcomeDataSnapshots';
 import { formatClinicalLabel } from './clinicalTypes';
 
-export function ConfirmedCaseCollectionPanel({ stats }: { stats: ConfirmedCaseCollectionStats }) {
+export function ConfirmedCaseCollectionPanel({
+    stats,
+    snapshot,
+}: {
+    stats: ConfirmedCaseCollectionStats;
+    snapshot?: OutcomeDataSnapshot | null;
+}) {
     return (
         <section className="rounded-lg border border-accent/20 bg-accent/[0.035] p-4 sm:p-5">
             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -31,12 +38,34 @@ export function ConfirmedCaseCollectionPanel({ stats }: { stats: ConfirmedCaseCo
                 </div>
             </div>
 
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
                 <CollectionMetric label="Confirmed cases" value={stats.confirmed_cases} />
                 <CollectionMetric label="Learning signals" value={stats.deidentified_learning_signals} />
                 <CollectionMetric label="Pending outcomes" value={stats.pending_cases} />
                 <CollectionMetric label="Last 7 days" value={stats.confirmed_last_7d} />
                 <CollectionMetric label="Label coverage" value={stats.label_count} />
+                <CollectionMetric label="Ledger status" value={snapshot ? 'Stored' : 'Pending'} />
+            </div>
+
+            <div className="mt-4 rounded-md border border-white/10 bg-black/20 p-3 text-xs leading-relaxed text-white/62">
+                <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/50">
+                    Outcome data ledger
+                </div>
+                <div className="mt-2">
+                    {snapshot ? (
+                        <>
+                            Latest append-only snapshot: {formatSnapshotDate(snapshot.snapshot_date)} ·{' '}
+                            {snapshot.deidentified_learning_signals} de-identified learning signal
+                            {snapshot.deidentified_learning_signals === 1 ? '' : 's'} · closure rate{' '}
+                            {formatPercent(snapshot.closure_rate)}.
+                        </>
+                    ) : (
+                        <>
+                            Awaiting the next daily snapshot. The live counters above remain available while the append-only
+                            ledger catches up.
+                        </>
+                    )}
+                </div>
             </div>
 
             {stats.top_labels.length > 0 ? (
@@ -64,11 +93,26 @@ export function ConfirmedCaseCollectionPanel({ stats }: { stats: ConfirmedCaseCo
     );
 }
 
-function CollectionMetric({ label, value }: { label: string; value: number }) {
+function CollectionMetric({ label, value }: { label: string; value: number | string }) {
     return (
         <div className="rounded-md border border-white/10 bg-black/20 p-3">
             <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/50">{label}</div>
             <div className="mt-2 text-2xl font-semibold text-white">{value}</div>
         </div>
     );
+}
+
+function formatSnapshotDate(value: string): string {
+    const parsed = new Date(`${value}T00:00:00.000Z`);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        timeZone: 'UTC',
+    });
+}
+
+function formatPercent(value: number): string {
+    return `${Math.round(value * 100)}%`;
 }

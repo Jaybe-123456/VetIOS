@@ -4,6 +4,7 @@ import { ClinicalCaseListClient } from '@/components/clinical/ClinicalCaseListCl
 import { ConsoleCard, Container, PageHeader, TerminalButton } from '@/components/ui/terminal';
 import { loadConfirmedCaseCollectionStats } from '@/lib/cases/confirmedCaseCollection';
 import { listClinicalCases } from '@/lib/cases/caseWorkflow';
+import { loadLatestOutcomeDataSnapshot } from '@/lib/cases/outcomeDataSnapshots';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
 export const dynamic = 'force-dynamic';
@@ -24,9 +25,10 @@ export default async function CasesPage() {
     }
 
     const supabase = getSupabaseServer();
-    const [cases, collectionStats] = await Promise.all([
+    const [cases, collectionStats, outcomeSnapshot] = await Promise.all([
         listClinicalCases(supabase, session.tenantId, { limit: 30 }),
         loadConfirmedCaseCollectionStats(supabase, session.tenantId, 300),
+        loadLatestOutcomeDataSnapshot(supabase, session.tenantId),
     ]);
 
     return (
@@ -36,7 +38,7 @@ export default async function CasesPage() {
                 description="Review recent patients, open a case, or start a new diagnosis."
             />
             <div className="mb-5">
-                <ConfirmedCaseCollectionPanel stats={collectionStats} />
+                <ConfirmedCaseCollectionPanel stats={collectionStats} snapshot={outcomeSnapshot} />
             </div>
             <ClinicalCaseListClient cases={cases} />
         </Container>

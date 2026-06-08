@@ -91,6 +91,7 @@ function makeCase(overrides: Partial<CaseSummary> = {}): CaseSummary {
         tenant_id: 'tenant-1',
         user_id: 'vet-a',
         clinic_id: 'clinic-1',
+        patient_id: 'patient-1',
         created_at: '2026-05-19T08:00:00.000Z',
         updated_at: '2026-05-19T08:00:00.000Z',
         case_status: 'open',
@@ -109,6 +110,10 @@ function makeCase(overrides: Partial<CaseSummary> = {}): CaseSummary {
         closed_at: null,
         patient_metadata: {},
         latest_input_signature: {},
+        top_differentials: [],
+        recommended_tests: [],
+        reliability_score: 0.82,
+        reliability_label: 'High',
         ...overrides,
     };
 }

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { mapCaseSummary, type CaseSummary } from '@/lib/cases/caseWorkflow';
 import { buildOpenCaseClosureDigest } from '@/lib/cases/caseClosureMetrics';
+import { loadConfirmedCaseCollectionStats } from '@/lib/cases/confirmedCaseCollection';
+import { persistOutcomeDataSnapshot } from '@/lib/cases/outcomeDataSnapshots';
 import { authorizeCronRequest } from '@/lib/http/cronAuth';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { createPlatformAlert } from '@/lib/platform/alerts';
@@ -50,6 +52,7 @@ export async function GET(req: Request) {
                 overdueHours: OVERDUE_HOURS,
                 limit: DIGEST_ITEM_LIMIT,
             });
+            const snapshot = await writeOutcomeSnapshot(tenantId, tenantCases, digest, now, supabase, errors);
 
             if (digest.metrics.open_cases === 0) {
                 tenantSummaries.push({
@@ -57,6 +60,8 @@ export async function GET(req: Request) {
                     open_cases: 0,
                     closed_cases: digest.metrics.closed_cases,
                     closure_rate: digest.metrics.closure_rate,
+                    outcome_snapshot_stored: snapshot.stored,
+                    outcome_snapshot_warning: snapshot.warning,
                     alert_written: false,
                 });
                 continue;
@@ -93,6 +98,8 @@ export async function GET(req: Request) {
                 inferred_closure_rate: digest.metrics.inferred_closure_rate,
                 closure_rate: digest.metrics.closure_rate,
                 digest_items: digest.items.length,
+                outcome_snapshot_stored: snapshot.stored,
+                outcome_snapshot_warning: snapshot.warning,
                 alert_written: true,
             });
         }
@@ -144,4 +151,30 @@ function groupCasesByTenant(cases: CaseSummary[]): Map<string, CaseSummary[]> {
         groups.set(clinicalCase.tenant_id, existing);
     }
     return groups;
+}
+
+async function writeOutcomeSnapshot(
+    tenantId: string,
+    tenantCases: CaseSummary[],
+    digest: ReturnType<typeof buildOpenCaseClosureDigest>,
+    now: Date,
+    supabase: ReturnType<typeof getSupabaseServer>,
+    errors: string[],
+): Promise<{ stored: boolean; warning: string | null }> {
+    try {
+        const collectionStats = await loadConfirmedCaseCollectionStats(supabase, tenantId, CASE_SCAN_LIMIT);
+        const result = await persistOutcomeDataSnapshot(supabase, {
+            tenantId,
+            cases: tenantCases,
+            collectionStats,
+            now,
+            digest,
+        });
+        if (result.warning) errors.push(`${tenantId}: ${result.warning}`);
+        return { stored: result.stored, warning: result.warning };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'outcome snapshot write failed';
+        errors.push(`${tenantId}: ${message}`);
+        return { stored: false, warning: message };
+    }
 }
