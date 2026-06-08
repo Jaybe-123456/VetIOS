@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { apiGuard } from '@/lib/http/apiGuard';
 import { acceptNativeVendorAuthorizationCallback } from '@/lib/passiveSignals/service';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
@@ -6,6 +7,9 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+
     const url = new URL(req.url);
     const state = url.searchParams.get('state');
     const code = url.searchParams.get('code');

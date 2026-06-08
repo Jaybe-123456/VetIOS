@@ -1,11 +1,15 @@
 import { NextResponse } from 'next/server';
 import { aggregateAMRPatterns, type AMRSurveillanceRow } from '@/lib/amr/screener';
+import { apiGuard } from '@/lib/http/apiGuard';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+
     const { searchParams } = new URL(req.url);
     const species = normalizeFilter(searchParams.get('species'));
     const region = normalizeRegion(searchParams.get('region'));

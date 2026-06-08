@@ -1,10 +1,14 @@
 import { NextResponse } from 'next/server';
 import { GBSClient } from '@vetios/quantum';
+import { apiGuard } from '@/lib/http/apiGuard';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function GET() {
+export async function GET(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
+    if (guard.blocked) return guard.response!;
+
     const enabled = process.env.QUANTUM_ENABLED === 'true';
     const serviceUrl = process.env.QUANTUM_SERVICE_URL?.trim() ?? null;
     const timeoutMs = readPositiveInt(process.env.QUANTUM_SERVICE_TIMEOUT_MS, 10_000);

@@ -1,4 +1,5 @@
 import { POST as runAskVetios } from '../route';
+import { apiGuard } from '@/lib/http/apiGuard';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -17,6 +18,9 @@ type AskVetiosStreamPayload = {
 const encoder = new TextEncoder();
 
 export async function POST(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 32 * 1024 });
+    if (guard.blocked) return guard.response!;
+
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
             void streamAskVetiosResponse(req, controller);
