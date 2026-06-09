@@ -246,9 +246,16 @@ async function fetchJson(fetcher: typeof fetch, url: URL): Promise<Record<string
         },
     });
     if (!response.ok) {
-        throw new Error(`NCBI connector request failed with ${response.status}.`);
+        const detail = await readResponseText(response);
+        throw new Error(`NCBI connector request failed with ${response.status}${detail ? `: ${detail}` : ''}.`);
     }
-    return asRecord(await response.json());
+    const text = await readResponseText(response);
+    if (!text) throw new Error('NCBI connector returned an empty response.');
+    try {
+        return asRecord(JSON.parse(text) as unknown);
+    } catch {
+        throw new Error(`NCBI connector returned a non-JSON response: ${summarizeResponseText(text)}`);
+    }
 }
 
 function mapNcbiSummary(database: NcbiDatabase, uid: string, row: Record<string, unknown>): NcbiSummaryRecord | null {
@@ -357,4 +364,12 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function normalizeText(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim().replace(/\s+/g, ' ') : null;
+}
+
+async function readResponseText(response: Response): Promise<string> {
+    return response.text().catch(() => '');
+}
+
+function summarizeResponseText(value: string): string {
+    return value.replace(/\s+/g, ' ').trim().slice(0, 180);
 }

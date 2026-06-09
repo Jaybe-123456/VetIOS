@@ -37,10 +37,11 @@ export async function embedRagText(text: string): Promise<RagEmbeddingResult> {
     });
 
     if (!response.ok) {
-        throw new Error(`RAG embedding provider returned ${response.status}`);
+        const detail = await readResponseText(response);
+        throw new Error(`RAG embedding provider returned ${response.status}${detail ? `: ${detail}` : ''}`);
     }
 
-    const data = (await response.json()) as {
+    const data = await readJsonResponse(response, 'RAG embedding provider') as {
         data?: Array<{ embedding?: number[] }>;
         usage?: { total_tokens?: number };
     };
@@ -83,4 +84,22 @@ function deterministicEmbedding(text: string): RagEmbeddingResult {
 
 function estimateTokens(value: string): number {
     return Math.max(1, Math.ceil(value.length / 4));
+}
+
+async function readJsonResponse(response: Response, label: string): Promise<unknown> {
+    const text = await readResponseText(response);
+    if (!text) throw new Error(`${label} returned an empty response.`);
+    try {
+        return JSON.parse(text) as unknown;
+    } catch {
+        throw new Error(`${label} returned a non-JSON response: ${summarizeResponseText(text)}`);
+    }
+}
+
+async function readResponseText(response: Response): Promise<string> {
+    return response.text().catch(() => '');
+}
+
+function summarizeResponseText(value: string): string {
+    return value.replace(/\s+/g, ' ').trim().slice(0, 180);
 }
