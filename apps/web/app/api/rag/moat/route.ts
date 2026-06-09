@@ -18,13 +18,13 @@ export async function GET(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    const supabase = getSupabaseServer();
-    const auth = await resolveClinicalApiActor(req, { client: supabase, requiredScopes: ['rag:read'] });
-    if (auth.error || !auth.actor) {
-        return withHeaders(NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: auth.error?.status ?? 401 }), requestId, startTime);
-    }
-
     try {
+        const supabase = getSupabaseServer();
+        const auth = await resolveClinicalApiActor(req, { client: supabase, requiredScopes: ['rag:read'] });
+        if (auth.error || !auth.actor) {
+            return withHeaders(NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: auth.error?.status ?? 401 }), requestId, startTime);
+        }
+
         const readiness = await evaluateRagReadiness(supabase, auth.actor.tenantId);
         const [latest_snapshot, live_snapshot] = await Promise.all([
             loadLatestAgenticRagMoatSnapshot(supabase, auth.actor.tenantId),
@@ -55,13 +55,13 @@ export async function POST(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
-    const supabase = getSupabaseServer();
-    const auth = await resolveClinicalApiActor(req, { client: supabase, requiredScopes: ['rag:write'] });
-    if (auth.error || !auth.actor) {
-        return withHeaders(NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: auth.error?.status ?? 401 }), requestId, startTime);
-    }
-
     try {
+        const supabase = getSupabaseServer();
+        const auth = await resolveClinicalApiActor(req, { client: supabase, requiredScopes: ['rag:write'] });
+        if (auth.error || !auth.actor) {
+            return withHeaders(NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: auth.error?.status ?? 401 }), requestId, startTime);
+        }
+
         const readiness = await evaluateRagReadiness(supabase, auth.actor.tenantId);
         const result = await persistAgenticRagMoatSnapshot(supabase, {
             tenantId: auth.actor.tenantId,

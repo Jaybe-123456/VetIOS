@@ -144,23 +144,23 @@ export default function AgenticRagClient() {
                 fetch('/api/rag/moat', { cache: 'no-store', credentials: 'same-origin' }),
             ]);
             if (sourcesResponse.ok) {
-                const body = await sourcesResponse.json() as { sources?: RagSource[] };
+                const body = await readResponseJson<{ sources?: RagSource[] }>(sourcesResponse);
                 setSources(body.sources ?? []);
             }
             if (documentsResponse.ok) {
-                const body = await documentsResponse.json() as { documents?: RagDocument[] };
+                const body = await readResponseJson<{ documents?: RagDocument[] }>(documentsResponse);
                 setDocuments(body.documents ?? []);
             }
             if (catalogResponse.ok) {
-                const body = await catalogResponse.json() as { catalog?: unknown[]; readiness?: RagReadiness };
+                const body = await readResponseJson<{ catalog?: unknown[]; readiness?: RagReadiness }>(catalogResponse);
                 setCatalogCount(body.catalog?.length ?? 0);
                 setReadiness(body.readiness ?? null);
             }
             if (moatResponse.ok) {
-                const body = await moatResponse.json() as {
+                const body = await readResponseJson<{
                     latest_snapshot?: AgenticRagMoatSnapshot | null;
                     live_snapshot?: AgenticRagMoatSnapshot | null;
-                };
+                }>(moatResponse);
                 setMoatSnapshot(body.latest_snapshot ?? body.live_snapshot ?? null);
             }
         } finally {
@@ -179,14 +179,14 @@ export default function AgenticRagClient() {
                 credentials: 'same-origin',
                 body: JSON.stringify({ force_refresh: forceRefresh }),
             });
-            const body = await response.json() as {
+            const body = await readResponseJson<{
                 sources_indexed?: number;
                 documents_indexed?: number;
                 chunks_indexed?: number;
                 errors?: Array<{ source: string; message: string }>;
                 detail?: string;
                 error?: string;
-            };
+            }>(response);
             if (!response.ok && response.status !== 207) {
                 throw new Error(body.detail ?? body.error ?? 'RAG catalog refresh failed.');
             }
@@ -211,13 +211,13 @@ export default function AgenticRagClient() {
                 credentials: 'same-origin',
                 body: JSON.stringify({}),
             });
-            const body = await response.json() as {
+            const body = await readResponseJson<{
                 snapshot?: AgenticRagMoatSnapshot;
                 stored?: boolean;
                 warning?: string | null;
                 detail?: string;
                 error?: string;
-            };
+            }>(response);
             if (!response.ok) {
                 throw new Error(body.detail ?? body.error ?? 'Agentic RAG moat snapshot failed.');
             }
@@ -263,7 +263,7 @@ export default function AgenticRagClient() {
                     },
                 }),
             });
-            const body = await response.json() as { chunks_indexed?: number; detail?: string; error?: string };
+            const body = await readResponseJson<{ chunks_indexed?: number; detail?: string; error?: string }>(response);
             if (!response.ok) {
                 throw new Error(body.detail ?? body.error ?? 'RAG ingest failed.');
             }
@@ -294,7 +294,7 @@ export default function AgenticRagClient() {
                     limit: 6,
                 }),
             });
-            const body = await response.json() as RagQueryResult & { detail?: string; error?: string };
+            const body = await readResponseJson<RagQueryResult & { detail?: string; error?: string }>(response);
             if (!response.ok) {
                 throw new Error(body.detail ?? body.error ?? 'RAG query failed.');
             }
@@ -626,4 +626,24 @@ function summarizeCatalogErrors(errors: Array<{ source: string; message: string 
         }];
     }
     return errors.slice(0, 6);
+}
+
+async function readResponseJson<T>(response: Response): Promise<T & { detail?: string; error?: string }> {
+    const text = await response.text();
+    if (!text.trim()) return {} as T & { detail?: string; error?: string };
+
+    try {
+        return JSON.parse(text) as T & { detail?: string; error?: string };
+    } catch {
+        return {
+            error: `Non-JSON response from ${response.url || 'VetIOS API'} (${response.status}): ${summarizeResponseText(text)}`,
+        } as T & { detail?: string; error?: string };
+    }
+}
+
+function summarizeResponseText(text: string): string {
+    return text
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 180) || 'empty response';
 }
