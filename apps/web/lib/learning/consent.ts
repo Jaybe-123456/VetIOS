@@ -37,6 +37,9 @@ export async function listTenantLearningConsents(
 
     const { data, error } = await query;
     if (error) {
+        if (isMissingTenantLearningConsentsTable(error)) {
+            throw new Error(missingConsentMigrationMessage());
+        }
         throw new Error(`Failed to list tenant learning consents: ${error.message}`);
     }
 
@@ -83,6 +86,9 @@ export async function upsertTenantLearningConsent(
         .single();
 
     if (error || !data) {
+        if (error && isMissingTenantLearningConsentsTable(error)) {
+            throw new Error(missingConsentMigrationMessage());
+        }
         throw new Error(`Failed to update tenant learning consent: ${error?.message ?? 'Unknown error'}`);
     }
 
@@ -114,4 +120,16 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function isMissingTenantLearningConsentsTable(error: { code?: string; message?: string }): boolean {
+    const message = error.message?.toLowerCase() ?? '';
+    return error.code === '42P01'
+        || error.code === 'PGRST116'
+        || message.includes('tenant_learning_consents')
+        || message.includes('schema cache');
+}
+
+function missingConsentMigrationMessage(): string {
+    return 'Network learning consent storage is not installed. Apply supabase/migrations/20260609010000_tenant_learning_consents_repair.sql in Supabase, then reload the schema.';
 }

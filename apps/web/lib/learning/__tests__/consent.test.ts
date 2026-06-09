@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { upsertTenantLearningConsent } from '../consent';
+import { listTenantLearningConsents, upsertTenantLearningConsent } from '../consent';
 
 describe('tenant learning consent service', () => {
     it('writes a granted deidentified-training consent with actor lineage', async () => {
@@ -43,5 +43,27 @@ describe('tenant learning consent service', () => {
         });
         expect(record.status).toBe('granted');
         expect(record.granted_by).toBe('user_1');
+    });
+
+    it('returns a migration-specific error when the consent table is missing', async () => {
+        const client = {
+            from: () => ({
+                select: () => ({
+                    eq: () => ({
+                        order: () => Promise.resolve({
+                            data: null,
+                            error: {
+                                code: 'PGRST116',
+                                message: "Could not find the table 'public.tenant_learning_consents' in the schema cache",
+                            },
+                        }),
+                    }),
+                }),
+            }),
+        } as any;
+
+        await expect(listTenantLearningConsents(client, 'tenant_1')).rejects.toThrow(
+            'Apply supabase/migrations/20260609010000_tenant_learning_consents_repair.sql',
+        );
     });
 });
