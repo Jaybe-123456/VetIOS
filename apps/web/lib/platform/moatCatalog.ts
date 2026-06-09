@@ -122,6 +122,12 @@ export const platformLayers: PlatformLayerDefinition[] = [
                 href: '/experiments',
             },
             {
+                label: 'Agentic RAG Evidence Moat',
+                status: 'implemented',
+                summary: 'Citation-first retrieval now produces durable aggregate quality snapshots for grounding rate, source authority, corpus freshness, fallback dependence, and query-ledger evidence.',
+                href: '/rag',
+            },
+            {
                 label: 'Model Registry',
                 status: 'implemented',
                 summary: 'Governed registry, promotion controls, rollback, and routing already exist.',
@@ -164,6 +170,30 @@ export const platformLayers: PlatformLayerDefinition[] = [
 ];
 
 export const moatCards: MoatCardDefinition[] = [
+    {
+        id: 'agentic-rag',
+        company: 'PERPLEXITY',
+        themeClass: 'border-[#38bdf8] bg-[#123047]',
+        status: 'implemented',
+        title: 'Agentic RAG Evidence Moat',
+        thesis: 'Evidence-grounded answers create a proprietary clinical retrieval ledger',
+        claim: 'Every cited answer improves VetIOS knowledge coverage, source authority analytics, and clinical evidence defensibility.',
+        availableNow: [
+            'Agentic RAG already indexes veterinary and medical sources with authority tiers, species scope, provenance, content hashes, chunk hashes, and retrieval metadata.',
+            'The query ledger records retrieval strategy, grounding evaluation, citation coverage, fallback use, withheld citations, and latency without needing another raw-prompt store.',
+            'A new append-only Agentic RAG moat snapshot ledger stores daily aggregate source authority, corpus freshness, grounded-answer rate, fallback dependence, and warning signals.',
+            'The RAG console and closed-loop endpoint now expose whether the moat is blocked, forming, or compounding, with an explicit Seal Snapshot action for durable tenant evidence.',
+            'Ask VetIOS and inference-adjacent workflows can use the same evidence infrastructure while preserving the clinical decision-support boundary.',
+        ],
+        missingNow: [
+            'The technical Agentic RAG moat is implemented; remaining work is larger proprietary clinic corpora, more real query volume, source partnerships, and external evidence-quality validation.',
+        ],
+        links: [
+            { label: 'Agentic RAG Console', href: '/rag' },
+            { label: 'RAG Moat API', href: '/api/rag/moat' },
+            { label: 'Closed Loop RAG', href: '/api/rag/closed-loop' },
+        ],
+    },
     {
         id: 'outcome-data',
         company: 'TESLA',

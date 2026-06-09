@@ -77,6 +77,21 @@ interface RagQueryResult {
     };
 }
 
+interface AgenticRagMoatSnapshot {
+    moat_status: 'compounding' | 'forming' | 'blocked';
+    evidence_freshness: 'fresh' | 'stale' | 'empty';
+    query_count_30d: number;
+    grounded_queries_30d: number;
+    grounding_rate: number;
+    citation_coverage_avg: number;
+    catalog_fallback_queries_30d: number;
+    catalog_fallback_rate: number;
+    withheld_citations_30d: number;
+    avg_retrieval_ms: number | null;
+    top_authority_tier: string | null;
+    warnings: string[];
+}
+
 export default function AgenticRagClient() {
     const [sources, setSources] = useState<RagSource[]>([]);
     const [documents, setDocuments] = useState<RagDocument[]>([]);
@@ -84,10 +99,12 @@ export default function AgenticRagClient() {
     const [ingesting, setIngesting] = useState(false);
     const [querying, setQuerying] = useState(false);
     const [seedingCatalog, setSeedingCatalog] = useState(false);
+    const [persistingMoat, setPersistingMoat] = useState(false);
     const [status, setStatus] = useState<string | null>(null);
     const [catalogErrors, setCatalogErrors] = useState<Array<{ source: string; message: string }>>([]);
     const [catalogCount, setCatalogCount] = useState(0);
     const [readiness, setReadiness] = useState<RagReadiness | null>(null);
+    const [moatSnapshot, setMoatSnapshot] = useState<AgenticRagMoatSnapshot | null>(null);
     const [queryResult, setQueryResult] = useState<RagQueryResult | null>(null);
     const [sourceForm, setSourceForm] = useState({
         name: 'VetIOS clinical guideline source',
@@ -120,10 +137,11 @@ export default function AgenticRagClient() {
     async function refreshSnapshot() {
         setLoadingSnapshot(true);
         try {
-            const [sourcesResponse, documentsResponse, catalogResponse] = await Promise.all([
+            const [sourcesResponse, documentsResponse, catalogResponse, moatResponse] = await Promise.all([
                 fetch('/api/rag/sources', { cache: 'no-store', credentials: 'same-origin' }),
                 fetch('/api/rag/documents', { cache: 'no-store', credentials: 'same-origin' }),
                 fetch('/api/rag/catalog', { cache: 'no-store', credentials: 'same-origin' }),
+                fetch('/api/rag/moat', { cache: 'no-store', credentials: 'same-origin' }),
             ]);
             if (sourcesResponse.ok) {
                 const body = await sourcesResponse.json() as { sources?: RagSource[] };
@@ -137,6 +155,13 @@ export default function AgenticRagClient() {
                 const body = await catalogResponse.json() as { catalog?: unknown[]; readiness?: RagReadiness };
                 setCatalogCount(body.catalog?.length ?? 0);
                 setReadiness(body.readiness ?? null);
+            }
+            if (moatResponse.ok) {
+                const body = await moatResponse.json() as {
+                    latest_snapshot?: AgenticRagMoatSnapshot | null;
+                    live_snapshot?: AgenticRagMoatSnapshot | null;
+                };
+                setMoatSnapshot(body.latest_snapshot ?? body.live_snapshot ?? null);
             }
         } finally {
             setLoadingSnapshot(false);
@@ -173,6 +198,35 @@ export default function AgenticRagClient() {
             setStatus(error instanceof Error ? error.message : 'RAG catalog refresh failed.');
         } finally {
             setSeedingCatalog(false);
+        }
+    }
+
+    async function handlePersistMoatSnapshot() {
+        setPersistingMoat(true);
+        setStatus(null);
+        try {
+            const response = await fetch('/api/rag/moat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({}),
+            });
+            const body = await response.json() as {
+                snapshot?: AgenticRagMoatSnapshot;
+                stored?: boolean;
+                warning?: string | null;
+                detail?: string;
+                error?: string;
+            };
+            if (!response.ok) {
+                throw new Error(body.detail ?? body.error ?? 'Agentic RAG moat snapshot failed.');
+            }
+            if (body.snapshot) setMoatSnapshot(body.snapshot);
+            setStatus(body.warning ?? (body.stored ? 'Agentic RAG moat snapshot sealed.' : 'Agentic RAG moat snapshot computed but not stored.'));
+        } catch (error) {
+            setStatus(error instanceof Error ? error.message : 'Agentic RAG moat snapshot failed.');
+        } finally {
+            setPersistingMoat(false);
         }
     }
 
@@ -259,12 +313,13 @@ export default function AgenticRagClient() {
                 description="Index veterinary and medical sources, retrieve grounded evidence, and return citation-first answers for VetIOS workflows."
             />
 
-            <div className="mb-6 grid gap-3 md:grid-cols-5">
+            <div className="mb-6 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
                 <MetricTile icon={<DatabaseZap className="h-4 w-4" />} label="Sources" value={sources.length} />
                 <MetricTile icon={<FileText className="h-4 w-4" />} label="Documents" value={documents.length} />
                 <MetricTile icon={<BookOpenCheck className="h-4 w-4" />} label="Indexed" value={indexedCount} />
                 <MetricTile icon={<ShieldCheck className="h-4 w-4" />} label="High Trust" value={readiness?.high_authority_sources ?? 0} />
                 <MetricTile icon={<SearchCheck className="h-4 w-4" />} label="Catalog" value={catalogCount} />
+                <MetricTile icon={<ShieldCheck className="h-4 w-4" />} label="Moat" value={formatMoatStatus(moatSnapshot?.moat_status)} />
             </div>
 
             {status && (
@@ -306,6 +361,45 @@ export default function AgenticRagClient() {
                     {readiness.warnings.length > 0 && (
                         <div className="mt-3 grid gap-2 md:grid-cols-2">
                             {readiness.warnings.map((warning) => (
+                                <div key={warning} className="border border-amber-300/20 bg-amber-300/5 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-amber-200">
+                                    {warning}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </section>
+            )}
+
+            {moatSnapshot && (
+                <section className="mb-6 border border-accent/20 bg-accent/5 p-4">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 border-b border-accent/20 pb-3">
+                        <div className="flex items-center gap-2">
+                            <ShieldCheck className="h-4 w-4 text-accent" />
+                            <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-foreground">Agentic RAG Moat</h2>
+                        </div>
+                        <div className="flex items-center gap-3">
+                            <span className={`font-mono text-[10px] uppercase tracking-[0.18em] ${moatSnapshot.moat_status === 'compounding' ? 'text-accent' : moatSnapshot.moat_status === 'forming' ? 'text-amber-300' : 'text-red-300'}`}>
+                                {formatMoatStatus(moatSnapshot.moat_status)}
+                            </span>
+                            <TerminalButton type="button" onClick={() => void handlePersistMoatSnapshot()} disabled={persistingMoat}>
+                                {persistingMoat ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                Seal Snapshot
+                            </TerminalButton>
+                        </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-4">
+                        <DataRow label="30D Queries" value={moatSnapshot.query_count_30d} tone={moatSnapshot.query_count_30d > 0 ? 'accent' : undefined} />
+                        <DataRow label="Grounding Rate" value={formatPercent(moatSnapshot.grounding_rate)} tone={moatSnapshot.grounding_rate >= 0.8 ? 'accent' : undefined} />
+                        <DataRow label="Citation Coverage" value={formatPercent(moatSnapshot.citation_coverage_avg)} tone={moatSnapshot.citation_coverage_avg >= 0.8 ? 'accent' : undefined} />
+                        <DataRow label="Fallback Rate" value={formatPercent(moatSnapshot.catalog_fallback_rate)} tone={moatSnapshot.catalog_fallback_rate <= 0.2 ? 'accent' : undefined} />
+                        <DataRow label="Grounded Queries" value={moatSnapshot.grounded_queries_30d} />
+                        <DataRow label="Withheld Citations" value={moatSnapshot.withheld_citations_30d} />
+                        <DataRow label="Avg Retrieval" value={moatSnapshot.avg_retrieval_ms === null ? 'No ledger' : `${moatSnapshot.avg_retrieval_ms}ms`} />
+                        <DataRow label="Freshness" value={moatSnapshot.evidence_freshness} tone={moatSnapshot.evidence_freshness === 'fresh' ? 'accent' : undefined} />
+                    </div>
+                    {moatSnapshot.warnings.length > 0 && (
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                            {moatSnapshot.warnings.slice(0, 4).map((warning) => (
                                 <div key={warning} className="border border-amber-300/20 bg-amber-300/5 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.12em] text-amber-200">
                                     {warning}
                                 </div>
@@ -504,6 +598,23 @@ function formatDate(value: string | null): string {
     if (!value) return 'Never';
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
+}
+
+function formatPercent(value: number): string {
+    return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+}
+
+function formatMoatStatus(value?: AgenticRagMoatSnapshot['moat_status']): string {
+    switch (value) {
+        case 'compounding':
+            return 'Compounding';
+        case 'forming':
+            return 'Forming';
+        case 'blocked':
+            return 'Blocked';
+        default:
+            return 'Unknown';
+    }
 }
 
 function summarizeCatalogErrors(errors: Array<{ source: string; message: string }>): Array<{ source: string; message: string }> {

@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { evaluateRagReadiness } from '@/lib/agenticRag/automation';
 import { buildRagClosedLoopLearningSystem } from '@/lib/agenticRag/closedLoop';
+import {
+    buildLiveAgenticRagMoatSnapshot,
+    loadLatestAgenticRagMoatSnapshot,
+} from '@/lib/agenticRag/moatSnapshot';
 import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
@@ -48,11 +52,21 @@ export async function GET(req: Request) {
     }
 
     const readiness = await evaluateRagReadiness(supabase, auth.actor.tenantId);
-    const closedLoop = buildRagClosedLoopLearningSystem(readiness);
+    const [closedLoop, latestSnapshot, liveSnapshot] = await Promise.all([
+        Promise.resolve(buildRagClosedLoopLearningSystem(readiness)),
+        loadLatestAgenticRagMoatSnapshot(supabase, auth.actor.tenantId),
+        buildLiveAgenticRagMoatSnapshot({
+            client: supabase,
+            tenantId: auth.actor.tenantId,
+            readiness,
+        }),
+    ]);
     const selfProtection = buildVetiosSelfProtectionPosture();
 
     return withHeaders(NextResponse.json({
         closed_loop: closedLoop,
+        moat_snapshot: latestSnapshot ?? liveSnapshot,
+        live_moat_snapshot: liveSnapshot,
         self_protection: selfProtection,
         request_assessment: protection,
         request_id: requestId,
