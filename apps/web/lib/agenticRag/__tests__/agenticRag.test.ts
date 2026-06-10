@@ -3,6 +3,7 @@ import { buildCatalogDocumentPlans } from '../catalogConnectors';
 import { chunkRagDocument, normalizeRagContent } from '../chunking';
 import { buildRagClosedLoopLearningSystem } from '../closedLoop';
 import { getRagEmbeddingReadiness, probeRagEmbeddingProvider } from '../embedding';
+import { recordRagCitationFeedback } from '../feedback';
 import { answerRagQuery, buildRagLexicalSearchQuery, buildRagQueryPlan } from '../service';
 import { buildIndexSourceBundleJobs, buildIndexSourceDatasetPlan } from '../sourceBundle';
 import { validatePublicSourceUrl } from '../sourcePolicy';
@@ -87,8 +88,10 @@ describe('VetIOS Agentic RAG service primitives', () => {
             .toBe('"vomiting diarrhea" OR gastroenteritis OR fecal OR parvovirus');
         expect(buildRagLexicalSearchQuery('List diagnostic steps for a cat with nasal discharge and sneezing, with citations.', respiratoryPlan))
             .toBe('"nasal discharge" OR sneezing OR respiratory OR conjunctivitis');
+        expect(buildRagLexicalSearchQuery('What AMR One Health surveillance evidence is indexed for livestock?', generalPlan))
+            .toBe('AMR OR "antimicrobial resistance" OR "antimicrobial use" OR "One Health" OR surveillance');
         expect(buildRagLexicalSearchQuery('What indexed sources mention anticoagulant rodenticide toxicosis diagnostics?', generalPlan))
-            .toBe('mention anticoagulant rodenticide toxicosis');
+            .toBe('toxin OR toxicosis OR rodenticide OR anticoagulant OR "PT" OR "PTT"');
     });
 
     it('reports embedding readiness so production can verify live semantic retrieval', () => {
@@ -210,6 +213,26 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(capcEvidence?.document.content_text).toContain('fecal');
         expect(capcEvidence?.document.content_text).toContain('Giardia');
         expect(capcEvidence?.document.metadata.curated_evidence_summary).toBe(true);
+    });
+
+    it('adds seedable parvo, AHDS, renal, and AMR evidence packs to the curated catalog', async () => {
+        const keys = getCuratedRagCatalog().map((source) => source.external_key);
+
+        expect(keys).toContain('merck_canine_parvovirus');
+        expect(keys).toContain('merck_acute_hemorrhagic_diarrhea_syndrome_dogs');
+        expect(keys).toContain('iris_kidney_guidelines');
+        expect(keys).toContain('who_antimicrobial_resistance');
+        expect(keys).toContain('fao_antimicrobial_resistance');
+
+        const amrText = getCuratedRagCatalog()
+            .filter((source) => ['who_antimicrobial_resistance', 'fao_antimicrobial_resistance', 'cdc_one_health'].includes(source.external_key))
+            .flatMap((source) => source.evidence_summaries ?? [])
+            .map((summary) => summary.summary)
+            .join('\n');
+
+        expect(amrText).toContain('One Health');
+        expect(amrText).toContain('surveillance');
+        expect(amrText).toContain('not to generate patient-specific antimicrobial treatment');
     });
 
     it('maps bulk index_source payloads into reusable RAG document jobs', () => {
@@ -988,6 +1011,71 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.answer).toContain('Labs - Use pancreas-specific lipase testing with CBC, chemistry, electrolytes');
         expect(result.answer).toContain('Imaging - Use abdominal ultrasound to support pancreatitis');
         expect(result.evaluation.warnings.some((warning) => warning.includes('built-in curated catalog evidence summaries'))).toBe(true);
+    });
+
+    it('answers AMR One Health questions as evidence context, not a fake diagnostic workflow', async () => {
+        const client = createRagFakeClient({
+            sources: [],
+            chunks: [],
+            documents: [],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What AMR One Health surveillance evidence is indexed for livestock?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.evaluation.grounded).toBe(true);
+        expect(result.retrieval_stats.catalog_fallback_hits).toBeGreaterThan(0);
+        expect(result.citations.some((citation) => citation.source_name.includes('WHO') || citation.source_name.includes('FAO') || citation.source_name.includes('CDC'))).toBe(true);
+        expect(result.answer).toContain('Evidence use:');
+        expect(result.answer).not.toContain('Concise diagnostic workflow:');
+    });
+
+    it('records RAG citation feedback without storing raw notes or raw citation quotes', async () => {
+        let insertedPayload: Record<string, unknown> | null = null;
+        const client = {
+            from: (table: string) => ({
+                insert: (payload: Record<string, unknown>) => {
+                    insertedPayload = { table, ...payload };
+                    return {
+                        select: () => ({
+                            single: async () => ({
+                                data: { id: '99999999-9999-4999-8999-999999999999' },
+                                error: null,
+                            }),
+                        }),
+                    };
+                },
+            }),
+        };
+
+        const result = await recordRagCitationFeedback(client as any, {
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            queryId: '44444444-4444-4444-8444-444444444444',
+            feedbackKind: 'citation_useful',
+            notes: 'This citation was clinically useful for the workup.',
+            citations: [{
+                index: 1,
+                source_name: 'Merck Veterinary Manual',
+                title: 'Canine parvovirus diagnostic evidence summary',
+                url: 'https://example.test/parvo',
+            }],
+            grounded: true,
+        });
+
+        expect(result.stored).toBe(true);
+        expect(result.feedback_id).toBe('99999999-9999-4999-8999-999999999999');
+        expect(insertedPayload?.table).toBe('rag_citation_feedback_events');
+        expect(insertedPayload?.notes_hash).toHaveLength(64);
+        expect(JSON.stringify(insertedPayload)).not.toContain('This citation was clinically useful');
+        expect((insertedPayload?.metadata as Record<string, unknown>).raw_citation_quotes_stored).toBe(false);
+        expect(insertedPayload?.citation_indexes).toEqual([1]);
     });
 
     it('builds a respiratory diagnostic workflow for feline nasal discharge and sneezing evidence', async () => {

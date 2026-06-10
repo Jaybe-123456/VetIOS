@@ -24,6 +24,10 @@ export interface AgenticRagMoatSnapshot {
     catalog_fallback_queries_30d: number;
     catalog_fallback_rate: number;
     withheld_citations_30d: number;
+    feedback_events_30d: number;
+    useful_feedback_30d: number;
+    needs_review_feedback_30d: number;
+    citation_usefulness_rate: number;
     avg_retrieval_ms: number | null;
     top_authority_tier: string | null;
     evidence_freshness: AgenticRagEvidenceFreshness;
@@ -47,6 +51,11 @@ interface RagQueryMetricRow {
     created_at?: unknown;
 }
 
+interface RagFeedbackMetricRow {
+    feedback_kind?: unknown;
+    created_at?: unknown;
+}
+
 interface RagQueryAggregateMetrics {
     query_count_30d: number;
     grounded_queries_30d: number;
@@ -56,11 +65,16 @@ interface RagQueryAggregateMetrics {
     catalog_fallback_queries_30d: number;
     catalog_fallback_rate: number;
     withheld_citations_30d: number;
+    feedback_events_30d: number;
+    useful_feedback_30d: number;
+    needs_review_feedback_30d: number;
+    citation_usefulness_rate: number;
     avg_retrieval_ms: number | null;
     top_authority_tier: string | null;
     strategy_counts: Record<string, number>;
     query_window_days: number;
     ledger_warning: string | null;
+    feedback_warning: string | null;
 }
 
 const QUERY_WINDOW_DAYS = 30;
@@ -171,6 +185,10 @@ export function buildAgenticRagMoatSnapshot(input: {
         catalog_fallback_queries_30d: queryMetrics.catalog_fallback_queries_30d,
         catalog_fallback_rate: queryMetrics.catalog_fallback_rate,
         withheld_citations_30d: queryMetrics.withheld_citations_30d,
+        feedback_events_30d: queryMetrics.feedback_events_30d,
+        useful_feedback_30d: queryMetrics.useful_feedback_30d,
+        needs_review_feedback_30d: queryMetrics.needs_review_feedback_30d,
+        citation_usefulness_rate: queryMetrics.citation_usefulness_rate,
         avg_retrieval_ms: queryMetrics.avg_retrieval_ms,
         top_authority_tier: queryMetrics.top_authority_tier,
         evidence_freshness: evidenceFreshness,
@@ -180,6 +198,7 @@ export function buildAgenticRagMoatSnapshot(input: {
             query_window_days: QUERY_WINDOW_DAYS,
             strategy_counts: queryMetrics.strategy_counts,
             ledger_warning: queryMetrics.ledger_warning,
+            feedback_warning: queryMetrics.feedback_warning,
         },
         warnings,
         generated_from: 'agentic_rag_query_ledger',
@@ -209,7 +228,38 @@ async function loadRagQueryAggregateMetrics(
         throw new Error(`Failed to load Agentic RAG query metrics: ${error.message}`);
     }
 
-    return aggregateQueryRows(Array.isArray(data) ? data as RagQueryMetricRow[] : []);
+    const queryMetrics = aggregateQueryRows(Array.isArray(data) ? data as RagQueryMetricRow[] : []);
+    const feedbackMetrics = await loadRagFeedbackAggregateMetrics(client, tenantId, now);
+    return normalizeQueryMetrics({
+        ...queryMetrics,
+        ...feedbackMetrics,
+    });
+}
+
+async function loadRagFeedbackAggregateMetrics(
+    client: SupabaseClient,
+    tenantId: string,
+    now: Date = new Date(),
+): Promise<Partial<RagQueryAggregateMetrics>> {
+    const since = new Date(now.getTime() - QUERY_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await client
+        .from('rag_citation_feedback_events')
+        .select('feedback_kind,created_at')
+        .eq('tenant_id', tenantId)
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(QUERY_LEDGER_LIMIT);
+
+    if (error) {
+        if (isMissingFeedbackTable(error)) {
+            return {
+                feedback_warning: 'RAG citation feedback ledger is not available; apply supabase/migrations/20260610000000_agentic_rag_citation_feedback.sql.',
+            };
+        }
+        throw new Error(`Failed to load Agentic RAG feedback metrics: ${error.message}`);
+    }
+
+    return aggregateFeedbackRows(Array.isArray(data) ? data as RagFeedbackMetricRow[] : []);
 }
 
 function aggregateQueryRows(rows: RagQueryMetricRow[]): RagQueryAggregateMetrics {
@@ -261,6 +311,24 @@ function aggregateQueryRows(rows: RagQueryMetricRow[]): RagQueryAggregateMetrics
     });
 }
 
+function aggregateFeedbackRows(rows: RagFeedbackMetricRow[]): Partial<RagQueryAggregateMetrics> {
+    let useful = 0;
+    let needsReview = 0;
+
+    for (const row of rows) {
+        const kind = readText(row.feedback_kind);
+        if (kind === 'answer_useful' || kind === 'citation_useful') useful += 1;
+        if (kind === 'needs_review') needsReview += 1;
+    }
+
+    return {
+        feedback_events_30d: rows.length,
+        useful_feedback_30d: useful,
+        needs_review_feedback_30d: needsReview,
+        citation_usefulness_rate: rows.length > 0 ? useful / rows.length : 0,
+    };
+}
+
 function normalizeQueryMetrics(metrics?: Partial<RagQueryAggregateMetrics>): RagQueryAggregateMetrics {
     const queryCount = Math.max(0, Math.round(metrics?.query_count_30d ?? 0));
     const groundedQueries = Math.max(0, Math.round(metrics?.grounded_queries_30d ?? 0));
@@ -274,11 +342,16 @@ function normalizeQueryMetrics(metrics?: Partial<RagQueryAggregateMetrics>): Rag
         catalog_fallback_queries_30d: catalogFallbackQueries,
         catalog_fallback_rate: roundRatio(metrics?.catalog_fallback_rate ?? (queryCount > 0 ? catalogFallbackQueries / queryCount : 0)),
         withheld_citations_30d: Math.max(0, Math.round(metrics?.withheld_citations_30d ?? 0)),
+        feedback_events_30d: Math.max(0, Math.round(metrics?.feedback_events_30d ?? 0)),
+        useful_feedback_30d: Math.max(0, Math.round(metrics?.useful_feedback_30d ?? 0)),
+        needs_review_feedback_30d: Math.max(0, Math.round(metrics?.needs_review_feedback_30d ?? 0)),
+        citation_usefulness_rate: roundRatio(metrics?.citation_usefulness_rate ?? 0),
         avg_retrieval_ms: roundNullable(metrics?.avg_retrieval_ms),
         top_authority_tier: readText(metrics?.top_authority_tier) ?? null,
         strategy_counts: sanitizeStrategyCounts(readRecord(metrics?.strategy_counts)),
         query_window_days: QUERY_WINDOW_DAYS,
         ledger_warning: readText(metrics?.ledger_warning),
+        feedback_warning: readText(metrics?.feedback_warning),
     };
 }
 
@@ -289,7 +362,13 @@ function classifyFreshness(readiness: RagReadinessSummary): AgenticRagEvidenceFr
 
 function classifyMoatStatus(readiness: RagReadinessSummary, metrics: RagQueryAggregateMetrics): AgenticRagMoatStatus {
     if (!readiness.ready || readiness.chunks === 0) return 'blocked';
-    if (metrics.query_count_30d >= 10 && metrics.grounding_rate >= 0.8 && metrics.catalog_fallback_rate <= 0.2) {
+    if (
+        metrics.query_count_30d >= 10
+        && metrics.grounding_rate >= 0.8
+        && metrics.catalog_fallback_rate <= 0.2
+        && metrics.feedback_events_30d >= 5
+        && metrics.citation_usefulness_rate >= 0.65
+    ) {
         return 'compounding';
     }
     return 'forming';
@@ -302,10 +381,13 @@ function buildWarnings(
 ): string[] {
     const warnings = [...readiness.warnings];
     if (metrics.ledger_warning) warnings.push(metrics.ledger_warning);
+    if (metrics.feedback_warning) warnings.push(metrics.feedback_warning);
     if (evidenceFreshness === 'empty') warnings.push('Agentic RAG has no indexed evidence corpus yet.');
     if (evidenceFreshness === 'stale') warnings.push('Agentic RAG evidence freshness is degraded by stale or failed documents.');
     if (metrics.query_count_30d === 0) warnings.push('No RAG query ledger activity in the last 30 days.');
     if (metrics.query_count_30d > 0 && metrics.grounding_rate < 0.8) warnings.push('Grounded answer rate is below the 80% operating target.');
+    if (metrics.query_count_30d > 0 && metrics.feedback_events_30d === 0) warnings.push('No citation usefulness feedback has been recorded for recent RAG answers.');
+    if (metrics.feedback_events_30d > 0 && metrics.citation_usefulness_rate < 0.65) warnings.push('Citation usefulness feedback is below the 65% operating target.');
     if (metrics.catalog_fallback_rate > 0.2) warnings.push('Built-in catalog fallback is carrying more than 20% of recent RAG answers.');
     return Array.from(new Set(warnings));
 }
@@ -340,6 +422,10 @@ function fromDatabaseRow(row: Record<string, unknown>): AgenticRagMoatSnapshot {
         catalog_fallback_queries_30d: readNumber(row.catalog_fallback_queries_30d),
         catalog_fallback_rate: readNumber(row.catalog_fallback_rate),
         withheld_citations_30d: readNumber(row.withheld_citations_30d),
+        feedback_events_30d: readNumber(row.feedback_events_30d),
+        useful_feedback_30d: readNumber(row.useful_feedback_30d),
+        needs_review_feedback_30d: readNumber(row.needs_review_feedback_30d),
+        citation_usefulness_rate: readNumber(row.citation_usefulness_rate),
         avg_retrieval_ms: readNullableNumber(row.avg_retrieval_ms),
         top_authority_tier: readText(row.top_authority_tier),
         evidence_freshness: readFreshness(row.evidence_freshness),
@@ -364,6 +450,14 @@ function isMissingRagQueryTable(error: { code?: string; message?: string }): boo
     return error.code === '42P01'
         || error.code === 'PGRST116'
         || message.includes('rag_queries')
+        || message.includes('schema cache');
+}
+
+function isMissingFeedbackTable(error: { code?: string; message?: string }): boolean {
+    const message = error.message?.toLowerCase() ?? '';
+    return error.code === '42P01'
+        || error.code === 'PGRST116'
+        || message.includes('rag_citation_feedback_events')
         || message.includes('schema cache');
 }
 

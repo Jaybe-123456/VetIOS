@@ -27,6 +27,10 @@ describe('Agentic RAG moat snapshots', () => {
                 catalog_fallback_queries_30d: 2,
                 catalog_fallback_rate: 0.1,
                 withheld_citations_30d: 3,
+                feedback_events_30d: 8,
+                useful_feedback_30d: 7,
+                needs_review_feedback_30d: 1,
+                citation_usefulness_rate: 0.875,
                 avg_retrieval_ms: 142.331,
                 top_authority_tier: 'specialist_guideline',
                 strategy_counts: {
@@ -42,8 +46,32 @@ describe('Agentic RAG moat snapshots', () => {
         expect(snapshot.evidence_freshness).toBe('fresh');
         expect(snapshot.grounding_rate).toBe(0.9);
         expect(snapshot.catalog_fallback_rate).toBe(0.1);
+        expect(snapshot.feedback_events_30d).toBe(8);
+        expect(snapshot.citation_usefulness_rate).toBe(0.875);
         expect(snapshot.avg_retrieval_ms).toBe(142.33);
         expect(snapshot.warnings).toEqual([]);
+    });
+
+    it('keeps the moat forming until citation usefulness feedback is active', () => {
+        const snapshot = buildAgenticRagMoatSnapshot({
+            tenantId: 'tenant-1',
+            readiness: readyCorpus,
+            now: new Date('2026-06-09T12:00:00.000Z'),
+            queryMetrics: {
+                query_count_30d: 20,
+                grounded_queries_30d: 18,
+                grounding_rate: 0.9,
+                citation_coverage_avg: 0.92,
+                catalog_fallback_queries_30d: 1,
+                catalog_fallback_rate: 0.05,
+                strategy_counts: {
+                    hybrid: 20,
+                },
+            },
+        });
+
+        expect(snapshot.moat_status).toBe('forming');
+        expect(snapshot.warnings).toContain('No citation usefulness feedback has been recorded for recent RAG answers.');
     });
 
     it('blocks the moat when the corpus is not indexed or high-authority', () => {

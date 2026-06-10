@@ -635,6 +635,21 @@ export function buildRagLexicalSearchQuery(question: string, plan: RagQueryPlan)
     if (isRespiratoryDiagnosticQuestion(question)) {
         return '"nasal discharge" OR sneezing OR respiratory OR conjunctivitis';
     }
+    if (isParvovirusDiagnosticQuestion(question)) {
+        return 'parvovirus OR parvo OR "fecal antigen" OR leukopenia OR PCR';
+    }
+    if (isAcuteHemorrhagicDiarrheaQuestion(question)) {
+        return 'AHDS OR HGE OR "hemorrhagic diarrhea" OR hemoconcentration OR PCV';
+    }
+    if (isRenalDiagnosticQuestion(question)) {
+        return 'renal OR kidney OR CKD OR AKI OR creatinine OR SDMA OR urinalysis OR proteinuria';
+    }
+    if (isToxicExposureDiagnosticQuestion(question)) {
+        return 'toxin OR toxicosis OR rodenticide OR anticoagulant OR "PT" OR "PTT"';
+    }
+    if (isAMROneHealthQuestion(question)) {
+        return 'AMR OR "antimicrobial resistance" OR "antimicrobial use" OR "One Health" OR surveillance';
+    }
 
     const terms = extractRetrievalTerms(question)
         .filter((term) => !ragConsoleQueryStopwords().has(term))
@@ -766,7 +781,12 @@ function shouldUseCuratedCatalogFallback(question: string): boolean {
     return isPancreatitisDiagnosticQuestion(question)
         || isBroadCanineGiDiagnosticQuestion(question)
         || isRespiratoryDiagnosticQuestion(question)
-        || /\b(fpv|panleukopenia|feline panleukopenia|feline parvovirus|cpv|canine parvovirus|parvo|distemper)\b/i.test(question);
+        || isParvovirusDiagnosticQuestion(question)
+        || isAcuteHemorrhagicDiarrheaQuestion(question)
+        || isRenalDiagnosticQuestion(question)
+        || isToxicExposureDiagnosticQuestion(question)
+        || isAMROneHealthQuestion(question)
+        || /\b(fpv|panleukopenia|feline panleukopenia|feline parvovirus|distemper)\b/i.test(question);
 }
 
 function mergeRetrievedChunks(vectorRows: RagRetrievedChunk[], lexicalRows: RagRetrievedChunk[]): RagRetrievedChunk[] {
@@ -878,12 +898,20 @@ function synthesizeExtractiveAnswer(input: {
     const speciesNote = input.species
         ? `Species-specific note: evidence was filtered to sources matching ${input.species}.`
         : 'Species-specific note: no species filter was supplied, so use only after matching the patient species.';
+    const evidenceUseLines = input.recommendations.length > 0
+        ? [
+            'Concise diagnostic workflow:',
+            ...recommendationLines,
+        ]
+        : [
+            'Evidence use:',
+            'The retrieved citations support source-grounded context for this question, but VetIOS did not generate a diagnostic workflow because the accepted evidence is policy, surveillance, source-discovery, or non-protocol evidence.',
+        ];
 
     return [
         'Citations:',
         ...citationLines,
-        'Concise diagnostic workflow:',
-        ...recommendationLines,
+        ...evidenceUseLines,
         speciesNote,
         `Causal Memory: triggered (${input.integrationContexts.causal_memory.linked ? 'tenant memory linked' : 'no tenant memory match'}).`,
         `Counterfactual review: triggered (${input.integrationContexts.counterfactual.linked ? 'tenant sessions linked' : 'no tenant session match'}).`,
@@ -898,6 +926,9 @@ function buildEvidenceBackedRecommendations(input: {
     scopeAssessment: EvidenceScopeAssessment;
 }): RagDiagnosticRecommendation[] {
     if (!hasHighConfidenceEvidence(input.citations) || !input.scopeAssessment.sufficient) {
+        return [];
+    }
+    if (isAMROneHealthQuestion(input.question) && /\b(surveillance|policy|one health|population|infrastructure|government|global|who|fao|woah|cdc|amr)\b/i.test(input.question)) {
         return [];
     }
 
@@ -1000,6 +1031,27 @@ function isRespiratoryDiagnosticQuestion(question: string): boolean {
 
 function isPancreatitisDiagnosticQuestion(question: string): boolean {
     return /\b(pancreatitis|pancreatic|pancreas|cpli|pli|spec cpl|pancreatic lipase|serum lipase)\b/i.test(question);
+}
+
+function isParvovirusDiagnosticQuestion(question: string): boolean {
+    return /\b(cpv|canine parvovirus|parvo|parvoviral|fecal antigen|viral pcr|leukopenia)\b/i.test(question);
+}
+
+function isAcuteHemorrhagicDiarrheaQuestion(question: string): boolean {
+    return /\b(ahds|hge|acute hemorrhagic diarrhea|acute haemorrhagic diarrhoea|hemorrhagic diarrhea|haemorrhagic diarrhoea|bloody diarrhea|bloody diarrhoea|hemoconcentration|haemoconcentration)\b/i.test(question);
+}
+
+function isRenalDiagnosticQuestion(question: string): boolean {
+    return /\b(renal|kidney|ckd|aki|azotemia|azotaemia|creatinine|sdma|proteinuria|upc|urinalysis|urine specific gravity)\b/i.test(question)
+        && /\b(diagnos|diagnostic|diagnostics|workup|stage|staging|test|tests|evidence|indexed|monitor)\b/i.test(question);
+}
+
+function isToxicExposureDiagnosticQuestion(question: string): boolean {
+    return /\b(toxin|toxicosis|poison|poisoning|rodenticide|anticoagulant|cholecalciferol|ethylene glycol|exposure|bait|ptt|prothrombin|coagulation)\b/i.test(question);
+}
+
+function isAMROneHealthQuestion(question: string): boolean {
+    return /\b(amr|antimicrobial resistance|antibiotic resistance|antimicrobial use|antibiogram|susceptibility|culture and sensitivity|one health|zoonotic|surveillance|outbreak|drug-resistant|drug resistant|resistance gene)\b/i.test(question);
 }
 
 function hasHighConfidenceEvidence(citations: RagCitation[]): boolean {

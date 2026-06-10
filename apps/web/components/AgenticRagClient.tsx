@@ -79,6 +79,7 @@ interface RagQueryResult {
         counterfactual_reasoning_linked?: boolean;
         one_health_surveillance_linked?: boolean;
     };
+    query_id: string | null;
 }
 
 interface RagEmbeddingProbe {
@@ -106,6 +107,10 @@ interface AgenticRagMoatSnapshot {
     catalog_fallback_queries_30d: number;
     catalog_fallback_rate: number;
     withheld_citations_30d: number;
+    feedback_events_30d?: number;
+    useful_feedback_30d?: number;
+    needs_review_feedback_30d?: number;
+    citation_usefulness_rate?: number;
     avg_retrieval_ms: number | null;
     top_authority_tier: string | null;
     warnings: string[];
@@ -127,6 +132,8 @@ export default function AgenticRagClient() {
     const [moatSnapshot, setMoatSnapshot] = useState<AgenticRagMoatSnapshot | null>(null);
     const [embeddingProbe, setEmbeddingProbe] = useState<RagEmbeddingProbe | null>(null);
     const [queryResult, setQueryResult] = useState<RagQueryResult | null>(null);
+    const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+    const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
     const [sourceForm, setSourceForm] = useState({
         name: 'VetIOS clinical guideline source',
         source_type: 'guideline',
@@ -351,10 +358,61 @@ export default function AgenticRagClient() {
                 throw new Error(body.detail ?? body.error ?? 'RAG query failed.');
             }
             setQueryResult(body);
+            setFeedbackStatus(null);
         } catch (error) {
             setStatus(error instanceof Error ? error.message : 'RAG query failed.');
         } finally {
             setQuerying(false);
+        }
+    }
+
+    async function handleFeedback(
+        feedbackKind: 'answer_useful' | 'answer_not_useful' | 'citation_useful' | 'citation_not_useful' | 'needs_review',
+        citation?: RagCitation,
+    ) {
+        if (!queryResult?.query_id) {
+            setFeedbackStatus('Query ledger ID is missing. Apply the RAG migrations before recording feedback.');
+            return;
+        }
+
+        setFeedbackSubmitting(true);
+        setFeedbackStatus(null);
+        try {
+            const citations = citation ? [{
+                index: citation.index,
+                title: citation.title,
+                source_name: citation.source_name,
+                url: citation.url,
+            }] : queryResult.citations.map((entry) => ({
+                index: entry.index,
+                title: entry.title,
+                source_name: entry.source_name,
+                url: entry.url,
+            }));
+
+            const response = await fetch('/api/rag/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    query_id: queryResult.query_id,
+                    feedback_kind: feedbackKind,
+                    citation_indexes: citations.map((entry) => entry.index),
+                    citations,
+                    grounded: queryResult.evaluation.grounded,
+                    clinical_use_case: queryForm.question.slice(0, 120),
+                }),
+            });
+            const body = await readResponseJson<{ stored?: boolean; warning?: string | null; error?: string; detail?: string }>(response);
+            if (!response.ok) {
+                throw new Error(body.detail ?? body.error ?? 'RAG feedback failed.');
+            }
+            setFeedbackStatus(body.warning ?? (body.stored === false ? 'Feedback was accepted but not stored.' : 'Feedback recorded.'));
+            await refreshSnapshot();
+        } catch (error) {
+            setFeedbackStatus(error instanceof Error ? error.message : 'RAG feedback failed.');
+        } finally {
+            setFeedbackSubmitting(false);
         }
     }
 
@@ -473,6 +531,10 @@ export default function AgenticRagClient() {
                         <DataRow label="Fallback Rate" value={formatPercent(moatSnapshot.catalog_fallback_rate)} tone={moatSnapshot.catalog_fallback_rate <= 0.2 ? 'accent' : undefined} />
                         <DataRow label="Grounded Queries" value={moatSnapshot.grounded_queries_30d} />
                         <DataRow label="Withheld Citations" value={moatSnapshot.withheld_citations_30d} />
+                        <DataRow label="Feedback Events" value={moatSnapshot.feedback_events_30d ?? 0} tone={(moatSnapshot.feedback_events_30d ?? 0) > 0 ? 'accent' : undefined} />
+                        <DataRow label="Usefulness" value={formatPercent(moatSnapshot.citation_usefulness_rate ?? 0)} tone={(moatSnapshot.citation_usefulness_rate ?? 0) >= 0.65 ? 'accent' : undefined} />
+                        <DataRow label="Useful Signals" value={moatSnapshot.useful_feedback_30d ?? 0} />
+                        <DataRow label="Needs Review" value={moatSnapshot.needs_review_feedback_30d ?? 0} />
                         <DataRow label="Avg Retrieval" value={moatSnapshot.avg_retrieval_ms === null ? 'No ledger' : `${moatSnapshot.avg_retrieval_ms}ms`} />
                         <DataRow label="Freshness" value={moatSnapshot.evidence_freshness} tone={moatSnapshot.evidence_freshness === 'fresh' ? 'accent' : undefined} />
                     </div>
@@ -560,6 +622,20 @@ export default function AgenticRagClient() {
                             <div className="border border-accent/15 bg-black/20 p-4">
                                 <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-accent">Grounded Answer</div>
                                 <p className="font-mono text-sm leading-relaxed text-foreground">{queryResult.answer}</p>
+                                <div className="mt-4 flex flex-wrap gap-2">
+                                    <TerminalButton type="button" disabled={feedbackSubmitting || !queryResult.query_id} onClick={() => handleFeedback('answer_useful')}>
+                                        Useful Answer
+                                    </TerminalButton>
+                                    <TerminalButton type="button" disabled={feedbackSubmitting || !queryResult.query_id} onClick={() => handleFeedback('answer_not_useful')}>
+                                        Not Useful
+                                    </TerminalButton>
+                                    <TerminalButton type="button" disabled={feedbackSubmitting || !queryResult.query_id} onClick={() => handleFeedback('needs_review')}>
+                                        Needs Review
+                                    </TerminalButton>
+                                </div>
+                                {feedbackStatus && (
+                                    <div className="mt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">{feedbackStatus}</div>
+                                )}
                             </div>
                             <div className="grid gap-3 md:grid-cols-2">
                                 <DataRow label="Strategy" value={queryResult.retrieval_stats.strategy} tone="accent" />
@@ -599,6 +675,14 @@ export default function AgenticRagClient() {
                                                 {citation.url}
                                             </a>
                                         )}
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            <TerminalButton type="button" disabled={feedbackSubmitting || !queryResult.query_id} onClick={() => handleFeedback('citation_useful', citation)}>
+                                                Useful Citation
+                                            </TerminalButton>
+                                            <TerminalButton type="button" disabled={feedbackSubmitting || !queryResult.query_id} onClick={() => handleFeedback('citation_not_useful', citation)}>
+                                                Not Useful
+                                            </TerminalButton>
+                                        </div>
                                     </div>
                                 ))}
                             </div>

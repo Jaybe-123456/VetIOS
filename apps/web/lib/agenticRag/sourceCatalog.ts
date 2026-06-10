@@ -200,6 +200,28 @@ export const CURATED_VETERINARY_RAG_SOURCES: CuratedRagSourceDefinition[] = [
                     'Source note: this VetIOS evidence summary is indexed under the Merck Veterinary Manual broad disease reference source card to support syndrome-level retrieval while preserving clinician review and source-citation boundaries.',
                 ].join('\n'),
             },
+            {
+                title: 'Canine acute abdomen and obstruction triage evidence summary',
+                source_year: '2026',
+                topics: ['canine vomiting', 'acute abdomen', 'foreign body', 'gastrointestinal obstruction', 'abdominal radiographs', 'abdominal ultrasound', 'surgery triage'],
+                summary: [
+                    'Merck Veterinary Manual broad small-animal disease reference routing: dogs with persistent vomiting, abdominal pain, distension, dehydration, shock, foreign-body exposure, unproductive retching, or progressive systemic signs need obstruction and acute-abdomen triage rather than routine gastroenteritis handling.',
+                    'Evidence routing for suspected obstruction should combine history and physical examination with baseline stabilization assessment, CBC, serum chemistry, electrolytes, lactate or perfusion markers when available, and abdominal imaging selected by patient stability.',
+                    'Abdominal radiographs can help identify obstructive gas patterns, foreign material, gastric dilation, mass effect, perforation concern, or loss of serosal detail; ultrasound can add soft-tissue, wall-layering, free-fluid, intussusception, or pancreaticobiliary context when available.',
+                    'Workflow boundary: this evidence pack supports diagnostic escalation and triage. It does not replace emergency stabilization, surgical judgment, or local referral criteria for suspected obstruction, GDV, perforation, or septic abdomen.',
+                ].join('\n'),
+            },
+            {
+                title: 'Canine toxin and external exposure diagnostic routing evidence summary',
+                source_year: '2026',
+                topics: ['canine toxin exposure', 'rodenticide', 'anticoagulant', 'melena', 'hematochezia', 'vomiting', 'diarrhea', 'coagulation testing', 'PT', 'PTT'],
+                summary: [
+                    'Merck Veterinary Manual toxicology routing: canine gastrointestinal signs should trigger targeted exposure review when history suggests rodenticide, household chemical, plant, medication, bait, toxin, or dietary indiscretion exposure.',
+                    'For possible anticoagulant rodenticide exposure, diagnostic routing includes baseline PCV/TP or CBC, coagulation testing such as PT and PTT, and serial monitoring when bleeding signs or uncertain exposure timing are present. Thoracic or abdominal imaging is selected when clinical signs suggest cavity hemorrhage.',
+                    'Toxin workups should remain exposure-specific: the RAG layer can route clinicians toward toxicology evidence and diagnostics, but treatment, decontamination, antidotes, and dosing must follow licensed veterinary toxicology guidance and patient stability.',
+                    'This pack exists to prevent broad GI answers from omitting external exposure and coagulopathy branches when vomiting, diarrhea, melena, hematochezia, pallor, bruising, weakness, or unexplained bleeding are part of the case.',
+                ].join('\n'),
+            },
         ],
         source_card: {
             retrieval_use: 'Broad veterinary disease reference and differential-diagnosis support across species.',
@@ -298,6 +320,84 @@ export const CURATED_VETERINARY_RAG_SOURCES: CuratedRagSourceDefinition[] = [
             safety_boundary: 'Use as clinical decision support only; suspected pancreatitis requires patient-specific examination, stabilization, laboratory interpretation, imaging context, and licensed veterinary judgment.',
             integration_hooks: ['diagnostic_panel_selector', 'counterfactual_reviewer', 'clinical_safety_guardrail', 'outcome_learning'],
             seed_topics: ['canine pancreatitis', 'pancreatic lipase', 'Spec cPL', 'abdominal ultrasound', 'vomiting diarrhea pancreatitis'],
+        },
+    },
+    {
+        external_key: 'merck_canine_parvovirus',
+        name: 'Merck Veterinary Manual canine parvovirus infection',
+        source_type: 'textbook',
+        authority_tier: 'institutional',
+        species_scope: ['canine'],
+        medicine_domain: ['disease_reference', 'diagnostics', 'infectious_disease', 'gastroenterology', 'treatment_pathway'],
+        url: 'https://www.merckvetmanual.com/digestive-system/infectious-diseases-of-the-gastrointestinal-tract-in-small-animals/canine-parvovirus-infection-parvoviral-enteritis-in-dogs',
+        license: 'public web reference; verify source terms before redistributing extracted text',
+        attribution: 'Merck Veterinary Manual',
+        ingestion_policy: {
+            preferred_for: ['canine parvovirus', 'parvo diagnostics', 'fecal antigen testing', 'viral PCR', 'leukopenia triage'],
+            high_authority: true,
+        },
+        refresh_policy: {
+            connector: 'public_https',
+            refresh_interval_days: 30,
+            fetch_remote_text: true,
+        },
+        evidence_summaries: [
+            {
+                title: 'Canine parvovirus diagnostic evidence summary',
+                source_year: '2025',
+                topics: ['canine parvovirus', 'parvo', 'vomiting', 'hemorrhagic diarrhea', 'fecal antigen', 'PCR', 'leukopenia', 'isolation'],
+                summary: [
+                    'Merck Veterinary Manual canine parvovirus infection: parvoviral enteritis is a contagious acute GI disease most often affecting young, unvaccinated, or incompletely vaccinated dogs. Clinical signs commonly include anorexia, lethargy, vomiting, and diarrhea that can be hemorrhagic.',
+                    'Diagnosis is typically based on signalment, history, physical examination, and fecal parvoviral antigen testing or viral PCR. Relevant cases should be tested promptly so isolation and infection-control actions can begin.',
+                    'CBC and chemistry findings can support severity assessment: moderate to severe leukopenia with lymphopenia and neutropenia can occur, while serum chemistry may show dehydration, electrolyte, glucose, protein, or organ-impact changes.',
+                    'Clinical boundary: this pack supports diagnostic recognition, isolation routing, and evidence retrieval. Treatment, antimicrobial decisions, fluid plans, and outpatient versus inpatient decisions require licensed veterinary judgment and patient-specific monitoring.',
+                ].join('\n'),
+            },
+        ],
+        source_card: {
+            retrieval_use: 'Institutional infectious-disease reference for canine parvovirus diagnostics, isolation routing, leukopenia, fecal antigen testing, and PCR confirmation.',
+            safety_boundary: 'Use as decision support only; suspected parvo requires isolation, patient-specific stabilization, diagnostic confirmation, and licensed veterinary oversight.',
+            integration_hooks: ['diagnostic_panel_selector', 'clinical_safety_guardrail', 'outbreak_signal_review', 'outcome_learning'],
+            seed_topics: ['canine parvovirus', 'parvo ELISA', 'fecal antigen', 'viral PCR', 'leukopenia', 'hemorrhagic diarrhea'],
+        },
+    },
+    {
+        external_key: 'merck_acute_hemorrhagic_diarrhea_syndrome_dogs',
+        name: 'Merck Veterinary Manual acute hemorrhagic diarrhea syndrome in dogs',
+        source_type: 'textbook',
+        authority_tier: 'institutional',
+        species_scope: ['canine'],
+        medicine_domain: ['disease_reference', 'diagnostics', 'gastroenterology', 'emergency_triage', 'treatment_pathway'],
+        url: 'https://www.merckvetmanual.com/digestive-system/diseases-of-the-large-intestine-in-small-animals/acute-hemorrhagic-diarrhea-syndrome-in-dogs',
+        license: 'public web reference; verify source terms before redistributing extracted text',
+        attribution: 'Merck Veterinary Manual',
+        ingestion_policy: {
+            preferred_for: ['acute hemorrhagic diarrhea syndrome', 'AHDS', 'HGE', 'hemoconcentration', 'bloody diarrhea differential'],
+            high_authority: true,
+        },
+        refresh_policy: {
+            connector: 'public_https',
+            refresh_interval_days: 30,
+            fetch_remote_text: true,
+        },
+        evidence_summaries: [
+            {
+                title: 'Canine acute hemorrhagic diarrhea syndrome evidence summary',
+                source_year: '2026',
+                topics: ['acute hemorrhagic diarrhea syndrome', 'AHDS', 'HGE', 'hemoconcentration', 'PCV', 'neutropenia', 'parvovirus differential', 'coagulopathy'],
+                summary: [
+                    'Merck Veterinary Manual acute hemorrhagic diarrhea syndrome in dogs: AHDS presents with acute vomiting and hemorrhagic diarrhea, and diagnosis is based on clinical presentation with evidence of hemoconcentration such as high packed cell volume.',
+                    'CBC abnormalities are commonly hemoconcentration and neutrophilic leukocytosis; neutropenia should raise concern for sepsis or parvoviral enteritis. Serum chemistry can be unremarkable or show protein, glucose, and electrolyte changes related to GI loss and decreased intake.',
+                    'Differentials include bacterial, viral, and parasitic gastroenteritis, systemic disease such as hypoadrenocorticism, coagulopathy including rodenticide toxicosis, thrombocytopenia, severe ulceration, neoplasia, pancreatitis, and GI perforation.',
+                    'Clinical boundary: this evidence supports differential routing and monitoring priorities. Fluid therapy, antimicrobial use, transfusion decisions, and hospitalization thresholds require direct veterinary assessment.',
+                ].join('\n'),
+            },
+        ],
+        source_card: {
+            retrieval_use: 'Institutional emergency GI reference for canine AHDS/HGE diagnostic differentiation, hemoconcentration, electrolyte loss, and severe-disease triage.',
+            safety_boundary: 'Use as decision support only; hemorrhagic diarrhea with shock, neutropenia, coagulopathy, perforation concern, or severe systemic signs needs urgent clinician-led care.',
+            integration_hooks: ['diagnostic_panel_selector', 'counterfactual_reviewer', 'clinical_safety_guardrail', 'outcome_learning'],
+            seed_topics: ['AHDS', 'HGE', 'hemorrhagic diarrhea', 'hemoconcentration', 'PCV', 'canine bloody diarrhea'],
         },
     },
     {
@@ -553,6 +653,19 @@ export const CURATED_VETERINARY_RAG_SOURCES: CuratedRagSourceDefinition[] = [
             refresh_interval_days: 30,
             fetch_remote_text: true,
         },
+        evidence_summaries: [
+            {
+                title: 'Canine and feline renal diagnostic staging evidence summary',
+                source_year: '2026',
+                topics: ['renal disease', 'CKD', 'AKI', 'creatinine', 'SDMA', 'urinalysis', 'UPC', 'blood pressure', 'proteinuria'],
+                summary: [
+                    'IRIS kidney disease guidance is the specialist reference layer for canine and feline kidney disease staging, renal laboratory interpretation, proteinuria assessment, and monitoring. VetIOS uses it to route renal questions toward structured staging rather than generic illness summaries.',
+                    'Renal diagnostic workups should interpret creatinine, SDMA, urinalysis, urine specific gravity, proteinuria or UPC, blood pressure, hydration status, trends over time, and comorbidities together. Single laboratory values should not be used in isolation.',
+                    'AKI and CKD questions require scope control: the RAG answer should distinguish acute injury, chronic staging, dehydration/prerenal azotemia, obstruction/postrenal concerns, and systemic disease when the indexed evidence supports those distinctions.',
+                    'Clinical boundary: treatment recommendations, fluid plans, diet, antihypertensive use, and proteinuria therapy depend on patient stability, serial diagnostics, and licensed veterinary judgment.',
+                ].join('\n'),
+            },
+        ],
         source_card: {
             retrieval_use: 'Canine and feline kidney disease staging, lab interpretation, treatment-pathway, and monitoring context.',
             safety_boundary: 'Renal recommendations depend on patient hydration, comorbidities, trends, lab methods, and clinician-supervised follow-up.',
@@ -605,6 +718,19 @@ export const CURATED_VETERINARY_RAG_SOURCES: CuratedRagSourceDefinition[] = [
             refresh_interval_days: 30,
             fetch_remote_text: true,
         },
+        evidence_summaries: [
+            {
+                title: 'WOAH animal antimicrobial use and AMR surveillance evidence summary',
+                source_year: '2026',
+                topics: ['antimicrobial resistance', 'AMR', 'antimicrobial use', 'ANIMUSE', 'surveillance', 'veterinary services', 'animal health'],
+                summary: [
+                    'WOAH antimicrobial-resistance guidance positions Veterinary and Aquatic Animal Health Services as core actors in responsible antimicrobial use, surveillance, national capacity building, and animal-health system strengthening.',
+                    'WOAH supports monitoring antimicrobial use in animals through national, regional, and global reporting, including ANIMUSE, and frames surveillance plus responsible-use governance as part of the animal-health response to AMR.',
+                    'VetIOS uses this source to ground animal-sector AMR surveillance, veterinary-service capacity, antimicrobial-use monitoring, and cross-border policy context rather than individual patient antimicrobial dosing.',
+                    'Clinical boundary: local susceptibility testing, antibiograms, culture results, label restrictions, withdrawal times, and jurisdictional regulations remain required before treatment decisions.',
+                ].join('\n'),
+            },
+        ],
         source_card: {
             retrieval_use: 'Disease surveillance, diagnostic test standardization, and outbreak triage grounding.',
             safety_boundary: 'Regulatory reporting obligations vary by jurisdiction and must be confirmed against local authority rules.',
@@ -631,11 +757,101 @@ export const CURATED_VETERINARY_RAG_SOURCES: CuratedRagSourceDefinition[] = [
             refresh_interval_days: 14,
             fetch_remote_text: true,
         },
+        evidence_summaries: [
+            {
+                title: 'CDC One Health AMR coordination evidence summary',
+                source_year: '2026',
+                topics: ['One Health', 'antimicrobial resistance', 'zoonotic disease', 'surveillance', 'public health', 'drug-resistant infections'],
+                summary: [
+                    'CDC One Health resources ground the human-animal-environment coordination layer for zoonotic and drug-resistant threats. VetIOS uses this evidence when clinical or population signals need public-health context rather than a narrow single-patient reference.',
+                    'CDC antimicrobial-resistance resources describe drug-resistant germs as organisms that can defeat drugs designed to kill them and maintain public-health resources including AR threat reporting, isolate-bank infrastructure, and laboratory assessment tooling.',
+                    'For VetIOS, this source supports public-health framing, outbreak routing, and surveillance evidence. It should be combined with veterinary diagnostic confirmation and local health authority guidance before action.',
+                ].join('\n'),
+            },
+        ],
         source_card: {
             retrieval_use: 'Human-animal-environment surveillance context and cross-species zoonotic risk triage.',
             safety_boundary: 'Use public health guidance with veterinary case evidence and local reporting requirements.',
             integration_hooks: ['one_health_surveillance', 'zoonotic_bridge_engine', 'outbreak_signal_review'],
             seed_topics: ['One Health', 'zoonotic disease', 'surveillance', 'human animal environment'],
+        },
+    },
+    {
+        external_key: 'who_antimicrobial_resistance',
+        name: 'WHO antimicrobial resistance fact sheet',
+        source_type: 'web',
+        authority_tier: 'regulatory',
+        species_scope: ['canine', 'feline', 'equine', 'bovine', 'avian', 'swine', 'human', 'wildlife'],
+        medicine_domain: ['antimicrobial_resistance', 'one_health', 'public_health', 'surveillance', 'stewardship'],
+        url: 'https://www.who.int/news-room/fact-sheets/detail/antimicrobial-resistance',
+        license: 'public global health reference',
+        attribution: 'World Health Organization',
+        ingestion_policy: {
+            preferred_for: ['global AMR framing', 'One Health AMR policy', 'surveillance priorities', 'strategic information'],
+            high_authority: true,
+        },
+        refresh_policy: {
+            connector: 'regulatory_index',
+            refresh_interval_days: 30,
+            fetch_remote_text: true,
+        },
+        evidence_summaries: [
+            {
+                title: 'WHO One Health antimicrobial resistance evidence summary',
+                source_year: '2023',
+                topics: ['antimicrobial resistance', 'One Health', 'animals', 'plants', 'humans', 'surveillance', 'antimicrobial use', 'AMR burden'],
+                summary: [
+                    'WHO frames antimicrobial resistance as a major global public-health and development threat. It identifies misuse and overuse of antimicrobials in humans, animals, and plants as main drivers of drug-resistant pathogens.',
+                    'WHO states that AMR affects animal and plant health, farm productivity, and food security, and that controlling AMR requires sector-specific action plus coordinated One Health work across human health, food production, animal, and environmental sectors.',
+                    'WHO priorities include quality diagnosis, appropriate treatment, infection prevention, surveillance of AMR and antimicrobial consumption or use, and strategic information for national action plans.',
+                    'VetIOS uses this source to ground the infrastructure claim that veterinary clinical intelligence is part of the One Health AMR surveillance layer, not to generate patient-specific antimicrobial treatment.',
+                ].join('\n'),
+            },
+        ],
+        source_card: {
+            retrieval_use: 'Global AMR burden, One Health coordination, surveillance, and strategic-information grounding for infrastructure and policy workflows.',
+            safety_boundary: 'Use for public-health and surveillance framing. Patient-level prescribing requires culture, susceptibility, species-specific evidence, drug labels, and clinician judgment.',
+            integration_hooks: ['one_health_surveillance', 'population_signal_engine', 'outbreak_signal_review', 'policy_intelligence'],
+            seed_topics: ['WHO AMR', 'One Health AMR', 'antimicrobial use surveillance', 'global action plan', 'strategic information'],
+        },
+    },
+    {
+        external_key: 'fao_antimicrobial_resistance',
+        name: 'FAO antimicrobial resistance resources',
+        source_type: 'web',
+        authority_tier: 'regulatory',
+        species_scope: ['bovine', 'ovine', 'caprine', 'swine', 'avian', 'aquatic', 'human'],
+        medicine_domain: ['antimicrobial_resistance', 'food_security', 'livestock_health', 'one_health', 'surveillance'],
+        url: 'https://www.fao.org/antimicrobial-resistance/en/',
+        license: 'public UN food and agriculture reference',
+        attribution: 'Food and Agriculture Organization of the United Nations',
+        ingestion_policy: {
+            preferred_for: ['livestock AMR', 'agrifood systems', 'food security', 'farm biosecurity', 'antimicrobial use monitoring'],
+            high_authority: true,
+        },
+        refresh_policy: {
+            connector: 'regulatory_index',
+            refresh_interval_days: 30,
+            fetch_remote_text: true,
+        },
+        evidence_summaries: [
+            {
+                title: 'FAO livestock and agrifood AMR evidence summary',
+                source_year: '2026',
+                topics: ['antimicrobial resistance', 'livestock', 'agrifood systems', 'food security', 'farm biosecurity', 'InFARM', 'One Health'],
+                summary: [
+                    'FAO AMR resources frame antimicrobial misuse in livestock, aquaculture, and crop production as a risk for the emergence and spread of antimicrobial-resistant microorganisms.',
+                    'FAO positions antimicrobial effectiveness as important for animal health, animal welfare, food security, and agrifood systems. Its AMR work includes action planning, farm biosecurity, responsible antimicrobial use, and surveillance systems such as InFARM.',
+                    'VetIOS uses this source to ground livestock and agrifood AMR surveillance questions, especially where clinical data may connect to farm biosecurity, food security, and One Health policy workflows.',
+                    'Clinical boundary: farm-level and herd-level AMR answers require local lab evidence, susceptibility testing, production context, withdrawal-time rules, and veterinary oversight.',
+                ].join('\n'),
+            },
+        ],
+        source_card: {
+            retrieval_use: 'Livestock, food-security, farm-biosecurity, and agrifood AMR grounding for One Health surveillance workflows.',
+            safety_boundary: 'Use for surveillance and policy context. Treatment and farm-control actions require local diagnostics, regulations, and veterinary authority.',
+            integration_hooks: ['one_health_surveillance', 'population_signal_engine', 'outbreak_signal_review', 'policy_intelligence'],
+            seed_topics: ['FAO AMR', 'livestock antimicrobial use', 'InFARM', 'farm biosecurity', 'agrifood systems'],
         },
     },
     {
