@@ -175,6 +175,9 @@ export async function ingestRagDocument(input: IngestRagDocumentInput): Promise<
             metadata: {
                 token_estimate: chunk.token_estimate,
                 heading: chunk.heading,
+                document_type: document.document_type,
+                curated_evidence_summary: document.metadata.curated_evidence_summary === true,
+                evidence_summary_index: document.metadata.evidence_summary_index ?? null,
             },
         });
     }
@@ -250,8 +253,8 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
     if (catalogFallbackRows.length > 0) {
         retrievalWarnings.push('Tenant corpus had no matching indexed chunks, so VetIOS used built-in curated catalog evidence summaries. Run Seed/Refresh Catalog to persist these summaries into the retrieval corpus.');
     }
-    const chunks = [...filteredChunks, ...catalogFallbackRows]
-        .sort((left, right) => evidenceRankScore(right) - evidenceRankScore(left))
+    const chunks = dedupeRetrievedEvidence([...filteredChunks, ...catalogFallbackRows]
+        .sort((left, right) => evidenceRankScore(right) - evidenceRankScore(left)))
         .slice(0, limit);
     const candidateCitations = chunks.map((chunk, index) => buildCitation(chunk, index + 1));
     const citations = candidateCitations
@@ -799,6 +802,41 @@ function mergeRetrievedChunks(vectorRows: RagRetrievedChunk[], lexicalRows: RagR
     }
 
     return [...byId.values()].sort((left, right) => evidenceRankScore(right) - evidenceRankScore(left));
+}
+
+function dedupeRetrievedEvidence(chunks: RagRetrievedChunk[]): RagRetrievedChunk[] {
+    const accepted: RagRetrievedChunk[] = [];
+    const seen = new Set<string>();
+
+    for (const chunk of chunks) {
+        const key = retrievalEvidenceDedupeKey(chunk);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        accepted.push(chunk);
+    }
+
+    return accepted;
+}
+
+function retrievalEvidenceDedupeKey(chunk: RagRetrievedChunk): string {
+    const documentType = inferChunkDocumentType(chunk);
+    if (documentType === 'web_snapshot') {
+        return [
+            'web_snapshot',
+            normalizeDedupeToken(chunk.url ?? String(chunk.provenance.source_url ?? '')),
+            normalizeDedupeToken(chunk.title),
+        ].join(':');
+    }
+
+    if (documentType === 'source_card') {
+        return `source_card:${chunk.source_id}`;
+    }
+
+    return [
+        chunk.document_id,
+        String(chunk.metadata.evidence_summary_index ?? chunk.chunk_index),
+        normalizeDedupeToken(chunk.title),
+    ].join(':');
 }
 
 async function loadRagSourceMap(client: SupabaseClient, tenantId: string): Promise<Map<string, RagSourceRecord>> {
@@ -1488,7 +1526,7 @@ function inferDomainFilters(lower: string): string[] {
 }
 
 function buildQuote(text: string): string {
-    const normalized = normalizeRagContent(text);
+    const normalized = sanitizeCitationText(normalizeRagContent(text));
     return normalized.length > 360 ? `${normalized.slice(0, 357).trimEnd()}...` : normalized;
 }
 
@@ -1520,6 +1558,7 @@ function evidenceRankScore(chunk: RagRetrievedChunk): number {
         + authorityWeight(chunk.authority_tier)
         + highAuthoritySourceBoost(chunk)
         + retrievalModeBoost(chunk)
+        + documentTypeEvidenceBoost(chunk)
         - sourceMetadataPenalty(chunk);
 }
 
@@ -1537,8 +1576,46 @@ function retrievalModeBoost(chunk: RagRetrievedChunk): number {
     return 0;
 }
 
+function documentTypeEvidenceBoost(chunk: RagRetrievedChunk): number {
+    switch (inferChunkDocumentType(chunk)) {
+        case 'curated_evidence_summary': return 0.22;
+        case 'clinical_protocol': return 0.12;
+        case 'lab_reference': return 0.1;
+        case 'drug_label': return 0.08;
+        case 'literature_index_snapshot': return -0.04;
+        case 'web_snapshot': return -0.12;
+        default: return 0;
+    }
+}
+
 function sourceMetadataPenalty(chunk: RagRetrievedChunk): number {
     return isCatalogOrSourceMetadataChunk(chunk) ? 0.3 : 0;
+}
+
+function inferChunkDocumentType(chunk: RagRetrievedChunk): string {
+    const metadataType = normalizeOptional(chunk.metadata.document_type);
+    if (metadataType) return metadataType.toLowerCase();
+
+    const title = chunk.title.toLowerCase();
+    if (title.includes('evidence summary')) return 'curated_evidence_summary';
+    if (title.includes('source snapshot')) return 'web_snapshot';
+    if (title.includes('source card')) return 'source_card';
+    if (title.includes('literature') && title.includes('snapshot')) return 'literature_index_snapshot';
+    return '';
+}
+
+function normalizeDedupeToken(value: string): string {
+    return value.toLowerCase().replace(/https:\/\/(www\.)?/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function sanitizeCitationText(value: string): string {
+    return value
+        .replace(/\bhoneypot link\b/gi, ' ')
+        .replace(/\bskip to main content\b/gi, ' ')
+        .replace(/\bMERCK MANUAL\s+Veterinary Manual\s+VETERINARY PROFESSIONALS\s+PET OWNERS\s+RESOURCES\s+QUIZZES\s+ABOUT\s+VETERINARY PROFESSIONALS\s+PET OWNERS\b/gi, ' ')
+        .replace(/\bPROFESSIONAL VERSION\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 function sourceMatchesRequestedSpecies(values: string[], species: string | null): boolean {
@@ -1740,7 +1817,7 @@ function isClinicalSpecificQuestion(question: string): boolean {
 }
 
 function isCatalogOrSourceMetadataChunk(chunk: RagRetrievedChunk): boolean {
-    const documentType = String(chunk.metadata.document_type ?? '').toLowerCase();
+    const documentType = inferChunkDocumentType(chunk);
     if (documentType === 'source_card') return true;
 
     return isCatalogOrSourceMetadataText(`${chunk.title} ${chunk.chunk_text}`);

@@ -828,6 +828,131 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.answer).not.toContain('Fecal/external tests');
     });
 
+    it('deduplicates noisy web snapshots and prefers curated clinical evidence citations', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '41414141-4141-4141-8141-414141414141',
+                    tenant_id: 'tenant_1',
+                    name: 'Merck Veterinary Manual canine parvovirus infection',
+                    source_type: 'textbook',
+                    authority_tier: 'institutional',
+                    species_scope: ['canine'],
+                    medicine_domain: ['disease_reference', 'diagnostics', 'clinical_guideline', 'gastroenterology', 'infectious_disease'],
+                    url: 'https://www.merckvetmanual.com/digestive-system/infectious-diseases-of-the-gastrointestinal-tract-in-small-animals/canine-parvovirus-infection-parvoviral-enteritis-in-dogs',
+                    status: 'active',
+                },
+                {
+                    id: '42424242-4242-4242-8242-424242424242',
+                    tenant_id: 'tenant_1',
+                    name: 'Merck Veterinary Manual',
+                    source_type: 'textbook',
+                    authority_tier: 'institutional',
+                    species_scope: ['canine'],
+                    medicine_domain: ['disease_reference', 'diagnostics', 'clinical_guideline', 'gastroenterology'],
+                    url: 'https://www.merckvetmanual.com/en-us/veterinary-topics',
+                    status: 'active',
+                },
+                {
+                    id: '43434343-4343-4343-8343-434343434343',
+                    tenant_id: 'tenant_1',
+                    name: 'CAPC companion animal parasite guidelines',
+                    source_type: 'guideline',
+                    authority_tier: 'specialist_guideline',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['parasitology', 'diagnostics', 'clinical_guideline', 'gastroenterology'],
+                    url: 'https://capcvet.org/',
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: '44444444-4444-4444-8444-444444444441',
+                    source_id: '41414141-4141-4141-8141-414141414141',
+                    document_id: '45454545-4545-4545-8545-454545454545',
+                    chunk_index: 0,
+                    chunk_text: 'Canine Parvovirus Infection (Parvoviral Enteritis in Dogs) - Digestive System - Merck Veterinary Manual honeypot link skip to main content MERCK MANUAL Veterinary Manual VETERINARY PROFESSIONALS PET OWNERS RESOURCES QUIZZES ABOUT VETERINARY PROFESSIONALS PET OWNERS Infectious Diseases of the Gastrointestinal Tract in Small Animals PROFESSIONAL VERSION. Canine parvovirus can cause vomiting and diarrhea; compatible cases may use fecal antigen testing, PCR, hydration assessment, CBC, and chemistry.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+                {
+                    id: '44444444-4444-4444-8444-444444444442',
+                    source_id: '41414141-4141-4141-8141-414141414141',
+                    document_id: '45454545-4545-4545-8545-454545454545',
+                    chunk_index: 1,
+                    chunk_text: 'Canine Parvovirus Infection (Parvoviral Enteritis in Dogs) - Digestive System - Merck Veterinary Manual honeypot link skip to main content. Dogs with parvovirus may have vomiting, diarrhea, dehydration, leukopenia, and need fecal antigen or PCR support when clinical suspicion is present.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+                {
+                    id: '46464646-4646-4646-8646-464646464646',
+                    source_id: '42424242-4242-4242-8242-424242424242',
+                    document_id: '47474747-4747-4747-8747-474747474747',
+                    chunk_index: 0,
+                    chunk_text: 'Merck Veterinary Manual broad small-animal disease reference routing: canine vomiting and diarrhea should be approached as a syndrome, not a diagnosis. Initial assessment should integrate history, duration, hydration status, abdominal pain, vaccination status, exposure risk, toxin or dietary history, CBC, serum chemistry, fecal or parasite diagnostics, parvovirus testing, and imaging when obstruction or foreign body signs are present.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+                {
+                    id: '48484848-4848-4848-8848-484848484848',
+                    source_id: '43434343-4343-4343-8343-434343434343',
+                    document_id: '49494949-4949-4949-8949-494949494949',
+                    chunk_index: 0,
+                    chunk_text: 'CAPC companion animal parasite guidance supports parasite-aware evaluation of canine diarrhea. When diarrhea, exposure history, travel, shelter contact, zoonotic risk, or recurrent gastrointestinal signs are present, fecal testing, Giardia testing, parasite diagnostics, and risk-matched follow-up should be considered alongside baseline clinical assessment.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: '45454545-4545-4545-8545-454545454545',
+                    title: 'Merck Veterinary Manual canine parvovirus infection source snapshot',
+                    document_type: 'web_snapshot',
+                    metadata: { remote_fetch: true },
+                    provenance: {
+                        source_url: 'https://www.merckvetmanual.com/digestive-system/infectious-diseases-of-the-gastrointestinal-tract-in-small-animals/canine-parvovirus-infection-parvoviral-enteritis-in-dogs',
+                        publication_year: '2026',
+                    },
+                },
+                {
+                    id: '47474747-4747-4747-8747-474747474747',
+                    title: 'Canine vomiting and diarrhea diagnostic workflow evidence summary',
+                    document_type: 'curated_evidence_summary',
+                    metadata: { curated_evidence_summary: true, evidence_summary_index: 0 },
+                    provenance: {
+                        source_url: 'https://www.merckvetmanual.com/en-us/veterinary-topics',
+                        publication_year: '2026',
+                    },
+                },
+                {
+                    id: '49494949-4949-4949-8949-494949494949',
+                    title: 'Canine diarrhea parasite and fecal testing evidence summary',
+                    document_type: 'curated_evidence_summary',
+                    metadata: { curated_evidence_summary: true, evidence_summary_index: 0 },
+                    provenance: {
+                        source_url: 'https://capcvet.org/',
+                        publication_year: '2026',
+                    },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What evidence is indexed for canine vomiting and diarrhea diagnostics?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.evaluation.grounded).toBe(true);
+        expect(result.citations[0]?.title).toBe('Canine vomiting and diarrhea diagnostic workflow evidence summary');
+        expect(result.citations.filter((citation) => citation.title.includes('parvovirus infection source snapshot'))).toHaveLength(1);
+        expect(result.answer).not.toMatch(/honeypot|skip to main content|VETERINARY PROFESSIONALS/i);
+        expect(result.citations.map((citation) => citation.quote).join(' ')).not.toMatch(/honeypot|skip to main content|VETERINARY PROFESSIONALS/i);
+    });
+
     it('uses curated catalog evidence summaries for broad canine vomiting and diarrhea diagnostics when tenant chunks are not seeded yet', async () => {
         const client = createRagFakeClient({
             sources: [],
