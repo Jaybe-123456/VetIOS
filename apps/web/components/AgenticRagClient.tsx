@@ -48,6 +48,16 @@ interface RagReadiness {
     warnings: string[];
 }
 
+interface CatalogSeedBatchResult {
+    sources_indexed?: number;
+    documents_indexed?: number;
+    chunks_indexed?: number;
+    errors?: Array<{ source: string; message: string }>;
+    warnings?: string[];
+    next_cursor?: string | null;
+    has_more?: boolean;
+}
+
 interface RagCitation {
     index: number;
     title: string;
@@ -201,26 +211,49 @@ export default function AgenticRagClient() {
         setStatus(null);
         setCatalogErrors([]);
         try {
-            const response = await fetch('/api/rag/catalog', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body: JSON.stringify({ force_refresh: forceRefresh }),
-            });
-            const body = await readResponseJson<{
-                sources_indexed?: number;
-                documents_indexed?: number;
-                chunks_indexed?: number;
-                errors?: Array<{ source: string; message: string }>;
-                detail?: string;
-                error?: string;
-            }>(response);
-            if (!response.ok && response.status !== 207) {
-                throw new Error(body.detail ?? body.error ?? 'RAG catalog refresh failed.');
+            let cursor: string | null = null;
+            let hasMore = true;
+            let batchCount = 0;
+            let sourcesIndexed = 0;
+            let documentsIndexed = 0;
+            let chunksIndexed = 0;
+            const errors: Array<{ source: string; message: string }> = [];
+            const warnings: string[] = [];
+
+            while (hasMore && batchCount < 12) {
+                setStatus(`Catalog refresh batch ${batchCount + 1} is indexing curated evidence...`);
+                const response: Response = await fetch('/api/rag/catalog', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        force_refresh: forceRefresh,
+                        batch_size: 6,
+                        cursor,
+                        remote_mode: 'summaries_only',
+                    }),
+                });
+                const body: CatalogSeedBatchResult & { detail?: string; error?: string } = await readResponseJson<CatalogSeedBatchResult>(response);
+                if (!response.ok && response.status !== 207) {
+                    throw new Error(body.detail ?? body.error ?? 'RAG catalog refresh failed.');
+                }
+
+                sourcesIndexed += body.sources_indexed ?? 0;
+                documentsIndexed += body.documents_indexed ?? 0;
+                chunksIndexed += body.chunks_indexed ?? 0;
+                errors.push(...(body.errors ?? []));
+                warnings.push(...(body.warnings ?? []));
+                batchCount += 1;
+
+                cursor = body.next_cursor ?? null;
+                hasMore = Boolean(body.has_more && cursor);
             }
-            setCatalogErrors(body.errors ?? []);
-            const errorSuffix = body.errors?.length ? ` ${body.errors.length} source(s) need review.` : '';
-            setStatus(`Catalog indexed ${body.sources_indexed ?? 0} source(s), ${body.documents_indexed ?? 0} document(s), ${body.chunks_indexed ?? 0} chunk(s).${errorSuffix}`);
+
+            setCatalogErrors(errors);
+            const errorSuffix = errors.length ? ` ${errors.length} source(s) need review.` : '';
+            const limitSuffix = hasMore ? ' More catalog batches remain; run refresh again to continue.' : '';
+            const warningSuffix = warnings.length && !hasMore ? ` ${warnings[0]}` : '';
+            setStatus(`Catalog indexed ${sourcesIndexed} source(s), ${documentsIndexed} document(s), ${chunksIndexed} chunk(s) across ${batchCount} batch(es).${errorSuffix}${limitSuffix}${warningSuffix}`);
             await refreshSnapshot();
         } catch (error) {
             setStatus(error instanceof Error ? error.message : 'RAG catalog refresh failed.');

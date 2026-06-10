@@ -8,23 +8,36 @@ import type { RagReadinessSummary } from './types';
 export interface RagCatalogRunResult {
     run_id: string | null;
     run_mode: 'catalog_seed' | 'catalog_refresh';
+    catalog_total: number;
+    batch_size: number;
+    cursor: string | null;
+    next_cursor: string | null;
+    has_more: boolean;
+    remote_mode: RagCatalogRemoteMode;
     sources_attempted: number;
     sources_indexed: number;
     documents_indexed: number;
     chunks_indexed: number;
     readiness: RagReadinessSummary;
+    warnings: string[];
     errors: Array<{ source: string; message: string }>;
 }
+
+export type RagCatalogRemoteMode = 'summaries_only' | 'full_remote';
 
 export async function seedCuratedRagCatalog(input: {
     client: SupabaseClient;
     tenantId: string;
     actorLabel: string | null;
     forceRefresh?: boolean;
+    batchSize?: number;
+    cursor?: string | null;
+    remoteMode?: RagCatalogRemoteMode;
 }): Promise<RagCatalogRunResult> {
     return runCuratedCatalogJob({
         ...input,
         runMode: input.forceRefresh ? 'catalog_refresh' : 'catalog_seed',
+        remoteMode: input.remoteMode ?? 'summaries_only',
     });
 }
 
@@ -33,12 +46,16 @@ export async function refreshCuratedRagCatalog(input: {
     tenantId: string;
     actorLabel: string | null;
     onlyDue?: boolean;
+    batchSize?: number;
+    cursor?: string | null;
+    remoteMode?: RagCatalogRemoteMode;
 }): Promise<RagCatalogRunResult> {
     return runCuratedCatalogJob({
         ...input,
         runMode: 'catalog_refresh',
         onlyDue: input.onlyDue ?? true,
         forceRefresh: true,
+        remoteMode: input.remoteMode ?? 'full_remote',
     });
 }
 
@@ -100,13 +117,27 @@ async function runCuratedCatalogJob(input: {
     runMode: 'catalog_seed' | 'catalog_refresh';
     onlyDue?: boolean;
     forceRefresh?: boolean;
+    batchSize?: number;
+    cursor?: string | null;
+    remoteMode?: RagCatalogRemoteMode;
 }): Promise<RagCatalogRunResult> {
     const catalog = getCuratedRagCatalog();
+    const warnings: string[] = [];
+    const batchSelection = selectCatalogBatch({
+        catalog,
+        cursor: input.cursor ?? null,
+        batchSize: input.batchSize,
+    });
+    warnings.push(...batchSelection.warnings);
+    if (batchSelection.hasMore) {
+        warnings.push('Catalog refresh is running in batches to avoid Vercel function timeouts. Continue with next_cursor to finish the catalog.');
+    }
+    const remoteMode = input.remoteMode ?? 'full_remote';
     const runId = await createRefreshRun(input.client, {
         tenantId: input.tenantId,
         actorKind: input.actorLabel ?? 'system',
         runMode: input.runMode,
-        sourcesAttempted: catalog.length,
+        sourcesAttempted: batchSelection.batch.length,
     });
 
     let sourcesIndexed = 0;
@@ -114,13 +145,17 @@ async function runCuratedCatalogJob(input: {
     let chunksIndexed = 0;
     const errors: Array<{ source: string; message: string }> = [];
 
-    for (const definition of catalog) {
+    for (const definition of batchSelection.batch) {
         try {
             if (input.onlyDue && !await sourceIsDue(input.client, input.tenantId, definition)) {
                 continue;
             }
 
-            const result = await ingestCatalogDefinition(input, definition);
+            const result = await ingestCatalogDefinition({
+                ...input,
+                includeRemoteSnapshots: remoteMode === 'full_remote',
+                includeConnectors: remoteMode === 'full_remote',
+            }, definition);
             sourcesIndexed += 1;
             documentsIndexed += result.documents_indexed;
             chunksIndexed += result.chunks_indexed;
@@ -152,11 +187,18 @@ async function runCuratedCatalogJob(input: {
     return {
         run_id: runId,
         run_mode: input.runMode,
-        sources_attempted: catalog.length,
+        catalog_total: catalog.length,
+        batch_size: batchSelection.batchSize,
+        cursor: input.cursor ?? null,
+        next_cursor: batchSelection.nextCursor,
+        has_more: batchSelection.hasMore,
+        remote_mode: remoteMode,
+        sources_attempted: batchSelection.batch.length,
         sources_indexed: sourcesIndexed,
         documents_indexed: documentsIndexed,
         chunks_indexed: chunksIndexed,
         readiness,
+        warnings,
         errors,
     };
 }
@@ -166,10 +208,17 @@ async function ingestCatalogDefinition(input: {
     tenantId: string;
     actorLabel: string | null;
     forceRefresh?: boolean;
+    includeRemoteSnapshots?: boolean;
+    includeConnectors?: boolean;
 }, definition: CuratedRagSourceDefinition) {
     const now = new Date();
     const nextRefresh = addDaysIso(now, definition.refresh_policy.refresh_interval_days);
-    const plan = await buildCatalogDocumentPlans({ definition, now });
+    const plan = await buildCatalogDocumentPlans({
+        definition,
+        now,
+        includeRemoteSnapshots: input.includeRemoteSnapshots,
+        includeConnectors: input.includeConnectors,
+    });
     const connectorWarnings = [...plan.connector_warnings];
     const results = [];
 
@@ -354,4 +403,48 @@ function addDaysIso(date: Date, days: number): string {
 
 function isMissingRagSchemaError(message: string): boolean {
     return /Could not find the table 'public\.rag_|relation "public\.rag_|schema cache/i.test(message);
+}
+
+function selectCatalogBatch(input: {
+    catalog: CuratedRagSourceDefinition[];
+    cursor: string | null;
+    batchSize?: number;
+}): {
+    batch: CuratedRagSourceDefinition[];
+    batchSize: number;
+    nextCursor: string | null;
+    hasMore: boolean;
+    warnings: string[];
+} {
+    const warnings: string[] = [];
+    const batchSize = normalizeCatalogBatchSize(input.batchSize, input.catalog.length);
+    let startIndex = 0;
+
+    if (input.cursor) {
+        const cursorIndex = input.catalog.findIndex((definition) => definition.external_key === input.cursor);
+        if (cursorIndex >= 0) {
+            startIndex = cursorIndex + 1;
+        } else {
+            warnings.push(`Catalog cursor "${input.cursor}" was not found; refresh restarted at the beginning.`);
+        }
+    }
+
+    const batch = input.catalog.slice(startIndex, startIndex + batchSize);
+    const hasMore = startIndex + batch.length < input.catalog.length;
+    const nextCursor = hasMore ? batch.at(-1)?.external_key ?? null : null;
+
+    return {
+        batch,
+        batchSize,
+        nextCursor,
+        hasMore,
+        warnings,
+    };
+}
+
+function normalizeCatalogBatchSize(value: unknown, catalogLength: number): number {
+    const fallback = catalogLength > 0 ? catalogLength : 1;
+    const parsed = typeof value === 'number' ? value : Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(Math.max(Math.floor(parsed), 1), Math.max(catalogLength, 1));
 }

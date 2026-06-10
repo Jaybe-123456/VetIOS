@@ -50,6 +50,8 @@ export async function buildCatalogDocumentPlans(input: {
     definition: CuratedRagSourceDefinition;
     now: Date;
     fetcher?: typeof fetch;
+    includeRemoteSnapshots?: boolean;
+    includeConnectors?: boolean;
 }): Promise<CatalogDocumentPlanResult> {
     const documents: CatalogDocumentPlan[] = [
         buildSourceCardPlan(input.definition, input.now),
@@ -57,11 +59,11 @@ export async function buildCatalogDocumentPlans(input: {
     ];
     const connectorWarnings: string[] = [];
 
-    if (input.definition.refresh_policy.fetch_remote_text) {
+    if (input.includeRemoteSnapshots !== false && input.definition.refresh_policy.fetch_remote_text) {
         documents.push(buildRemoteSnapshotPlan(input.definition, input.now));
     }
 
-    if (input.definition.refresh_policy.connector === 'ncbi_literature') {
+    if (input.includeConnectors !== false && input.definition.refresh_policy.connector === 'ncbi_literature') {
         try {
             documents.push(...await buildNcbiLiteraturePlans({
                 definition: input.definition,

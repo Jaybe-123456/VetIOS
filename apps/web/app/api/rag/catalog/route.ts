@@ -14,6 +14,9 @@ export const maxDuration = 120;
 
 const SeedSchema = z.object({
     force_refresh: z.boolean().default(false),
+    batch_size: z.number().int().min(1).max(8).default(6),
+    cursor: z.string().trim().min(1).max(180).nullable().optional(),
+    remote_mode: z.enum(['summaries_only', 'full_remote']).default('summaries_only'),
 });
 
 export async function GET(req: Request) {
@@ -36,7 +39,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 6, windowMs: 60_000, maxBodySize: 16 * 1024, selfProtection: true });
+    const guard = await apiGuard(req, { maxRequests: 18, windowMs: 60_000, maxBodySize: 16 * 1024, selfProtection: true });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
@@ -61,6 +64,9 @@ export async function POST(req: Request) {
         tenantId: auth.actor.tenantId,
         actorLabel: auth.actor.principalLabel ?? auth.actor.userId ?? auth.actor.authMode,
         forceRefresh: parsed.data.force_refresh,
+        batchSize: parsed.data.batch_size,
+        cursor: parsed.data.cursor ?? null,
+        remoteMode: parsed.data.remote_mode,
     });
 
     return withHeaders(NextResponse.json({ ...result, request_id: requestId }, { status: result.errors.length > 0 ? 207 : 200 }), requestId, startTime);

@@ -28,11 +28,15 @@ async function runRagRefresh(req: Request) {
 
     const supabase = getSupabaseServer();
     const tenantId = resolveRagTenant(req);
+    const refreshOptions = resolveRefreshOptions(req);
     const result = await refreshCuratedRagCatalog({
         client: supabase,
         tenantId,
         actorLabel: 'vetios_rag_refresh_cron',
         onlyDue: true,
+        batchSize: refreshOptions.batchSize,
+        cursor: refreshOptions.cursor,
+        remoteMode: refreshOptions.remoteMode,
     });
 
     return withHeaders(NextResponse.json({ tenant_id: tenantId, ...result, request_id: requestId }, {
@@ -68,6 +72,26 @@ function resolveRagTenant(req: Request): string {
         || process.env.VETIOS_PUBLIC_RAG_TENANT_ID
         || process.env.VETIOS_DEV_TENANT_ID
         || 'public';
+}
+
+function resolveRefreshOptions(req: Request): {
+    batchSize: number;
+    cursor: string | null;
+    remoteMode: 'summaries_only' | 'full_remote';
+} {
+    const url = new URL(req.url);
+    const requestedBatchSize = Number(url.searchParams.get('batch_size') ?? 6);
+    const remoteMode = url.searchParams.get('remote_mode') === 'full_remote'
+        ? 'full_remote'
+        : 'summaries_only';
+
+    return {
+        batchSize: Number.isFinite(requestedBatchSize)
+            ? Math.min(Math.max(Math.floor(requestedBatchSize), 1), 8)
+            : 6,
+        cursor: url.searchParams.get('cursor')?.trim() || null,
+        remoteMode,
+    };
 }
 
 function withHeaders(response: NextResponse, requestId: string, startTime: number): NextResponse {

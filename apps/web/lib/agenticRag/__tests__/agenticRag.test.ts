@@ -464,6 +464,37 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(plan.documents.map((entry) => entry.document.content_text).join('\n')).toContain('https://pubmed.ncbi.nlm.nih.gov/12345/');
     });
 
+    it('builds lightweight catalog plans for interactive refreshes without remote snapshots or connectors', async () => {
+        const merckGeneral = getCuratedRagCatalog().find((source) => source.external_key === 'merck_veterinary_manual');
+        const pubmed = getCuratedRagCatalog().find((source) => source.external_key === 'pubmed_literature_index');
+        expect(merckGeneral).toBeTruthy();
+        expect(pubmed).toBeTruthy();
+
+        const failingFetcher = async () => {
+            throw new Error('interactive catalog refresh should not call external connectors');
+        };
+
+        const merckPlan = await buildCatalogDocumentPlans({
+            definition: merckGeneral!,
+            now: new Date('2026-05-10T00:00:00.000Z'),
+            fetcher: failingFetcher as typeof fetch,
+            includeRemoteSnapshots: false,
+            includeConnectors: false,
+        });
+        const pubmedPlan = await buildCatalogDocumentPlans({
+            definition: pubmed!,
+            now: new Date('2026-05-10T00:00:00.000Z'),
+            fetcher: failingFetcher as typeof fetch,
+            includeRemoteSnapshots: false,
+            includeConnectors: false,
+        });
+
+        expect(merckPlan.documents.some((entry) => entry.document.document_type === 'web_snapshot')).toBe(false);
+        expect(pubmedPlan.documents.some((entry) => entry.document.document_type === 'literature_index_snapshot')).toBe(false);
+        expect(merckPlan.documents.some((entry) => entry.document.document_type === 'curated_evidence_summary')).toBe(true);
+        expect(pubmedPlan.documents.some((entry) => entry.document.document_type === 'source_card')).toBe(true);
+    });
+
     it('refuses disease-specific diagnostic answers when only generic guideline metadata is indexed', async () => {
         const client = createRagFakeClient({
             sources: [
