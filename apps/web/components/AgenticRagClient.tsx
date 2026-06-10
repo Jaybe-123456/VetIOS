@@ -40,6 +40,10 @@ interface RagReadiness {
     high_authority_sources: number;
     stale_documents: number;
     last_refreshed_at: string | null;
+    embedding_mode?: 'live_provider' | 'deterministic_fallback';
+    embedding_model?: string | null;
+    embedding_dimensions?: number;
+    embedding_live_provider_configured?: boolean;
     ready: boolean;
     warnings: string[];
 }
@@ -357,6 +361,9 @@ export default function AgenticRagClient() {
                         <DataRow label="High Authority" value={readiness.high_authority_sources} tone={readiness.high_authority_sources > 0 ? 'accent' : undefined} />
                         <DataRow label="Stale Docs" value={readiness.stale_documents} tone={readiness.stale_documents === 0 ? 'accent' : undefined} />
                         <DataRow label="Last Refresh" value={formatDate(readiness.last_refreshed_at)} />
+                        <DataRow label="Embeddings" value={formatEmbeddingMode(readiness.embedding_mode)} tone={readiness.embedding_live_provider_configured ? 'accent' : 'warning'} />
+                        <DataRow label="Embedding Model" value={readiness.embedding_model ?? 'Unknown'} />
+                        <DataRow label="Vector Dims" value={readiness.embedding_dimensions ?? 'Unknown'} />
                     </div>
                     {readiness.warnings.length > 0 && (
                         <div className="mt-3 grid gap-2 md:grid-cols-2">
@@ -495,6 +502,18 @@ export default function AgenticRagClient() {
                                 <DataRow label="Counterfactual" value={queryResult.evaluation.counterfactual_reasoning_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.counterfactual_reasoning_linked ? 'accent' : undefined} />
                                 <DataRow label="One Health" value={queryResult.evaluation.one_health_surveillance_linked ? 'LINKED' : 'NO MATCH'} tone={queryResult.evaluation.one_health_surveillance_linked ? 'accent' : undefined} />
                             </div>
+                            {queryResult.evaluation.warnings.length > 0 && (
+                                <div className="border border-amber-300/20 bg-amber-300/5 p-3">
+                                    <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.18em] text-amber-200">Retrieval Warnings</div>
+                                    <div className="space-y-2">
+                                        {queryResult.evaluation.warnings.slice(0, 5).map((warning) => (
+                                            <div key={warning} className="font-mono text-[10px] uppercase tracking-[0.12em] text-amber-100">
+                                                {warning}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <div className="space-y-3">
                                 {queryResult.citations.map((citation) => (
                                     <div key={`${citation.index}-${citation.title}`} className="border border-grid bg-black/20 p-3">
@@ -612,6 +631,17 @@ function formatMoatStatus(value?: AgenticRagMoatSnapshot['moat_status']): string
             return 'Forming';
         case 'blocked':
             return 'Blocked';
+        default:
+            return 'Unknown';
+    }
+}
+
+function formatEmbeddingMode(value?: RagReadiness['embedding_mode']): string {
+    switch (value) {
+        case 'live_provider':
+            return 'Live Provider';
+        case 'deterministic_fallback':
+            return 'Deterministic Fallback';
         default:
             return 'Unknown';
     }

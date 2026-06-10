@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { buildCatalogDocumentPlans } from '../catalogConnectors';
 import { chunkRagDocument, normalizeRagContent } from '../chunking';
 import { buildRagClosedLoopLearningSystem } from '../closedLoop';
-import { answerRagQuery, buildRagQueryPlan } from '../service';
+import { getRagEmbeddingReadiness } from '../embedding';
+import { answerRagQuery, buildRagLexicalSearchQuery, buildRagQueryPlan } from '../service';
 import { buildIndexSourceBundleJobs, buildIndexSourceDatasetPlan } from '../sourceBundle';
 import { validatePublicSourceUrl } from '../sourcePolicy';
 import { buildCuratedSourceCard, getCuratedRagCatalog } from '../sourceCatalog';
@@ -69,6 +70,37 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(diagnosticPlan.domain_filters).toEqual(['clinical_guideline', 'diagnostics']);
         expect(diagnosticPlan.speciesFilterRequired).toBe(true);
         expect(diagnosticPlan.retrievalOrder).toBe('semantic_first_then_hybrid');
+    });
+
+    it('normalizes console-style RAG questions into clinical lexical search queries', () => {
+        const giPlan = buildRagQueryPlan({
+            question: 'What evidence is indexed for canine vomiting and diarrhea diagnostics?',
+        });
+        const respiratoryPlan = buildRagQueryPlan({
+            question: 'List diagnostic steps for a cat with nasal discharge and sneezing, with citations.',
+        });
+        const generalPlan = buildRagQueryPlan({
+            question: 'What indexed sources mention anticoagulant rodenticide toxicosis diagnostics?',
+        });
+
+        expect(buildRagLexicalSearchQuery('What evidence is indexed for canine vomiting and diarrhea diagnostics?', giPlan))
+            .toBe('"vomiting diarrhea" OR gastroenteritis OR fecal OR parvovirus');
+        expect(buildRagLexicalSearchQuery('List diagnostic steps for a cat with nasal discharge and sneezing, with citations.', respiratoryPlan))
+            .toBe('"nasal discharge" OR sneezing OR respiratory OR conjunctivitis');
+        expect(buildRagLexicalSearchQuery('What indexed sources mention anticoagulant rodenticide toxicosis diagnostics?', generalPlan))
+            .toBe('mention anticoagulant rodenticide toxicosis');
+    });
+
+    it('reports embedding readiness so production can verify live semantic retrieval', () => {
+        const readiness = getRagEmbeddingReadiness();
+
+        expect(readiness.embedding_dimensions).toBe(1536);
+        expect(['live_provider', 'deterministic_fallback']).toContain(readiness.embedding_mode);
+        expect(readiness.embedding_model.length).toBeGreaterThan(0);
+        expect(readiness.embedding_live_provider_configured).toBe(readiness.embedding_mode === 'live_provider');
+        if (readiness.embedding_mode === 'deterministic_fallback') {
+            expect(readiness.warnings.join(' ')).toContain('deterministic fallback');
+        }
     });
 
     it('ships a curated global veterinary and medical source catalog with explicit trust tiers', () => {
@@ -138,6 +170,34 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(evidence?.document.content_text?.toLowerCase()).toContain('abdominal ultrasound');
         expect(evidence?.document.content_text).not.toContain('Canonical source URL');
         expect(evidence?.document.metadata.evidence_topics).toContain('canine pancreatitis');
+    });
+
+    it('adds seedable broad canine vomiting and diarrhea diagnostic evidence summaries to the catalog plan', async () => {
+        const merckGeneral = getCuratedRagCatalog().find((source) => source.external_key === 'merck_veterinary_manual');
+        const capc = getCuratedRagCatalog().find((source) => source.external_key === 'capc_parasite_guidelines');
+        expect(merckGeneral).toBeTruthy();
+        expect(capc).toBeTruthy();
+
+        const merckPlan = await buildCatalogDocumentPlans({
+            definition: merckGeneral!,
+            now: new Date('2026-05-10T00:00:00.000Z'),
+            fetcher: async () => new Response('Remote Merck page snapshot', { status: 200 }) as Response,
+        });
+        const capcPlan = await buildCatalogDocumentPlans({
+            definition: capc!,
+            now: new Date('2026-05-10T00:00:00.000Z'),
+            fetcher: async () => new Response('Remote CAPC page snapshot', { status: 200 }) as Response,
+        });
+
+        const merckEvidence = merckPlan.documents.find((entry) => entry.document.title === 'Canine vomiting and diarrhea diagnostic workflow evidence summary');
+        const capcEvidence = capcPlan.documents.find((entry) => entry.document.title === 'Canine diarrhea parasite and fecal testing evidence summary');
+
+        expect(merckEvidence?.document.content_text).toContain('CBC');
+        expect(merckEvidence?.document.content_text).toContain('canine parvovirus');
+        expect(merckEvidence?.document.content_text).toContain('foreign body');
+        expect(capcEvidence?.document.content_text).toContain('fecal');
+        expect(capcEvidence?.document.content_text).toContain('Giardia');
+        expect(capcEvidence?.document.metadata.curated_evidence_summary).toBe(true);
     });
 
     it('maps bulk index_source payloads into reusable RAG document jobs', () => {
@@ -640,6 +700,91 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.answer).toContain('Labs - Run baseline laboratory diagnostics first');
         expect(result.answer).toContain('Imaging - Use imaging when history, exam, or labs support obstruction');
         expect(result.answer).toContain('Fecal/external tests - Add fecal, parasite, infectious, toxin, or external exposure testing');
+    });
+
+    it('withholds broad canine GI workflow synthesis when only narrow pancreatitis evidence is retrieved', async () => {
+        const client = createRagFakeClient({
+            sources: [
+                {
+                    id: '29292929-2929-4292-8292-292929292929',
+                    tenant_id: 'tenant_1',
+                    name: 'Merck Veterinary Manual pancreatitis in dogs and cats',
+                    source_type: 'textbook',
+                    authority_tier: 'institutional',
+                    species_scope: ['canine', 'feline'],
+                    medicine_domain: ['disease_reference', 'diagnostics', 'lab_reference', 'imaging', 'gastroenterology', 'pancreatitis'],
+                    url: 'https://www.merckvetmanual.com/digestive-system/the-exocrine-pancreas/pancreatitis-in-dogs-and-cats',
+                    status: 'active',
+                },
+            ],
+            chunks: [
+                {
+                    id: '30303030-3030-4303-8303-303030303030',
+                    source_id: '29292929-2929-4292-8292-292929292929',
+                    document_id: '31313131-3131-4313-8313-313131313131',
+                    chunk_index: 0,
+                    chunk_text: 'Merck Veterinary Manual pancreatitis in dogs and cats: diagnosis integrates clinical findings, imaging findings, and serum pancreatic lipase levels; no single test should be used in isolation. For canine early detection, combine compatible signs such as vomiting, anorexia, weakness, abdominal pain, dehydration, or diarrhea with CBC, serum chemistry, and pancreas-specific lipase testing. Abdominal ultrasonography supports severe acute pancreatitis when pancreatic enlargement, peripancreatic fluid, altered pancreatic echogenicity, increased peripancreatic fat echogenicity, or pancreatic mass effect are present.',
+                    metadata: {},
+                    created_at: '2026-05-10T00:00:00.000Z',
+                },
+            ],
+            documents: [
+                {
+                    id: '31313131-3131-4313-8313-313131313131',
+                    title: 'Canine acute pancreatitis diagnostic evidence summary',
+                    document_type: 'curated_evidence_summary',
+                    metadata: { curated_evidence_summary: true },
+                    provenance: {
+                        source_url: 'https://www.merckvetmanual.com/digestive-system/the-exocrine-pancreas/pancreatitis-in-dogs-and-cats',
+                        publication_year: '2025',
+                    },
+                },
+            ],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What evidence is indexed for canine vomiting and diarrhea diagnostics?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.citations).toHaveLength(1);
+        expect(result.evaluation.grounded).toBe(false);
+        expect(result.evaluation.citation_coverage).toBe(0.5);
+        expect(result.evaluation.warnings).toContain('Accepted citations are narrower than the broad canine vomiting/diarrhea diagnostic question; workflow synthesis was withheld.');
+        expect(result.answer).toContain('Scope limitation:');
+        expect(result.answer).toContain('does not yet support a complete canine vomiting/diarrhea diagnostic workflow');
+        expect(result.answer).toContain('Indexed citations:');
+        expect(result.answer).not.toContain('Concise diagnostic workflow:');
+        expect(result.answer).not.toContain('Fecal/external tests');
+    });
+
+    it('uses curated catalog evidence summaries for broad canine vomiting and diarrhea diagnostics when tenant chunks are not seeded yet', async () => {
+        const client = createRagFakeClient({
+            sources: [],
+            chunks: [],
+            documents: [],
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What evidence is indexed for canine vomiting and diarrhea diagnostics?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.evaluation.grounded).toBe(true);
+        expect(result.retrieval_stats.catalog_fallback_hits).toBeGreaterThan(0);
+        expect(result.citations.map((citation) => citation.title)).toContain('Canine vomiting and diarrhea diagnostic workflow evidence summary');
+        expect(result.answer).toContain('Concise diagnostic workflow:');
+        expect(result.answer).toContain('Labs - Run baseline laboratory diagnostics first');
+        expect(result.answer).toContain('Fecal/external tests - Add fecal, parasite, infectious, toxin, or external exposure testing');
+        expect(result.answer).not.toContain('Scope limitation:');
     });
 
     it('uses document provenance URLs for citations when a bulk source has no single canonical URL', async () => {

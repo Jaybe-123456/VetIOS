@@ -187,6 +187,20 @@ export const CURATED_VETERINARY_RAG_SOURCES: CuratedRagSourceDefinition[] = [
             refresh_interval_days: 30,
             fetch_remote_text: true,
         },
+        evidence_summaries: [
+            {
+                title: 'Canine vomiting and diarrhea diagnostic workflow evidence summary',
+                source_year: '2026',
+                topics: ['canine vomiting', 'canine diarrhea', 'gastroenteritis', 'diagnostics', 'CBC', 'serum chemistry', 'fecal testing', 'parvovirus', 'abdominal imaging'],
+                summary: [
+                    'Merck Veterinary Manual broad small-animal disease reference routing: canine vomiting and diarrhea should be approached as a syndrome, not a diagnosis. Initial assessment should integrate history, duration, hydration status, abdominal pain, vaccination status, exposure risk, toxin or dietary history, and physical examination before narrowing the differential list.',
+                    'Baseline diagnostics for dogs with vomiting and diarrhea commonly include hydration assessment, CBC, serum chemistry, electrolyte review, urinalysis when indicated, and assessment for systemic complications or concurrent disease.',
+                    'Fecal and infectious testing should be selected from risk factors and presentation: fecal flotation or parasite testing, Giardia testing, canine parvovirus antigen or PCR testing when age, vaccination, exposure, leukopenia, or hemorrhagic diarrhea support it, and other infectious or toxin testing when history indicates.',
+                    'Imaging is used when history, exam, pain, laboratory findings, or progression raises concern for foreign body, obstruction, mass, severe abdominal disease, or non-gastrointestinal differentials. Abdominal radiographs or ultrasound should be interpreted with the clinical picture rather than as isolated screening tests.',
+                    'Source note: this VetIOS evidence summary is indexed under the Merck Veterinary Manual broad disease reference source card to support syndrome-level retrieval while preserving clinician review and source-citation boundaries.',
+                ].join('\n'),
+            },
+        ],
         source_card: {
             retrieval_use: 'Broad veterinary disease reference and differential-diagnosis support across species.',
             safety_boundary: 'Reference material must not override patient-specific exam, diagnostics, drug labels, or specialist guidelines.',
@@ -669,6 +683,19 @@ export const CURATED_VETERINARY_RAG_SOURCES: CuratedRagSourceDefinition[] = [
             refresh_interval_days: 14,
             fetch_remote_text: true,
         },
+        evidence_summaries: [
+            {
+                title: 'Canine diarrhea parasite and fecal testing evidence summary',
+                source_year: '2026',
+                topics: ['canine diarrhea', 'fecal testing', 'parasite diagnostics', 'Giardia', 'zoonotic parasites', 'diagnostics'],
+                summary: [
+                    'CAPC companion animal parasite guidance supports parasite-aware evaluation of canine diarrhea. When diarrhea, exposure history, age, travel, kennel or shelter contact, zoonotic risk, or recurrent gastrointestinal signs are present, fecal and parasite diagnostics should be considered alongside baseline clinical assessment.',
+                    'Fecal testing options can include fecal flotation, antigen testing, Giardia-focused testing, and targeted parasite diagnostics selected by local prevalence, travel history, clinical signs, and zoonotic risk.',
+                    'For broad canine vomiting and diarrhea workflows, CAPC evidence helps cover the fecal, parasite, and zoonotic diagnostic branch; it should be combined with baseline labs, hydration assessment, and imaging or obstruction triage from other clinical sources.',
+                    'Source note: CAPC guidance is used here for the parasite and fecal-testing branch of the diagnostic workflow, not as a full substitute for patient-specific differential diagnosis.',
+                ].join('\n'),
+            },
+        ],
         source_card: {
             retrieval_use: 'Small-animal parasite prevention, diagnostic, prevalence, and zoonotic risk grounding for canine and feline cases.',
             safety_boundary: 'Parasite recommendations should account for local prevalence, travel, patient risk, drug labels, and clinician judgment.',

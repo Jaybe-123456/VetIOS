@@ -13,8 +13,37 @@ export interface RagEmbeddingResult {
     deterministic_fallback: boolean;
 }
 
+export interface RagEmbeddingReadiness {
+    embedding_mode: 'live_provider' | 'deterministic_fallback';
+    embedding_model: string;
+    embedding_dimensions: number;
+    embedding_live_provider_configured: boolean;
+    warnings: string[];
+}
+
 const RAG_EMBEDDING_MODEL = process.env.VETIOS_RAG_EMBEDDING_MODEL || 'text-embedding-3-small';
 const RAG_EMBEDDING_DIMENSIONS = 1536;
+
+export function getRagEmbeddingReadiness(): RagEmbeddingReadiness {
+    const heuristicFallback = shouldUseAiHeuristicFallback();
+    const hasProviderKey = Boolean(process.env.OPENAI_API_KEY || process.env.AI_PROVIDER_API_KEY);
+    const liveProviderConfigured = !heuristicFallback && hasProviderKey;
+    const warnings: string[] = [];
+
+    if (heuristicFallback) {
+        warnings.push('RAG embeddings are using deterministic fallback mode; semantic retrieval quality is reduced until live embeddings are enabled.');
+    } else if (!hasProviderKey) {
+        warnings.push('RAG live embeddings are not configured. Set OPENAI_API_KEY or AI_PROVIDER_API_KEY for production semantic retrieval.');
+    }
+
+    return {
+        embedding_mode: liveProviderConfigured ? 'live_provider' : 'deterministic_fallback',
+        embedding_model: liveProviderConfigured ? RAG_EMBEDDING_MODEL : 'deterministic-vetios-rag-embedding',
+        embedding_dimensions: RAG_EMBEDDING_DIMENSIONS,
+        embedding_live_provider_configured: liveProviderConfigured,
+        warnings,
+    };
+}
 
 export async function embedRagText(text: string): Promise<RagEmbeddingResult> {
     if (shouldUseAiHeuristicFallback()) {

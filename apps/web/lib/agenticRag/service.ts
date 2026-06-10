@@ -257,7 +257,11 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
     const citations = candidateCitations
         .filter((citation) => isAcceptedGroundingCitation(citation, input.question, plan))
         .map((citation, index) => ({ ...citation, index: index + 1 }));
-    const grounded = citations.length > 0;
+    const scopeAssessment = assessEvidenceScope({
+        question: input.question,
+        citations,
+    });
+    const grounded = citations.length > 0 && scopeAssessment.sufficient;
     if (candidateCitations.length > citations.length) {
         retrievalWarnings.push(`${candidateCitations.length - citations.length} retrieval candidate(s) were withheld because they did not meet the clinical grounding threshold.`);
     }
@@ -271,6 +275,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         question: input.question,
         species: plan.species,
         citations,
+        scopeAssessment,
     });
     const answer = synthesizeExtractiveAnswer({
         question: input.question,
@@ -279,8 +284,13 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         citations,
         recommendations,
         integrationContexts,
+        scopeAssessment,
     });
-    const warnings = [...buildRagWarnings(citations, candidateCitations.length), ...retrievalWarnings];
+    const warnings = [
+        ...buildRagWarnings(citations, candidateCitations.length),
+        ...scopeAssessment.warnings,
+        ...retrievalWarnings,
+    ];
     const retrievalStats = {
         strategy: plan.strategy,
         vector_hits: vectorRows.length,
@@ -297,7 +307,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
     };
     const evaluation = {
         grounded,
-        citation_coverage: grounded ? 1 : 0,
+        citation_coverage: grounded ? 1 : citations.length > 0 ? 0.5 : 0,
         unsupported_claims: 0,
         warnings,
         top_recommendations: recommendations,
@@ -596,7 +606,7 @@ async function retrieveLexicalChunks(
     limit: number,
 ): Promise<RagRetrievedChunk[]> {
     const { data, error } = await input.client.rpc('search_rag_chunks_lexical', {
-        search_query: input.question,
+        search_query: buildRagLexicalSearchQuery(input.question, plan),
         match_count: limit,
         filter_tenant: input.tenantId,
         filter_source_ids: sourceIds.length > 0 ? sourceIds : null,
@@ -606,6 +616,23 @@ async function retrieveLexicalChunks(
     if (error) throw new Error(error.message);
     const rows = Array.isArray(data) ? data as Record<string, unknown>[] : [];
     return rows.map((row) => mapRetrievedChunk(row, 'lexical'));
+}
+
+export function buildRagLexicalSearchQuery(question: string, plan: RagQueryPlan): string {
+    if (isBroadCanineGiDiagnosticQuestion(question)) {
+        return '"vomiting diarrhea" OR gastroenteritis OR fecal OR parvovirus';
+    }
+    if (isPancreatitisDiagnosticQuestion(question)) {
+        return 'pancreatitis OR "pancreatic lipase" OR cpli OR ultrasound';
+    }
+    if (isRespiratoryDiagnosticQuestion(question)) {
+        return '"nasal discharge" OR sneezing OR respiratory OR conjunctivitis';
+    }
+
+    const terms = extractRetrievalTerms(question)
+        .filter((term) => !ragConsoleQueryStopwords().has(term))
+        .slice(0, 8);
+    return terms.length > 0 ? terms.join(' ') : question;
 }
 
 async function retrieveDirectLexicalChunks(
@@ -730,6 +757,7 @@ function retrieveCuratedCatalogEvidenceChunks(
 
 function shouldUseCuratedCatalogFallback(question: string): boolean {
     return isPancreatitisDiagnosticQuestion(question)
+        || isBroadCanineGiDiagnosticQuestion(question)
         || isRespiratoryDiagnosticQuestion(question)
         || /\b(fpv|panleukopenia|feline panleukopenia|feline parvovirus|cpv|canine parvovirus|parvo|distemper)\b/i.test(question);
 }
@@ -810,6 +838,7 @@ function synthesizeExtractiveAnswer(input: {
     domain: string | null;
     citations: RagCitation[];
     recommendations: RagDiagnosticRecommendation[];
+    scopeAssessment: EvidenceScopeAssessment;
     integrationContexts: {
         causal_memory: Record<string, unknown> & { linked: boolean };
         counterfactual: Record<string, unknown> & { linked: boolean };
@@ -823,6 +852,19 @@ function synthesizeExtractiveAnswer(input: {
     const citationLines = input.citations.slice(0, 6).map((citation) => (
         `${citation.index}. [${formatCitationReference(citation)}] ${selectBestSentence(citation.quote, input.question)}`
     ));
+    if (!input.scopeAssessment.sufficient) {
+        return [
+            'Scope limitation:',
+            input.scopeAssessment.answerNote,
+            'Indexed citations:',
+            ...citationLines,
+            'No broad diagnostic workflow was generated because the accepted evidence does not cover the full clinical scope of the question.',
+            `Causal Memory: triggered (${input.integrationContexts.causal_memory.linked ? 'tenant memory linked' : 'no tenant memory match'}).`,
+            `Counterfactual review: triggered (${input.integrationContexts.counterfactual.linked ? 'tenant sessions linked' : 'no tenant session match'}).`,
+            'Use this as clinical decision support; final diagnosis, treatment, and dosing decisions require licensed veterinary judgment.',
+        ].join('\n');
+    }
+
     const recommendationLines = input.recommendations.map((recommendation) => (
         `${recommendation.rank}. ${formatWorkflowStep(recommendation.workflow_step)} - ${recommendation.recommendation} Confidence: ${recommendation.confidence}. Evidence: ${formatCitationIndexes(recommendation.citation_indexes)}.`
     ));
@@ -846,8 +888,9 @@ function buildEvidenceBackedRecommendations(input: {
     question: string;
     species: string | null;
     citations: RagCitation[];
+    scopeAssessment: EvidenceScopeAssessment;
 }): RagDiagnosticRecommendation[] {
-    if (!hasHighConfidenceEvidence(input.citations)) {
+    if (!hasHighConfidenceEvidence(input.citations) || !input.scopeAssessment.sufficient) {
         return [];
     }
 
@@ -957,6 +1000,73 @@ function hasHighConfidenceEvidence(citations: RagCitation[]): boolean {
         isHighAuthorityTier(citation.authority_tier)
         && citation.similarity >= minimumEvidenceSimilarity(citation)
     ));
+}
+
+interface EvidenceScopeAssessment {
+    sufficient: boolean;
+    warnings: string[];
+    answerNote: string;
+}
+
+function assessEvidenceScope(input: {
+    question: string;
+    citations: RagCitation[];
+}): EvidenceScopeAssessment {
+    if (input.citations.length === 0) {
+        return {
+            sufficient: true,
+            warnings: [],
+            answerNote: '',
+        };
+    }
+
+    if (isBroadCanineGiDiagnosticQuestion(input.question)) {
+        const broadGiCitations = input.citations.filter(citationCoversBroadCanineGiWorkflow);
+        if (broadGiCitations.length === 0) {
+            return {
+                sufficient: false,
+                warnings: [
+                    'Accepted citations are narrower than the broad canine vomiting/diarrhea diagnostic question; workflow synthesis was withheld.',
+                ],
+                answerNote: 'The accepted indexed evidence is narrower than the question. It can support a differential-specific discussion, such as pancreatitis when that is what was retrieved, but it does not yet support a complete canine vomiting/diarrhea diagnostic workflow. Index broad canine GI evidence covering baseline labs, fecal/infectious testing, and imaging/obstruction triage before using this query as a general workflow.',
+            };
+        }
+    }
+
+    return {
+        sufficient: true,
+        warnings: [],
+        answerNote: '',
+    };
+}
+
+function isBroadCanineGiDiagnosticQuestion(question: string): boolean {
+    if (isPancreatitisDiagnosticQuestion(question)) return false;
+    return /\b(canine|dog|dogs)\b/i.test(question)
+        && /\b(vomit|vomiting|emesis)\b/i.test(question)
+        && /\b(diarrhea|diarrhoea|gastroenteritis|enteritis)\b/i.test(question)
+        && /\b(diagnos|diagnostic|diagnostics|workup|test|tests|evidence|indexed)\b/i.test(question);
+}
+
+function citationCoversBroadCanineGiWorkflow(citation: RagCitation): boolean {
+    const haystack = normalizedTextHaystack(`${citation.title} ${citation.source_name} ${citation.quote}`);
+    const mentionsGiSyndrome = (
+        /\b(vomit|vomiting|emesis)\b/.test(haystack)
+        && /\b(diarrhea|diarrhoea|gastroenteritis|enteritis)\b/.test(haystack)
+    );
+    if (!mentionsGiSyndrome) return false;
+
+    const hasBaselineLabs = /\b(cbc|chemistry|electrolyte|urinalysis|hydration|pcv|packed|solids|leukopenia|blood)\b/.test(haystack);
+    const hasFecalInfectious = /\b(fecal|faecal|parasite|giardia|parvo|parvovirus|elisa|antigen|pcr|toxin|campylobacter|salmonella)\b/.test(haystack);
+    const hasImagingOrObstruction = /\b(radiograph|radiographs|radiography|ultrasound|ultrasonography|imaging|obstruction|foreign|mass|abdominal)\b/.test(haystack);
+    const diagnosticBreadth = [hasBaselineLabs, hasFecalInfectious, hasImagingOrObstruction]
+        .filter(Boolean)
+        .length;
+    const narrowPancreatitisOnly = /\b(pancreatitis|pancreatic|lipase|cpli|pli)\b/.test(haystack)
+        && !hasFecalInfectious
+        && !/\b(gastroenteritis|enteritis)\b/.test(haystack);
+
+    return diagnosticBreadth >= 2 && !narrowPancreatitisOnly;
 }
 
 function isAcceptedGroundingCitation(
@@ -1612,6 +1722,9 @@ function extractRetrievalTerms(value: string): string[] {
         'include',
         'includes',
         'including',
+        'index',
+        'indexed',
+        'indexing',
         'infection',
         'infections',
         'marker',
@@ -1643,6 +1756,18 @@ function extractRetrievalTerms(value: string): string[] {
         .toLowerCase()
         .split(/[^a-z0-9]+/)
         .filter((term) => term.length > 3 && !stopwords.has(term)))];
+}
+
+function ragConsoleQueryStopwords(): Set<string> {
+    return new Set([
+        'available',
+        'catalog',
+        'corpus',
+        'evidence',
+        'indexed',
+        'source',
+        'sources',
+    ]);
 }
 
 function buildQuestionPhrases(value: string): string[] {

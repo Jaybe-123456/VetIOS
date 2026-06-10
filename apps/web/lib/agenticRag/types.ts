@@ -179,6 +179,10 @@ export interface RagReadinessSummary {
     high_authority_sources: number;
     stale_documents: number;
     last_refreshed_at: string | null;
+    embedding_mode?: 'live_provider' | 'deterministic_fallback';
+    embedding_model?: string | null;
+    embedding_dimensions?: number;
+    embedding_live_provider_configured?: boolean;
     ready: boolean;
     warnings: string[];
 }

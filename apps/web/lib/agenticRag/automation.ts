@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { buildCatalogDocumentPlans } from './catalogConnectors';
+import { getRagEmbeddingReadiness } from './embedding';
 import { ingestRagDocument } from './service';
 import { getCuratedRagCatalog, type CuratedRagSourceDefinition } from './sourceCatalog';
 import type { RagReadinessSummary } from './types';
@@ -57,6 +58,7 @@ export async function evaluateRagReadiness(client: SupabaseClient, tenantId: str
     const chunks = chunkRows.count;
     const highAuthoritySources = highAuthorityRows.count;
     const staleDocuments = staleDocumentRows.count;
+    const embeddingReadiness = getRagEmbeddingReadiness();
     const schemaErrors = [schemaCheck, sourceRows, documentRows, chunkRows, highAuthorityRows, staleDocumentRows]
         .map((result) => result.error)
         .filter((error): error is string => Boolean(error));
@@ -73,6 +75,7 @@ export async function evaluateRagReadiness(client: SupabaseClient, tenantId: str
     if (chunks === 0) warnings.push('No retrieval chunks are available.');
     if (highAuthoritySources === 0) warnings.push('No high-authority veterinary or medical sources are indexed.');
     if (staleDocuments > 0) warnings.push(`${staleDocuments} indexed document(s) need refresh or review.`);
+    warnings.push(...embeddingReadiness.warnings);
 
     return {
         sources,
@@ -81,6 +84,10 @@ export async function evaluateRagReadiness(client: SupabaseClient, tenantId: str
         high_authority_sources: highAuthoritySources,
         stale_documents: staleDocuments,
         last_refreshed_at: lastRefresh,
+        embedding_mode: embeddingReadiness.embedding_mode,
+        embedding_model: embeddingReadiness.embedding_model,
+        embedding_dimensions: embeddingReadiness.embedding_dimensions,
+        embedding_live_provider_configured: embeddingReadiness.embedding_live_provider_configured,
         ready: sources > 0 && documents > 0 && chunks > 0 && highAuthoritySources > 0,
         warnings,
     };
