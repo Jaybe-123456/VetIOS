@@ -21,8 +21,19 @@ export interface RagEmbeddingReadiness {
     warnings: string[];
 }
 
+export interface RagEmbeddingProbeResult extends RagEmbeddingReadiness {
+    probe_ok: boolean;
+    provider_reachable: boolean;
+    deterministic_fallback_used: boolean;
+    latency_ms: number;
+    vector_dimension_observed: number | null;
+    vector_norm: number | null;
+    error: string | null;
+}
+
 const RAG_EMBEDDING_MODEL = process.env.VETIOS_RAG_EMBEDDING_MODEL || 'text-embedding-3-small';
 const RAG_EMBEDDING_DIMENSIONS = 1536;
+const RAG_EMBEDDING_PROBE_TEXT = 'VetIOS RAG embedding readiness probe for canine vomiting diarrhea diagnostics.';
 
 export function getRagEmbeddingReadiness(): RagEmbeddingReadiness {
     const heuristicFallback = shouldUseAiHeuristicFallback();
@@ -43,6 +54,57 @@ export function getRagEmbeddingReadiness(): RagEmbeddingReadiness {
         embedding_live_provider_configured: liveProviderConfigured,
         warnings,
     };
+}
+
+export async function probeRagEmbeddingProvider(): Promise<RagEmbeddingProbeResult> {
+    const start = Date.now();
+    const readiness = getRagEmbeddingReadiness();
+
+    try {
+        const embedding = await embedRagText(RAG_EMBEDDING_PROBE_TEXT);
+        const vectorNorm = Math.sqrt(embedding.vector.reduce((sum, value) => sum + value * value, 0));
+        const dimensionOk = embedding.dimension === RAG_EMBEDDING_DIMENSIONS;
+        const deterministicFallbackUsed = embedding.deterministic_fallback;
+        const warnings = [...readiness.warnings];
+
+        if (!dimensionOk) {
+            warnings.push(`RAG embedding probe returned ${embedding.dimension} dimensions; expected ${RAG_EMBEDDING_DIMENSIONS}.`);
+        }
+        if (deterministicFallbackUsed && !warnings.some((warning) => warning.includes('deterministic fallback'))) {
+            warnings.push('RAG embedding probe used deterministic fallback mode; live semantic retrieval is not verified.');
+        }
+
+        return {
+            embedding_mode: deterministicFallbackUsed ? 'deterministic_fallback' : 'live_provider',
+            embedding_model: embedding.model,
+            embedding_dimensions: RAG_EMBEDDING_DIMENSIONS,
+            embedding_live_provider_configured: !deterministicFallbackUsed,
+            warnings,
+            probe_ok: dimensionOk && !deterministicFallbackUsed,
+            provider_reachable: !deterministicFallbackUsed,
+            deterministic_fallback_used: deterministicFallbackUsed,
+            latency_ms: Date.now() - start,
+            vector_dimension_observed: embedding.dimension,
+            vector_norm: Number(vectorNorm.toFixed(6)),
+            error: null,
+        };
+    } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown RAG embedding probe failure';
+        return {
+            ...readiness,
+            warnings: [
+                ...readiness.warnings,
+                `RAG embedding probe failed: ${message}`,
+            ],
+            probe_ok: false,
+            provider_reachable: false,
+            deterministic_fallback_used: readiness.embedding_mode === 'deterministic_fallback',
+            latency_ms: Date.now() - start,
+            vector_dimension_observed: null,
+            vector_norm: null,
+            error: message,
+        };
+    }
 }
 
 export async function embedRagText(text: string): Promise<RagEmbeddingResult> {

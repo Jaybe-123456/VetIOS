@@ -81,6 +81,21 @@ interface RagQueryResult {
     };
 }
 
+interface RagEmbeddingProbe {
+    probe_ok: boolean;
+    provider_reachable: boolean;
+    deterministic_fallback_used: boolean;
+    embedding_mode: 'live_provider' | 'deterministic_fallback';
+    embedding_model: string;
+    embedding_dimensions: number;
+    embedding_live_provider_configured: boolean;
+    latency_ms: number;
+    vector_dimension_observed: number | null;
+    vector_norm: number | null;
+    error: string | null;
+    warnings: string[];
+}
+
 interface AgenticRagMoatSnapshot {
     moat_status: 'compounding' | 'forming' | 'blocked';
     evidence_freshness: 'fresh' | 'stale' | 'empty';
@@ -104,11 +119,13 @@ export default function AgenticRagClient() {
     const [querying, setQuerying] = useState(false);
     const [seedingCatalog, setSeedingCatalog] = useState(false);
     const [persistingMoat, setPersistingMoat] = useState(false);
+    const [probingEmbeddings, setProbingEmbeddings] = useState(false);
     const [status, setStatus] = useState<string | null>(null);
     const [catalogErrors, setCatalogErrors] = useState<Array<{ source: string; message: string }>>([]);
     const [catalogCount, setCatalogCount] = useState(0);
     const [readiness, setReadiness] = useState<RagReadiness | null>(null);
     const [moatSnapshot, setMoatSnapshot] = useState<AgenticRagMoatSnapshot | null>(null);
+    const [embeddingProbe, setEmbeddingProbe] = useState<RagEmbeddingProbe | null>(null);
     const [queryResult, setQueryResult] = useState<RagQueryResult | null>(null);
     const [sourceForm, setSourceForm] = useState({
         name: 'VetIOS clinical guideline source',
@@ -234,6 +251,37 @@ export default function AgenticRagClient() {
         }
     }
 
+    async function handleProbeEmbeddings() {
+        setProbingEmbeddings(true);
+        setStatus(null);
+        try {
+            const response = await fetch('/api/rag/embedding-health', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({}),
+            });
+            const body = await readResponseJson<{
+                probe?: RagEmbeddingProbe;
+                detail?: string;
+                error?: string;
+            }>(response);
+            if (!body.probe && !response.ok) {
+                throw new Error(body.detail ?? body.error ?? 'RAG embedding probe failed.');
+            }
+            if (body.probe) {
+                setEmbeddingProbe(body.probe);
+                setStatus(body.probe.probe_ok
+                    ? 'RAG embedding provider probe passed.'
+                    : 'RAG embedding probe did not verify live semantic retrieval.');
+            }
+        } catch (error) {
+            setStatus(error instanceof Error ? error.message : 'RAG embedding probe failed.');
+        } finally {
+            setProbingEmbeddings(false);
+        }
+    }
+
     async function handleIngest(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         setIngesting(true);
@@ -352,9 +400,15 @@ export default function AgenticRagClient() {
                             <ShieldCheck className="h-4 w-4 text-accent" />
                             <h2 className="font-mono text-xs uppercase tracking-[0.18em] text-foreground">Corpus Readiness</h2>
                         </div>
-                        <span className={`font-mono text-[10px] uppercase tracking-[0.18em] ${readiness.ready ? 'text-accent' : 'text-amber-300'}`}>
-                            {readiness.ready ? 'Ready' : 'Needs Evidence'}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-3">
+                            <span className={`font-mono text-[10px] uppercase tracking-[0.18em] ${readiness.ready ? 'text-accent' : 'text-amber-300'}`}>
+                                {readiness.ready ? 'Ready' : 'Needs Evidence'}
+                            </span>
+                            <TerminalButton type="button" onClick={() => void handleProbeEmbeddings()} disabled={probingEmbeddings}>
+                                {probingEmbeddings ? <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" /> : null}
+                                Probe Embeddings
+                            </TerminalButton>
+                        </div>
                     </div>
                     <div className="grid gap-3 md:grid-cols-4">
                         <DataRow label="Chunks" value={readiness.chunks} tone={readiness.chunks > 0 ? 'accent' : undefined} />
@@ -365,6 +419,24 @@ export default function AgenticRagClient() {
                         <DataRow label="Embedding Model" value={readiness.embedding_model ?? 'Unknown'} />
                         <DataRow label="Vector Dims" value={readiness.embedding_dimensions ?? 'Unknown'} />
                     </div>
+                    {embeddingProbe && (
+                        <div className={`mt-3 border p-3 ${embeddingProbe.probe_ok ? 'border-accent/20 bg-accent/5' : 'border-amber-300/20 bg-amber-300/5'}`}>
+                            <div className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-foreground">Embedding Probe</div>
+                            <div className="grid gap-3 md:grid-cols-4">
+                                <DataRow label="Status" value={embeddingProbe.probe_ok ? 'Live Verified' : 'Not Verified'} tone={embeddingProbe.probe_ok ? 'accent' : 'warning'} />
+                                <DataRow label="Provider" value={embeddingProbe.provider_reachable ? 'Reachable' : 'Not Reachable'} tone={embeddingProbe.provider_reachable ? 'accent' : 'warning'} />
+                                <DataRow label="Latency" value={`${embeddingProbe.latency_ms}ms`} />
+                                <DataRow label="Observed Dims" value={embeddingProbe.vector_dimension_observed ?? 'None'} tone={embeddingProbe.vector_dimension_observed === embeddingProbe.embedding_dimensions ? 'accent' : 'warning'} />
+                                <DataRow label="Fallback" value={embeddingProbe.deterministic_fallback_used ? 'Used' : 'No'} tone={embeddingProbe.deterministic_fallback_used ? 'warning' : 'accent'} />
+                                <DataRow label="Norm" value={embeddingProbe.vector_norm ?? 'None'} />
+                            </div>
+                            {embeddingProbe.error && (
+                                <div className="mt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-amber-100">
+                                    {embeddingProbe.error}
+                                </div>
+                            )}
+                        </div>
+                    )}
                     {readiness.warnings.length > 0 && (
                         <div className="mt-3 grid gap-2 md:grid-cols-2">
                             {readiness.warnings.map((warning) => (

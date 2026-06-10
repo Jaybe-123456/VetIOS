@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildCatalogDocumentPlans } from '../catalogConnectors';
 import { chunkRagDocument, normalizeRagContent } from '../chunking';
 import { buildRagClosedLoopLearningSystem } from '../closedLoop';
-import { getRagEmbeddingReadiness } from '../embedding';
+import { getRagEmbeddingReadiness, probeRagEmbeddingProvider } from '../embedding';
 import { answerRagQuery, buildRagLexicalSearchQuery, buildRagQueryPlan } from '../service';
 import { buildIndexSourceBundleJobs, buildIndexSourceDatasetPlan } from '../sourceBundle';
 import { validatePublicSourceUrl } from '../sourcePolicy';
@@ -101,6 +101,18 @@ describe('VetIOS Agentic RAG service primitives', () => {
         if (readiness.embedding_mode === 'deterministic_fallback') {
             expect(readiness.warnings.join(' ')).toContain('deterministic fallback');
         }
+    });
+
+    it('probes RAG embeddings and reports fallback instead of marking semantic retrieval live in test mode', async () => {
+        const probe = await probeRagEmbeddingProvider();
+
+        expect(probe.embedding_dimensions).toBe(1536);
+        expect(probe.vector_dimension_observed).toBe(1536);
+        expect(probe.vector_norm).toBeGreaterThan(0);
+        expect(probe.deterministic_fallback_used).toBe(true);
+        expect(probe.provider_reachable).toBe(false);
+        expect(probe.probe_ok).toBe(false);
+        expect(probe.warnings.join(' ')).toContain('deterministic fallback');
     });
 
     it('ships a curated global veterinary and medical source catalog with explicit trust tiers', () => {
