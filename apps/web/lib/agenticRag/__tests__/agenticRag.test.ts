@@ -799,6 +799,28 @@ describe('VetIOS Agentic RAG service primitives', () => {
         expect(result.answer).not.toContain('Scope limitation:');
     });
 
+    it('keeps the RAG query ledger active when context columns are missing from the live schema', async () => {
+        const client = createRagFakeClient({
+            sources: [],
+            chunks: [],
+            documents: [],
+            ragQueryInsertErrorOnContextColumns: true,
+        });
+
+        const result = await answerRagQuery({
+            tenantId: 'tenant_1',
+            actorKind: 'dev_bypass',
+            client,
+            question: 'What evidence is indexed for canine vomiting and diarrhea diagnostics?',
+            strategy: 'hybrid',
+            limit: 6,
+        });
+
+        expect(result.query_id).toBe('44444444-4444-4444-8444-444444444444');
+        expect(result.evaluation.warnings.join(' ')).toContain('RAG query ledger used compact insert');
+        expect(result.evaluation.warnings.join(' ')).toContain('20260510010000_agentic_rag_automation.sql');
+    });
+
     it('uses document provenance URLs for citations when a bulk source has no single canonical URL', async () => {
         const client = createRagFakeClient({
             sources: [
@@ -1040,6 +1062,7 @@ function createRagFakeClient(data: {
     sources: Array<Record<string, unknown>>;
     chunks: Array<Record<string, unknown>>;
     documents: Array<Record<string, unknown>>;
+    ragQueryInsertErrorOnContextColumns?: boolean;
 }): any {
     return {
         rpc: async () => ({ data: [], error: null }),
@@ -1051,9 +1074,11 @@ function createFakeQuery(table: string, fixture: {
     sources: Array<Record<string, unknown>>;
     chunks: Array<Record<string, unknown>>;
     documents: Array<Record<string, unknown>>;
+    ragQueryInsertErrorOnContextColumns?: boolean;
 }): any {
     let selectedHead = false;
     let inserted = false;
+    let insertedPayload: unknown = null;
     const query: any = {
         select: (_columns?: string, options?: { head?: boolean }) => {
             selectedHead = options?.head === true;
@@ -1062,15 +1087,16 @@ function createFakeQuery(table: string, fixture: {
         eq: () => query,
         in: () => query,
         order: () => query,
-        limit: () => Promise.resolve(resolveFakeResult(table, fixture, selectedHead, inserted)),
+        limit: () => Promise.resolve(resolveFakeResult(table, fixture, selectedHead, inserted, insertedPayload)),
         maybeSingle: () => Promise.resolve({ data: null, error: null }),
-        single: () => Promise.resolve({ data: { id: '44444444-4444-4444-8444-444444444444' }, error: null }),
-        insert: () => {
+        single: () => Promise.resolve(resolveFakeResult(table, fixture, selectedHead, inserted, insertedPayload)),
+        insert: (payload?: unknown) => {
             inserted = true;
+            insertedPayload = payload;
             return query;
         },
         then: (resolve: (value: unknown) => void, reject: (reason?: unknown) => void) => (
-            Promise.resolve(resolveFakeResult(table, fixture, selectedHead, inserted)).then(resolve, reject)
+            Promise.resolve(resolveFakeResult(table, fixture, selectedHead, inserted, insertedPayload)).then(resolve, reject)
         ),
     };
     return query;
@@ -1082,12 +1108,32 @@ function resolveFakeResult(
         sources: Array<Record<string, unknown>>;
         chunks: Array<Record<string, unknown>>;
         documents: Array<Record<string, unknown>>;
+        ragQueryInsertErrorOnContextColumns?: boolean;
     },
     head: boolean,
     inserted: boolean,
-): { data: unknown; error: null; count?: number } {
+    insertedPayload: unknown,
+): { data: unknown; error: null | { code?: string; message: string }; count?: number } {
     if (head) return { data: null, error: null, count: 0 };
-    if (inserted) return { data: { id: '44444444-4444-4444-8444-444444444444' }, error: null };
+    if (inserted) {
+        const row = Array.isArray(insertedPayload) ? insertedPayload[0] : insertedPayload;
+        if (
+            table === 'rag_queries'
+            && fixture.ragQueryInsertErrorOnContextColumns
+            && typeof row === 'object'
+            && row !== null
+            && 'causal_memory_context' in row
+        ) {
+            return {
+                data: null,
+                error: {
+                    code: 'PGRST204',
+                    message: "Could not find the 'causal_memory_context' column of 'rag_queries' in the schema cache",
+                },
+            };
+        }
+        return { data: { id: '44444444-4444-4444-8444-444444444444' }, error: null };
+    }
     if (table === 'rag_sources') return { data: fixture.sources, error: null };
     if (table === 'rag_chunks') return { data: fixture.chunks, error: null };
     if (table === 'rag_documents') return { data: fixture.documents, error: null };

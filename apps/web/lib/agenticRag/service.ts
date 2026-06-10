@@ -318,7 +318,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         one_health_surveillance_linked: integrationContexts.one_health.linked,
     };
 
-    const queryId = await logRagQuery(input.client, {
+    const queryLog = await logRagQuery(input.client, {
         tenantId: input.tenantId,
         actorKind: input.actorKind,
         question: input.question,
@@ -328,7 +328,14 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         retrievalStats,
         evaluation,
         integrationContexts,
-    }).catch(() => null);
+    }).catch((error) => ({
+        queryId: null,
+        warning: `RAG query ledger insert failed: ${error instanceof Error ? error.message : 'unknown error'}.`,
+    }));
+    if (queryLog.warning) {
+        warnings.push(queryLog.warning);
+        evaluation.warnings = warnings;
+    }
 
     return {
         answer,
@@ -337,7 +344,7 @@ export async function answerRagQuery(input: AnswerRagQueryInput): Promise<RagAns
         citations,
         retrieval_stats: retrievalStats,
         evaluation,
-        query_id: queryId,
+        query_id: queryLog.queryId,
     };
 }
 
@@ -1212,29 +1219,72 @@ async function logRagQuery(client: SupabaseClient, input: {
         counterfactual: Record<string, unknown>;
         one_health: Record<string, unknown>;
     };
-}): Promise<string | null> {
+}): Promise<{ queryId: string | null; warning: string | null }> {
+    const baseRow = {
+        tenant_id: input.tenantId,
+        actor_kind: input.actorKind,
+        query_text: input.question,
+        query_hash: contentHash(input.question),
+        retrieval_strategy: input.strategy,
+        answer_text: input.answer,
+        answer_mode: 'extractive',
+        citations: input.citations,
+        retrieval_stats: input.retrievalStats,
+        evaluation: input.evaluation,
+    };
+    const fullRow = {
+        ...baseRow,
+        causal_memory_context: input.integrationContexts.causal_memory,
+        counterfactual_context: input.integrationContexts.counterfactual,
+        one_health_context: input.integrationContexts.one_health,
+    };
+
+    const fullResult = await insertRagQueryRow(client, fullRow);
+    if (!fullResult.error && fullResult.queryId) {
+        return { queryId: fullResult.queryId, warning: null };
+    }
+
+    if (fullResult.error && isMissingRagQueryContextColumn(fullResult.error)) {
+        const compactResult = await insertRagQueryRow(client, baseRow);
+        if (!compactResult.error && compactResult.queryId) {
+            return {
+                queryId: compactResult.queryId,
+                warning: 'RAG query ledger used compact insert because context columns are missing. Apply supabase/migrations/20260510010000_agentic_rag_automation.sql to capture causal, counterfactual, and One Health contexts.',
+            };
+        }
+        return {
+            queryId: null,
+            warning: `RAG query ledger compact insert failed: ${compactResult.error?.message ?? 'unknown error'}.`,
+        };
+    }
+
+    return {
+        queryId: null,
+        warning: `RAG query ledger insert failed: ${fullResult.error?.message ?? 'unknown error'}.`,
+    };
+}
+
+async function insertRagQueryRow(
+    client: SupabaseClient,
+    row: Record<string, unknown>,
+): Promise<{ queryId: string | null; error: { code?: string; message?: string } | null }> {
     const { data, error } = await client
         .from('rag_queries')
-        .insert({
-            tenant_id: input.tenantId,
-            actor_kind: input.actorKind,
-            query_text: input.question,
-            query_hash: contentHash(input.question),
-            retrieval_strategy: input.strategy,
-            answer_text: input.answer,
-            answer_mode: 'extractive',
-            citations: input.citations,
-            retrieval_stats: input.retrievalStats,
-            evaluation: input.evaluation,
-            causal_memory_context: input.integrationContexts.causal_memory,
-            counterfactual_context: input.integrationContexts.counterfactual,
-            one_health_context: input.integrationContexts.one_health,
-        })
+        .insert(row)
         .select('id')
         .single();
 
-    if (error || !data?.id) return null;
-    return String(data.id);
+    if (error || !data?.id) return { queryId: null, error: error ?? { message: 'missing query id' } };
+    return { queryId: String(data.id), error: null };
+}
+
+function isMissingRagQueryContextColumn(error: { code?: string; message?: string }): boolean {
+    const message = error.message?.toLowerCase() ?? '';
+    return error.code === 'PGRST204'
+        || message.includes('causal_memory_context')
+        || message.includes('counterfactual_context')
+        || message.includes('one_health_context')
+        || (message.includes('rag_queries') && message.includes('schema cache'));
 }
 
 function mapSource(row: Record<string, unknown>): RagSourceRecord {
