@@ -205,4 +205,16 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             'Excludes tenant IDs, clinic identifiers, patient identifiers, owner identifiers, and inference event IDs.',
         ],
     },
+    {
+        id: 'public-cire-standard',
+        method: 'GET',
+        path: '/api/public/cire-standard',
+        auth: 'public',
+        readiness: 'public',
+        purpose: 'Publish the versioned CIRE reliability standard for phi_hat, CPS, safety states, and inference lineage.',
+        notes: [
+            'This is intentionally open so external researchers and partners can cite the reliability contract.',
+            'Managed VetIOS deployments provide hosted lineage, outcome loops, model cards, and enterprise SLA support around the standard.',
+        ],
+    },
 ];

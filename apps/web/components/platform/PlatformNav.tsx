@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation';
 
 const navItems = [
     { href: '/platform', label: 'Overview' },
+    { href: '/platform/cire-standard', label: 'CIRE Standard' },
     { href: '/platform/model-cards', label: 'Model Cards' },
     { href: '/platform/developers', label: 'Developers' },
     { href: '/platform/passive-signals', label: 'Passive Signals' },

@@ -14,7 +14,7 @@ export default function robots(): MetadataRoute.Robots {
     return {
         rules: {
             userAgent: '*',
-            allow: '/',
+            allow: ['/', '/platform/cire-standard'],
             disallow: ['/api/'],
         },
         sitemap: getConfiguredSiteOrigin()

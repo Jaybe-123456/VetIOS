@@ -36,6 +36,12 @@ export const PUBLIC_SEO_PAGES = [
         priority: 0.88,
     },
     {
+        path: '/platform/cire-standard',
+        title: 'VetIOS CIRE Open Standard',
+        description: 'Public VetIOS clinical inference reliability standard for phi_hat, CPS, safety states, and outcome-linked audit lineage.',
+        priority: 0.86,
+    },
+    {
         path: '/docs',
         title: 'VetIOS Documentation',
         description: 'API reference and platform documentation for VetIOS veterinary AI infrastructure.',

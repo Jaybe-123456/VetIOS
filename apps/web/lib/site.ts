@@ -5,6 +5,7 @@ const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/auth/callback'];
 const PUBLIC_MARKETING_PATHS = [...PUBLIC_SEO_PATHS];
 const PUBLIC_PLATFORM_PATHS = [
+    '/platform/cire-standard',
     '/platform/model-cards',
     '/platform/population-intelligence',
 ];
