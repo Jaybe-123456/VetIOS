@@ -215,21 +215,23 @@ function asRecord(value: unknown): Record<string, unknown> {
 function isMissingTenantLearningConsentsTable(error: { code?: string; message?: string }): boolean {
     const message = error.message?.toLowerCase() ?? '';
     return error.code === '42P01'
-        || error.code === 'PGRST116'
-        || message.includes('tenant_learning_consents')
-        || message.includes('schema cache');
+        || error.code === 'PGRST205'
+        || message.includes("could not find the table 'public.tenant_learning_consents'")
+        || message.includes('relation "public.tenant_learning_consents" does not exist')
+        || message.includes('relation tenant_learning_consents does not exist');
 }
 
 function isMissingTenantLearningConsentEventsTable(error: { code?: string; message?: string }): boolean {
     const message = error.message?.toLowerCase() ?? '';
     return error.code === '42P01'
-        || error.code === 'PGRST116'
-        || message.includes('tenant_learning_consent_events')
-        || message.includes('schema cache');
+        || error.code === 'PGRST205'
+        || message.includes("could not find the table 'public.tenant_learning_consent_events'")
+        || message.includes('relation "public.tenant_learning_consent_events" does not exist')
+        || message.includes('relation tenant_learning_consent_events does not exist');
 }
 
 function missingConsentMigrationMessage(): string {
-    return 'Network learning consent storage is not installed. Apply supabase/migrations/20260609010000_tenant_learning_consents_repair.sql in Supabase, then reload the schema.';
+    return 'Network learning consent storage is not visible to PostgREST. Apply supabase/migrations/20260609010000_tenant_learning_consents_repair.sql in Supabase, then reload the schema and verify Vercel points at the same Supabase project.';
 }
 
 function missingConsentEventMigrationMessage(): string {

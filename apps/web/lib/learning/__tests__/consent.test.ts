@@ -95,7 +95,7 @@ describe('tenant learning consent service', () => {
                         order: () => Promise.resolve({
                             data: null,
                             error: {
-                                code: 'PGRST116',
+                                code: 'PGRST205',
                                 message: "Could not find the table 'public.tenant_learning_consents' in the schema cache",
                             },
                         }),
@@ -106,6 +106,28 @@ describe('tenant learning consent service', () => {
 
         await expect(listTenantLearningConsents(client, 'tenant_1')).rejects.toThrow(
             'Apply supabase/migrations/20260609010000_tenant_learning_consents_repair.sql',
+        );
+    });
+
+    it('does not mislabel permission or RLS errors as missing storage', async () => {
+        const client = {
+            from: () => ({
+                select: () => ({
+                    eq: () => ({
+                        order: () => Promise.resolve({
+                            data: null,
+                            error: {
+                                code: '42501',
+                                message: 'permission denied for table tenant_learning_consents',
+                            },
+                        }),
+                    }),
+                }),
+            }),
+        } as any;
+
+        await expect(listTenantLearningConsents(client, 'tenant_1')).rejects.toThrow(
+            'Failed to list tenant learning consents: permission denied for table tenant_learning_consents',
         );
     });
 });
