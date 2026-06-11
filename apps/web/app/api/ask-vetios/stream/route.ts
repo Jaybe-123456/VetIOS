@@ -1,5 +1,10 @@
 import { POST as runAskVetios } from '../route';
 import { apiGuard } from '@/lib/http/apiGuard';
+import { buildHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
+import {
+    buildAskVetiosSpeculativeDraft,
+    shouldEmitAskVetiosSpeculativeDraft,
+} from '@/lib/askVetios/speculativeDraft';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -18,12 +23,15 @@ type AskVetiosStreamPayload = {
 const encoder = new TextEncoder();
 
 export async function POST(req: Request) {
-    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 32 * 1024 });
+    const guardRequest = req.clone();
+    const draftRequest = req.clone();
+    const finalRequest = req.clone();
+    const guard = await apiGuard(guardRequest, { maxRequests: 30, windowMs: 60_000, maxBodySize: 32 * 1024 });
     if (guard.blocked) return guard.response!;
 
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {
-            void streamAskVetiosResponse(req, controller);
+            void streamAskVetiosResponse(finalRequest, draftRequest, controller);
         },
     });
 
@@ -36,10 +44,21 @@ export async function POST(req: Request) {
     });
 }
 
-async function streamAskVetiosResponse(req: Request, controller: ReadableStreamDefaultController<Uint8Array>) {
+async function streamAskVetiosResponse(
+    finalRequest: Request,
+    draftRequest: Request,
+    controller: ReadableStreamDefaultController<Uint8Array>,
+) {
+    const startedAt = Date.now();
+    let draftEmitted = false;
     try {
-        writeEvent(controller, { type: 'start' });
-        const response = await runAskVetios(req);
+        writeEvent(controller, {
+            type: 'start',
+            speculative_draft_enabled: shouldEmitAskVetiosSpeculativeDraft(),
+        });
+        draftEmitted = await tryWriteSpeculativeDraft(draftRequest, controller, startedAt);
+
+        const response = await runAskVetios(finalRequest);
         const payload = await readPayload(response);
         const requestId = response.headers.get('x-request-id') ?? payload.request_id ?? null;
         const tokenHeaders = readTokenHeaders(response.headers);
@@ -57,11 +76,16 @@ async function streamAskVetiosResponse(req: Request, controller: ReadableStreamD
         }
 
         const content = typeof payload.content === 'string' ? payload.content : '';
+        const finalMetadata = {
+            ...asRecord(payload.metadata),
+            speculative_status: draftEmitted ? 'final_replaced_draft' : 'final',
+            speculative_draft_replaced: draftEmitted,
+        };
         writeEvent(controller, {
             type: 'metadata',
             mode: payload.mode ?? 'general',
             topic: payload.topic,
-            metadata: payload.metadata ?? null,
+            metadata: finalMetadata,
             query_history_id: payload.query_history_id ?? null,
             request_id: requestId,
             token_budget: tokenHeaders,
@@ -76,7 +100,7 @@ async function streamAskVetiosResponse(req: Request, controller: ReadableStreamD
             type: 'done',
             mode: payload.mode ?? 'general',
             topic: payload.topic,
-            metadata: payload.metadata ?? null,
+            metadata: finalMetadata,
             query_history_id: payload.query_history_id ?? null,
             request_id: requestId,
             token_budget: tokenHeaders,
@@ -93,6 +117,38 @@ async function streamAskVetiosResponse(req: Request, controller: ReadableStreamD
     }
 }
 
+async function tryWriteSpeculativeDraft(
+    req: Request,
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    startedAt: number,
+): Promise<boolean> {
+    if (!shouldEmitAskVetiosSpeculativeDraft()) return false;
+    const payload = await readDraftRequestPayload(req);
+    if (!payload?.message) return false;
+
+    const heuristic = buildHeuristicResponse(payload.message);
+    const draft = buildAskVetiosSpeculativeDraft(heuristic, Date.now() - startedAt);
+    writeEvent(controller, {
+        type: 'draft',
+        mode: draft.mode,
+        topic: draft.topic,
+        content: draft.content,
+        metadata: draft.metadata,
+        draft_latency_ms: draft.metadata.draft_latency_ms,
+    });
+    return true;
+}
+
+async function readDraftRequestPayload(req: Request): Promise<{ message: string } | null> {
+    try {
+        const payload = await req.json() as { message?: unknown };
+        const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+        return message.length > 0 ? { message } : null;
+    } catch {
+        return null;
+    }
+}
+
 async function readPayload(response: Response): Promise<AskVetiosStreamPayload> {
     try {
         return await response.json() as AskVetiosStreamPayload;
@@ -106,6 +162,10 @@ async function readPayload(response: Response): Promise<AskVetiosStreamPayload> 
 
 function writeEvent(controller: ReadableStreamDefaultController<Uint8Array>, value: Record<string, unknown>) {
     controller.enqueue(encoder.encode(`${JSON.stringify(value)}\n`));
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
 }
 
 function chunkText(text: string): string[] {

@@ -155,9 +155,23 @@ export default function AskVetIOSPage() {
                 metadata: { mode: 'general' },
             });
             let streamedContent = '';
+            let draftVisible = false;
             await streamAskVetiosResponse({
                 clientId,
                 payload: { message: content, conversation: history },
+                onDraft: (event) => {
+                    if (typeof event.content !== 'string' || event.content.trim().length === 0) return;
+                    draftVisible = true;
+                    updateMessage(activeChatId, assistantMessageId!, {
+                        content: event.content,
+                        metadata: {
+                            mode: (event.mode as 'educational' | 'clinical' | 'general') ?? 'general',
+                            topic: event.topic,
+                            query_history_id: event.query_history_id,
+                            ...(asRecord(event.metadata)),
+                        },
+                    });
+                },
                 onMetadata: (event) => {
                     updateMessage(activeChatId, assistantMessageId!, {
                         metadata: {
@@ -169,7 +183,9 @@ export default function AskVetIOSPage() {
                     });
                 },
                 onChunk: (chunk) => {
-                    streamedContent += chunk;
+                    streamedContent = draftVisible && streamedContent.length === 0
+                        ? chunk
+                        : streamedContent + chunk;
                     updateMessage(activeChatId, assistantMessageId!, { content: streamedContent });
                 },
             });
@@ -530,7 +546,7 @@ return (
 }
 
 type AskVetiosStreamEvent = {
-    type: 'start' | 'metadata' | 'chunk' | 'done' | 'error';
+    type: 'start' | 'draft' | 'metadata' | 'chunk' | 'done' | 'error';
     content?: string;
     mode?: string;
     topic?: string;
@@ -540,11 +556,13 @@ type AskVetiosStreamEvent = {
     error?: string;
     message?: string;
     request_id?: string | null;
+    draft_latency_ms?: number;
 };
 
 async function streamAskVetiosResponse(input: {
     clientId: string;
     payload: { message: string; conversation: Array<{ role: 'user' | 'assistant'; content: string }> };
+    onDraft: (event: AskVetiosStreamEvent) => void;
     onMetadata: (event: AskVetiosStreamEvent) => void;
     onChunk: (chunk: string) => void;
 }) {
@@ -589,6 +607,7 @@ async function streamAskVetiosResponse(input: {
 function handleAskVetiosStreamEvent(
     event: AskVetiosStreamEvent,
     input: {
+        onDraft: (event: AskVetiosStreamEvent) => void;
         onMetadata: (event: AskVetiosStreamEvent) => void;
         onChunk: (chunk: string) => void;
     },
@@ -598,6 +617,10 @@ function handleAskVetiosStreamEvent(
     }
     if (event.type === 'metadata' || event.type === 'done') {
         input.onMetadata(event);
+        return;
+    }
+    if (event.type === 'draft') {
+        input.onDraft(event);
         return;
     }
     if (event.type === 'chunk' && typeof event.content === 'string') {
