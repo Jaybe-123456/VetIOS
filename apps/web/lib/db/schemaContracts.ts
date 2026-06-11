@@ -79,6 +79,41 @@ export const INFERENCE_EXECUTION_TRACE_EVENTS = {
     },
 } as const;
 
+export const INFERENCE_REPLAY_EVENTS = {
+    TABLE: 'inference_replay_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        replay_request_id: 'replay_request_id',
+        source_inference_event_id: 'source_inference_event_id',
+        source_request_id: 'source_request_id',
+        replay_mode: 'replay_mode',
+        replay_status: 'replay_status',
+        failure_reason: 'failure_reason',
+        source_model_name: 'source_model_name',
+        source_model_version: 'source_model_version',
+        replay_model_name: 'replay_model_name',
+        replay_model_version: 'replay_model_version',
+        source_schema_version: 'source_schema_version',
+        replay_schema_version: 'replay_schema_version',
+        source_ranker: 'source_ranker',
+        replay_ranker: 'replay_ranker',
+        original_top_label: 'original_top_label',
+        replay_top_label: 'replay_top_label',
+        original_confidence: 'original_confidence',
+        replay_confidence: 'replay_confidence',
+        top_label_changed: 'top_label_changed',
+        confidence_delta: 'confidence_delta',
+        distribution_drift: 'distribution_drift',
+        latency_ms: 'latency_ms',
+        input_digest: 'input_digest',
+        original_output_digest: 'original_output_digest',
+        replay_output_digest: 'replay_output_digest',
+        replay_summary: 'replay_summary',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const CLINICAL_CASES = {
     TABLE: 'clinical_cases',
     COLUMNS: {

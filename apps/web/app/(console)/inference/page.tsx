@@ -85,6 +85,21 @@ interface ExecutionTraceEvent {
     stage_metadata: Record<string, unknown>;
 }
 
+interface ReplayDriftResult {
+    replay_event_id: string | null;
+    replay_status: 'completed' | 'failed';
+    original_top_label: string | null;
+    replay_top_label: string | null;
+    original_confidence: number | null;
+    replay_confidence: number | null;
+    top_label_changed: boolean;
+    confidence_delta: number | null;
+    distribution_drift: number | null;
+    latency_ms: number;
+    warnings: string[];
+    error: string | null;
+}
+
 interface CorrectionData {
     hallucinated_signals_removed: string[];
     penalties_applied: string[];
@@ -165,6 +180,12 @@ interface InferenceState {
     logs: LogEntry[];
 }
 
+interface ReplayDriftState {
+    status: 'idle' | 'running' | 'success' | 'error';
+    result: ReplayDriftResult | null;
+    errorMessage: string | null;
+}
+
 export default function InferenceConsole() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<InferenceTab>('analysis');
@@ -193,6 +214,11 @@ export default function InferenceConsole() {
         executionTraceMessage: null,
         metrics: null,
         logs: [],
+    });
+    const [replayDrift, setReplayDrift] = useState<ReplayDriftState>({
+        status: 'idle',
+        result: null,
+        errorMessage: null,
     });
 
     const [inputMode, setInputMode] = useState<InputMode>('structured');
@@ -451,6 +477,7 @@ export default function InferenceConsole() {
                     executionTraceMessage: null,
                 }));
                 setOutcomeState({ status: 'idle' });
+                setReplayDrift({ status: 'idle', result: null, errorMessage: null });
                 return;
             }
 
@@ -513,6 +540,7 @@ export default function InferenceConsole() {
                 executionTraceMessage: null,
             }));
             setOutcomeState({ status: 'idle' });
+            setReplayDrift({ status: 'idle', result: null, errorMessage: null });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Normalization failed.';
             setState(prev => ({ ...prev, status: 'error', errorMessage }));
@@ -537,6 +565,7 @@ export default function InferenceConsole() {
             }],
         }));
         setOutcomeState({ status: 'idle' });
+        setReplayDrift({ status: 'idle', result: null, errorMessage: null });
 
         const pushLog = (message: string, level: LogEntry['level'] = 'info') => {
             setState(prev => ({
@@ -785,6 +814,46 @@ export default function InferenceConsole() {
         } catch {
             setCopyStatus('error');
             window.setTimeout(() => setCopyStatus('idle'), 2000);
+        }
+    }
+
+    async function handleReplayDriftCheck() {
+        if (!state.eventId || replayDrift.status === 'running') return;
+        setReplayDrift({ status: 'running', result: null, errorMessage: null });
+        try {
+            const response = await fetchWithTimeout(`/api/inference/${encodeURIComponent(state.eventId)}/replay`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+            }, {
+                timeoutMs: 20_000,
+                timeoutMessage: 'Replay drift check did not return within 20 seconds.',
+            });
+            const text = await response.text();
+            let payload: unknown;
+            try {
+                payload = JSON.parse(text);
+            } catch {
+                throw new Error(`Replay API returned non-JSON HTTP ${response.status}.`);
+            }
+
+            const record = asRecord(payload);
+            const result = normalizeReplayDriftResult(record?.data);
+            if (!response.ok && !result) {
+                throw new Error(formatApiError(payload, `Replay drift check failed (HTTP ${response.status})`));
+            }
+
+            setReplayDrift({
+                status: result?.replay_status === 'completed' ? 'success' : 'error',
+                result,
+                errorMessage: result?.error ?? (!response.ok ? formatApiError(payload, 'Replay drift check failed.') : null),
+            });
+        } catch (error) {
+            setReplayDrift({
+                status: 'error',
+                result: null,
+                errorMessage: error instanceof Error ? error.message : 'Replay drift check failed.',
+            });
         }
     }
 
@@ -1301,6 +1370,60 @@ export default function InferenceConsole() {
                                             {state.executionTraceMessage ?? 'No execution trace rows have been recorded for this inference event yet.'}
                                         </div>
                                     )}
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Replay Drift Check" className="border-violet-400/30">
+                                    <div className="grid grid-cols-1 lg:grid-cols-[1fr,220px] gap-4 items-start">
+                                        <div className="space-y-3">
+                                            <p className="font-mono text-[11px] leading-relaxed text-muted">
+                                                Rerun this stored inference through the deterministic core without creating a new clinical case, then compare top diagnosis, confidence, and distribution drift against the original event.
+                                            </p>
+                                            {replayDrift.result && (
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                                                    <DataRow
+                                                        label="Top Label"
+                                                        value={`${formatNullableLabel(replayDrift.result.original_top_label)} -> ${formatNullableLabel(replayDrift.result.replay_top_label)}`}
+                                                        tone={replayDrift.result.top_label_changed ? 'warning' : 'accent'}
+                                                    />
+                                                    <DataRow
+                                                        label="Confidence Delta"
+                                                        value={formatPercentNumber(replayDrift.result.confidence_delta)}
+                                                        tone={(replayDrift.result.confidence_delta ?? 0) > 0.1 ? 'warning' : 'accent'}
+                                                    />
+                                                    <DataRow
+                                                        label="Distribution Drift"
+                                                        value={formatPercentNumber(replayDrift.result.distribution_drift)}
+                                                        tone={(replayDrift.result.distribution_drift ?? 0) > 0.15 ? 'warning' : 'accent'}
+                                                    />
+                                                    <DataRow
+                                                        label="Replay Latency"
+                                                        value={`${replayDrift.result.latency_ms}ms`}
+                                                        tone="cyan"
+                                                    />
+                                                </div>
+                                            )}
+                                            {replayDrift.errorMessage && (
+                                                <div className="border border-yellow-400/30 bg-yellow-400/5 p-3 font-mono text-[11px] text-yellow-300">
+                                                    {replayDrift.errorMessage}
+                                                </div>
+                                            )}
+                                            {replayDrift.result?.warnings.length ? (
+                                                <div className="border border-grid bg-black/20 p-3 font-mono text-[11px] text-muted space-y-1">
+                                                    {replayDrift.result.warnings.map((warning, index) => (
+                                                        <div key={index}>- {warning}</div>
+                                                    ))}
+                                                </div>
+                                            ) : null}
+                                        </div>
+                                        <TerminalButton
+                                            type="button"
+                                            variant="secondary"
+                                            onClick={handleReplayDriftCheck}
+                                            disabled={!state.eventId || replayDrift.status === 'running'}
+                                        >
+                                            {replayDrift.status === 'running' ? 'Replaying...' : 'Run Replay'}
+                                        </TerminalButton>
+                                    </div>
                                 </ConsoleCard>
 
                                 {state.multisystemAssessment && (
@@ -1999,6 +2122,7 @@ async function fetchInferenceExecutionTrace(
             message: error instanceof Error ? error.message : 'Trace ledger request failed.',
         };
     }
+
 }
 
 function normalizeExecutionTraceEvent(value: Record<string, unknown>): ExecutionTraceEvent | null {
@@ -2024,6 +2148,34 @@ function traceStatusClass(status: ExecutionTraceEvent['stage_status']) {
     if (status === 'completed') return 'text-green-400';
     if (status === 'skipped') return 'text-yellow-400';
     return 'text-red-400';
+}
+
+function normalizeReplayDriftResult(value: unknown): ReplayDriftResult | null {
+    const record = asRecord(value);
+    if (!record) return null;
+    const status = record.replay_status === 'completed' || record.replay_status === 'failed'
+        ? record.replay_status
+        : null;
+    if (!status) return null;
+
+    return {
+        replay_event_id: readString(record.replay_event_id),
+        replay_status: status,
+        original_top_label: readString(record.original_top_label),
+        replay_top_label: readString(record.replay_top_label),
+        original_confidence: readNumber(record.original_confidence),
+        replay_confidence: readNumber(record.replay_confidence),
+        top_label_changed: record.top_label_changed === true,
+        confidence_delta: readNumber(record.confidence_delta),
+        distribution_drift: readNumber(record.distribution_drift),
+        latency_ms: Math.max(0, Math.round(readNumber(record.latency_ms) ?? 0)),
+        warnings: readStringArray(record.warnings),
+        error: readString(record.error),
+    };
+}
+
+function formatNullableLabel(value: string | null): string {
+    return value ? formatReadableLabel(value) : 'Not returned';
 }
 
 function cireBadgeLabel(badge: CireState['reliability_badge']) {
