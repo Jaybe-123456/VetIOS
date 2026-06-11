@@ -15,6 +15,8 @@ import { getSupabaseServer } from '@/lib/supabaseServer';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const DIAGNOSTIC_VERSION = 'learning-consent-diagnostics-v2';
+
 const ConsentScopeSchema = z.enum(['deidentified_training', 'network_learning', 'population_signal']);
 const ConsentBodySchema = z.object({
     consent_scope: ConsentScopeSchema,
@@ -49,6 +51,7 @@ export async function GET(req: Request) {
                 tenant_id: auth.actor.tenantId,
             },
             error: null,
+            diagnostic_version: DIAGNOSTIC_VERSION,
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);
@@ -59,6 +62,7 @@ export async function GET(req: Request) {
                 data: null,
                 error: 'learning_consent_list_failed',
                 detail: error instanceof Error ? error.message : 'Failed to read learning consent status.',
+                diagnostic_version: DIAGNOSTIC_VERSION,
                 request_id: requestId,
             },
             { status: 500 },
@@ -121,6 +125,7 @@ export async function POST(req: Request) {
                 tenant_id: auth.actor.tenantId,
             },
             error: null,
+            diagnostic_version: DIAGNOSTIC_VERSION,
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);
@@ -131,6 +136,7 @@ export async function POST(req: Request) {
                 data: null,
                 error: 'learning_consent_update_failed',
                 detail: error instanceof Error ? error.message : 'Failed to update learning consent.',
+                diagnostic_version: DIAGNOSTIC_VERSION,
                 request_id: requestId,
             },
             { status: 500 },

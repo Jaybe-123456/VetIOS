@@ -5,7 +5,8 @@
  *   - SUPABASE_URL / SUPABASE_ANON_KEY (server-only, preferred)
  *   - NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY (fallback)
  *
- * Prefers SUPABASE_SERVICE_ROLE_KEY for server-side inserts if available.
+ * Prefers SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY for server-side
+ * inserts if available.
  *
  * SUPABASE_DB_POOLER_URL is exposed for direct Postgres clients. The Supabase
  * JS client below still needs the Supabase API URL, not a postgresql:// URL.
@@ -36,16 +37,17 @@ export function getSupabaseServer(): SupabaseClient {
 
     const url = resolveSupabaseApiUrl();
 
-    // Prefer service role key for server-side inserts (bypasses RLS)
+    // Prefer a server secret for server-side inserts (bypasses RLS)
     // Fall back to anon key if service role is not set
     const key =
         process.env.SUPABASE_SERVICE_ROLE_KEY ||
+        process.env.SUPABASE_SECRET_KEY ||
         process.env.SUPABASE_ANON_KEY ||
         process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
     if (!key) {
         throw new Error(
-            'Missing Supabase key: set SUPABASE_SERVICE_ROLE_KEY (preferred for server), ' +
+            'Missing Supabase key: set SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SECRET_KEY (preferred for server), ' +
             'SUPABASE_ANON_KEY, or NEXT_PUBLIC_SUPABASE_ANON_KEY.'
         );
     }
