@@ -5,8 +5,22 @@ describe('tenant learning consent service', () => {
     it('writes a granted deidentified-training consent with actor lineage', async () => {
         const upserts: Array<Record<string, unknown>> = [];
         const events: Array<Record<string, unknown>> = [];
+        const tenantInserts: Array<Record<string, unknown>> = [];
         const client = {
             from: (table: string) => {
+                if (table === 'tenants') {
+                    const tenantQuery: any = {};
+                    tenantQuery.eq = () => tenantQuery;
+                    tenantQuery.maybeSingle = () => Promise.resolve({ data: null, error: null });
+                    return {
+                        select: () => tenantQuery,
+                        insert: (payload: Record<string, unknown>) => {
+                            tenantInserts.push(payload);
+                            return Promise.resolve({ error: null });
+                        },
+                    };
+                }
+
                 if (table === 'tenant_learning_consent_events') {
                     return {
                         insert: (payload: Record<string, unknown>) => {
@@ -71,6 +85,14 @@ describe('tenant learning consent service', () => {
             revoked_by: null,
             revoked_at: null,
             policy_snapshot: { policy: 'clinic_partner_v1' },
+        });
+        expect(tenantInserts[0]).toMatchObject({
+            id: 'tenant_1',
+            settings: {
+                source: 'learning_consent_upsert',
+                tenant_model: 'v1_auth_user_id',
+                created_for_fk_integrity: true,
+            },
         });
         expect(record.status).toBe('granted');
         expect(record.granted_by).toBe('user_1');

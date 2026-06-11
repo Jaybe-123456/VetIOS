@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { TENANT_LEARNING_CONSENTS } from '@/lib/db/schemaContracts';
+import { ensureTenantAnchor } from '@/lib/tenancy/tenantAnchor';
 
 export type LearningConsentScope = 'deidentified_training' | 'network_learning' | 'population_signal';
 export type LearningConsentStatus = 'granted' | 'revoked';
@@ -63,6 +64,11 @@ export async function upsertTenantLearningConsent(
     const C = TENANT_LEARNING_CONSENTS.COLUMNS;
     const now = new Date().toISOString();
     const consentVersion = normalizeText(input.consentVersion) ?? 'vetios_learning_consent_v1';
+    await ensureTenantAnchor(client, {
+        tenantId: input.tenantId,
+        label: input.actorUserId ? `VetIOS clinical workspace ${input.actorUserId.slice(0, 8)}` : null,
+        source: 'learning_consent_upsert',
+    });
     const previous = await findExistingTenantLearningConsent(client, {
         tenantId: input.tenantId,
         consentScope: input.consentScope,
