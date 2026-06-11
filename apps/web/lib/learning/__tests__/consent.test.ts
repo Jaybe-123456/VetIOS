@@ -4,10 +4,41 @@ import { listTenantLearningConsents, upsertTenantLearningConsent } from '../cons
 describe('tenant learning consent service', () => {
     it('writes a granted deidentified-training consent with actor lineage', async () => {
         const upserts: Array<Record<string, unknown>> = [];
+        const events: Array<Record<string, unknown>> = [];
         const client = {
             from: (table: string) => {
+                if (table === 'tenant_learning_consent_events') {
+                    return {
+                        insert: (payload: Record<string, unknown>) => {
+                            events.push(payload);
+                            return Promise.resolve({ error: null });
+                        },
+                    };
+                }
+
                 expect(table).toBe('tenant_learning_consents');
+                const previousQuery: any = {};
+                previousQuery.eq = () => previousQuery;
+                previousQuery.maybeSingle = () => Promise.resolve({
+                        data: {
+                            id: 'consent_previous',
+                            tenant_id: 'tenant_1',
+                            consent_scope: 'deidentified_training',
+                            status: 'revoked',
+                            consent_version: 'vetios_learning_consent_v1',
+                            granted_by: null,
+                            revoked_by: 'user_0',
+                            policy_snapshot: {},
+                            granted_at: null,
+                            revoked_at: 'before',
+                            created_at: 'before',
+                            updated_at: 'before',
+                        },
+                        error: null,
+                    });
+
                 return {
+                    select: () => previousQuery,
                     upsert: (payload: Record<string, unknown>) => {
                         upserts.push(payload);
                         return {
@@ -43,6 +74,17 @@ describe('tenant learning consent service', () => {
         });
         expect(record.status).toBe('granted');
         expect(record.granted_by).toBe('user_1');
+        expect(events[0]).toMatchObject({
+            tenant_id: 'tenant_1',
+            consent_id: 'consent_1',
+            consent_scope: 'deidentified_training',
+            status: 'granted',
+            previous_status: 'revoked',
+            consent_version: 'vetios_learning_consent_v1',
+            actor_user_id: 'user_1',
+            event_source: 'clinical_dataset_network_learning_panel',
+            policy_snapshot: { policy: 'clinic_partner_v1' },
+        });
     });
 
     it('returns a migration-specific error when the consent table is missing', async () => {

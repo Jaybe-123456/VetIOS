@@ -31,6 +31,8 @@ interface RealCaseImportReport {
         consent_required_rejections: number;
         phi_rejections: number;
     };
+    import_job_id?: string | null;
+    import_job_storage_warning?: string | null;
 }
 
 interface ImportApiResponse {
@@ -180,6 +182,16 @@ function ImportReportCard({ report }: { report: RealCaseImportReport }) {
                 <MiniMetric label="Rejected" value={report.summary.rejected} tone={report.summary.rejected > 0 ? 'warn' : 'default'} />
                 <MiniMetric label="Learning" value={report.summary.learning_ready} tone="accent" />
             </div>
+            {report.import_job_id ? (
+                <div className="mt-3 border border-accent/25 bg-accent/10 p-2 text-xs leading-relaxed text-[hsl(0_0%_78%)]">
+                    Import job ledger: <span className="text-accent">{report.import_job_id}</span>
+                </div>
+            ) : null}
+            {report.import_job_storage_warning ? (
+                <div className="mt-3 border border-amber-300/25 bg-amber-300/10 p-2 text-xs leading-relaxed text-amber-100">
+                    {report.import_job_storage_warning}
+                </div>
+            ) : null}
             {report.rejected.length > 0 ? (
                 <div className="mt-3 space-y-2">
                     {report.rejected.slice(0, 4).map((entry, index) => (

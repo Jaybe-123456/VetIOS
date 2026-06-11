@@ -51,15 +51,23 @@ export async function upsertTenantLearningConsent(
     input: {
         tenantId: string;
         actorUserId?: string | null;
+        actorMode?: string | null;
         consentScope: LearningConsentScope;
         status: LearningConsentStatus;
         consentVersion?: string | null;
         policySnapshot?: Record<string, unknown> | null;
+        requestId?: string | null;
+        eventSource?: string | null;
     },
 ): Promise<TenantLearningConsentRecord> {
     const C = TENANT_LEARNING_CONSENTS.COLUMNS;
     const now = new Date().toISOString();
     const consentVersion = normalizeText(input.consentVersion) ?? 'vetios_learning_consent_v1';
+    const previous = await findExistingTenantLearningConsent(client, {
+        tenantId: input.tenantId,
+        consentScope: input.consentScope,
+        consentVersion,
+    });
     const payload: Record<string, unknown> = {
         [C.tenant_id]: input.tenantId,
         [C.consent_scope]: input.consentScope,
@@ -92,7 +100,89 @@ export async function upsertTenantLearningConsent(
         throw new Error(`Failed to update tenant learning consent: ${error?.message ?? 'Unknown error'}`);
     }
 
-    return mapConsentRow(data as Record<string, unknown>);
+    const consent = mapConsentRow(data as Record<string, unknown>);
+    await appendTenantLearningConsentEvent(client, {
+        tenantId: input.tenantId,
+        consentId: consent.id,
+        consentScope: input.consentScope,
+        status: input.status,
+        previousStatus: previous?.status ?? null,
+        consentVersion,
+        actorUserId: input.actorUserId ?? null,
+        actorMode: input.actorMode ?? null,
+        eventSource: input.eventSource ?? 'clinical_dataset_network_learning_panel',
+        requestId: input.requestId ?? null,
+        policySnapshot: input.policySnapshot ?? {},
+    });
+
+    return consent;
+}
+
+export async function appendTenantLearningConsentEvent(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        consentId?: string | null;
+        consentScope: LearningConsentScope;
+        status: LearningConsentStatus;
+        previousStatus?: LearningConsentStatus | null;
+        consentVersion: string;
+        actorUserId?: string | null;
+        actorMode?: string | null;
+        eventSource?: string | null;
+        requestId?: string | null;
+        policySnapshot?: Record<string, unknown> | null;
+    },
+): Promise<void> {
+    const { error } = await client
+        .from('tenant_learning_consent_events')
+        .insert({
+            tenant_id: input.tenantId,
+            consent_id: input.consentId ?? null,
+            consent_scope: input.consentScope,
+            status: input.status,
+            previous_status: input.previousStatus ?? null,
+            consent_version: input.consentVersion,
+            actor_user_id: input.actorUserId ?? null,
+            actor_mode: input.actorMode ?? null,
+            event_source: input.eventSource ?? 'clinical_dataset_network_learning_panel',
+            request_id: input.requestId ?? null,
+            policy_snapshot: input.policySnapshot ?? {},
+        });
+
+    if (error) {
+        if (isMissingTenantLearningConsentEventsTable(error)) {
+            throw new Error(missingConsentEventMigrationMessage());
+        }
+        throw new Error(`Failed to append tenant learning consent event: ${error.message}`);
+    }
+}
+
+async function findExistingTenantLearningConsent(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        consentScope: LearningConsentScope;
+        consentVersion: string;
+    },
+): Promise<TenantLearningConsentRecord | null> {
+    const C = TENANT_LEARNING_CONSENTS.COLUMNS;
+    const { data, error } = await client
+        .from(TENANT_LEARNING_CONSENTS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.consent_scope, input.consentScope)
+        .eq(C.consent_version, input.consentVersion)
+        .maybeSingle();
+
+    if (error) {
+        if (isMissingTenantLearningConsentsTable(error)) {
+            throw new Error(missingConsentMigrationMessage());
+        }
+        throw new Error(`Failed to read previous tenant learning consent: ${error.message}`);
+    }
+
+    return data ? mapConsentRow(data as Record<string, unknown>) : null;
 }
 
 function mapConsentRow(row: Record<string, unknown>): TenantLearningConsentRecord {
@@ -130,6 +220,18 @@ function isMissingTenantLearningConsentsTable(error: { code?: string; message?: 
         || message.includes('schema cache');
 }
 
+function isMissingTenantLearningConsentEventsTable(error: { code?: string; message?: string }): boolean {
+    const message = error.message?.toLowerCase() ?? '';
+    return error.code === '42P01'
+        || error.code === 'PGRST116'
+        || message.includes('tenant_learning_consent_events')
+        || message.includes('schema cache');
+}
+
 function missingConsentMigrationMessage(): string {
     return 'Network learning consent storage is not installed. Apply supabase/migrations/20260609010000_tenant_learning_consents_repair.sql in Supabase, then reload the schema.';
+}
+
+function missingConsentEventMigrationMessage(): string {
+    return 'Network learning consent event ledger is not installed. Apply supabase/migrations/20260611011000_dataset_consent_and_import_ledgers.sql in Supabase, then reload the schema.';
 }

@@ -5,6 +5,13 @@ import { apiGuard } from '@/lib/http/apiGuard';
 import { formatZodErrors } from '@/lib/http/schemas';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
+import {
+    completeClinicalCaseImportJob,
+    createClinicalCaseImportJob,
+    hashImportPayload,
+    missingImportJobStorageMessage,
+    type ClinicalCaseImportJobRecord,
+} from '@/lib/dataset/importJobs';
 import { importRealClinicalCases, type RealCaseImportRow } from '@/lib/dataset/realCaseImport';
 import { listTenantLearningConsents } from '@/lib/learning/consent';
 import { getSupabaseServer } from '@/lib/supabaseServer';
@@ -92,7 +99,30 @@ export async function POST(req: Request) {
         );
     }
 
+    const payloadHash = hashImportPayload(parsed.data);
+    let importJob: ClinicalCaseImportJobRecord | null = null;
+    let importJobStorageWarning: string | null = null;
+
     try {
+        try {
+            importJob = await createClinicalCaseImportJob(supabase, {
+                tenantId: auth.actor.tenantId,
+                userId: auth.actor.userId,
+                clinicId: parsed.data.clinic_id ?? null,
+                sourceName: parsed.data.source_name ?? null,
+                dryRun: parsed.data.dry_run,
+                status: parsed.data.dry_run ? 'validating' : 'importing',
+                requestedCases: parsed.data.cases.length,
+                payloadHash,
+            });
+        } catch (jobError) {
+            if (jobError instanceof Error && jobError.message === missingImportJobStorageMessage()) {
+                importJobStorageWarning = jobError.message;
+            } else {
+                throw jobError;
+            }
+        }
+
         const consents = await listTenantLearningConsents(supabase, auth.actor.tenantId, 'deidentified_training');
         const tenantConsentGranted = consents.some((consent) => consent.status === 'granted');
         const report = await importRealClinicalCases(supabase, {
@@ -105,9 +135,29 @@ export async function POST(req: Request) {
             tenantConsentGranted,
         });
 
+        if (importJob) {
+            try {
+                importJob = await completeClinicalCaseImportJob(supabase, {
+                    tenantId: auth.actor.tenantId,
+                    jobId: importJob.id,
+                    status: parsed.data.dry_run ? 'validated' : 'completed',
+                    report: report as unknown as Record<string, unknown>,
+                    summary: report.summary,
+                });
+            } catch (jobError) {
+                importJobStorageWarning = jobError instanceof Error
+                    ? jobError.message
+                    : 'Clinical case import completed, but import job finalization failed.';
+            }
+        }
+
         const response = NextResponse.json(
             {
-                data: report,
+                data: {
+                    ...report,
+                    import_job_id: importJob?.id ?? null,
+                    import_job_storage_warning: importJobStorageWarning,
+                },
                 request_id: requestId,
             },
             { status: report.summary.accepted > 0 || parsed.data.dry_run ? 200 : 422 },
@@ -115,6 +165,15 @@ export async function POST(req: Request) {
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
     } catch (error) {
+        if (importJob) {
+            await completeClinicalCaseImportJob(supabase, {
+                tenantId: auth.actor.tenantId,
+                jobId: importJob.id,
+                status: 'failed',
+                errorMessage: error instanceof Error ? error.message : 'Unknown real-case import error.',
+            }).catch(() => null);
+        }
+
         return NextResponse.json(
             {
                 error: 'real_case_import_failed',

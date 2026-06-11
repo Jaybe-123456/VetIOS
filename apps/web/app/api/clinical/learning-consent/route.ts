@@ -100,9 +100,12 @@ export async function POST(req: Request) {
         const consent = await upsertTenantLearningConsent(supabase, {
             tenantId: auth.actor.tenantId,
             actorUserId: auth.actor.userId,
+            actorMode: auth.actor.authMode,
             consentScope: parsed.data.consent_scope,
             status: parsed.data.status,
             consentVersion: parsed.data.consent_version,
+            requestId,
+            eventSource: 'clinical_dataset_network_learning_panel',
             policySnapshot: {
                 source: 'clinical_dataset_network_learning_panel',
                 actor_mode: auth.actor.authMode,
