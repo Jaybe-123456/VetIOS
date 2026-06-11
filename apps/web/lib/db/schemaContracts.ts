@@ -52,6 +52,33 @@ export const AI_INFERENCE_EVENTS = {
 } as const;
 
 // ─── clinical_outcome_events ────────────────────────────────────────────────
+export const INFERENCE_EXECUTION_TRACE_EVENTS = {
+    TABLE: 'inference_execution_trace_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        request_id: 'request_id',
+        trace_id: 'trace_id',
+        inference_event_id: 'inference_event_id',
+        stage_key: 'stage_key',
+        stage_label: 'stage_label',
+        stage_status: 'stage_status',
+        started_at: 'started_at',
+        completed_at: 'completed_at',
+        latency_ms: 'latency_ms',
+        source_module: 'source_module',
+        model_name: 'model_name',
+        model_version: 'model_version',
+        provider_name: 'provider_name',
+        ranker: 'ranker',
+        schema_version: 'schema_version',
+        input_digest: 'input_digest',
+        output_digest: 'output_digest',
+        stage_metadata: 'stage_metadata',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const CLINICAL_CASES = {
     TABLE: 'clinical_cases',
     COLUMNS: {

@@ -29,6 +29,11 @@ import {
 } from '@/lib/api/corePipeline';
 import type { InputSignature } from '@/lib/vetios-inference';
 import { recordProductUsageEvent } from '@/lib/billing/entitlements';
+import {
+    createInferenceExecutionTraceContext,
+    type InferenceExecutionTraceContext,
+    type TraceSupabaseClient,
+} from '@/lib/inference/executionTrace';
 
 export const runtime = 'nodejs';
 
@@ -88,6 +93,7 @@ export async function POST(req: Request) {
     const startTime = Date.now();
     let requestId: string | null = null;
     let tenantId: string | null = null;
+    let trace: InferenceExecutionTraceContext | null = null;
     const supabase = getSupabaseServer();
     const auth = await resolveClinicalApiActor(req, {
         client: supabase,
@@ -98,7 +104,9 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    tenantId = auth.actor.tenantId;
+    const actor = auth.actor;
+    const traceStore = supabase as unknown as TraceSupabaseClient;
+    tenantId = actor.tenantId;
     const rateLimit = checkRateLimit(tenantId);
     if (!rateLimit.allowed) {
         return NextResponse.json(
@@ -149,10 +157,36 @@ export async function POST(req: Request) {
         );
     }
     requestId = parsed.data.request_id;
+    trace = createInferenceExecutionTraceContext({
+        tenantId,
+        requestId,
+        sourceModule: 'clinical_api',
+        modelName: parsed.data.model.name,
+        modelVersion: parsed.data.model.version,
+        providerName: 'vetios-clinical-engine',
+        schemaVersion: 'v1',
+        inputDigestSource: parsed.data.input.input_signature,
+    });
+    trace.recordCompleted('request_validated', 'Request validated', {
+        auth_mode: actor.authMode,
+        scope_count: actor.scopes.length,
+        rate_limit_remaining: rateLimit.remaining,
+        feature_count: parsed.data.input.input_signature.symptoms.length,
+        has_metadata: Boolean(parsed.data.input.input_signature.metadata),
+        quantum_requested: parsed.data.use_quantum === true,
+    });
 
-    const cached = await loadCachedInferenceEvent(supabase, tenantId, requestId);
+    const cached = await trace.measure(
+        'idempotency_lookup',
+        'Idempotency lookup',
+        () => loadCachedInferenceEvent(supabase, tenantId, requestId),
+    );
     if (cached.error) {
         const errorCode = readErrorCode(cached.error, 'inference_idempotency_lookup_failed');
+        trace.recordFailed('idempotency_lookup_result', 'Idempotency lookup result', cached.error, {
+            error_code: errorCode,
+        });
+        await trace.flush(traceStore);
         logSupabaseFailure({
             route: '/api/inference',
             requestId,
@@ -171,6 +205,16 @@ export async function POST(req: Request) {
         return retryAfterResponse({ requestId, errorCode, detail: readErrorMessage(cached.error) });
     }
     if (cached.data) {
+        const cachedRecord = cached.data as Record<string, unknown>;
+        trace.recordCompleted('idempotency_cache_hit', 'Cached inference returned', {
+            cache_hit: true,
+            cached_at_available: Boolean(cachedRecord.created_at),
+        });
+        await trace.flush(traceStore, {
+            inferenceEventId: readString(cachedRecord.id),
+            ranker: readRanker(readString(cachedRecord.ranker)),
+            outputDigestSource: cachedRecord.output_payload,
+        });
         logApiCompleted({
             event: 'inference.completed',
             route: '/api/inference',
@@ -190,9 +234,14 @@ export async function POST(req: Request) {
         const simulationContext = resolveSimulationContext(
             req,
             parsed.data.input.input_signature as InputSignature,
-            auth.actor,
+            actor,
         );
         if (!simulationContext.ok) {
+            trace.recordFailed('simulation_context', 'Simulation context validation', new Error(simulationContext.code), {
+                error_code: simulationContext.code,
+                status: simulationContext.status,
+            });
+            await trace.flush(traceStore);
             logApiCompleted({
                 event: 'inference.completed',
                 route: '/api/inference',
@@ -206,32 +255,66 @@ export async function POST(req: Request) {
                 { status: simulationContext.status },
             );
         }
-
-        const enrichedInputSignature = await enrichInputWithGraphPriors(
-            supabase,
-            parsed.data.input.input_signature as InputSignature,
-        );
-        const quantumRanking = await runOptionalQuantumRanking({
-            enabledByRequest: parsed.data.use_quantum === true,
-            inputSignature: enrichedInputSignature,
+        trace.recordCompleted('simulation_context', 'Simulation context validation', {
+            synthetic: simulationContext.isSynthetic,
+            simulation_linked: Boolean(simulationContext.simulationId),
+            has_parent_event: Boolean(simulationContext.parentInferenceEventId),
         });
 
-        const result = await runInference({
-            tenantId,
-            requestId,
-            supabase,
-            model: parsed.data.model,
-            inputSignature: enrichedInputSignature,
-            persist: true,
-            userId: auth.actor.userId,
-            sourceModule: simulationContext.simulationId ? 'simulation_api' : 'clinical_api',
-            simulationId: simulationContext.simulationId,
-            isSynthetic: simulationContext.isSynthetic,
-            simulationAgentIndex: simulationContext.agentIndex,
-            simulationRequestIndex: simulationContext.requestIndex,
-            parentInferenceEventId: simulationContext.parentInferenceEventId,
-            ranker: quantumRanking.ranker,
-            quantumResult: quantumRanking.quantumResult,
+        const enrichedInputSignature = await trace.measure(
+            'graph_priors',
+            'Knowledge graph prior enrichment',
+            () => enrichInputWithGraphPriors(
+                supabase,
+                parsed.data.input.input_signature as InputSignature,
+            ),
+            { graph_priors_enabled: true },
+        );
+        const quantumRanking = await trace.measure(
+            'quantum_ranking',
+            'Optional quantum ranking',
+            () => runOptionalQuantumRanking({
+                enabledByRequest: parsed.data.use_quantum === true,
+                inputSignature: enrichedInputSignature,
+            }),
+            { requested: parsed.data.use_quantum === true },
+        );
+
+        const result = await trace.measure(
+            'clinical_inference_persist',
+            'Clinical inference and persistence',
+            () => runInference({
+                tenantId,
+                requestId,
+                supabase,
+                model: parsed.data.model,
+                inputSignature: enrichedInputSignature,
+                persist: true,
+                userId: actor.userId,
+                sourceModule: simulationContext.simulationId ? 'simulation_api' : 'clinical_api',
+                simulationId: simulationContext.simulationId,
+                isSynthetic: simulationContext.isSynthetic,
+                simulationAgentIndex: simulationContext.agentIndex,
+                simulationRequestIndex: simulationContext.requestIndex,
+                parentInferenceEventId: simulationContext.parentInferenceEventId,
+                ranker: quantumRanking.ranker,
+                quantumResult: quantumRanking.quantumResult,
+            }),
+            {
+                persist: true,
+                source_module: simulationContext.simulationId ? 'simulation_api' : 'clinical_api',
+                quantum_ranker: quantumRanking.ranker,
+            },
+        );
+        trace.recordCompleted('response_build', 'Inference response built', {
+            ranker: result.ranker,
+            latency_ms: result.latency_ms,
+            cire_state: result.cire.safety_state,
+        });
+        await trace.flush(traceStore, {
+            inferenceEventId: result.inference_event_id,
+            ranker: result.ranker,
+            outputDigestSource: result.output_payload,
         });
 
         const response = NextResponse.json({
@@ -260,7 +343,7 @@ export async function POST(req: Request) {
         if (!simulationContext.isSynthetic) {
             await recordProductUsageEvent({
                 tenantId,
-                userId: auth.actor.userId,
+                userId: actor.userId,
                 eventType: 'diagnosis',
                 source: 'inference_api',
                 requestId,
@@ -282,6 +365,10 @@ export async function POST(req: Request) {
         });
         return response;
     } catch (error) {
+        trace?.recordFailed('inference_request', 'Inference request failed', error, {
+            elapsed_ms: Date.now() - startTime,
+        });
+        await trace?.flush(traceStore);
         if (error instanceof SupabaseWriteError) {
             await recordFailedInferenceTelemetry({
                 supabase,
@@ -613,6 +700,10 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function readRanker(value: unknown): 'classical' | 'quantum' | 'hybrid' | null {
+    return value === 'classical' || value === 'quantum' || value === 'hybrid' ? value : null;
 }
 
 function isInferenceUnavailableError(error: unknown): boolean {

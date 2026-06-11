@@ -72,6 +72,19 @@ interface CireState {
     incident_id?: string | null;
 }
 
+interface ExecutionTraceEvent {
+    id: string;
+    stage_key: string;
+    stage_label: string;
+    stage_status: 'completed' | 'skipped' | 'failed';
+    latency_ms: number;
+    model_name: string | null;
+    model_version: string | null;
+    ranker: 'classical' | 'quantum' | 'hybrid' | null;
+    created_at: string;
+    stage_metadata: Record<string, unknown>;
+}
+
 interface CorrectionData {
     hallucinated_signals_removed: string[];
     penalties_applied: string[];
@@ -141,6 +154,8 @@ interface InferenceState {
     labResults: UploadedArtifact[];
     cire: CireState | null;
     cireMessage: string | null;
+    executionTrace: ExecutionTraceEvent[];
+    executionTraceMessage: string | null;
     metrics: {
         inferenceTimeMs: number;
         confidenceHistory: { value: number }[];
@@ -174,6 +189,8 @@ export default function InferenceConsole() {
         labResults: [],
         cire: null,
         cireMessage: null,
+        executionTrace: [],
+        executionTraceMessage: null,
         metrics: null,
         logs: [],
     });
@@ -430,6 +447,8 @@ export default function InferenceConsole() {
                     errorMessage: null,
                     cire: null,
                     cireMessage: null,
+                    executionTrace: [],
+                    executionTraceMessage: null,
                 }));
                 setOutcomeState({ status: 'idle' });
                 return;
@@ -490,6 +509,8 @@ export default function InferenceConsole() {
                 errorMessage: null,
                 cire: null,
                 cireMessage: null,
+                executionTrace: [],
+                executionTraceMessage: null,
             }));
             setOutcomeState({ status: 'idle' });
         } catch (err: unknown) {
@@ -506,6 +527,8 @@ export default function InferenceConsole() {
             status: 'computing',
             normalizedInput: finalInput,
             errorMessage: null,
+            executionTrace: [],
+            executionTraceMessage: null,
             logs: [{
                 id: Math.random().toString(16).slice(2),
                 timestamp: new Date().toLocaleTimeString(),
@@ -611,6 +634,10 @@ export default function InferenceConsole() {
             const inferenceEventId = extractUuidFromText(result.inference_event_id);
             if (!inferenceEventId) {
                 throw new Error('Inference succeeded but returned an invalid inference_event_id.');
+            }
+            const traceResult = await fetchInferenceExecutionTrace(inferenceEventId);
+            if (traceResult.message) {
+                pushLog(`TRACE LEDGER: ${traceResult.message}`, 'warn');
             }
 
             const dataPayload = result.data && typeof result.data === 'object'
@@ -721,6 +748,8 @@ export default function InferenceConsole() {
                 labResults: [],
                 cire,
                 cireMessage: null,
+                executionTrace: traceResult.events,
+                executionTraceMessage: traceResult.message,
                 metrics: {
                     inferenceTimeMs: Math.round(measuredLatencyMs),
                     confidenceHistory: generateFlatHistory(apiConfidence),
@@ -736,7 +765,15 @@ export default function InferenceConsole() {
     }
 
     function handleCancelPreview() {
-        setState(prev => ({ ...prev, status: 'idle', normalizedInput: null, cire: null, cireMessage: null }));
+        setState(prev => ({
+            ...prev,
+            status: 'idle',
+            normalizedInput: null,
+            cire: null,
+            cireMessage: null,
+            executionTrace: [],
+            executionTraceMessage: null,
+        }));
     }
 
     async function handleCopyEventId() {
@@ -1236,6 +1273,36 @@ export default function InferenceConsole() {
                             </div>
                         ) : (
                             <>
+                                <ConsoleCard title="Execution Trace Ledger" className="border-cyan-400/30">
+                                    {state.executionTrace.length > 0 ? (
+                                        <div className="space-y-2">
+                                            {state.executionTrace.map((event, index) => (
+                                                <div
+                                                    key={event.id || `${event.stage_key}-${index}`}
+                                                    className="grid grid-cols-[36px,1fr,88px,74px] gap-3 items-center border border-grid bg-black/20 px-3 py-2 font-mono text-[11px]"
+                                                >
+                                                    <span className="text-muted tabular-nums">{String(index + 1).padStart(2, '0')}</span>
+                                                    <div className="min-w-0">
+                                                        <div className="truncate text-foreground">{event.stage_label || formatReadableLabel(event.stage_key)}</div>
+                                                        <div className="truncate text-[9px] uppercase tracking-widest text-muted">
+                                                            {event.stage_key}
+                                                            {event.ranker ? ` // ${event.ranker}` : ''}
+                                                        </div>
+                                                    </div>
+                                                    <span className={`uppercase tracking-widest text-[10px] ${traceStatusClass(event.stage_status)}`}>
+                                                        {event.stage_status}
+                                                    </span>
+                                                    <span className="text-right text-accent tabular-nums">{event.latency_ms}ms</span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="text-muted font-mono text-xs border border-dashed border-grid p-4">
+                                            {state.executionTraceMessage ?? 'No execution trace rows have been recorded for this inference event yet.'}
+                                        </div>
+                                    )}
+                                </ConsoleCard>
+
                                 {state.multisystemAssessment && (
                                     <ConsoleCard title="Multisystem Inference Run" className="border-accent/40">
                                         <div className="grid grid-cols-1 md:grid-cols-[1fr,1.4fr] gap-5">
@@ -1888,6 +1955,75 @@ function buildClinicalInfrastructureSnapshot(
             { label: 'Update Policy', value: readString(causalMemory.update_policy) ?? 'Update confidence once outcome ground truth is submitted.' },
         ],
     };
+}
+
+async function fetchInferenceExecutionTrace(
+    inferenceEventId: string,
+): Promise<{ events: ExecutionTraceEvent[]; message: string | null }> {
+    try {
+        const response = await fetchWithTimeout(`/api/inference/${encodeURIComponent(inferenceEventId)}/trace`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+        }, {
+            timeoutMs: 4_000,
+            timeoutMessage: 'Trace ledger did not respond within 4 seconds.',
+        });
+        const text = await response.text();
+        let payload: unknown;
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            return {
+                events: [],
+                message: `Trace API returned non-JSON HTTP ${response.status}.`,
+            };
+        }
+
+        if (!response.ok) {
+            return {
+                events: [],
+                message: formatApiError(payload, `Trace ledger unavailable (HTTP ${response.status})`),
+            };
+        }
+
+        const record = asRecord(payload);
+        const events = readRecordArray(record?.data)
+            .map(normalizeExecutionTraceEvent)
+            .filter((event): event is ExecutionTraceEvent => Boolean(event));
+
+        return { events, message: events.length > 0 ? null : 'Trace ledger returned no rows for this event.' };
+    } catch (error) {
+        return {
+            events: [],
+            message: error instanceof Error ? error.message : 'Trace ledger request failed.',
+        };
+    }
+}
+
+function normalizeExecutionTraceEvent(value: Record<string, unknown>): ExecutionTraceEvent | null {
+    const stageKey = readString(value.stage_key);
+    if (!stageKey) return null;
+    return {
+        id: readString(value.id) ?? stageKey,
+        stage_key: stageKey,
+        stage_label: readString(value.stage_label) ?? formatReadableLabel(stageKey),
+        stage_status: value.stage_status === 'completed' || value.stage_status === 'skipped' || value.stage_status === 'failed'
+            ? value.stage_status
+            : 'failed',
+        latency_ms: Math.max(0, Math.round(readNumber(value.latency_ms) ?? 0)),
+        model_name: readString(value.model_name),
+        model_version: readString(value.model_version),
+        ranker: value.ranker === 'classical' || value.ranker === 'quantum' || value.ranker === 'hybrid' ? value.ranker : null,
+        created_at: readString(value.created_at) ?? '',
+        stage_metadata: asRecord(value.stage_metadata) ?? {},
+    };
+}
+
+function traceStatusClass(status: ExecutionTraceEvent['stage_status']) {
+    if (status === 'completed') return 'text-green-400';
+    if (status === 'skipped') return 'text-yellow-400';
+    return 'text-red-400';
 }
 
 function cireBadgeLabel(badge: CireState['reliability_badge']) {
