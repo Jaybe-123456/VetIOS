@@ -334,28 +334,39 @@ export default function DashboardControlPlaneClient() {
         };
     }, [pageVisible, liveStreamsEnabled]);
 
-    const activeAlerts = (snapshot?.alerts ?? []).filter((alert) => !alert.resolved);
+    const systemHealth = snapshot?.system_health ?? null;
+    const diagnostics = snapshot?.diagnostics ?? null;
+    const decisionEngine = snapshot?.decision_engine ?? null;
+    const configuration = snapshot?.configuration ?? null;
+    const governanceFamilies = Array.isArray(snapshot?.governance?.families) ? snapshot.governance.families : [];
+    const dashboardLens = snapshot?.dashboard ?? null;
+    const latencyHistory = Array.isArray(dashboardLens?.latency_history) ? dashboardLens.latency_history : [];
+    const driftHistory = Array.isArray(dashboardLens?.drift_history) ? dashboardLens.drift_history : [];
+    const telemetryLatency = Array.isArray(telemetrySnapshot?.charts?.latency) ? telemetrySnapshot.charts.latency : [];
+    const telemetryDrift = Array.isArray(telemetrySnapshot?.charts?.drift) ? telemetrySnapshot.charts.drift : [];
+    const activeAlerts = (Array.isArray(snapshot?.alerts) ? snapshot.alerts : []).filter((alert) => !alert.resolved);
     const criticalAlertCount = activeAlerts.filter((alert) => alert.severity === 'critical').length;
     const warningAlertCount = activeAlerts.filter((alert) => alert.severity === 'warning').length;
-    const networkHealthScore = topologySnapshot?.network_health_score ?? snapshot?.system_health.network_health_score ?? null;
-    const telemetryPulse = snapshot?.system_health.event_ingestion_rate ?? null;
-    const dashboardLens = snapshot?.dashboard ?? null;
+    const networkHealthScore = topologySnapshot?.network_health_score ?? systemHealth?.network_health_score ?? null;
+    const telemetryPulse = systemHealth?.event_ingestion_rate ?? null;
     const topologySummary = topologySnapshot
         ? topologySnapshot.summary
-        : snapshot
+        : diagnostics
             ? {
-                where_failing: snapshot.diagnostics.where_failing,
-                root_cause: snapshot.diagnostics.root_cause,
-                impact: snapshot.diagnostics.impact,
-                next_action: snapshot.diagnostics.next_action,
+                where_failing: diagnostics.where_failing,
+                root_cause: diagnostics.root_cause,
+                impact: diagnostics.impact,
+                next_action: diagnostics.next_action,
             }
             : null;
-    const governanceFamilies = snapshot?.governance.families ?? [];
     const routingOverview = buildRoutingOverview(topologySnapshot, dashboardLens?.routing ?? null, governanceFamilies);
-    const recentLogs = (snapshot?.logs ?? []).slice(0, 8);
-    const pipelineStates = snapshot?.pipelines ?? [];
+    const recentLogs = (Array.isArray(snapshot?.logs) ? snapshot.logs : []).slice(0, 8);
+    const pipelineStates = Array.isArray(snapshot?.pipelines) ? snapshot.pipelines : [];
     const loadingWithoutData = loading && !snapshot && !telemetrySnapshot && !topologySnapshot;
     const liveMetricPending = !liveDataError && evaluationMetrics == null;
+    const inferenceMetrics = evaluationMetrics?.inference ?? null;
+    const simulationMetrics = evaluationMetrics?.simulation ?? null;
+    const cireSafetyDistribution = cireStatus?.safety_state_distribution ?? null;
     const cireHistoryChart = cireHistory.map((point) => ({
         time: new Date(point.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         value: point.phi_mean,
@@ -525,29 +536,29 @@ export default function DashboardControlPlaneClient() {
             <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-4 lg:gap-6 mb-4 sm:mb-6">
                 <MetricCard
                     label="Total Inferences"
-                    value={formatLiveMetric(evaluationMetrics?.inference.total, liveMetricPending, liveDataError)}
+                    value={formatLiveMetric(inferenceMetrics?.total, liveMetricPending, liveDataError)}
                     tone="accent"
                     icon={<Gauge className="w-4 h-4" />}
                     detail="Tenant-scoped inference events"
                 />
                 <MetricCard
                     label="Mean Confidence"
-                    value={formatLivePercent(evaluationMetrics?.inference.mean_confidence, liveMetricPending, liveDataError)}
-                    tone={evaluationMetrics && evaluationMetrics.inference.mean_confidence < 0.4 ? 'warning' : 'accent'}
+                    value={formatLivePercent(inferenceMetrics?.mean_confidence, liveMetricPending, liveDataError)}
+                    tone={inferenceMetrics && inferenceMetrics.mean_confidence < 0.4 ? 'warning' : 'accent'}
                     icon={<Activity className="w-4 h-4" />}
                     detail="Average model confidence"
                 />
                 <MetricCard
                     label="Outcomes Resolved"
-                    value={formatLiveMetric(evaluationMetrics?.inference.outcomes_resolved, liveMetricPending, liveDataError)}
+                    value={formatLiveMetric(inferenceMetrics?.outcomes_resolved, liveMetricPending, liveDataError)}
                     tone="accent"
                     icon={<Bot className="w-4 h-4" />}
                     detail="Linked ground-truth outcomes"
                 />
                 <MetricCard
                     label="Simulation Pass Rate"
-                    value={formatLivePercent(evaluationMetrics?.simulation.mean_pass_rate, liveMetricPending, liveDataError)}
-                    tone={evaluationMetrics && evaluationMetrics.simulation.mean_pass_rate < 0.7 ? 'warning' : 'accent'}
+                    value={formatLivePercent(simulationMetrics?.mean_pass_rate, liveMetricPending, liveDataError)}
+                    tone={simulationMetrics && simulationMetrics.mean_pass_rate < 0.7 ? 'warning' : 'accent'}
                     icon={<AlertTriangle className="w-4 h-4" />}
                     detail="Non-hold simulation variants"
                 />
@@ -566,24 +577,24 @@ export default function DashboardControlPlaneClient() {
                 </div>
 
                 <ConsoleCard title="Autonomous Posture" collapsible>
-                    <DataRow label="Database Health" value={<StateText tone={healthStatus?.db === 'ok' ? 'accent' : healthStatus ? 'danger' : 'muted'}>{healthStatus?.db.toUpperCase() ?? (liveDataError ? '\u2014' : 'LOADING')}</StateText>} />
-                    <DataRow label="Inference Health" value={<StateText tone={healthStatus?.inference === 'ok' ? 'accent' : healthStatus ? 'danger' : 'muted'}>{healthStatus?.inference.toUpperCase() ?? (liveDataError ? '\u2014' : 'LOADING')}</StateText>} />
-                    <DataRow label="Decision Mode" value={<StateText tone={snapshot?.decision_engine.mode === 'autonomous' ? 'danger' : snapshot?.decision_engine.mode === 'assist' ? 'warning' : 'accent'}>{snapshot?.decision_engine.mode.toUpperCase() ?? 'NO DATA'}</StateText>} />
-                    <DataRow label="Safe Mode" value={snapshot?.decision_engine.safe_mode_enabled ? 'ENABLED' : snapshot ? 'DISABLED' : 'NO DATA'} />
-                    <DataRow label="Simulation" value={snapshot?.configuration.simulation_enabled ? 'ENABLED' : snapshot ? 'DISABLED' : 'NO DATA'} />
-                    <DataRow label="Active Decisions" value={snapshot ? String(snapshot.decision_engine.active_decision_count) : 'NO DATA'} />
-                    <DataRow label="Latest Trigger" value={snapshot?.decision_engine.latest_trigger ?? (snapshot ? 'STANDBY' : 'NO DATA')} />
-                    <DataRow label="Latest Action" value={snapshot?.decision_engine.latest_action ?? (snapshot ? 'No action yet' : 'NO DATA')} />
-                    <DataRow label="Safe Execute Threshold" value={snapshot ? `${(snapshot.decision_engine.auto_execute_confidence_threshold * 100).toFixed(0)}%` : 'NO DATA'} />
+                    <DataRow label="Database Health" value={<StateText tone={healthStatus?.db === 'ok' ? 'accent' : healthStatus ? 'danger' : 'muted'}>{healthStatus?.db?.toUpperCase() ?? (liveDataError ? '\u2014' : 'LOADING')}</StateText>} />
+                    <DataRow label="Inference Health" value={<StateText tone={healthStatus?.inference === 'ok' ? 'accent' : healthStatus ? 'danger' : 'muted'}>{healthStatus?.inference?.toUpperCase() ?? (liveDataError ? '\u2014' : 'LOADING')}</StateText>} />
+                    <DataRow label="Decision Mode" value={<StateText tone={decisionEngine?.mode === 'autonomous' ? 'danger' : decisionEngine?.mode === 'assist' ? 'warning' : 'accent'}>{decisionEngine?.mode?.toUpperCase() ?? 'NO DATA'}</StateText>} />
+                    <DataRow label="Safe Mode" value={decisionEngine?.safe_mode_enabled ? 'ENABLED' : decisionEngine ? 'DISABLED' : 'NO DATA'} />
+                    <DataRow label="Simulation" value={configuration?.simulation_enabled ? 'ENABLED' : configuration ? 'DISABLED' : 'NO DATA'} />
+                    <DataRow label="Active Decisions" value={decisionEngine ? String(decisionEngine.active_decision_count ?? 0) : 'NO DATA'} />
+                    <DataRow label="Latest Trigger" value={decisionEngine?.latest_trigger ?? (decisionEngine ? 'STANDBY' : 'NO DATA')} />
+                    <DataRow label="Latest Action" value={decisionEngine?.latest_action ?? (decisionEngine ? 'No action yet' : 'NO DATA')} />
+                    <DataRow label="Safe Execute Threshold" value={typeof decisionEngine?.auto_execute_confidence_threshold === 'number' ? `${(decisionEngine.auto_execute_confidence_threshold * 100).toFixed(0)}%` : 'NO DATA'} />
                 </ConsoleCard>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4 lg:gap-6 mb-4 sm:mb-6">
                 <ConsoleCard title="Latency Envelope (p95 window input)" className="h-[200px] sm:h-[320px]" collapsible>
-                    {(telemetrySnapshot && telemetrySnapshot.charts.latency.length > 0) || (dashboardLens && dashboardLens.latency_history.length > 0) ? (
+                    {telemetryLatency.length > 0 || latencyHistory.length > 0 ? (
                         <div className="flex-1 -mx-2 sm:-mx-4 h-full">
                             <TelemetryChart
-                                data={telemetrySnapshot?.charts.latency.length ? telemetrySnapshot.charts.latency : (dashboardLens?.latency_history ?? [])}
+                                data={telemetryLatency.length ? telemetryLatency : latencyHistory}
                                 color="#00ff41"
                             />
                         </div>
@@ -593,10 +604,10 @@ export default function DashboardControlPlaneClient() {
                 </ConsoleCard>
 
                 <ConsoleCard title="Outcome Drift Signal" className="h-[200px] sm:h-[320px]" collapsible>
-                    {(telemetrySnapshot && telemetrySnapshot.charts.drift.length > 0) || (dashboardLens && dashboardLens.drift_history.length > 0) ? (
+                    {telemetryDrift.length > 0 || driftHistory.length > 0 ? (
                         <div className="flex-1 -mx-2 sm:-mx-4 h-full">
                             <TelemetryChart
-                                data={telemetrySnapshot?.charts.drift.length ? telemetrySnapshot.charts.drift : (dashboardLens?.drift_history ?? [])}
+                                data={telemetryDrift.length ? telemetryDrift : driftHistory}
                                 color="#ff3333"
                             />
                         </div>
@@ -619,7 +630,7 @@ export default function DashboardControlPlaneClient() {
                                     {pipeline.last_successful_event ? `Last success ${new Date(pipeline.last_successful_event).toLocaleString()}` : 'NO DATA'}
                                 </div>
                                 <div className="mt-1 font-mono text-[10px] text-muted">
-                                    {pipeline.error_logs.length > 0 ? pipeline.error_logs[0] : 'No active pipeline errors.'}
+                                    {Array.isArray(pipeline.error_logs) && pipeline.error_logs.length > 0 ? pipeline.error_logs[0] : 'No active pipeline errors.'}
                                 </div>
                             </div>
                         ))
@@ -731,28 +742,28 @@ export default function DashboardControlPlaneClient() {
                     <div className="grid grid-cols-2 sm:grid-cols-2 xl:grid-cols-4 gap-2 sm:gap-4 lg:gap-6">
                         <MetricCard
                             label="Phi Mean"
-                            value={cireStatus ? cireStatus.phi_population_mean.toFixed(3) : 'NO DATA'}
+                            value={formatOptionalFixed(cireStatus?.phi_population_mean, 3)}
                             tone="accent"
                             icon={<ShieldAlert className="w-4 h-4" />}
                             detail="Last 100 inferences"
                         />
                         <MetricCard
                             label="Rolling CPS"
-                            value={cireStatus ? cireStatus.rolling_cps.toFixed(3) : 'NO DATA'}
+                            value={formatOptionalFixed(cireStatus?.rolling_cps, 3)}
                             tone={cireStatus && cireStatus.rolling_cps >= 0.75 ? 'danger' : cireStatus && cireStatus.rolling_cps >= 0.5 ? 'warning' : 'accent'}
                             icon={<Gauge className="w-4 h-4" />}
                             detail="Tenant collapse proximity"
                         />
                         <MetricCard
                             label="Incidents 7D"
-                            value={cireStatus ? String(cireStatus.incident_count_7d) : 'NO DATA'}
+                            value={typeof cireStatus?.incident_count_7d === 'number' ? String(cireStatus.incident_count_7d) : 'NO DATA'}
                             tone={cireStatus && cireStatus.incident_count_7d > 0 ? 'warning' : 'accent'}
                             icon={<AlertTriangle className="w-4 h-4" />}
                             detail="Critical + blocked snapshots"
                         />
                         <MetricCard
                             label="Calibration"
-                            value={cireStatus ? cireStatus.calibration_status.toUpperCase() : 'NO DATA'}
+                            value={cireStatus?.calibration_status?.toUpperCase() ?? 'NO DATA'}
                             tone={cireStatus?.calibration_status === 'calibrated' ? 'accent' : 'warning'}
                             icon={<Cpu className="w-4 h-4" />}
                             detail={cireStatus?.last_calibrated_at ? `Last ${new Date(cireStatus.last_calibrated_at).toLocaleString()}` : 'No calibration yet'}
@@ -772,10 +783,10 @@ export default function DashboardControlPlaneClient() {
                             </ConsoleCard>
                         </div>
                         <ConsoleCard title="Safety State Distribution" collapsible>
-                            {cireStatus ? (
+                            {cireSafetyDistribution ? (
                                 <div className="space-y-3 font-mono text-xs">
-                                    {Object.entries(cireStatus.safety_state_distribution).map(([label, value]) => {
-                                        const total = Object.values(cireStatus.safety_state_distribution).reduce((sum, count) => sum + count, 0) || 1;
+                                    {Object.entries(cireSafetyDistribution).map(([label, value]) => {
+                                        const total = Object.values(cireSafetyDistribution).reduce((sum, count) => sum + count, 0) || 1;
                                         const width = (value / total) * 100;
                                         return (
                                             <div key={label}>
@@ -838,8 +849,8 @@ export default function DashboardControlPlaneClient() {
                             {cireProfile ? (
                                 <div className="space-y-3">
                                     <DataRow label="Model" value={cireProfile.model_version} />
-                                    <DataRow label="Phi Baseline" value={cireProfile.phi_baseline.toFixed(4)} />
-                                    <DataRow label="HII" value={cireProfile.hii != null ? cireProfile.hii.toFixed(4) : 'NO DATA'} />
+                                    <DataRow label="Phi Baseline" value={formatOptionalFixed(cireProfile.phi_baseline, 4)} />
+                                    <DataRow label="HII" value={formatOptionalFixed(cireProfile.hii, 4)} />
                                     <DataRow label="Calibrated" value={new Date(cireProfile.calibrated_at).toLocaleString()} />
                                     <div className="border-t border-grid pt-3">
                                         <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted mb-2">
@@ -1011,11 +1022,12 @@ function buildRoutingOverview(
         .slice(0, 5);
 
     if (topModels.length === 0 && fallbackRouting?.top_route) {
+        const fallbackRows = Array.isArray(fallbackRouting.family_rows) ? fallbackRouting.family_rows : [];
         topModels = [{
             model_id: fallbackRouting.top_route,
             request_count: Math.max(
                 0,
-                ...(fallbackRouting.family_rows.map((row) => row.total_requests)),
+                ...(fallbackRows.map((row) => row.total_requests)),
             ),
         }];
     }
@@ -1034,7 +1046,7 @@ function buildRoutingOverview(
     }
 
     if (familyRows.length === 0 && fallbackRouting) {
-        familyRows.push(...fallbackRouting.family_rows);
+        familyRows.push(...(Array.isArray(fallbackRouting.family_rows) ? fallbackRouting.family_rows : []));
     }
 
     if (familyRows.length === 0 && governanceFamilies.length > 0) {
@@ -1111,15 +1123,18 @@ function alertTextTone(severity: ControlPlaneAlertRecord['severity']) {
 }
 
 function dashboardLogToRow(log: ControlPlaneDashboardViewSnapshot['logs'][number]): VercelLogTableRow {
+    const category = typeof log.category === 'string' && log.category.trim() ? log.category : 'system';
+    const level = typeof log.level === 'string' && log.level.trim() ? log.level : 'INFO';
+    const eventType = typeof log.event_type === 'string' && log.event_type.trim() ? log.event_type : category;
     return {
         id: log.id,
         timestamp: log.timestamp,
-        method: log.category.toUpperCase(),
-        status: log.level,
-        level: log.level,
+        method: category.toUpperCase(),
+        status: level,
+        level,
         host: log.model_version ?? 'control-plane',
-        request: log.run_id ?? log.event_type ?? log.category,
-        badges: [(log.event_type ?? log.category).slice(0, 1).toLowerCase(), log.category.slice(0, 1).toLowerCase()],
+        request: log.run_id ?? eventType,
+        badges: [eventType.slice(0, 1).toLowerCase(), category.slice(0, 1).toLowerCase()],
         message: log.message,
     };
 }
@@ -1135,11 +1150,11 @@ function resolveDriftChartMessage(
     controlPlaneSnapshot?: ControlPlaneDashboardViewSnapshot | null,
 ) {
     if (streamStatus === 'disconnected' && !snapshot) return 'STREAM DISCONNECTED';
-    if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES' && controlPlaneSnapshot?.system_health.last_evaluation_event_timestamp) {
+    if (snapshot?.metric_states?.drift_score === 'INSUFFICIENT_OUTCOMES' && controlPlaneSnapshot?.system_health?.last_evaluation_event_timestamp) {
         return `Need more linked outcomes. Last evaluation ${new Date(controlPlaneSnapshot.system_health.last_evaluation_event_timestamp).toLocaleTimeString()}`;
     }
-    if (snapshot?.metric_states.drift_score === 'INSUFFICIENT_OUTCOMES') return 'INSUFFICIENT DATA';
-    if (snapshot?.metric_states.drift_score === 'NO_DATA') return 'NO DATA';
+    if (snapshot?.metric_states?.drift_score === 'INSUFFICIENT_OUTCOMES') return 'INSUFFICIENT DATA';
+    if (snapshot?.metric_states?.drift_score === 'NO_DATA') return 'NO DATA';
     return 'WAITING FOR DRIFT SIGNALS';
 }
 
@@ -1149,10 +1164,10 @@ function resolveLatencyChartMessage(
     controlPlaneSnapshot?: ControlPlaneDashboardViewSnapshot | null,
 ) {
     if (streamStatus === 'disconnected' && !snapshot) return 'STREAM DISCONNECTED';
-    if (snapshot?.metric_states.p95_latency === 'NO_DATA' && controlPlaneSnapshot?.system_health.last_inference_timestamp) {
+    if (snapshot?.metric_states?.p95_latency === 'NO_DATA' && controlPlaneSnapshot?.system_health?.last_inference_timestamp) {
         return `Awaiting fresh latency telemetry. Last inference ${new Date(controlPlaneSnapshot.system_health.last_inference_timestamp).toLocaleTimeString()}`;
     }
-    if (snapshot?.metric_states.p95_latency === 'NO_DATA') return 'NO DATA';
+    if (snapshot?.metric_states?.p95_latency === 'NO_DATA') return 'NO DATA';
     return 'WAITING FOR LATENCY SIGNALS';
 }
 
@@ -1160,7 +1175,7 @@ function describeControlPlaneState(
     state: string,
     snapshot: ControlPlaneDashboardViewSnapshot | null,
 ) {
-    if (state === 'CONTROL_PLANE_INITIALIZING' && snapshot?.system_health.last_inference_timestamp) {
+    if (state === 'CONTROL_PLANE_INITIALIZING' && snapshot?.system_health?.last_inference_timestamp) {
         return 'LIVE / IDLE';
     }
     if (state === 'INSUFFICIENT_OUTCOMES_FOR_DRIFT') {
@@ -1173,7 +1188,7 @@ function describeControlPlaneState(
 }
 
 function resolveInferenceMessage(snapshot: ControlPlaneDashboardViewSnapshot | null) {
-    if (snapshot?.system_health.last_inference_timestamp) {
+    if (snapshot?.system_health?.last_inference_timestamp) {
         return `NO LIVE INFERENCE ACTIVITY | LAST SUCCESS ${new Date(snapshot.system_health.last_inference_timestamp).toLocaleString()}`;
     }
     return 'NO INFERENCE ACTIVITY';
@@ -1224,6 +1239,10 @@ function formatLivePercent(value: number | null | undefined, pending: boolean, f
 function formatLatency(value: number | null | undefined) {
     if (value == null) return 'NO DATA';
     return `${value.toFixed(1)}ms`;
+}
+
+function formatOptionalFixed(value: number | null | undefined, digits: number) {
+    return typeof value === 'number' && Number.isFinite(value) ? value.toFixed(digits) : 'NO DATA';
 }
 
 function resolveRecentTopDifferential(event: RecentInferenceEvent) {
