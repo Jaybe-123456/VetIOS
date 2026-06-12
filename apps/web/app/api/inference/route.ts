@@ -36,6 +36,12 @@ import {
 } from '@/lib/inference/executionTrace';
 import { recordInferenceCalibrationSnapshot } from '@/lib/inference/calibrationSnapshot';
 import { recordInferenceActionabilityGateEvent } from '@/lib/inference/actionabilityGate';
+import {
+    recordInferenceReviewQueueEvent,
+    reviewReasonFromActionabilityGate,
+    reviewSeverityFromActionabilityGate,
+    shouldQueueActionabilityGate,
+} from '@/lib/inference/reviewQueue';
 
 export const runtime = 'nodejs';
 
@@ -529,7 +535,7 @@ async function recordSuccessfulInferenceTelemetry(input: {
         calibrationWrite,
         Promise.allSettled(sharedTelemetryWrites),
     ]);
-    await recordInferenceActionabilityGateEvent(input.supabase, {
+    const actionabilityResult = await recordInferenceActionabilityGateEvent(input.supabase, {
         tenantId: input.tenantId,
         inferenceEventId: input.result.inference_event_id,
         requestId: input.result.meta.request_id,
@@ -539,6 +545,24 @@ async function recordSuccessfulInferenceTelemetry(input: {
         phiHat: input.result.cire.phi_hat,
         calibrationSnapshot: calibrationResult.data,
     });
+
+    if (shouldQueueActionabilityGate(actionabilityResult.data)) {
+        await recordInferenceReviewQueueEvent(input.supabase, {
+            tenantId: input.tenantId,
+            inferenceEventId: input.result.inference_event_id,
+            requestId: input.result.meta.request_id,
+            caseId: input.result.clinical_case_id,
+            actionabilityGate: actionabilityResult.data,
+            reviewStatus: 'queued',
+            severity: reviewSeverityFromActionabilityGate(actionabilityResult.data),
+            reviewReason: reviewReasonFromActionabilityGate(actionabilityResult.data),
+            source: 'actionability_gate',
+            metadata: {
+                auto_queued: true,
+                source_module: 'clinical_api',
+            },
+        });
+    }
 }
 
 async function recordFailedInferenceTelemetry(input: {

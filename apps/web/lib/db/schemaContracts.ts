@@ -225,6 +225,33 @@ export const INFERENCE_ACTIONABILITY_GATE_EVENTS = {
     },
 } as const;
 
+export const INFERENCE_REVIEW_QUEUE_EVENTS = {
+    TABLE: 'inference_review_queue_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        inference_event_id: 'inference_event_id',
+        actionability_gate_event_id: 'actionability_gate_event_id',
+        request_id: 'request_id',
+        case_id: 'case_id',
+        review_status: 'review_status',
+        severity: 'severity',
+        review_reason: 'review_reason',
+        source: 'source',
+        top_label: 'top_label',
+        top_confidence: 'top_confidence',
+        phi_hat: 'phi_hat',
+        actionability_score: 'actionability_score',
+        blockers: 'blockers',
+        warnings: 'warnings',
+        recommended_next_step: 'recommended_next_step',
+        reviewer_note: 'reviewer_note',
+        created_by: 'created_by',
+        metadata: 'metadata',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const CLINICAL_CASES = {
     TABLE: 'clinical_cases',
     COLUMNS: {

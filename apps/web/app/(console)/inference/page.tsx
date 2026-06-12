@@ -163,6 +163,29 @@ interface ActionabilityGateResult {
     created_at: string | null;
 }
 
+interface ReviewQueueEvent {
+    id: string | null;
+    review_status: 'queued' | 'acknowledged' | 'resolved' | 'dismissed';
+    severity: 'routine' | 'review' | 'urgent' | 'critical';
+    review_reason: string;
+    source: string;
+    top_label: string | null;
+    top_confidence: number;
+    phi_hat: number;
+    actionability_score: number;
+    blockers: string[];
+    warnings: string[];
+    recommended_next_step: string | null;
+    reviewer_note: string | null;
+    created_at: string | null;
+}
+
+interface ReviewQueueState {
+    status: 'idle' | 'loading' | 'success' | 'missing' | 'error';
+    events: ReviewQueueEvent[];
+    errorMessage: string | null;
+}
+
 interface CorrectionData {
     hallucinated_signals_removed: string[];
     penalties_applied: string[];
@@ -316,6 +339,11 @@ export default function InferenceConsole() {
         result: null,
         errorMessage: null,
     });
+    const [reviewQueue, setReviewQueue] = useState<ReviewQueueState>({
+        status: 'idle',
+        events: [],
+        errorMessage: null,
+    });
 
     const [inputMode, setInputMode] = useState<InputMode>('structured');
     const [panelSpecies, setPanelSpecies] = useState<Species>('canine');
@@ -324,6 +352,7 @@ export default function InferenceConsole() {
     const riskModelDefinition = state.riskModelOutput?.definition?.toLowerCase() ?? '';
     const hasAbdominalRiskCalibration = Boolean(state.riskModelOutput) && !riskModelDefinition.includes('non-abdominal');
     const intelligenceSnapshot = buildClinicalInfrastructureSnapshot(state.responsePayload, state.requestPayload, state.cire);
+    const latestReviewEvent = reviewQueue.events[0] ?? null;
 
     // ── File reader ──────────────────────────────────────────────────────────
 
@@ -577,6 +606,7 @@ export default function InferenceConsole() {
                 setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
                 setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
                 setActionabilityGate({ status: 'idle', result: null, errorMessage: null });
+                setReviewQueue({ status: 'idle', events: [], errorMessage: null });
                 return;
             }
 
@@ -643,6 +673,7 @@ export default function InferenceConsole() {
             setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
             setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
             setActionabilityGate({ status: 'idle', result: null, errorMessage: null });
+            setReviewQueue({ status: 'idle', events: [], errorMessage: null });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Normalization failed.';
             setState(prev => ({ ...prev, status: 'error', errorMessage }));
@@ -671,6 +702,7 @@ export default function InferenceConsole() {
         setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
         setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
         setActionabilityGate({ status: 'idle', result: null, errorMessage: null });
+        setReviewQueue({ status: 'idle', events: [], errorMessage: null });
 
         const pushLog = (message: string, level: LogEntry['level'] = 'info') => {
             setState(prev => ({
@@ -780,6 +812,10 @@ export default function InferenceConsole() {
             const actionabilityResult = await fetchInferenceActionabilityGate(inferenceEventId);
             if (actionabilityResult.message) {
                 pushLog(`ACTIONABILITY GATE: ${actionabilityResult.message}`, actionabilityResult.gate ? 'info' : 'warn');
+            }
+            const reviewQueueResult = await fetchInferenceReviewQueue(inferenceEventId);
+            if (reviewQueueResult.message) {
+                pushLog(`REVIEW QUEUE: ${reviewQueueResult.message}`, reviewQueueResult.events.length > 0 ? 'info' : 'warn');
             }
 
             const dataPayload = result.data && typeof result.data === 'object'
@@ -909,6 +945,11 @@ export default function InferenceConsole() {
                 result: actionabilityResult.gate,
                 errorMessage: actionabilityResult.message,
             });
+            setReviewQueue({
+                status: reviewQueueResult.events.length > 0 ? 'success' : reviewQueueResult.message ? 'missing' : 'missing',
+                events: reviewQueueResult.events,
+                errorMessage: reviewQueueResult.message,
+            });
             setActiveTab('vectors');
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Unknown inference error.';
@@ -929,6 +970,7 @@ export default function InferenceConsole() {
         setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
         setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
         setActionabilityGate({ status: 'idle', result: null, errorMessage: null });
+        setReviewQueue({ status: 'idle', events: [], errorMessage: null });
     }
 
     async function handleCopyEventId() {
@@ -1041,6 +1083,37 @@ export default function InferenceConsole() {
             status: result.gate ? 'success' : result.message ? 'error' : 'missing',
             result: result.gate,
             errorMessage: result.message,
+        });
+    }
+
+    async function handleReviewQueueRefresh() {
+        if (!state.eventId || reviewQueue.status === 'loading') return;
+        setReviewQueue({ status: 'loading', events: reviewQueue.events, errorMessage: null });
+        const result = await fetchInferenceReviewQueue(state.eventId);
+        setReviewQueue({
+            status: result.events.length > 0 ? 'success' : result.message ? 'missing' : 'missing',
+            events: result.events,
+            errorMessage: result.message,
+        });
+    }
+
+    async function handleReviewQueueAction(action: 'queue' | 'acknowledge' | 'resolve' | 'dismiss') {
+        if (!state.eventId || reviewQueue.status === 'loading') return;
+        setReviewQueue({ status: 'loading', events: reviewQueue.events, errorMessage: null });
+        const result = await postInferenceReviewQueueAction(state.eventId, action);
+        if (result.event) {
+            const refreshed = await fetchInferenceReviewQueue(state.eventId);
+            setReviewQueue({
+                status: refreshed.events.length > 0 ? 'success' : refreshed.message ? 'missing' : 'missing',
+                events: refreshed.events.length > 0 ? refreshed.events : [result.event],
+                errorMessage: refreshed.message,
+            });
+            return;
+        }
+        setReviewQueue({
+            status: 'error',
+            events: reviewQueue.events,
+            errorMessage: result.message ?? 'Review queue action failed.',
         });
     }
 
@@ -1764,6 +1837,106 @@ export default function InferenceConsole() {
                                         >
                                             {actionabilityGate.status === 'loading' ? 'Loading...' : 'Refresh Gate'}
                                         </TerminalButton>
+                                    </div>
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Clinical Review Queue" className="border-accent/20">
+                                    <div className="grid grid-cols-1 lg:grid-cols-[1fr,260px] gap-4 items-start">
+                                        <div className="space-y-3">
+                                            <p className="font-mono text-[11px] leading-relaxed text-muted">
+                                                Append-only review workflow for inferences the gate marks as review, hold, or suppressed. Status changes are recorded as new events.
+                                            </p>
+                                            {latestReviewEvent ? (
+                                                <div className="space-y-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                                                        <DataRow
+                                                            label="Latest Status"
+                                                            value={formatReadableLabel(latestReviewEvent.review_status)}
+                                                            tone={reviewStatusTone(latestReviewEvent.review_status)}
+                                                        />
+                                                        <DataRow
+                                                            label="Severity"
+                                                            value={formatReadableLabel(latestReviewEvent.severity)}
+                                                            tone={reviewSeverityTone(latestReviewEvent.severity)}
+                                                        />
+                                                        <DataRow
+                                                            label="Top Label"
+                                                            value={`${formatNullableLabel(latestReviewEvent.top_label)} - ${formatPercentNumber(latestReviewEvent.top_confidence)}`}
+                                                            tone="accent"
+                                                        />
+                                                        <DataRow
+                                                            label="Source"
+                                                            value={formatReadableLabel(latestReviewEvent.source)}
+                                                            tone="muted"
+                                                        />
+                                                    </div>
+                                                    <p className="font-mono text-[11px] leading-relaxed text-foreground/85">
+                                                        {latestReviewEvent.review_reason}
+                                                    </p>
+                                                    {latestReviewEvent.recommended_next_step && (
+                                                        <p className="font-mono text-[11px] leading-relaxed text-muted">
+                                                            {latestReviewEvent.recommended_next_step}
+                                                        </p>
+                                                    )}
+                                                    {reviewQueue.events.length > 1 && (
+                                                        <div className="border border-grid bg-black/20 p-3">
+                                                            <div className="mb-2 text-[10px] uppercase tracking-widest text-muted">Recent Review Events</div>
+                                                            <div className="space-y-1 font-mono text-[11px] text-foreground/80">
+                                                                {reviewQueue.events.slice(0, 4).map((event, index) => (
+                                                                    <div key={event.id ?? `${event.review_status}-${index}`} className="flex flex-wrap justify-between gap-2 border-b border-grid/60 pb-1 last:border-b-0">
+                                                                        <span>{formatReadableLabel(event.review_status)} / {formatReadableLabel(event.severity)}</span>
+                                                                        <span className="text-muted">{event.created_at ? new Date(event.created_at).toLocaleString() : 'No timestamp'}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <div className="border border-dashed border-grid p-4 font-mono text-[11px] text-muted">
+                                                    {reviewQueue.errorMessage ?? 'No clinical review queue event has been recorded for this inference yet.'}
+                                                </div>
+                                            )}
+                                            {reviewQueue.errorMessage && latestReviewEvent && (
+                                                <div className="border border-yellow-400/30 bg-yellow-400/5 p-3 font-mono text-[11px] text-yellow-300">
+                                                    {reviewQueue.errorMessage}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="grid grid-cols-1 gap-2">
+                                            <TerminalButton
+                                                type="button"
+                                                variant="secondary"
+                                                onClick={handleReviewQueueRefresh}
+                                                disabled={!state.eventId || reviewQueue.status === 'loading'}
+                                            >
+                                                {reviewQueue.status === 'loading' ? 'Loading...' : 'Refresh Queue'}
+                                            </TerminalButton>
+                                            <TerminalButton
+                                                type="button"
+                                                variant="secondary"
+                                                onClick={() => handleReviewQueueAction('queue')}
+                                                disabled={!state.eventId || !actionabilityGate.result || reviewQueue.status === 'loading'}
+                                            >
+                                                Queue Review
+                                            </TerminalButton>
+                                            <TerminalButton
+                                                type="button"
+                                                variant="secondary"
+                                                onClick={() => handleReviewQueueAction('acknowledge')}
+                                                disabled={!state.eventId || !latestReviewEvent || reviewQueue.status === 'loading'}
+                                            >
+                                                Acknowledge
+                                            </TerminalButton>
+                                            <TerminalButton
+                                                type="button"
+                                                variant="primary"
+                                                onClick={() => handleReviewQueueAction('resolve')}
+                                                disabled={!state.eventId || !latestReviewEvent || reviewQueue.status === 'loading'}
+                                            >
+                                                Resolve
+                                            </TerminalButton>
+                                        </div>
                                     </div>
                                 </ConsoleCard>
 
@@ -2620,6 +2793,98 @@ async function fetchInferenceActionabilityGate(
     }
 }
 
+async function fetchInferenceReviewQueue(
+    inferenceEventId: string,
+): Promise<{ events: ReviewQueueEvent[]; message: string | null }> {
+    try {
+        const response = await fetchWithTimeout(`/api/inference/${encodeURIComponent(inferenceEventId)}/review`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+        }, {
+            timeoutMs: 4_000,
+            timeoutMessage: 'Clinical review queue did not respond within 4 seconds.',
+        });
+        const text = await response.text();
+        let payload: unknown;
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            return {
+                events: [],
+                message: `Clinical review queue API returned non-JSON HTTP ${response.status}.`,
+            };
+        }
+
+        if (!response.ok) {
+            return {
+                events: [],
+                message: formatApiError(payload, `Clinical review queue unavailable (HTTP ${response.status})`),
+            };
+        }
+
+        const record = asRecord(payload);
+        const events = Array.isArray(record?.data)
+            ? record.data.map(normalizeReviewQueueEvent).filter((entry): entry is ReviewQueueEvent => Boolean(entry))
+            : [];
+        return {
+            events,
+            message: events.length > 0 ? null : readString(record?.message) ?? 'No clinical review queue events have been recorded for this inference yet.',
+        };
+    } catch (error) {
+        return {
+            events: [],
+            message: error instanceof Error ? error.message : 'Clinical review queue request failed.',
+        };
+    }
+}
+
+async function postInferenceReviewQueueAction(
+    inferenceEventId: string,
+    action: 'queue' | 'acknowledge' | 'resolve' | 'dismiss',
+): Promise<{ event: ReviewQueueEvent | null; message: string | null }> {
+    try {
+        const response = await fetchWithTimeout(`/api/inference/${encodeURIComponent(inferenceEventId)}/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store',
+            body: JSON.stringify({ action }),
+        }, {
+            timeoutMs: 6_000,
+            timeoutMessage: 'Clinical review queue update did not respond within 6 seconds.',
+        });
+        const text = await response.text();
+        let payload: unknown;
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            return {
+                event: null,
+                message: `Clinical review queue API returned non-JSON HTTP ${response.status}.`,
+            };
+        }
+
+        if (!response.ok) {
+            return {
+                event: null,
+                message: formatApiError(payload, `Clinical review queue update failed (HTTP ${response.status})`),
+            };
+        }
+
+        const event = normalizeReviewQueueEvent(asRecord(payload)?.data);
+        return {
+            event,
+            message: event ? null : 'Clinical review queue update returned an invalid event.',
+        };
+    } catch (error) {
+        return {
+            event: null,
+            message: error instanceof Error ? error.message : 'Clinical review queue update failed.',
+        };
+    }
+}
+
 function normalizeExecutionTraceEvent(value: Record<string, unknown>): ExecutionTraceEvent | null {
     const stageKey = readString(value.stage_key);
     if (!stageKey) return null;
@@ -2690,6 +2955,35 @@ function normalizeActionabilityGateResult(value: unknown): ActionabilityGateResu
         required_confirmatory_tests: readStringArray(record.required_confirmatory_tests),
         blockers: readStringArray(record.blockers),
         warnings: readStringArray(record.warnings),
+        created_at: readString(record.created_at),
+    };
+}
+
+function normalizeReviewQueueEvent(value: unknown): ReviewQueueEvent | null {
+    const record = asRecord(value);
+    if (!record) return null;
+    const status = record.review_status;
+    const severity = record.severity;
+    if (status !== 'queued' && status !== 'acknowledged' && status !== 'resolved' && status !== 'dismissed') {
+        return null;
+    }
+    if (severity !== 'routine' && severity !== 'review' && severity !== 'urgent' && severity !== 'critical') {
+        return null;
+    }
+    return {
+        id: readString(record.id),
+        review_status: status,
+        severity,
+        review_reason: readString(record.review_reason) ?? 'Clinical review requested.',
+        source: readString(record.source) ?? 'actionability_gate',
+        top_label: readString(record.top_label),
+        top_confidence: readNumber(record.top_confidence) ?? 0,
+        phi_hat: readNumber(record.phi_hat) ?? 0,
+        actionability_score: readNumber(record.actionability_score) ?? 0,
+        blockers: readStringArray(record.blockers),
+        warnings: readStringArray(record.warnings),
+        recommended_next_step: readString(record.recommended_next_step),
+        reviewer_note: readString(record.reviewer_note),
         created_at: readString(record.created_at),
     };
 }
@@ -2804,6 +3098,22 @@ function actionabilityDecisionTone(
     if (decision === 'review_before_action') return 'warning';
     if (decision === 'hold_for_evidence') return 'warning';
     return 'danger';
+}
+
+function reviewStatusTone(
+    status: ReviewQueueEvent['review_status'],
+): 'accent' | 'warning' | 'danger' | 'muted' {
+    if (status === 'resolved' || status === 'dismissed') return 'accent';
+    if (status === 'acknowledged') return 'warning';
+    return 'warning';
+}
+
+function reviewSeverityTone(
+    severity: ReviewQueueEvent['severity'],
+): 'accent' | 'warning' | 'danger' | 'muted' {
+    if (severity === 'critical') return 'danger';
+    if (severity === 'urgent' || severity === 'review') return 'warning';
+    return 'muted';
 }
 
 function formatNullableLabel(value: string | null): string {
