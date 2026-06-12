@@ -85,6 +85,12 @@ const SIMULATION_TARGETS = [
     { id: 'control_plane', label: 'Control Plane' },
 ] as const;
 
+const SETTINGS_ACTION_LINK_CLASS =
+    'inline-flex items-center border border-[hsl(0_0%_28%)] bg-[hsl(0_0%_8%)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(0_0%_82%)] transition-colors hover:border-accent/60 hover:text-accent hover:bg-accent/5';
+
+const SETTINGS_PERMISSION_CHIP_CLASS =
+    'px-2 py-1 border border-[hsl(0_0%_28%)] bg-[hsl(0_0%_8%)] font-mono text-[10px] uppercase tracking-widest font-semibold text-[hsl(0_0%_82%)]';
+
 function PanelLoading({ label }: { label: string }) {
     return (
         <ConsoleCard title={label}>
@@ -388,32 +394,25 @@ export default function SettingsControlPlaneClient() {
                             <RefreshCw className="w-3 h-3 mr-2" />
                             Refresh Snapshot
                         </TerminalButton>
-                        <Link href="/settings/outbox"
-                            className="inline-flex items-center border border-[hsl(142_60%_30%_/_0.5)] bg-[hsl(142_60%_12%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(142_70%_60%)] transition-colors hover:border-[hsl(142_76%_46%)] hover:text-[hsl(142_76%_72%)] hover:bg-[hsl(142_60%_12%_/_0.4)]">
+                        <Link href="/settings/outbox" className={SETTINGS_ACTION_LINK_CLASS}>
                             Outbox Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link href="/settings/federation"
-                            className="inline-flex items-center border border-[hsl(190_70%_30%_/_0.5)] bg-[hsl(190_70%_10%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(190_80%_62%)] transition-colors hover:border-[hsl(190_90%_55%)] hover:text-[hsl(190_90%_78%)] hover:bg-[hsl(190_70%_10%_/_0.4)]">
+                        <Link href="/settings/federation" className={SETTINGS_ACTION_LINK_CLASS}>
                             Federation Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link href="/settings/petpass"
-                            className="inline-flex items-center border border-[hsl(265_60%_38%_/_0.5)] bg-[hsl(265_60%_12%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(265_75%_72%)] transition-colors hover:border-[hsl(265_80%_65%)] hover:text-[hsl(265_80%_85%)] hover:bg-[hsl(265_60%_12%_/_0.4)]">
+                        <Link href="/settings/petpass" className={SETTINGS_ACTION_LINK_CLASS}>
                             PetPass Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link href="/settings/passive-signals"
-                            className="inline-flex items-center border border-[hsl(30_80%_30%_/_0.5)] bg-[hsl(30_80%_10%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(30_90%_65%)] transition-colors hover:border-[hsl(30_90%_55%)] hover:text-[hsl(30_90%_78%)] hover:bg-[hsl(30_80%_10%_/_0.4)]">
+                        <Link href="/settings/passive-signals" className={SETTINGS_ACTION_LINK_CLASS}>
                             Passive Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link href="/settings/developer-platform"
-                            className="inline-flex items-center border border-[hsl(210_70%_32%_/_0.5)] bg-[hsl(210_70%_10%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(210_80%_68%)] transition-colors hover:border-[hsl(210_80%_58%)] hover:text-[hsl(210_80%_82%)] hover:bg-[hsl(210_70%_10%_/_0.4)]">
+                        <Link href="/settings/developer-platform" className={SETTINGS_ACTION_LINK_CLASS}>
                             Partner Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link href="/settings/model-trust"
-                            className="inline-flex items-center border border-[hsl(0_70%_32%_/_0.5)] bg-[hsl(0_70%_10%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(0_80%_66%)] transition-colors hover:border-[hsl(0_85%_58%)] hover:text-[hsl(0_85%_78%)] hover:bg-[hsl(0_70%_10%_/_0.4)]">
+                        <Link href="/settings/model-trust" className={SETTINGS_ACTION_LINK_CLASS}>
                             Trust Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
-                        <Link href="/settings/edge-box"
-                            className="inline-flex items-center border border-[hsl(45_80%_28%_/_0.5)] bg-[hsl(45_80%_8%_/_0.2)] px-4 py-3 font-mono text-sm uppercase tracking-widest text-[hsl(45_100%_62%)] transition-colors hover:border-[hsl(45_100%_52%)] hover:text-[hsl(45_100%_78%)] hover:bg-[hsl(45_80%_8%_/_0.4)]">
+                        <Link href="/settings/edge-box" className={SETTINGS_ACTION_LINK_CLASS}>
                             Edge Ops <ArrowRight className="ml-2 h-3 w-3" />
                         </Link>
                         <TerminalButton variant="secondary" onClick={() => void runAction({ action: 'run_system_diagnostic' })}>
@@ -619,8 +618,8 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
             <ConsoleCard title="Account Profile">
                 <div className="space-y-2">
                     <DataRow label="User ID" value={input.snapshot.profile.user_id ?? 'NO DATA'} tone="muted" />
-                    <DataRow label="Email" value={input.snapshot.profile.email ?? 'NO DATA'} tone="cyan" />
-                    <DataRow label="Role" value={input.snapshot.profile.role.toUpperCase()} tone={input.snapshot.profile.role === 'admin' ? 'warning' : 'accent'} />
+                    <DataRow label="Email" value={input.snapshot.profile.email ?? 'NO DATA'} />
+                    <DataRow label="Role" value={input.snapshot.profile.role.toUpperCase()} tone={input.snapshot.profile.role === 'admin' ? 'accent' : undefined} />
                     <DataRow label="Organization" value={input.snapshot.profile.organization ?? 'NO DATA'} />
                     <DataRow
                         label="Last Login"
@@ -677,21 +676,11 @@ function renderProfileTab(input: Parameters<typeof renderTab>[0]) {
 
             <ConsoleCard title="Permissions">
                 <div className="flex flex-wrap gap-2">
-                    {input.snapshot.profile.permissions.map((permission, i) => {
-                        const colours = [
-                            'border-[hsl(142_60%_30%_/_0.5)] text-[hsl(142_76%_60%)] bg-[hsl(142_60%_8%_/_0.3)]',
-                            'border-[hsl(190_60%_30%_/_0.5)] text-[hsl(190_80%_62%)] bg-[hsl(190_60%_8%_/_0.3)]',
-                            'border-[hsl(265_60%_38%_/_0.5)] text-[hsl(265_75%_72%)] bg-[hsl(265_60%_8%_/_0.3)]',
-                            'border-[hsl(45_80%_28%_/_0.5)]  text-[hsl(45_100%_62%)] bg-[hsl(45_80%_6%_/_0.3)]',
-                            'border-[hsl(210_60%_30%_/_0.5)] text-[hsl(210_80%_68%)] bg-[hsl(210_60%_8%_/_0.3)]',
-                        ];
-                        const cls = colours[i % colours.length];
-                        return (
-                            <span key={permission} className={`px-2 py-1 border font-mono text-[10px] uppercase tracking-widest font-bold ${cls}`}>
-                                {permission}
-                            </span>
-                        );
-                    })}
+                    {input.snapshot.profile.permissions.map((permission) => (
+                        <span key={permission} className={SETTINGS_PERMISSION_CHIP_CLASS}>
+                            {permission}
+                        </span>
+                    ))}
                 </div>
             </ConsoleCard>
         </div>
@@ -713,8 +702,8 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
             <ConsoleCard title="Access & Tokens" className="xl:col-span-2">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="space-y-2">
-                        <DataRow label="Tenant ID" value={input.snapshot.access_security.tenant_id} tone="cyan" />
-                        <DataRow label="Auth Mode" value={input.snapshot.access_security.auth_mode.toUpperCase()} tone="violet" />
+                        <DataRow label="Tenant ID" value={input.snapshot.access_security.tenant_id} />
+                        <DataRow label="Auth Mode" value={input.snapshot.access_security.auth_mode.toUpperCase()} />
                         <DataRow
                             label="Token Expiry"
                             value={input.snapshot.access_security.token_expiry ? new Date(input.snapshot.access_security.token_expiry).toLocaleString() : 'NO DATA'}
@@ -752,9 +741,9 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                         <DataRow
                             label="Expires"
                             value={session.expires_at ? new Date(session.expires_at).toLocaleString() : 'NO DATA'}
-                            tone="warning"
+                            tone="muted"
                         />
-                        <DataRow label="Tenant Isolation" value={session.tenant_isolation} tone="cyan" />
+                        <DataRow label="Tenant Isolation" value={session.tenant_isolation} tone="muted" />
                     </div>
                 ))}
             </ConsoleCard>
@@ -790,15 +779,15 @@ function renderAccessTab(input: Parameters<typeof renderTab>[0]) {
                             <div className="font-mono text-xs text-[hsl(0_0%_80%)] font-medium">No control-plane API keys registered.</div>
                         ) : (
                             input.snapshot.access_security.api_keys.map((key) => (
-                                <div key={key.id} className={`border p-3 ${key.status === 'active' ? 'border-[hsl(142_60%_30%_/_0.4)] bg-[hsl(142_40%_6%_/_0.2)]' : 'border-[hsl(0_0%_22%)] bg-[hsl(0_0%_6%_/_0.3)] opacity-70'}`}>
+                                <div key={key.id} className={`border p-3 ${key.status === 'active' ? 'border-[hsl(142_60%_30%_/_0.4)] bg-[hsl(142_40%_6%_/_0.2)]' : 'border-[hsl(0_0%_22%)] bg-[hsl(0_0%_6%_/_0.3)]'}`}>
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
                                         <div className="space-y-2">
-                                            <DataRow label="Label" value={key.label} tone="cyan" />
+                                            <DataRow label="Label" value={key.label} />
                                             <DataRow label="Prefix" value={key.key_prefix} tone="muted" />
                                             <DataRow label="Status" value={key.status.toUpperCase()} tone={key.status === 'active' ? 'accent' : 'danger'} />
                                         </div>
                                         <div className="space-y-2">
-                                            <DataRow label="Scopes" value={key.scopes.join(', ') || 'NO DATA'} tone="violet" />
+                                            <DataRow label="Scopes" value={key.scopes.join(', ') || 'NO DATA'} />
                                             <DataRow label="Created" value={new Date(key.created_at).toLocaleString()} />
                                             <DataRow label="Last Used" value={key.last_used_at ? new Date(key.last_used_at).toLocaleString() : 'NO DATA'} tone="muted" />
                                         </div>
@@ -834,7 +823,11 @@ function renderHealthTab(snapshot: ControlPlaneSnapshot) {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                     <div className="space-y-2">
                         <DataRow label="Telemetry Status" value={snapshot.system_health.telemetry_status.toUpperCase()} tone={snapshot.system_health.telemetry_status === 'connected' ? 'accent' : 'danger'} />
-                        <DataRow label="Topology State" value={snapshot.system_health.topology_state} tone="cyan" />
+                        <DataRow
+                            label="Topology State"
+                            value={snapshot.system_health.topology_state}
+                            tone={snapshot.system_health.topology_state.toLowerCase().includes('waiting') ? 'warning' : undefined}
+                        />
                         <DataRow
                             label="Ingestion Rate"
                             value={snapshot.system_health.event_ingestion_rate != null ? `${snapshot.system_health.event_ingestion_rate}/min` : 'NO DATA'}
@@ -847,11 +840,11 @@ function renderHealthTab(snapshot: ControlPlaneSnapshot) {
                         <DataRow label="Last Outcome" value={formatTimestamp(snapshot.system_health.last_outcome_timestamp)} tone="muted" />
                         <DataRow label="Last Evaluation" value={formatTimestamp(snapshot.system_health.last_evaluation_event_timestamp)} tone="muted" />
                         <DataRow label="Last Simulation" value={formatTimestamp(snapshot.system_health.last_simulation_timestamp)} tone="muted" />
-                        <DataRow label="Decision Mode" value={snapshot.decision_engine.mode.toUpperCase()} tone="violet" />
+                        <DataRow label="Decision Mode" value={snapshot.decision_engine.mode.toUpperCase()} />
                         <DataRow label="Safe Mode" value={snapshot.decision_engine.safe_mode_enabled ? 'ENABLED' : 'DISABLED'} tone={snapshot.decision_engine.safe_mode_enabled ? 'warning' : 'muted'} />
                     </div>
                 </div>
-                <div className="pt-4 border-t border-grid mt-4 font-mono text-xs text-muted space-y-2">
+                <div className="pt-4 border-t border-grid mt-4 font-mono text-xs text-[hsl(0_0%_78%)] leading-relaxed space-y-2">
                     <div>Where failing: {snapshot.diagnostics.where_failing}</div>
                     <div>Root cause: {snapshot.diagnostics.root_cause}</div>
                     <div>Impact: {snapshot.diagnostics.impact}</div>
@@ -947,10 +940,10 @@ function renderGovernanceTab(
             {snapshot.governance.families.map((family) => (
                 <ConsoleCard key={family.model_family} title={`${family.model_family.toUpperCase()} Governance`}>
                     <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 mb-4">
-                        <DataCard label="Production" value={family.current_production_model ?? 'NO DATA'} tone="accent" />
-                        <DataCard label="Staging" value={family.staging_candidate ?? 'NO DATA'} tone="warning" />
-                        <DataCard label="Rollback Target" value={family.rollback_target ?? 'NO DATA'} tone="danger" />
-                        <DataCard label="Active Route" value={family.active_registry_id ?? 'NO DATA'} tone="cyan" />
+                        <DataCard label="Production" value={family.current_production_model ?? 'NO DATA'} tone={family.current_production_model ? 'accent' : 'muted'} />
+                        <DataCard label="Staging" value={family.staging_candidate ?? 'NO DATA'} tone={family.staging_candidate ? 'warning' : 'muted'} />
+                        <DataCard label="Rollback Target" value={family.rollback_target ?? 'NO DATA'} tone={family.rollback_target ? 'danger' : 'muted'} />
+                        <DataCard label="Active Route" value={family.active_registry_id ?? 'NO DATA'} tone={family.active_registry_id ? 'accent' : 'muted'} />
                     </div>
                     {family.entries.length === 0 ? (
                         <div className="border border-dashed border-grid p-4 font-mono text-xs text-muted">
@@ -961,7 +954,7 @@ function renderGovernanceTab(
                             {family.entries.map((entry) => (
                                 <div key={entry.registry_id} className="border border-grid p-3">
                                     <div className="grid grid-cols-1 xl:grid-cols-5 gap-3">
-                                        <DataCard label="Version" value={entry.model_version} tone="cyan" />
+                                        <DataCard label="Version" value={entry.model_version} />
                                         <DataCard label="Role" value={entry.registry_role.toUpperCase()} tone={entry.registry_role === 'champion' ? 'accent' : entry.registry_role === 'challenger' ? 'warning' : undefined} />
                                         <DataCard label="Lifecycle" value={entry.lifecycle_status.toUpperCase()} tone={entry.lifecycle_status === 'production' ? 'accent' : entry.lifecycle_status === 'candidate' ? 'warning' : entry.lifecycle_status === 'archived' ? 'danger' : undefined} />
                                         <DataCard label="Promotion" value={entry.promotion_allowed ? 'YES' : 'NO'} tone={entry.promotion_allowed ? 'accent' : 'danger'} />
@@ -1347,7 +1340,7 @@ function renderAlertsTab(
                             <div className="font-mono text-xs text-muted">{alert.message}</div>
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
                                 <DataCard label="Timestamp" value={formatTimestamp(alert.timestamp)} />
-                                <DataCard label="Source Node" value={alert.node_id ?? 'NO DATA'} tone="cyan" />
+                                <DataCard label="Source Node" value={alert.node_id ?? 'NO DATA'} />
                                 <DataCard label="Resolved" value={alert.resolved ? 'YES' : 'NO'} tone={alert.resolved ? 'accent' : 'danger'} />
                             </div>
                             {!alert.resolved && (
@@ -1414,16 +1407,15 @@ function PipelineCard({ pipeline }: { pipeline: ControlPlanePipelineState }) {
     );
 }
 
-function DataCard({ label, value, tone }: { label: string; value: string; tone?: 'accent' | 'warning' | 'danger' | 'cyan' | 'violet' }) {
+function DataCard({ label, value, tone }: { label: string; value: string; tone?: 'accent' | 'warning' | 'danger' | 'muted' }) {
     const toneClass = tone === 'accent'  ? 'text-[hsl(142_76%_55%)]'
                     : tone === 'warning' ? 'text-[hsl(45_100%_60%)]'
                     : tone === 'danger'  ? 'text-[hsl(0_85%_62%)]'
-                    : tone === 'cyan'    ? 'text-[hsl(190_90%_62%)]'
-                    : tone === 'violet'  ? 'text-[hsl(265_80%_72%)]'
+                    : tone === 'muted'   ? 'text-[hsl(0_0%_72%)]'
                     : 'text-[hsl(0_0%_94%)]';
     return (
         <div className="border border-[hsl(0_0%_22%)] bg-[hsl(0_0%_7%_/_0.5)] p-3">
-            <div className="font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_52%)] mb-1">{label}</div>
+            <div className="font-mono text-[10px] uppercase tracking-widest text-[hsl(0_0%_72%)] mb-1">{label}</div>
             <div className={`font-mono text-xs font-semibold ${toneClass}`}>{value}</div>
         </div>
     );
