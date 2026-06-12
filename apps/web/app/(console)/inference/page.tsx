@@ -1378,7 +1378,7 @@ export default function InferenceConsole() {
                                         label="Phi Hat" 
                                         value={state.cire ? state.cire.phi_hat.toFixed(2) : '--'} 
                                         sparklineData={state.metrics?.loadHistory}
-                                        color="#3b82f6"
+                                        color="#00ff9d"
                                     />
                                     <MetricCard 
                                         label="CPS" 
@@ -1417,7 +1417,7 @@ export default function InferenceConsole() {
                                                     </div>
                                                     <div className="w-full h-2 bg-dim border border-grid overflow-hidden">
                                                         <div 
-                                                            className={`h-full transition-all duration-1000 ${i === 0 ? 'bg-accent' : 'bg-muted'}`} 
+                                                            className={`h-full transition-all duration-1000 ${i === 0 ? 'bg-accent' : 'bg-[hsl(0_0%_46%)]'}`}
                                                             style={{ width: `${p.value * 100}%` }} 
                                                         />
                                                     </div>
@@ -1429,7 +1429,7 @@ export default function InferenceConsole() {
 
                                 {/* Ground Truth Context */}
                                 {outcomeState.status === 'submitted' && outcomeState.evaluation && (
-                                    <ConsoleCard title="Feedback Loop — Evaluation Result" className="border-green-500/30 animate-in fade-in duration-500">
+                                    <ConsoleCard title="Feedback Loop — Evaluation Result" className="border-accent/30 animate-in fade-in duration-500">
                                         <div className="grid grid-cols-3 gap-3 font-mono text-xs text-center text-accent">
                                             <div className="border border-grid bg-black/20 p-3">
                                                 <div className="text-muted uppercase text-[9px] mb-1">Calibration</div>
@@ -1448,7 +1448,7 @@ export default function InferenceConsole() {
                                 )}
 
                                 {(outcomeState.status === 'expanded' || outcomeState.status === 'submitting') && (
-                                    <ConsoleCard title="Attach Ground Truth" className="border-blue-400/30 animate-in slide-in-from-top duration-300">
+                                    <ConsoleCard title="Attach Ground Truth" className="border-accent/30 animate-in slide-in-from-top duration-300">
                                         <form onSubmit={handleOutcomeSubmit} className="space-y-4">
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <div>
@@ -1529,7 +1529,7 @@ export default function InferenceConsole() {
                             </div>
                         ) : (
                             <>
-                                <ConsoleCard title="Execution Trace Ledger" className="border-cyan-400/30">
+                                <ConsoleCard title="Execution Trace Ledger" className="border-accent/25">
                                     {state.executionTrace.length > 0 ? (
                                         <div className="space-y-2">
                                             {state.executionTrace.map((event, index) => (
@@ -1559,7 +1559,7 @@ export default function InferenceConsole() {
                                     )}
                                 </ConsoleCard>
 
-                                <ConsoleCard title="Replay Drift Check" className="border-violet-400/30">
+                                <ConsoleCard title="Replay Drift Check" className="border-accent/25">
                                     <div className="grid grid-cols-1 lg:grid-cols-[1fr,220px] gap-4 items-start">
                                         <div className="space-y-3">
                                             <p className="font-mono text-[11px] leading-relaxed text-muted">
@@ -1613,7 +1613,7 @@ export default function InferenceConsole() {
                                     </div>
                                 </ConsoleCard>
 
-                                <ConsoleCard title="Calibration Snapshot Ledger" className="border-emerald-400/30">
+                                <ConsoleCard title="Calibration Snapshot Ledger" className="border-accent/25">
                                     <div className="grid grid-cols-1 lg:grid-cols-[1fr,220px] gap-4 items-start">
                                         <div className="space-y-3">
                                             <p className="font-mono text-[11px] leading-relaxed text-muted">
@@ -1679,7 +1679,7 @@ export default function InferenceConsole() {
                                     </div>
                                 </ConsoleCard>
 
-                                <ConsoleCard title="Clinical Actionability Gate" className="border-green-400/30">
+                                <ConsoleCard title="Clinical Actionability Gate" className="border-accent/25">
                                     <div className="grid grid-cols-1 lg:grid-cols-[1fr,220px] gap-4 items-start">
                                         <div className="space-y-3">
                                             <p className="font-mono text-[11px] leading-relaxed text-muted">
@@ -1767,7 +1767,7 @@ export default function InferenceConsole() {
                                     </div>
                                 </ConsoleCard>
 
-                                <ConsoleCard title="Counterfactual Stability Challenge" className="border-yellow-400/30">
+                                <ConsoleCard title="Counterfactual Stability Challenge" className="border-accent/25">
                                     <div className="grid grid-cols-1 lg:grid-cols-[1fr,220px] gap-4 items-start">
                                         <div className="space-y-3">
                                             <p className="font-mono text-[11px] leading-relaxed text-muted">
@@ -1836,7 +1836,7 @@ export default function InferenceConsole() {
                                 </ConsoleCard>
 
                                 {state.multisystemAssessment && (
-                                    <ConsoleCard title="Multisystem Inference Run" className="border-accent/40">
+                                    <ConsoleCard title="Multisystem Inference Run" className="border-accent/25">
                                         <div className="grid grid-cols-1 md:grid-cols-[1fr,1.4fr] gap-5">
                                             <div className="space-y-3 font-mono text-xs">
                                                 <DataRow label="Dominant System" value={formatSystemLabel(state.multisystemAssessment.dominant_system)} />
@@ -1874,7 +1874,7 @@ export default function InferenceConsole() {
                                 )}
 
                                 {state.contradictionAnalysis && (
-                                    <ConsoleCard title="Contradiction & Plausibility Guard" className="border-yellow-400/30">
+                                    <ConsoleCard title="Contradiction & Plausibility Guard" className="border-accent/25">
                                         <div className="grid grid-cols-1 md:grid-cols-[160px,1fr] gap-4 font-mono text-xs">
                                             <div>
                                                 <div className="text-muted uppercase tracking-widest text-[10px] mb-1">Contradiction Score</div>
@@ -1998,11 +1998,11 @@ export default function InferenceConsole() {
                                                                     STRIPPED SIGNALS:
                                                                 </div>
                                                                 {state.correction.hallucinated_signals_removed.map((s, i) => (
-                                                                    <div key={i} className="pl-5 text-danger opacity-70">- {s}</div>
+                                                                    <div key={i} className="pl-5 text-danger">- {s}</div>
                                                                 ))}
                                                             </div>
                                                         ) : (
-                                                            <div className="text-green-400 flex items-center gap-2 opacity-60 italic">
+                                                            <div className="text-muted flex items-center gap-2 italic">
                                                                 <CheckCircle2 className="w-3 h-3" />
                                                                 No hallucinated signals detected in driver set.
                                                             </div>
@@ -2032,7 +2032,7 @@ export default function InferenceConsole() {
                                                             </div>
                                                         )}
                                                         {state.correction.penalties_applied.length === 0 && state.correction.overrides_triggered.length === 0 && (
-                                                            <div className="text-muted italic opacity-60">
+                                                            <div className="text-muted italic">
                                                                 All hierarchy rules satisfied.
                                                             </div>
                                                         )}
@@ -2089,7 +2089,7 @@ export default function InferenceConsole() {
                                         </div>
                                     </ConsoleCard>
 
-                                    <ConsoleCard title="Pathophysiology Routing" className="border-cyan-400/30">
+                                    <ConsoleCard title="Pathophysiology Routing" className="border-accent/25">
                                         <div className="space-y-4">
                                             {intelligenceSnapshot.pathways.length > 0 ? intelligenceSnapshot.pathways.slice(0, 5).map((pathway) => (
                                                 <div key={pathway.system} className="space-y-2">
@@ -2116,7 +2116,7 @@ export default function InferenceConsole() {
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                    <ConsoleCard title="Mechanism & Differential Graph" className="border-violet-400/30">
+                                    <ConsoleCard title="Mechanism & Differential Graph" className="border-accent/25">
                                         <div className="space-y-4">
                                             {intelligenceSnapshot.mechanisms.length > 0 ? intelligenceSnapshot.mechanisms.slice(0, 5).map((entry) => (
                                                 <div key={`${entry.system}-${entry.mechanism}-${entry.score}`} className="border border-grid bg-black/20 p-3">
@@ -2134,7 +2134,7 @@ export default function InferenceConsole() {
                                         </div>
                                     </ConsoleCard>
 
-                                    <ConsoleCard title="Evidence Mapping" className="border-yellow-400/30">
+                                    <ConsoleCard title="Evidence Mapping" className="border-accent/25">
                                         <div className="space-y-4">
                                             {intelligenceSnapshot.evidenceMap.slice(0, 4).map((entry) => (
                                                 <div key={entry.condition} className="border border-grid bg-black/20 p-3">
@@ -2184,19 +2184,19 @@ export default function InferenceConsole() {
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                                    <ConsoleCard title="Surgical Intelligence" className="border-red-400/30">
+                                    <ConsoleCard title="Surgical Intelligence" className="border-accent/25">
                                         {intelligenceSnapshot.surgicalPlan.map((row) => (
                                             <DataRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
                                         ))}
                                     </ConsoleCard>
 
-                                    <ConsoleCard title="Orthopedic Intelligence" className="border-cyan-400/30">
+                                    <ConsoleCard title="Orthopedic Intelligence" className="border-accent/25">
                                         {intelligenceSnapshot.orthopedicPlan.map((row) => (
                                             <DataRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
                                         ))}
                                     </ConsoleCard>
 
-                                    <ConsoleCard title="Longitudinal Intelligence" className="border-violet-400/30">
+                                    <ConsoleCard title="Longitudinal Intelligence" className="border-accent/25">
                                         {intelligenceSnapshot.longitudinalPlan.map((row) => (
                                             <DataRow key={row.label} label={row.label} value={row.value} tone={row.tone} />
                                         ))}
@@ -2204,7 +2204,7 @@ export default function InferenceConsole() {
                                 </div>
 
                                 <div className="grid grid-cols-1 lg:grid-cols-[1fr,1fr] gap-6">
-                                    <ConsoleCard title="Counterfactual Outcome Trees" className="border-orange-400/30">
+                                    <ConsoleCard title="Counterfactual Outcome Trees" className="border-accent/25">
                                         <div className="space-y-3">
                                             {intelligenceSnapshot.counterfactuals.map((entry) => (
                                                 <div key={entry.scenario} className="border border-grid bg-black/20 p-3">
@@ -2291,7 +2291,7 @@ function EvidenceColumn({ title, items, tone }: { title: string; items: string[]
                 {items.length > 0 ? items.slice(0, 4).map((item) => (
                     <div key={item} className="truncate" title={item}>- {item}</div>
                 )) : (
-                    <div className="italic opacity-60">None recorded</div>
+                    <div className="italic">None recorded</div>
                 )}
             </div>
         </div>

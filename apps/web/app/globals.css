@@ -188,6 +188,15 @@
 /* ── Utility layer ────────────────────────────────────────────────────────── */
 
 @layer utilities {
+  /*
+   * Tailwind also creates a `text-muted` utility from --color-muted, which is a
+   * dark surface token in this app. Keep the legacy class readable anywhere it
+   * is used for secondary copy.
+   */
+  .text-muted {
+    color: hsl(var(--muted-foreground)) !important;
+  }
+
   .border-grid {
     border: 1px solid hsl(var(--border));
   }

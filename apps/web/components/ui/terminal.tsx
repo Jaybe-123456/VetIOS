@@ -112,13 +112,13 @@ export function DataRow({ label, value, tone }: { label: string, value: React.Re
     const toneClass = tone === 'accent'  ? 'text-[hsl(142_76%_50%)]'
                     : tone === 'warning' ? 'text-[hsl(45_100%_55%)]'
                     : tone === 'danger'  ? 'text-[hsl(0_85%_62%)]'
-                    : tone === 'muted'   ? 'text-[hsl(0_0%_50%)]'
+                    : tone === 'muted'   ? 'text-[hsl(0_0%_72%)]'
                     : tone === 'cyan'    ? 'text-[hsl(190_90%_60%)]'
                     : tone === 'violet'  ? 'text-[hsl(265_80%_72%)]'
                     : 'text-[hsl(0_0%_98%)]';
     return (
         <div className="flex justify-between items-start gap-4 py-2.5 border-b border-[hsl(0_0%_100%_/_0.06)] min-w-0 last:border-b-0">
-            <span className="font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_60%)] uppercase tracking-[0.14em] shrink-0 mt-0.5">
+            <span className="font-mono text-[11px] sm:text-[12px] text-[hsl(0_0%_72%)] uppercase tracking-[0.14em] shrink-0 mt-0.5">
                 {label}
             </span>
             <span className={"font-mono text-[13px] sm:text-[14px] text-right break-all sm:break-words min-w-0 flex-1 " + toneClass}>
