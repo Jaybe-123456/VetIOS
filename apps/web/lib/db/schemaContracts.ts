@@ -114,6 +114,52 @@ export const INFERENCE_REPLAY_EVENTS = {
     },
 } as const;
 
+export const COUNTERFACTUAL_DIAGNOSTIC_SESSIONS = {
+    TABLE: 'counterfactual_diagnostic_sessions',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        case_id: 'case_id',
+        inference_event_id: 'inference_event_id',
+        session_id: 'session_id',
+        species: 'species',
+        breed: 'breed',
+        age_years: 'age_years',
+        baseline_primary: 'baseline_primary',
+        baseline_confidence: 'baseline_confidence',
+        baseline_differential_count: 'baseline_differential_count',
+        findings_challenged: 'findings_challenged',
+        diagnoses_tested: 'diagnoses_tested',
+        stability_verdict: 'stability_verdict',
+        stability_score: 'stability_score',
+        top_load_bearing_finding: 'top_load_bearing_finding',
+        reasoning_trace: 'reasoning_trace',
+        latency_ms: 'latency_ms',
+        computed_at: 'computed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const CPG_FINDING_SCORES = {
+    TABLE: 'cpg_finding_scores',
+    COLUMNS: {
+        id: 'id',
+        session_id: 'session_id',
+        tenant_id: 'tenant_id',
+        finding: 'finding',
+        finding_type: 'finding_type',
+        diagnosis: 'diagnosis',
+        diagnosis_rank_baseline: 'diagnosis_rank_baseline',
+        probability_baseline: 'probability_baseline',
+        probability_counterfactual: 'probability_counterfactual',
+        cpg: 'cpg',
+        rank_after_removal: 'rank_after_removal',
+        rank_delta: 'rank_delta',
+        diagnosis_dropped_out: 'diagnosis_dropped_out',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const CLINICAL_CASES = {
     TABLE: 'clinical_cases',
     COLUMNS: {

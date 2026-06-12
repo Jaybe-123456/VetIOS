@@ -322,7 +322,7 @@ export class EvidenceChallenger {
       ),
     };
 
-    void this.persistSession(input, result);
+    await this.persistSession(input, result);
     return result;
   }
 

@@ -100,6 +100,27 @@ interface ReplayDriftResult {
     error: string | null;
 }
 
+interface CounterfactualStabilityResult {
+    session_id: string;
+    stability_verdict: 'stable' | 'fragile' | 'unstable' | 'indeterminate';
+    stability_score: number;
+    baseline_primary: string;
+    baseline_confidence: number;
+    findings_challenged: number;
+    diagnoses_tested: number;
+    top_load_bearing_finding: string | null;
+    top_cpg_scores: Array<{
+        finding: string;
+        diagnosis: string;
+        cpg: number;
+        probability_baseline: number;
+        probability_counterfactual: number;
+        diagnosis_dropped_out: boolean;
+    }>;
+    clinical_summary: string;
+    latency_ms: number;
+}
+
 interface CorrectionData {
     hallucinated_signals_removed: string[];
     penalties_applied: string[];
@@ -186,6 +207,12 @@ interface ReplayDriftState {
     errorMessage: string | null;
 }
 
+interface CounterfactualStabilityState {
+    status: 'idle' | 'running' | 'success' | 'error';
+    result: CounterfactualStabilityResult | null;
+    errorMessage: string | null;
+}
+
 export default function InferenceConsole() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<InferenceTab>('analysis');
@@ -216,6 +243,11 @@ export default function InferenceConsole() {
         logs: [],
     });
     const [replayDrift, setReplayDrift] = useState<ReplayDriftState>({
+        status: 'idle',
+        result: null,
+        errorMessage: null,
+    });
+    const [counterfactualStability, setCounterfactualStability] = useState<CounterfactualStabilityState>({
         status: 'idle',
         result: null,
         errorMessage: null,
@@ -478,6 +510,7 @@ export default function InferenceConsole() {
                 }));
                 setOutcomeState({ status: 'idle' });
                 setReplayDrift({ status: 'idle', result: null, errorMessage: null });
+                setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
                 return;
             }
 
@@ -541,6 +574,7 @@ export default function InferenceConsole() {
             }));
             setOutcomeState({ status: 'idle' });
             setReplayDrift({ status: 'idle', result: null, errorMessage: null });
+            setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Normalization failed.';
             setState(prev => ({ ...prev, status: 'error', errorMessage }));
@@ -566,6 +600,7 @@ export default function InferenceConsole() {
         }));
         setOutcomeState({ status: 'idle' });
         setReplayDrift({ status: 'idle', result: null, errorMessage: null });
+        setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
 
         const pushLog = (message: string, level: LogEntry['level'] = 'info') => {
             setState(prev => ({
@@ -803,6 +838,7 @@ export default function InferenceConsole() {
             executionTrace: [],
             executionTraceMessage: null,
         }));
+        setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
     }
 
     async function handleCopyEventId() {
@@ -853,6 +889,45 @@ export default function InferenceConsole() {
                 status: 'error',
                 result: null,
                 errorMessage: error instanceof Error ? error.message : 'Replay drift check failed.',
+            });
+        }
+    }
+
+    async function handleCounterfactualStabilityCheck() {
+        if (!state.eventId || counterfactualStability.status === 'running') return;
+        setCounterfactualStability({ status: 'running', result: null, errorMessage: null });
+        try {
+            const response = await fetchWithTimeout(`/api/inference/${encodeURIComponent(state.eventId)}/counterfactual`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                cache: 'no-store',
+            }, {
+                timeoutMs: 20_000,
+                timeoutMessage: 'Counterfactual stability check did not return within 20 seconds.',
+            });
+            const text = await response.text();
+            let payload: unknown;
+            try {
+                payload = JSON.parse(text);
+            } catch {
+                throw new Error(`Counterfactual API returned non-JSON HTTP ${response.status}.`);
+            }
+
+            if (!response.ok) {
+                throw new Error(formatApiError(payload, `Counterfactual stability check failed (HTTP ${response.status})`));
+            }
+
+            const result = normalizeCounterfactualStabilityResult(asRecord(payload)?.data);
+            if (!result) {
+                throw new Error('Counterfactual stability check returned an invalid payload.');
+            }
+
+            setCounterfactualStability({ status: 'success', result, errorMessage: null });
+        } catch (error) {
+            setCounterfactualStability({
+                status: 'error',
+                result: null,
+                errorMessage: error instanceof Error ? error.message : 'Counterfactual stability check failed.',
             });
         }
     }
@@ -1422,6 +1497,74 @@ export default function InferenceConsole() {
                                             disabled={!state.eventId || replayDrift.status === 'running'}
                                         >
                                             {replayDrift.status === 'running' ? 'Replaying...' : 'Run Replay'}
+                                        </TerminalButton>
+                                    </div>
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Counterfactual Stability Challenge" className="border-yellow-400/30">
+                                    <div className="grid grid-cols-1 lg:grid-cols-[1fr,220px] gap-4 items-start">
+                                        <div className="space-y-3">
+                                            <p className="font-mono text-[11px] leading-relaxed text-muted">
+                                                Remove structured findings one at a time, rerun the deterministic clinical engine, and measure which findings carry the diagnosis.
+                                            </p>
+                                            {counterfactualStability.result && (
+                                                <div className="space-y-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                                                        <DataRow
+                                                            label="Stability"
+                                                            value={`${counterfactualStability.result.stability_verdict.toUpperCase()} (${formatPercentNumber(counterfactualStability.result.stability_score)})`}
+                                                            tone={counterfactualVerdictTone(counterfactualStability.result.stability_verdict)}
+                                                        />
+                                                        <DataRow
+                                                            label="Baseline"
+                                                            value={`${formatReadableLabel(counterfactualStability.result.baseline_primary)} · ${formatPercentNumber(counterfactualStability.result.baseline_confidence)}`}
+                                                            tone="accent"
+                                                        />
+                                                        <DataRow
+                                                            label="Findings"
+                                                            value={`${counterfactualStability.result.findings_challenged} challenged`}
+                                                            tone="cyan"
+                                                        />
+                                                        <DataRow
+                                                            label="Load Bearing"
+                                                            value={counterfactualStability.result.top_load_bearing_finding ?? 'None'}
+                                                            tone={counterfactualStability.result.top_load_bearing_finding ? 'warning' : 'accent'}
+                                                        />
+                                                    </div>
+                                                    <p className="font-mono text-[11px] leading-relaxed text-foreground/80">
+                                                        {counterfactualStability.result.clinical_summary}
+                                                    </p>
+                                                    {counterfactualStability.result.top_cpg_scores.length > 0 && (
+                                                        <div className="space-y-2">
+                                                            {counterfactualStability.result.top_cpg_scores.slice(0, 3).map((score, index) => (
+                                                                <div key={`${score.finding}-${score.diagnosis}-${index}`} className="grid grid-cols-[1fr,70px] gap-3 border border-grid bg-black/20 px-3 py-2 font-mono text-[11px]">
+                                                                    <div className="min-w-0">
+                                                                        <div className="truncate text-foreground">{score.finding}</div>
+                                                                        <div className="truncate text-[9px] uppercase tracking-widest text-muted">
+                                                                            {formatReadableLabel(score.diagnosis)}
+                                                                            {score.diagnosis_dropped_out ? ' // DROPPED OUT' : ''}
+                                                                        </div>
+                                                                    </div>
+                                                                    <span className="text-right text-yellow-300 tabular-nums">{formatPercentNumber(Math.abs(score.cpg))}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                            {counterfactualStability.errorMessage && (
+                                                <div className="border border-yellow-400/30 bg-yellow-400/5 p-3 font-mono text-[11px] text-yellow-300">
+                                                    {counterfactualStability.errorMessage}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <TerminalButton
+                                            type="button"
+                                            variant="secondary"
+                                            onClick={handleCounterfactualStabilityCheck}
+                                            disabled={!state.eventId || counterfactualStability.status === 'running'}
+                                        >
+                                            {counterfactualStability.status === 'running' ? 'Challenging...' : 'Run Challenge'}
                                         </TerminalButton>
                                     </div>
                                 </ConsoleCard>
@@ -2172,6 +2315,44 @@ function normalizeReplayDriftResult(value: unknown): ReplayDriftResult | null {
         warnings: readStringArray(record.warnings),
         error: readString(record.error),
     };
+}
+
+function normalizeCounterfactualStabilityResult(value: unknown): CounterfactualStabilityResult | null {
+    const record = asRecord(value);
+    if (!record) return null;
+    const verdict = record?.stability_verdict;
+    if (verdict !== 'stable' && verdict !== 'fragile' && verdict !== 'unstable' && verdict !== 'indeterminate') {
+        return null;
+    }
+    return {
+        session_id: readString(record.session_id) ?? '',
+        stability_verdict: verdict,
+        stability_score: readNumber(record.stability_score) ?? 0,
+        baseline_primary: readString(record.baseline_primary) ?? 'unknown',
+        baseline_confidence: readNumber(record.baseline_confidence) ?? 0,
+        findings_challenged: readNumber(record.findings_challenged) ?? 0,
+        diagnoses_tested: readNumber(record.diagnoses_tested) ?? 0,
+        top_load_bearing_finding: readString(record.top_load_bearing_finding),
+        top_cpg_scores: readRecordArray(record.top_cpg_scores).map((score) => ({
+            finding: readString(score.finding) ?? 'unknown_finding',
+            diagnosis: readString(score.diagnosis) ?? 'unknown',
+            cpg: readNumber(score.cpg) ?? 0,
+            probability_baseline: readNumber(score.probability_baseline) ?? 0,
+            probability_counterfactual: readNumber(score.probability_counterfactual) ?? 0,
+            diagnosis_dropped_out: score.diagnosis_dropped_out === true,
+        })),
+        clinical_summary: readString(record.clinical_summary) ?? 'Counterfactual challenge completed.',
+        latency_ms: Math.max(0, Math.round(readNumber(record.latency_ms) ?? 0)),
+    };
+}
+
+function counterfactualVerdictTone(
+    verdict: CounterfactualStabilityResult['stability_verdict'],
+): 'accent' | 'warning' | 'danger' | 'muted' {
+    if (verdict === 'stable') return 'accent';
+    if (verdict === 'fragile') return 'warning';
+    if (verdict === 'unstable') return 'danger';
+    return 'muted';
 }
 
 function formatNullableLabel(value: string | null): string {
