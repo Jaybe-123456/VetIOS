@@ -121,6 +121,26 @@ interface CounterfactualStabilityResult {
     latency_ms: number;
 }
 
+interface CalibrationSnapshotResult {
+    id: string | null;
+    top_label: string | null;
+    top_confidence: number;
+    phi_hat: number;
+    contradiction_score: number;
+    differential_count: number;
+    differential_entropy: number;
+    margin_top2: number;
+    calibration_bucket: string;
+    calibration_status: 'needs_outcome' | 'calibrated' | 'underconfident' | 'overconfident' | 'indeterminate';
+    historical_sample_count: number;
+    historical_mean_delta: number | null;
+    expected_calibration_error: number | null;
+    calibration_reliability_score: number;
+    reliability_badge: 'HIGH' | 'REVIEW' | 'CAUTION' | 'SUPPRESSED';
+    recommended_action: string;
+    created_at: string | null;
+}
+
 interface CorrectionData {
     hallucinated_signals_removed: string[];
     penalties_applied: string[];
@@ -213,6 +233,12 @@ interface CounterfactualStabilityState {
     errorMessage: string | null;
 }
 
+interface CalibrationSnapshotState {
+    status: 'idle' | 'loading' | 'success' | 'missing' | 'error';
+    result: CalibrationSnapshotResult | null;
+    errorMessage: string | null;
+}
+
 export default function InferenceConsole() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<InferenceTab>('analysis');
@@ -248,6 +274,11 @@ export default function InferenceConsole() {
         errorMessage: null,
     });
     const [counterfactualStability, setCounterfactualStability] = useState<CounterfactualStabilityState>({
+        status: 'idle',
+        result: null,
+        errorMessage: null,
+    });
+    const [calibrationSnapshot, setCalibrationSnapshot] = useState<CalibrationSnapshotState>({
         status: 'idle',
         result: null,
         errorMessage: null,
@@ -511,6 +542,7 @@ export default function InferenceConsole() {
                 setOutcomeState({ status: 'idle' });
                 setReplayDrift({ status: 'idle', result: null, errorMessage: null });
                 setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
+                setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
                 return;
             }
 
@@ -575,6 +607,7 @@ export default function InferenceConsole() {
             setOutcomeState({ status: 'idle' });
             setReplayDrift({ status: 'idle', result: null, errorMessage: null });
             setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
+            setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Normalization failed.';
             setState(prev => ({ ...prev, status: 'error', errorMessage }));
@@ -601,6 +634,7 @@ export default function InferenceConsole() {
         setOutcomeState({ status: 'idle' });
         setReplayDrift({ status: 'idle', result: null, errorMessage: null });
         setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
+        setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
 
         const pushLog = (message: string, level: LogEntry['level'] = 'info') => {
             setState(prev => ({
@@ -702,6 +736,10 @@ export default function InferenceConsole() {
             const traceResult = await fetchInferenceExecutionTrace(inferenceEventId);
             if (traceResult.message) {
                 pushLog(`TRACE LEDGER: ${traceResult.message}`, 'warn');
+            }
+            const calibrationResult = await fetchInferenceCalibrationSnapshot(inferenceEventId);
+            if (calibrationResult.message) {
+                pushLog(`CALIBRATION SNAPSHOT: ${calibrationResult.message}`, calibrationResult.snapshot ? 'info' : 'warn');
             }
 
             const dataPayload = result.data && typeof result.data === 'object'
@@ -821,6 +859,11 @@ export default function InferenceConsole() {
                     tempHistory: generateFlatHistory(cire?.cps ?? 0),
                 },
             }));
+            setCalibrationSnapshot({
+                status: calibrationResult.snapshot ? 'success' : 'missing',
+                result: calibrationResult.snapshot,
+                errorMessage: calibrationResult.message,
+            });
             setActiveTab('vectors');
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Unknown inference error.';
@@ -839,6 +882,7 @@ export default function InferenceConsole() {
             executionTraceMessage: null,
         }));
         setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
+        setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
     }
 
     async function handleCopyEventId() {
@@ -930,6 +974,17 @@ export default function InferenceConsole() {
                 errorMessage: error instanceof Error ? error.message : 'Counterfactual stability check failed.',
             });
         }
+    }
+
+    async function handleCalibrationSnapshotRefresh() {
+        if (!state.eventId || calibrationSnapshot.status === 'loading') return;
+        setCalibrationSnapshot({ status: 'loading', result: calibrationSnapshot.result, errorMessage: null });
+        const result = await fetchInferenceCalibrationSnapshot(state.eventId);
+        setCalibrationSnapshot({
+            status: result.snapshot ? 'success' : result.message ? 'error' : 'missing',
+            result: result.snapshot,
+            errorMessage: result.message,
+        });
     }
 
     async function handleCireOverride() {
@@ -1497,6 +1552,72 @@ export default function InferenceConsole() {
                                             disabled={!state.eventId || replayDrift.status === 'running'}
                                         >
                                             {replayDrift.status === 'running' ? 'Replaying...' : 'Run Replay'}
+                                        </TerminalButton>
+                                    </div>
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Calibration Snapshot Ledger" className="border-emerald-400/30">
+                                    <div className="grid grid-cols-1 lg:grid-cols-[1fr,220px] gap-4 items-start">
+                                        <div className="space-y-3">
+                                            <p className="font-mono text-[11px] leading-relaxed text-muted">
+                                                Persisted calibration seal for this inference: confidence bucket, label calibration history, contradiction pressure, phi reliability, and top-two margin.
+                                            </p>
+                                            {calibrationSnapshot.result ? (
+                                                <div className="space-y-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                                                        <DataRow
+                                                            label="Badge"
+                                                            value={`${calibrationSnapshot.result.reliability_badge} // ${formatReadableLabel(calibrationSnapshot.result.calibration_status)}`}
+                                                            tone={calibrationBadgeTone(calibrationSnapshot.result.reliability_badge)}
+                                                        />
+                                                        <DataRow
+                                                            label="Top Label"
+                                                            value={`${formatNullableLabel(calibrationSnapshot.result.top_label)} · ${formatPercentNumber(calibrationSnapshot.result.top_confidence)}`}
+                                                            tone="accent"
+                                                        />
+                                                        <DataRow
+                                                            label="Outcome Samples"
+                                                            value={`${calibrationSnapshot.result.historical_sample_count} for label`}
+                                                            tone={calibrationSnapshot.result.historical_sample_count >= 5 ? 'accent' : 'warning'}
+                                                        />
+                                                        <DataRow
+                                                            label="Expected Error"
+                                                            value={calibrationSnapshot.result.expected_calibration_error == null ? 'Awaiting outcomes' : formatPercentNumber(calibrationSnapshot.result.expected_calibration_error)}
+                                                            tone={(calibrationSnapshot.result.expected_calibration_error ?? 0) > 0.12 ? 'warning' : 'accent'}
+                                                        />
+                                                        <DataRow
+                                                            label="Top-2 Margin"
+                                                            value={formatPercentNumber(calibrationSnapshot.result.margin_top2)}
+                                                            tone={calibrationSnapshot.result.margin_top2 < 0.12 ? 'warning' : 'cyan'}
+                                                        />
+                                                        <DataRow
+                                                            label="Entropy"
+                                                            value={formatPercentNumber(calibrationSnapshot.result.differential_entropy)}
+                                                            tone={calibrationSnapshot.result.differential_entropy > 0.68 ? 'warning' : 'cyan'}
+                                                        />
+                                                    </div>
+                                                    <p className="font-mono text-[11px] leading-relaxed text-foreground/80">
+                                                        {calibrationSnapshot.result.recommended_action}
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <div className="border border-dashed border-grid p-4 font-mono text-[11px] text-muted">
+                                                    {calibrationSnapshot.errorMessage ?? 'No calibration snapshot has been loaded for this event yet.'}
+                                                </div>
+                                            )}
+                                            {calibrationSnapshot.errorMessage && calibrationSnapshot.result && (
+                                                <div className="border border-yellow-400/30 bg-yellow-400/5 p-3 font-mono text-[11px] text-yellow-300">
+                                                    {calibrationSnapshot.errorMessage}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <TerminalButton
+                                            type="button"
+                                            variant="secondary"
+                                            onClick={handleCalibrationSnapshotRefresh}
+                                            disabled={!state.eventId || calibrationSnapshot.status === 'loading'}
+                                        >
+                                            {calibrationSnapshot.status === 'loading' ? 'Loading...' : 'Refresh Seal'}
                                         </TerminalButton>
                                     </div>
                                 </ConsoleCard>
@@ -2268,6 +2389,49 @@ async function fetchInferenceExecutionTrace(
 
 }
 
+async function fetchInferenceCalibrationSnapshot(
+    inferenceEventId: string,
+): Promise<{ snapshot: CalibrationSnapshotResult | null; message: string | null }> {
+    try {
+        const response = await fetchWithTimeout(`/api/inference/${encodeURIComponent(inferenceEventId)}/calibration`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+        }, {
+            timeoutMs: 4_000,
+            timeoutMessage: 'Calibration snapshot did not respond within 4 seconds.',
+        });
+        const text = await response.text();
+        let payload: unknown;
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            return {
+                snapshot: null,
+                message: `Calibration snapshot API returned non-JSON HTTP ${response.status}.`,
+            };
+        }
+
+        if (!response.ok) {
+            return {
+                snapshot: null,
+                message: formatApiError(payload, `Calibration snapshot unavailable (HTTP ${response.status})`),
+            };
+        }
+
+        const snapshot = normalizeCalibrationSnapshotResult(asRecord(payload)?.data);
+        return {
+            snapshot,
+            message: snapshot ? null : 'No calibration snapshot row has been recorded for this inference event yet.',
+        };
+    } catch (error) {
+        return {
+            snapshot: null,
+            message: error instanceof Error ? error.message : 'Calibration snapshot request failed.',
+        };
+    }
+}
+
 function normalizeExecutionTraceEvent(value: Record<string, unknown>): ExecutionTraceEvent | null {
     const stageKey = readString(value.stage_key);
     if (!stageKey) return null;
@@ -2291,6 +2455,38 @@ function traceStatusClass(status: ExecutionTraceEvent['stage_status']) {
     if (status === 'completed') return 'text-green-400';
     if (status === 'skipped') return 'text-yellow-400';
     return 'text-red-400';
+}
+
+function normalizeCalibrationSnapshotResult(value: unknown): CalibrationSnapshotResult | null {
+    const record = asRecord(value);
+    if (!record) return null;
+    const badge = record.reliability_badge;
+    const status = record.calibration_status;
+    if (badge !== 'HIGH' && badge !== 'REVIEW' && badge !== 'CAUTION' && badge !== 'SUPPRESSED') {
+        return null;
+    }
+    if (status !== 'needs_outcome' && status !== 'calibrated' && status !== 'underconfident' && status !== 'overconfident' && status !== 'indeterminate') {
+        return null;
+    }
+    return {
+        id: readString(record.id),
+        top_label: readString(record.top_label),
+        top_confidence: readNumber(record.top_confidence) ?? 0,
+        phi_hat: readNumber(record.phi_hat) ?? 0,
+        contradiction_score: readNumber(record.contradiction_score) ?? 0,
+        differential_count: Math.max(0, Math.round(readNumber(record.differential_count) ?? 0)),
+        differential_entropy: readNumber(record.differential_entropy) ?? 0,
+        margin_top2: readNumber(record.margin_top2) ?? 0,
+        calibration_bucket: readString(record.calibration_bucket) ?? '0.0-0.1',
+        calibration_status: status,
+        historical_sample_count: Math.max(0, Math.round(readNumber(record.historical_sample_count) ?? 0)),
+        historical_mean_delta: readNumber(record.historical_mean_delta),
+        expected_calibration_error: readNumber(record.expected_calibration_error),
+        calibration_reliability_score: readNumber(record.calibration_reliability_score) ?? 0,
+        reliability_badge: badge,
+        recommended_action: readString(record.recommended_action) ?? 'Continue outcome monitoring.',
+        created_at: readString(record.created_at),
+    };
 }
 
 function normalizeReplayDriftResult(value: unknown): ReplayDriftResult | null {
@@ -2353,6 +2549,15 @@ function counterfactualVerdictTone(
     if (verdict === 'fragile') return 'warning';
     if (verdict === 'unstable') return 'danger';
     return 'muted';
+}
+
+function calibrationBadgeTone(
+    badge: CalibrationSnapshotResult['reliability_badge'],
+): 'accent' | 'warning' | 'danger' | 'muted' {
+    if (badge === 'HIGH') return 'accent';
+    if (badge === 'REVIEW') return 'warning';
+    if (badge === 'CAUTION') return 'warning';
+    return 'danger';
 }
 
 function formatNullableLabel(value: string | null): string {

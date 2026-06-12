@@ -34,6 +34,7 @@ import {
     type InferenceExecutionTraceContext,
     type TraceSupabaseClient,
 } from '@/lib/inference/executionTrace';
+import { recordInferenceCalibrationSnapshot } from '@/lib/inference/calibrationSnapshot';
 
 export const runtime = 'nodejs';
 
@@ -509,6 +510,18 @@ async function recordSuccessfulInferenceTelemetry(input: {
                 inference_event_id: input.result.inference_event_id,
                 vision_status: asCoreRecord(input.result.output_payload.vision_inference).status ?? null,
             },
+        }),
+        recordInferenceCalibrationSnapshot(input.supabase, {
+            tenantId: input.tenantId,
+            inferenceEventId: input.result.inference_event_id,
+            requestId: input.result.meta.request_id,
+            caseId: input.result.clinical_case_id,
+            modelVersion: input.modelVersion,
+            sourceModule: 'clinical_api',
+            ranker: input.result.ranker,
+            outputPayload: input.result.output_payload,
+            confidenceScore: input.result.data.confidence_score,
+            phiHat: input.result.cire.phi_hat,
         }),
     ]);
 }

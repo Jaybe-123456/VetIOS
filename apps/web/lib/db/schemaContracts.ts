@@ -160,6 +160,39 @@ export const CPG_FINDING_SCORES = {
     },
 } as const;
 
+export const INFERENCE_CALIBRATION_SNAPSHOTS = {
+    TABLE: 'inference_calibration_snapshots',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        inference_event_id: 'inference_event_id',
+        request_id: 'request_id',
+        case_id: 'case_id',
+        model_name: 'model_name',
+        model_version: 'model_version',
+        schema_version: 'schema_version',
+        source_module: 'source_module',
+        ranker: 'ranker',
+        top_label: 'top_label',
+        top_confidence: 'top_confidence',
+        phi_hat: 'phi_hat',
+        contradiction_score: 'contradiction_score',
+        differential_count: 'differential_count',
+        differential_entropy: 'differential_entropy',
+        margin_top2: 'margin_top2',
+        calibration_bucket: 'calibration_bucket',
+        calibration_status: 'calibration_status',
+        historical_sample_count: 'historical_sample_count',
+        historical_mean_delta: 'historical_mean_delta',
+        expected_calibration_error: 'expected_calibration_error',
+        calibration_reliability_score: 'calibration_reliability_score',
+        reliability_badge: 'reliability_badge',
+        recommended_action: 'recommended_action',
+        snapshot: 'snapshot',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const CLINICAL_CASES = {
     TABLE: 'clinical_cases',
     COLUMNS: {
