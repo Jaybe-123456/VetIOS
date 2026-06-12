@@ -193,6 +193,38 @@ export const INFERENCE_CALIBRATION_SNAPSHOTS = {
     },
 } as const;
 
+export const INFERENCE_ACTIONABILITY_GATE_EVENTS = {
+    TABLE: 'inference_actionability_gate_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        inference_event_id: 'inference_event_id',
+        calibration_snapshot_id: 'calibration_snapshot_id',
+        request_id: 'request_id',
+        case_id: 'case_id',
+        gate_version: 'gate_version',
+        decision: 'decision',
+        actionability_score: 'actionability_score',
+        recommended_next_step: 'recommended_next_step',
+        top_label: 'top_label',
+        top_confidence: 'top_confidence',
+        phi_hat: 'phi_hat',
+        reliability_badge: 'reliability_badge',
+        calibration_status: 'calibration_status',
+        historical_sample_count: 'historical_sample_count',
+        contradiction_score: 'contradiction_score',
+        margin_top2: 'margin_top2',
+        differential_entropy: 'differential_entropy',
+        abstain_recommendation: 'abstain_recommendation',
+        urgent_confirmatory_testing: 'urgent_confirmatory_testing',
+        required_confirmatory_tests: 'required_confirmatory_tests',
+        blockers: 'blockers',
+        warnings: 'warnings',
+        policy_snapshot: 'policy_snapshot',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const CLINICAL_CASES = {
     TABLE: 'clinical_cases',
     COLUMNS: {

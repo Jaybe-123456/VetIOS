@@ -35,6 +35,7 @@ import {
     type TraceSupabaseClient,
 } from '@/lib/inference/executionTrace';
 import { recordInferenceCalibrationSnapshot } from '@/lib/inference/calibrationSnapshot';
+import { recordInferenceActionabilityGateEvent } from '@/lib/inference/actionabilityGate';
 
 export const runtime = 'nodejs';
 
@@ -479,7 +480,7 @@ async function recordSuccessfulInferenceTelemetry(input: {
         ?? readNumber(contradiction.contradiction_score);
     const prediction = extractPredictionLabel(input.result.output_payload);
 
-    await Promise.allSettled([
+    const sharedTelemetryWrites = [
         recordInferenceObservability(input.supabase, {
             inferenceEventId: input.result.inference_event_id,
             tenantId: input.tenantId,
@@ -511,19 +512,33 @@ async function recordSuccessfulInferenceTelemetry(input: {
                 vision_status: asCoreRecord(input.result.output_payload.vision_inference).status ?? null,
             },
         }),
-        recordInferenceCalibrationSnapshot(input.supabase, {
-            tenantId: input.tenantId,
-            inferenceEventId: input.result.inference_event_id,
-            requestId: input.result.meta.request_id,
-            caseId: input.result.clinical_case_id,
-            modelVersion: input.modelVersion,
-            sourceModule: 'clinical_api',
-            ranker: input.result.ranker,
-            outputPayload: input.result.output_payload,
-            confidenceScore: input.result.data.confidence_score,
-            phiHat: input.result.cire.phi_hat,
-        }),
+    ];
+    const calibrationWrite = recordInferenceCalibrationSnapshot(input.supabase, {
+        tenantId: input.tenantId,
+        inferenceEventId: input.result.inference_event_id,
+        requestId: input.result.meta.request_id,
+        caseId: input.result.clinical_case_id,
+        modelVersion: input.modelVersion,
+        sourceModule: 'clinical_api',
+        ranker: input.result.ranker,
+        outputPayload: input.result.output_payload,
+        confidenceScore: input.result.data.confidence_score,
+        phiHat: input.result.cire.phi_hat,
+    });
+    const [calibrationResult] = await Promise.all([
+        calibrationWrite,
+        Promise.allSettled(sharedTelemetryWrites),
     ]);
+    await recordInferenceActionabilityGateEvent(input.supabase, {
+        tenantId: input.tenantId,
+        inferenceEventId: input.result.inference_event_id,
+        requestId: input.result.meta.request_id,
+        caseId: input.result.clinical_case_id,
+        outputPayload: input.result.output_payload,
+        confidenceScore: input.result.data.confidence_score,
+        phiHat: input.result.cire.phi_hat,
+        calibrationSnapshot: calibrationResult.data,
+    });
 }
 
 async function recordFailedInferenceTelemetry(input: {

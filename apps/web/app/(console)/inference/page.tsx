@@ -141,6 +141,28 @@ interface CalibrationSnapshotResult {
     created_at: string | null;
 }
 
+interface ActionabilityGateResult {
+    id: string | null;
+    decision: 'actionable_with_confirmation' | 'review_before_action' | 'hold_for_evidence' | 'suppressed';
+    actionability_score: number;
+    recommended_next_step: string;
+    top_label: string | null;
+    top_confidence: number;
+    phi_hat: number;
+    reliability_badge: 'HIGH' | 'REVIEW' | 'CAUTION' | 'SUPPRESSED';
+    calibration_status: CalibrationSnapshotResult['calibration_status'];
+    historical_sample_count: number;
+    contradiction_score: number;
+    margin_top2: number;
+    differential_entropy: number;
+    abstain_recommendation: boolean;
+    urgent_confirmatory_testing: boolean;
+    required_confirmatory_tests: string[];
+    blockers: string[];
+    warnings: string[];
+    created_at: string | null;
+}
+
 interface CorrectionData {
     hallucinated_signals_removed: string[];
     penalties_applied: string[];
@@ -239,6 +261,12 @@ interface CalibrationSnapshotState {
     errorMessage: string | null;
 }
 
+interface ActionabilityGateState {
+    status: 'idle' | 'loading' | 'success' | 'missing' | 'error';
+    result: ActionabilityGateResult | null;
+    errorMessage: string | null;
+}
+
 export default function InferenceConsole() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<InferenceTab>('analysis');
@@ -279,6 +307,11 @@ export default function InferenceConsole() {
         errorMessage: null,
     });
     const [calibrationSnapshot, setCalibrationSnapshot] = useState<CalibrationSnapshotState>({
+        status: 'idle',
+        result: null,
+        errorMessage: null,
+    });
+    const [actionabilityGate, setActionabilityGate] = useState<ActionabilityGateState>({
         status: 'idle',
         result: null,
         errorMessage: null,
@@ -543,6 +576,7 @@ export default function InferenceConsole() {
                 setReplayDrift({ status: 'idle', result: null, errorMessage: null });
                 setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
                 setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
+                setActionabilityGate({ status: 'idle', result: null, errorMessage: null });
                 return;
             }
 
@@ -608,6 +642,7 @@ export default function InferenceConsole() {
             setReplayDrift({ status: 'idle', result: null, errorMessage: null });
             setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
             setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
+            setActionabilityGate({ status: 'idle', result: null, errorMessage: null });
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Normalization failed.';
             setState(prev => ({ ...prev, status: 'error', errorMessage }));
@@ -635,6 +670,7 @@ export default function InferenceConsole() {
         setReplayDrift({ status: 'idle', result: null, errorMessage: null });
         setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
         setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
+        setActionabilityGate({ status: 'idle', result: null, errorMessage: null });
 
         const pushLog = (message: string, level: LogEntry['level'] = 'info') => {
             setState(prev => ({
@@ -740,6 +776,10 @@ export default function InferenceConsole() {
             const calibrationResult = await fetchInferenceCalibrationSnapshot(inferenceEventId);
             if (calibrationResult.message) {
                 pushLog(`CALIBRATION SNAPSHOT: ${calibrationResult.message}`, calibrationResult.snapshot ? 'info' : 'warn');
+            }
+            const actionabilityResult = await fetchInferenceActionabilityGate(inferenceEventId);
+            if (actionabilityResult.message) {
+                pushLog(`ACTIONABILITY GATE: ${actionabilityResult.message}`, actionabilityResult.gate ? 'info' : 'warn');
             }
 
             const dataPayload = result.data && typeof result.data === 'object'
@@ -864,6 +904,11 @@ export default function InferenceConsole() {
                 result: calibrationResult.snapshot,
                 errorMessage: calibrationResult.message,
             });
+            setActionabilityGate({
+                status: actionabilityResult.gate ? 'success' : 'missing',
+                result: actionabilityResult.gate,
+                errorMessage: actionabilityResult.message,
+            });
             setActiveTab('vectors');
         } catch (err: unknown) {
             const errorMessage = err instanceof Error ? err.message : 'Unknown inference error.';
@@ -883,6 +928,7 @@ export default function InferenceConsole() {
         }));
         setCounterfactualStability({ status: 'idle', result: null, errorMessage: null });
         setCalibrationSnapshot({ status: 'idle', result: null, errorMessage: null });
+        setActionabilityGate({ status: 'idle', result: null, errorMessage: null });
     }
 
     async function handleCopyEventId() {
@@ -983,6 +1029,17 @@ export default function InferenceConsole() {
         setCalibrationSnapshot({
             status: result.snapshot ? 'success' : result.message ? 'error' : 'missing',
             result: result.snapshot,
+            errorMessage: result.message,
+        });
+    }
+
+    async function handleActionabilityGateRefresh() {
+        if (!state.eventId || actionabilityGate.status === 'loading') return;
+        setActionabilityGate({ status: 'loading', result: actionabilityGate.result, errorMessage: null });
+        const result = await fetchInferenceActionabilityGate(state.eventId);
+        setActionabilityGate({
+            status: result.gate ? 'success' : result.message ? 'error' : 'missing',
+            result: result.gate,
             errorMessage: result.message,
         });
     }
@@ -1618,6 +1675,94 @@ export default function InferenceConsole() {
                                             disabled={!state.eventId || calibrationSnapshot.status === 'loading'}
                                         >
                                             {calibrationSnapshot.status === 'loading' ? 'Loading...' : 'Refresh Seal'}
+                                        </TerminalButton>
+                                    </div>
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Clinical Actionability Gate" className="border-green-400/30">
+                                    <div className="grid grid-cols-1 lg:grid-cols-[1fr,220px] gap-4 items-start">
+                                        <div className="space-y-3">
+                                            <p className="font-mono text-[11px] leading-relaxed text-muted">
+                                                Final action/review/hold decision derived from confidence, CIRE, calibration, contradiction pressure, differential spread, and confirmatory-test requirements.
+                                            </p>
+                                            {actionabilityGate.result ? (
+                                                <div className="space-y-3">
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 font-mono text-xs">
+                                                        <DataRow
+                                                            label="Decision"
+                                                            value={`${formatReadableLabel(actionabilityGate.result.decision)} · ${formatPercentNumber(actionabilityGate.result.actionability_score)}`}
+                                                            tone={actionabilityDecisionTone(actionabilityGate.result.decision)}
+                                                        />
+                                                        <DataRow
+                                                            label="Reliability"
+                                                            value={`${actionabilityGate.result.reliability_badge} // ${formatReadableLabel(actionabilityGate.result.calibration_status)}`}
+                                                            tone={calibrationBadgeTone(actionabilityGate.result.reliability_badge)}
+                                                        />
+                                                        <DataRow
+                                                            label="Top Label"
+                                                            value={`${formatNullableLabel(actionabilityGate.result.top_label)} · ${formatPercentNumber(actionabilityGate.result.top_confidence)}`}
+                                                            tone="accent"
+                                                        />
+                                                        <DataRow
+                                                            label="Contradiction"
+                                                            value={formatPercentNumber(actionabilityGate.result.contradiction_score)}
+                                                            tone={actionabilityGate.result.contradiction_score >= 0.65 ? 'danger' : actionabilityGate.result.contradiction_score >= 0.35 ? 'warning' : 'accent'}
+                                                        />
+                                                    </div>
+                                                    <p className="font-mono text-[11px] leading-relaxed text-foreground/80">
+                                                        {actionabilityGate.result.recommended_next_step}
+                                                    </p>
+                                                    {(actionabilityGate.result.blockers.length > 0 || actionabilityGate.result.warnings.length > 0) && (
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                            <div className="border border-grid bg-black/20 p-3">
+                                                                <div className="mb-2 text-[10px] uppercase tracking-widest text-red-300">Blockers</div>
+                                                                <ul className="space-y-1 font-mono text-[11px] text-muted">
+                                                                    {(actionabilityGate.result.blockers.length ? actionabilityGate.result.blockers : ['None']).map((item, index) => (
+                                                                        <li key={`blocker-${index}`}>- {item}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            </div>
+                                                            <div className="border border-grid bg-black/20 p-3">
+                                                                <div className="mb-2 text-[10px] uppercase tracking-widest text-yellow-300">Warnings</div>
+                                                                <ul className="space-y-1 font-mono text-[11px] text-muted">
+                                                                    {(actionabilityGate.result.warnings.length ? actionabilityGate.result.warnings : ['None']).map((item, index) => (
+                                                                        <li key={`warning-${index}`}>- {item}</li>
+                                                                    ))}
+                                                                </ul>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    {actionabilityGate.result.required_confirmatory_tests.length > 0 && (
+                                                        <div className="border border-green-400/20 bg-green-400/5 p-3">
+                                                            <div className="mb-2 text-[10px] uppercase tracking-widest text-green-300">Confirmatory Tests</div>
+                                                            <div className="flex flex-wrap gap-2">
+                                                                {actionabilityGate.result.required_confirmatory_tests.slice(0, 6).map((test, index) => (
+                                                                    <span key={`${test}-${index}`} className="border border-green-400/20 px-2 py-1 font-mono text-[10px] text-green-200">
+                                                                        {test}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ) : (
+                                                <div className="border border-dashed border-grid p-4 font-mono text-[11px] text-muted">
+                                                    {actionabilityGate.errorMessage ?? 'No actionability gate row has been loaded for this event yet.'}
+                                                </div>
+                                            )}
+                                            {actionabilityGate.errorMessage && actionabilityGate.result && (
+                                                <div className="border border-yellow-400/30 bg-yellow-400/5 p-3 font-mono text-[11px] text-yellow-300">
+                                                    {actionabilityGate.errorMessage}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <TerminalButton
+                                            type="button"
+                                            variant="secondary"
+                                            onClick={handleActionabilityGateRefresh}
+                                            disabled={!state.eventId || actionabilityGate.status === 'loading'}
+                                        >
+                                            {actionabilityGate.status === 'loading' ? 'Loading...' : 'Refresh Gate'}
                                         </TerminalButton>
                                     </div>
                                 </ConsoleCard>
@@ -2432,6 +2577,49 @@ async function fetchInferenceCalibrationSnapshot(
     }
 }
 
+async function fetchInferenceActionabilityGate(
+    inferenceEventId: string,
+): Promise<{ gate: ActionabilityGateResult | null; message: string | null }> {
+    try {
+        const response = await fetchWithTimeout(`/api/inference/${encodeURIComponent(inferenceEventId)}/actionability`, {
+            method: 'GET',
+            credentials: 'same-origin',
+            cache: 'no-store',
+        }, {
+            timeoutMs: 4_000,
+            timeoutMessage: 'Actionability gate did not respond within 4 seconds.',
+        });
+        const text = await response.text();
+        let payload: unknown;
+        try {
+            payload = JSON.parse(text);
+        } catch {
+            return {
+                gate: null,
+                message: `Actionability gate API returned non-JSON HTTP ${response.status}.`,
+            };
+        }
+
+        if (!response.ok) {
+            return {
+                gate: null,
+                message: formatApiError(payload, `Actionability gate unavailable (HTTP ${response.status})`),
+            };
+        }
+
+        const gate = normalizeActionabilityGateResult(asRecord(payload)?.data);
+        return {
+            gate,
+            message: gate ? null : 'No actionability gate row has been recorded for this inference event yet.',
+        };
+    } catch (error) {
+        return {
+            gate: null,
+            message: error instanceof Error ? error.message : 'Actionability gate request failed.',
+        };
+    }
+}
+
 function normalizeExecutionTraceEvent(value: Record<string, unknown>): ExecutionTraceEvent | null {
     const stageKey = readString(value.stage_key);
     if (!stageKey) return null;
@@ -2455,6 +2643,55 @@ function traceStatusClass(status: ExecutionTraceEvent['stage_status']) {
     if (status === 'completed') return 'text-green-400';
     if (status === 'skipped') return 'text-yellow-400';
     return 'text-red-400';
+}
+
+function normalizeActionabilityGateResult(value: unknown): ActionabilityGateResult | null {
+    const record = asRecord(value);
+    if (!record) return null;
+    const decision = record.decision;
+    const badge = record.reliability_badge;
+    const calibrationStatus = record.calibration_status;
+    if (
+        decision !== 'actionable_with_confirmation'
+        && decision !== 'review_before_action'
+        && decision !== 'hold_for_evidence'
+        && decision !== 'suppressed'
+    ) {
+        return null;
+    }
+    if (badge !== 'HIGH' && badge !== 'REVIEW' && badge !== 'CAUTION' && badge !== 'SUPPRESSED') {
+        return null;
+    }
+    if (
+        calibrationStatus !== 'needs_outcome'
+        && calibrationStatus !== 'calibrated'
+        && calibrationStatus !== 'underconfident'
+        && calibrationStatus !== 'overconfident'
+        && calibrationStatus !== 'indeterminate'
+    ) {
+        return null;
+    }
+    return {
+        id: readString(record.id),
+        decision,
+        actionability_score: readNumber(record.actionability_score) ?? 0,
+        recommended_next_step: readString(record.recommended_next_step) ?? 'Clinician review required before action.',
+        top_label: readString(record.top_label),
+        top_confidence: readNumber(record.top_confidence) ?? 0,
+        phi_hat: readNumber(record.phi_hat) ?? 0,
+        reliability_badge: badge,
+        calibration_status: calibrationStatus,
+        historical_sample_count: Math.max(0, Math.round(readNumber(record.historical_sample_count) ?? 0)),
+        contradiction_score: readNumber(record.contradiction_score) ?? 0,
+        margin_top2: readNumber(record.margin_top2) ?? 0,
+        differential_entropy: readNumber(record.differential_entropy) ?? 0,
+        abstain_recommendation: record.abstain_recommendation === true,
+        urgent_confirmatory_testing: record.urgent_confirmatory_testing === true,
+        required_confirmatory_tests: readStringArray(record.required_confirmatory_tests),
+        blockers: readStringArray(record.blockers),
+        warnings: readStringArray(record.warnings),
+        created_at: readString(record.created_at),
+    };
 }
 
 function normalizeCalibrationSnapshotResult(value: unknown): CalibrationSnapshotResult | null {
@@ -2557,6 +2794,15 @@ function calibrationBadgeTone(
     if (badge === 'HIGH') return 'accent';
     if (badge === 'REVIEW') return 'warning';
     if (badge === 'CAUTION') return 'warning';
+    return 'danger';
+}
+
+function actionabilityDecisionTone(
+    decision: ActionabilityGateResult['decision'],
+): 'accent' | 'warning' | 'danger' | 'muted' {
+    if (decision === 'actionable_with_confirmation') return 'accent';
+    if (decision === 'review_before_action') return 'warning';
+    if (decision === 'hold_for_evidence') return 'warning';
     return 'danger';
 }
 
