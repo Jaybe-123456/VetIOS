@@ -58,7 +58,9 @@ function createSupabaseMock(error: { message: string } | null) {
     return {
         from: vi.fn(() => ({
             select: vi.fn(() => ({
-                limit: vi.fn(() => Promise.resolve({ error })),
+                limit: vi.fn(() => ({
+                    abortSignal: vi.fn(() => Promise.resolve({ error })),
+                })),
             })),
         })),
     };

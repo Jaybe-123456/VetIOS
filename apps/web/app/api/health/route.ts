@@ -31,19 +31,17 @@ export async function GET() {
 
 async function checkDatabase(): Promise<{ ok: boolean; latencyMs: number | null }> {
     const startedAt = Date.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), DB_TIMEOUT_MS);
 
     try {
         const supabase = getSupabaseServer();
-        const result = await Promise.race([
-            supabase
-                .from('ai_inference_events')
-                .select('id', { head: true, count: 'exact' })
-                .limit(1)
-                .then(({ error }) => ({ ok: !error })),
-            new Promise<{ ok: false }>((resolve) => {
-                setTimeout(() => resolve({ ok: false }), DB_TIMEOUT_MS);
-            }),
-        ]);
+        const result = await supabase
+            .from('ai_inference_events')
+            .select('id')
+            .limit(1)
+            .abortSignal(controller.signal)
+            .then(({ error }) => ({ ok: !error }));
 
         return {
             ok: result.ok,
@@ -54,6 +52,8 @@ async function checkDatabase(): Promise<{ ok: boolean; latencyMs: number | null 
             ok: false,
             latencyMs: Date.now() - startedAt,
         };
+    } finally {
+        clearTimeout(timeout);
     }
 }
 
