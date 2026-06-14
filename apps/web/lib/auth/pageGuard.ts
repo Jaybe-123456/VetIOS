@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { buildVerifyEmailPath } from '@/lib/auth/emailVerification';
 import { resolveSessionState } from '@/lib/supabaseServer';
+import { buildControlPlanePermissionSet, resolveControlPlaneRole } from '@/lib/settings/permissions';
 
 function resolveDevBypassTenantId(): string | null {
     if (process.env.VETIOS_DEV_BYPASS !== 'true') {
@@ -26,4 +27,20 @@ export async function requirePageSession(nextPath: string) {
     }
 
     redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+}
+
+export async function requireAdminPageSession(nextPath: string) {
+    const sessionState = await requirePageSession(nextPath);
+    if (sessionState === null) {
+        return null;
+    }
+
+    const user = (await sessionState.supabase.auth.getUser()).data.user ?? null;
+    const role = resolveControlPlaneRole(user, 'session');
+    const permissions = buildControlPlanePermissionSet(role);
+    if (permissions.can_manage_infrastructure) {
+        return sessionState;
+    }
+
+    redirect('/dashboard?access=admin_required');
 }

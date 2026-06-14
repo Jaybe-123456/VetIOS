@@ -1,8 +1,7 @@
 import type { ReactNode } from 'react';
-import { requirePageSession } from '@/lib/auth/pageGuard';
+import { requireAdminPageSession } from '@/lib/auth/pageGuard';
 
 export default async function SettingsLayout({ children }: { children: ReactNode }) {
-    await requirePageSession('/settings');
+    await requireAdminPageSession('/settings');
     return children;
 }
-

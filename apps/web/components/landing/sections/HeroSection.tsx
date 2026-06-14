@@ -26,17 +26,17 @@ export default function HeroSection() {
 
                     <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                         <Link
-                            href="/demo"
+                            href="/ask-vetios"
                             className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-lg bg-[#E8EDF2] px-6 text-sm font-medium text-[#0B0F14] transition-transform duration-200 hover:-translate-y-0.5"
                         >
-                            Try a demo case
+                            Ask VetIOS
                             <ArrowRight className="h-4 w-4" />
                         </Link>
                         <Link
-                            href="/login"
+                            href="/login?next=%2Finference"
                             className="inline-flex min-h-[48px] items-center justify-center rounded-lg border border-white/14 bg-white/[0.03] px-6 text-sm font-medium text-white/78 transition-colors duration-200 hover:border-white/24 hover:text-white"
                         >
-                            Sign in
+                            Open console
                         </Link>
                     </div>
 

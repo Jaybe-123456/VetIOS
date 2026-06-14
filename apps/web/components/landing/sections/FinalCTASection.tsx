@@ -24,10 +24,10 @@ export default function FinalCTASection() {
 
                     <div className="mt-8 flex flex-col gap-4 sm:flex-row">
                         <Link
-                            href="/signup"
+                            href="/ask-vetios"
                             className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#E8EDF2] px-6 py-3.5 text-sm font-medium text-[#0B0F14] transition-transform duration-200 hover:-translate-y-0.5 sm:w-auto"
                         >
-                            Access Platform
+                            Ask VetIOS
                             <ArrowRight className="h-4 w-4" />
                         </Link>
                         <Link

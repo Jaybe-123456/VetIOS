@@ -36,6 +36,14 @@ export function NormalizedPreview({ normalized, onConfirm, onCancel }: Normalize
                 species: parsed.species ?? null,
                 breed: parsed.breed ?? null,
                 symptoms: Array.isArray(parsed.symptoms) ? parsed.symptoms : [],
+                presenting_signs: Array.isArray(parsed.presenting_signs) ? parsed.presenting_signs : undefined,
+                history: parsed.history && typeof parsed.history === 'object' ? parsed.history : undefined,
+                preventive_history: parsed.preventive_history && typeof parsed.preventive_history === 'object' ? parsed.preventive_history : undefined,
+                diagnostic_tests: parsed.diagnostic_tests && typeof parsed.diagnostic_tests === 'object' ? parsed.diagnostic_tests : undefined,
+                physical_exam: parsed.physical_exam && typeof parsed.physical_exam === 'object' ? parsed.physical_exam : undefined,
+                region: typeof parsed.region === 'string' ? parsed.region : null,
+                age_years: typeof parsed.age_years === 'number' ? parsed.age_years : undefined,
+                weight_kg: typeof parsed.weight_kg === 'number' ? parsed.weight_kg : undefined,
                 metadata: parsed.metadata ?? {},
             });
         } catch {

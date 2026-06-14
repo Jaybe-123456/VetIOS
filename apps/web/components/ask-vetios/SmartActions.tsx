@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
     Activity, AlertTriangle, BookOpen,
-    ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle,
+    ClipboardCheck, ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle,
     Eye, ImageIcon, Pill, GitBranch, LibraryBig, ExternalLink
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -86,6 +86,107 @@ function UrgencyBadge({ level }: { level: string }) {
 }
 
 // ── Panel container ────────────────────────────────────────────────────────
+
+function CaseDraftPanel({ metadata, onFollowUp }: {
+    metadata: MessageMetadata;
+    onFollowUp: (prompt: string) => void;
+}) {
+    const draft = metadata.case_draft;
+    const questions = metadata.follow_up_questions ?? [];
+    if (!draft && questions.length === 0) return null;
+
+    const readiness = Math.round((metadata.intake_readiness_score ?? 0) * 100);
+    const handoff = metadata.case_handoff;
+    const statusLabel = (metadata.intake_status ?? 'needs_minimum').replace(/_/g, ' ');
+    const rows = [
+        { label: 'Species', value: draft?.species && draft.species !== 'unknown' ? draft.species : null },
+        { label: 'Age/Sex', value: [draft?.age_years ? `${draft.age_years}y` : null, draft?.sex].filter(Boolean).join(' / ') },
+        { label: 'Duration', value: draft?.duration },
+        { label: 'Signs', value: draft?.clinical_signs?.join(', ') },
+        { label: 'Labs', value: draft?.labs_or_tests?.join(', ') },
+    ].filter((row) => row.value && row.value.trim().length > 0);
+
+    const openInference = () => {
+        if (!handoff?.ready) return;
+        window.localStorage.setItem(handoff.storage_key, JSON.stringify(handoff.payload));
+        window.location.assign(handoff.inference_href);
+    };
+
+    return (
+        <div className="space-y-3 border border-accent/18 bg-accent/[0.035] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                    <ClipboardCheck className="h-3.5 w-3.5 text-accent" />
+                    <div>
+                        <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-accent/80">Case Intake Draft</div>
+                        <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-white/42">{statusLabel}</div>
+                    </div>
+                </div>
+                <div className="flex items-center gap-3">
+                    <div className="min-w-24">
+                        <div className="mb-1 flex items-center justify-between font-mono text-[9px] uppercase tracking-[0.12em] text-white/42">
+                            <span>Ready</span>
+                            <span>{readiness}%</span>
+                        </div>
+                        <div className="h-1 overflow-hidden bg-white/10">
+                            <div className="h-full bg-accent transition-all duration-500" style={{ width: `${readiness}%` }} />
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={openInference}
+                        disabled={!handoff?.ready}
+                        className="inline-flex items-center gap-1.5 border border-accent/35 bg-accent/10 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-white/30"
+                    >
+                        <ExternalLink className="h-3 w-3" />
+                        Open Inference
+                    </button>
+                </div>
+            </div>
+
+            {rows.length > 0 && (
+                <div className="grid gap-2 sm:grid-cols-2">
+                    {rows.map((row) => (
+                        <CaseDraftRow key={row.label} label={row.label} value={row.value ?? ''} />
+                    ))}
+                </div>
+            )}
+
+            {metadata.safety_notice && (
+                <div className="border border-red-500/20 bg-red-500/5 px-3 py-2 font-mono text-[10px] leading-relaxed text-red-300/80">
+                    {metadata.safety_notice}
+                </div>
+            )}
+
+            {questions.length > 0 && (
+                <div className="space-y-2">
+                    <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-white/42">Missing Details</div>
+                    <div className="flex flex-wrap gap-2">
+                        {questions.slice(0, 3).map((question) => (
+                            <button
+                                key={question}
+                                type="button"
+                                onClick={() => onFollowUp(question)}
+                                className="border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-left font-mono text-[10px] leading-relaxed text-white/64 transition-colors hover:border-accent/25 hover:text-accent"
+                            >
+                                {question}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function CaseDraftRow({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="border border-white/8 bg-black/20 px-3 py-2">
+            <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-white/35">{label}</div>
+            <div className="mt-1 font-mono text-[11px] leading-relaxed text-white/72">{value}</div>
+        </div>
+    );
+}
 
 function Panel({ title, icon: Icon, onClose, children }: {
     title: string; icon: React.ElementType; onClose: () => void; children: React.ReactNode;
@@ -195,6 +296,8 @@ export default function SmartActions({
             {/* ── Clinical panels ─────────────────────────────────────── */}
             {isClinical && (
                 <>
+                    <CaseDraftPanel metadata={metadata} onFollowUp={onFollowUp} />
+
                     {/* Differentials */}
                     {metadata.diagnosis_ranked && metadata.diagnosis_ranked.length > 0 && (
                         <div className="space-y-2">

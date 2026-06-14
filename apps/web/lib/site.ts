@@ -3,7 +3,7 @@ import { PUBLIC_SEO_PATHS } from '@/lib/seo/publicPages';
 const DEFAULT_SITE_ORIGIN = 'https://www.vetios.tech';
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/auth/callback'];
-const PUBLIC_MARKETING_PATHS = [...PUBLIC_SEO_PATHS];
+const PUBLIC_MARKETING_PATHS = [...PUBLIC_SEO_PATHS, '/ask-vetios'];
 const PUBLIC_PLATFORM_PATHS = [
     '/platform/cire-standard',
     '/platform/model-cards',
@@ -88,6 +88,7 @@ export function isPublicRoutePath(pathname: string): boolean {
 export function isShelllessPublicPath(pathname: string): boolean {
     return isPublicAuthPath(pathname)
         || PUBLIC_SEO_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
+        || pathname === '/ask-vetios'
         || isPublicPlatformPath(pathname);
 }
 

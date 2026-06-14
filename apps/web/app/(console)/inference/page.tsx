@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     ClinicWorkflowPanel,
@@ -11,6 +11,7 @@ import { TreatmentPathwaysPanel } from '@/components/TreatmentPathwaysPanel';
 import { InferenceForm } from '@/components/InferenceForm';
 import { NormalizedPreview } from '@/components/NormalizedPreview';
 import { normalizeInferenceInput, type InputMode as BaseInputMode, type NormalizedInput } from '@/lib/input/inputNormalizer';
+import { ASK_VETIOS_CASE_DRAFT_STORAGE_KEY, type AskVetiosCaseHandoffPayload } from '@/lib/askVetios/intake';
 import type { EncounterPayloadV2, MMColour, Sex, Species, SystemPanel, TestValue } from '@vetios/inference-schema';
 
 type InputMode = BaseInputMode | 'panels';
@@ -290,6 +291,67 @@ interface ActionabilityGateState {
     errorMessage: string | null;
 }
 
+interface AskVetiosNormalizedHandoff {
+    normalizedInput: NormalizedInput;
+    requestPayload: Record<string, unknown>;
+}
+
+function normalizeAskVetiosHandoff(payload: AskVetiosCaseHandoffPayload): AskVetiosNormalizedHandoff | null {
+    const input = readRecord(payload.input);
+    const signature = readRecord(input?.input_signature);
+    if (!signature) return null;
+
+    const metadata = readRecord(signature.metadata) ?? {};
+    const history = readRecord(signature.history);
+    const diagnosticTests = readRecord(signature.diagnostic_tests);
+    const physicalExam = readRecord(signature.physical_exam);
+    const model = readRecord(payload.model);
+    const symptoms = readAskVetiosStringArray(signature.symptoms);
+    const presentingSigns = readAskVetiosStringArray(signature.presenting_signs);
+    const species = typeof signature.species === 'string' && signature.species.trim().length > 0
+        ? signature.species.trim()
+        : null;
+    const breed = typeof signature.breed === 'string' && signature.breed.trim().length > 0
+        ? signature.breed.trim()
+        : null;
+    const ageYears = typeof signature.age_years === 'number' && Number.isFinite(signature.age_years)
+        ? signature.age_years
+        : undefined;
+
+    return {
+        requestPayload: signature,
+        normalizedInput: {
+            species,
+            breed,
+            symptoms,
+            presenting_signs: presentingSigns.length > 0 ? presentingSigns : symptoms,
+            history: history ?? undefined,
+            diagnostic_tests: diagnosticTests ?? undefined,
+            physical_exam: physicalExam ?? undefined,
+            region: typeof signature.region === 'string' ? signature.region : null,
+            age_years: ageYears,
+            metadata: {
+                ...metadata,
+                ask_vetios_handoff: true,
+                ask_vetios_handoff_model: model,
+            },
+        },
+    };
+}
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function readAskVetiosStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+            .map((entry) => entry.trim())
+        : [];
+}
+
 export default function InferenceConsole() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<InferenceTab>('analysis');
@@ -355,6 +417,62 @@ export default function InferenceConsole() {
     const latestReviewEvent = reviewQueue.events[0] ?? null;
 
     // ── File reader ──────────────────────────────────────────────────────────
+
+    useEffect(() => {
+        const source = new URLSearchParams(window.location.search).get('source');
+        if (source !== 'ask-vetios') return;
+
+        try {
+            const storedDraft = window.localStorage.getItem(ASK_VETIOS_CASE_DRAFT_STORAGE_KEY);
+            if (!storedDraft) return;
+
+            const handoff = normalizeAskVetiosHandoff(JSON.parse(storedDraft) as AskVetiosCaseHandoffPayload);
+            if (!handoff) {
+                throw new Error('Invalid Ask VetIOS handoff payload');
+            }
+
+            setInputMode('json');
+            setActiveTab('analysis');
+            setState((previous) => ({
+                ...previous,
+                status: 'previewing',
+                eventId: null,
+                requestPayload: handoff.requestPayload,
+                responsePayload: null,
+                probabilities: [],
+                explainability: null,
+                correction: null,
+                multisystemAssessment: null,
+                contradictionAnalysis: null,
+                uncertaintyNotes: [],
+                mlRisk: null,
+                riskModelOutput: null,
+                riskAssessment: null,
+                errorMessage: null,
+                normalizedInput: handoff.normalizedInput,
+                diagnosticImages: [],
+                labResults: [],
+                cire: null,
+                cireMessage: null,
+                executionTrace: [],
+                executionTraceMessage: null,
+                metrics: null,
+                logs: [{
+                    id: `ask-vetios-handoff-${Date.now()}`,
+                    timestamp: new Date().toISOString(),
+                    level: 'info',
+                    message: 'ASK VETIOS CASE DRAFT LOADED',
+                }],
+            }));
+            window.localStorage.removeItem(ASK_VETIOS_CASE_DRAFT_STORAGE_KEY);
+        } catch {
+            setState((previous) => ({
+                ...previous,
+                status: 'error',
+                errorMessage: 'Ask VetIOS case draft could not be loaded. Start a new inference manually.',
+            }));
+        }
+    }, []);
 
     async function readFilesAsBase64(files: FormDataEntryValue[]): Promise<UploadedArtifact[]> {
         const validFiles = files.filter((entry): entry is File => entry instanceof File && entry.size > 0);

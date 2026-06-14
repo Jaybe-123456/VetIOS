@@ -56,6 +56,8 @@ function main() {
     assert(site.shouldRedirectPreviewAuthHost('app.vetios.example', '/login') === false, 'Canonical host should not redirect.');
     assert(site.isPublicAuthPath('/verify-email') === true, 'Verify-email route should stay publicly accessible.');
     assert(site.isPublicMarketingPath('/platform') === true, 'Platform overview should stay publicly accessible.');
+    assert(site.isPublicMarketingPath('/ask-vetios') === true, 'Ask VetIOS should stay publicly accessible.');
+    assert(site.isShelllessPublicPath('/ask-vetios') === true, 'Ask VetIOS should render without the private console shell.');
     assert(site.isPublicMarketingPath('/platform/developers') === false, 'Detailed platform docs should not stay public.');
     assert(site.isShelllessPublicPath('/platform/developers') === true, 'Detailed platform routes should remain shellless for authenticated users.');
     assert(site.buildClientAuthCallbackUrl('https://vet-ios-preview.vercel.app', '/inference') === 'https://app.vetios.example/auth/callback?next=%2Finference', 'Client auth callback should prefer the configured public origin.');
@@ -68,6 +70,7 @@ function main() {
     assertFileContains(path.join(appRoot, 'proxy.ts'), 'shouldRedirectPreviewAuthHost');
     assertFileContains(path.join(appRoot, 'proxy.ts'), "loginUrl.searchParams.set('next'");
     assertFileContains(path.join(appRoot, 'lib', 'auth', 'pageGuard.ts'), "redirect(`/login?next=${encodeURIComponent(nextPath)}`)");
+    assertFileContains(path.join(appRoot, 'lib', 'auth', 'pageGuard.ts'), 'requireAdminPageSession');
     assertFileContains(path.join(appRoot, 'app', 'dashboard', 'layout.tsx'), "requirePageSession('/dashboard')");
     assertFileContains(path.join(appRoot, 'app', '(console)', 'layout.tsx'), "requirePageSession('/inference')");
     assertFileContains(path.join(appRoot, 'app', 'auth', 'callback', 'route.ts'), 'sanitizeInternalPath');

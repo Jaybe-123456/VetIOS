@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 
 export const navigationItems = [
+    { label: 'Ask VetIOS', href: '/ask-vetios' },
     { label: 'Architecture', href: '#architecture' },
     { label: 'Modules', href: '#modules' },
     { label: 'System', href: '#system' },

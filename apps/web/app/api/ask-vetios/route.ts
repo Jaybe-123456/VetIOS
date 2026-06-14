@@ -20,6 +20,7 @@ import { parseAskVetIOSQuery } from '@vetios/ask-vetios';
 import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/service';
 import { buildHeuristicResponse as buildAskVetiosHeuristicResponse, type AskVetiosHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
+import { buildAskVetiosIntake } from '@/lib/askVetios/intake';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -73,6 +74,7 @@ export async function POST(req: Request) {
     }
 
     const { message, conversation } = parsed.data;
+    const intake = buildAskVetiosIntake({ message, conversation });
     const tokenBudget = enforceAskVetiosTokenBudget({
         req,
         kind: 'chat',
@@ -112,9 +114,12 @@ export async function POST(req: Request) {
     // ── Heuristic fallback (dev / test) ──
     if (shouldUseAiHeuristicFallback()) {
         const agenticRagResult = await resolveAskVetiosAgenticRag(message, 1_100);
-        const heuristicBody = attachAgenticRagToHeuristicResponse(
-            buildAskVetiosHeuristicResponse(message),
-            agenticRagResult,
+        const heuristicBody = withAskVetiosIntake(
+            attachAgenticRagToHeuristicResponse(
+                buildAskVetiosHeuristicResponse(message),
+                agenticRagResult,
+            ),
+            intake,
         );
         const queryHistoryId = await logAskVetiosQuery(message, heuristicBody as unknown as Record<string, unknown>, startTime).catch(() => null);
         const fp = generateFingerprint({ tenantId: 'vetios-platform', requestId, endpoint: auditCtx.endpoint, issuedAt: startTime });
@@ -175,7 +180,10 @@ export async function POST(req: Request) {
         if (output.parse_error) {
             throw new Error(`AI generated invalid JSON: ${inferenceResult.raw_content}`);
         }
-        const response = buildEnsembleResponse(output, inferenceResult.ensemble_metadata, agenticRagResult);
+        const response = withAskVetiosIntake(
+            buildEnsembleResponse(output, inferenceResult.ensemble_metadata, agenticRagResult),
+            intake,
+        );
         const queryHistoryId = await logAskVetiosQuery(message, response, startTime).catch(() => null);
         const responseWithHistory = queryHistoryId ? { ...response, query_history_id: queryHistoryId } : response;
         const res = NextResponse.json(responseWithHistory, { status: 200 });
@@ -218,7 +226,7 @@ export async function POST(req: Request) {
         }
 
         // Surface fallback on AI failure — still better than a 500
-        const fallback = buildAskVetiosHeuristicResponse(message);
+        const fallback = withAskVetiosIntake(buildAskVetiosHeuristicResponse(message), intake);
         const queryHistoryId = await logAskVetiosQuery(message, fallback as unknown as Record<string, unknown>, startTime).catch(() => null);
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, metadata: { fallback: true, error: error instanceof Error ? error.message : 'Unknown' }, timestamp: new Date().toISOString() });
         const res = NextResponse.json({ ...fallback, query_history_id: queryHistoryId, _fallback: true }, { status: 200 });
@@ -287,6 +295,73 @@ function attachAgenticRagToHeuristicResponse(
         ...response,
         metadata: buildAskVetiosMetadata(response.metadata as Record<string, unknown> | null, agenticRagResult),
     };
+}
+
+type AskVetiosResponseBody = {
+    mode: string;
+    topic?: string;
+    content: string;
+    metadata?: unknown;
+};
+
+function withAskVetiosIntake<T extends AskVetiosResponseBody>(
+    response: T,
+    intake: ReturnType<typeof buildAskVetiosIntake>,
+): T {
+    const currentMetadata = asRecord(response.metadata);
+    const redFlags = mergeStrings(readStringArray(currentMetadata.red_flags), intake.case_draft.red_flags);
+    const clinicalSigns = mergeStrings(readStringArray(currentMetadata.clinical_signs), intake.case_draft.clinical_signs);
+    const nextMetadata: Record<string, unknown> = {
+        ...currentMetadata,
+        case_draft: intake.case_draft,
+        intake_status: intake.status,
+        intake_readiness_score: intake.readiness_score,
+        missing_fields: intake.missing_fields,
+        follow_up_questions: intake.follow_up_questions,
+        safety_notice: intake.safety_notice,
+        case_handoff: intake.case_handoff,
+    };
+
+    if (clinicalSigns.length > 0) {
+        nextMetadata.clinical_signs = clinicalSigns;
+    }
+
+    if (redFlags.length > 0) {
+        nextMetadata.red_flags = redFlags;
+        if (!nextMetadata.urgency_level || nextMetadata.urgency_level === 'low') {
+            nextMetadata.urgency_level = 'emergency';
+        }
+    }
+
+    return {
+        ...response,
+        metadata: nextMetadata,
+    } as T;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+}
+
+function readStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+        : [];
+}
+
+function mergeStrings(...groups: string[][]): string[] {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    groups.flat().forEach((item) => {
+        const normalized = item.trim();
+        const key = normalized.toLowerCase();
+        if (!normalized || seen.has(key)) return;
+        seen.add(key);
+        merged.push(normalized);
+    });
+    return merged;
 }
 
 function buildEnsembleResponse(

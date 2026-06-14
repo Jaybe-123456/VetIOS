@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { AskVetiosCaseDraft, AskVetiosCaseHandoff, AskVetiosIntakeStatus } from '@/lib/askVetios/intake';
 
 export type MessageMode = 'educational' | 'clinical' | 'general' | 'operational';
 
@@ -41,6 +42,13 @@ export interface MessageMetadata {
         chunks_indexed?: number;
         extracted_characters?: number;
     };
+    case_draft?: AskVetiosCaseDraft;
+    intake_status?: AskVetiosIntakeStatus;
+    intake_readiness_score?: number;
+    missing_fields?: string[];
+    follow_up_questions?: string[];
+    safety_notice?: string | null;
+    case_handoff?: AskVetiosCaseHandoff;
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';
