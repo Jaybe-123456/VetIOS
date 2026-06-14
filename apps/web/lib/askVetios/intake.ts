@@ -12,6 +12,9 @@ export interface AskVetiosCaseDraft {
     duration: string | null;
     clinical_signs: string[];
     labs_or_tests: string[];
+    imaging: string[];
+    treatments: string[];
+    outcome_signals: string[];
     red_flags: string[];
     raw_note: string;
 }
@@ -91,6 +94,30 @@ const TEST_PATTERNS: Array<{ label: string; patterns: RegExp[] }> = [
     { label: 'PCV/TS', patterns: [/\bpcv\b/i, /\bpacked cell volume\b/i, /\btotal solids\b/i, /\bts\b/i] },
 ];
 
+const IMAGING_PATTERNS: Array<{ label: string; patterns: RegExp[] }> = [
+    { label: 'radiographs', patterns: [/\bradiographs?\b/i, /\bx-?rays?\b/i] },
+    { label: 'ultrasound', patterns: [/\bultrasound\b/i, /\bultrasonography\b/i] },
+    { label: 'CT', patterns: [/\bct\b/i, /\bcomputed tomography\b/i] },
+    { label: 'MRI', patterns: [/\bmri\b/i, /\bmagnetic resonance\b/i] },
+    { label: 'endoscopy', patterns: [/\bendoscopy\b/i, /\brhinoscopy\b/i, /\bbronchoscopy\b/i] },
+];
+
+const TREATMENT_PATTERNS: Array<{ label: string; patterns: RegExp[] }> = [
+    { label: 'IV fluids', patterns: [/\biv fluids?\b/i, /\bfluid therapy\b/i, /\bcrystalloid/i] },
+    { label: 'antiemetic', patterns: [/\bantiemetic\b/i, /\bmaropitant\b/i, /\bondansetron\b/i] },
+    { label: 'antibiotics', patterns: [/\bantibiotics?\b/i, /\bamoxicillin\b/i, /\bcefazolin\b/i, /\bdoxycycline\b/i] },
+    { label: 'analgesia', patterns: [/\banalgesia\b/i, /\bpain medication\b/i, /\bopioid\b/i, /\bnsaid\b/i] },
+    { label: 'oxygen support', patterns: [/\boxygen\b/i, /\bo2\b/i] },
+    { label: 'surgery', patterns: [/\bsurgery\b/i, /\bsurgical\b/i, /\bexploratory laparotomy\b/i] },
+];
+
+const OUTCOME_PATTERNS: Array<{ label: string; patterns: RegExp[] }> = [
+    { label: 'improved', patterns: [/\bimproved\b/i, /\bimproving\b/i, /\bresolved\b/i, /\brecovered\b/i] },
+    { label: 'worsened', patterns: [/\bworsened\b/i, /\bdeclined\b/i, /\bdeteriorated\b/i] },
+    { label: 'deceased', patterns: [/\bdied\b/i, /\bdeceased\b/i, /\beuthanized\b/i, /\beuthanised\b/i] },
+    { label: 'no response', patterns: [/\bno response\b/i, /\bnot responding\b/i] },
+];
+
 const RED_FLAGS: Array<{ label: string; patterns: RegExp[] }> = [
     { label: 'difficulty breathing or respiratory distress', patterns: [/\bdifficulty breathing\b/i, /\brespiratory distress\b/i, /\bdyspnea\b/i, /\bgasping\b/i] },
     { label: 'collapse or inability to stand', patterns: [/\bcollapse(?:d)?\b/i, /\bunable to stand\b/i, /\bnon-ambulatory\b/i] },
@@ -114,6 +141,9 @@ export function buildAskVetiosIntake(input: AskVetiosIntakeInput): AskVetiosInta
     const species = detectSpeciesFromTexts(userTexts.slice().reverse(), 'unknown');
     const clinicalSigns = extractMatches(rawNote, CLINICAL_SIGNS);
     const labsOrTests = extractMatches(rawNote, TEST_PATTERNS);
+    const imaging = extractMatches(rawNote, IMAGING_PATTERNS);
+    const treatments = extractMatches(rawNote, TREATMENT_PATTERNS);
+    const outcomeSignals = extractMatches(rawNote, OUTCOME_PATTERNS);
     const redFlags = extractMatches(rawNote, RED_FLAGS);
     const ageYears = extractAgeYears(rawNote);
     const sex = extractSex(rawNote);
@@ -154,6 +184,9 @@ export function buildAskVetiosIntake(input: AskVetiosIntakeInput): AskVetiosInta
         duration,
         clinical_signs: clinicalSigns,
         labs_or_tests: labsOrTests,
+        imaging,
+        treatments,
+        outcome_signals: outcomeSignals,
         red_flags: redFlags,
         raw_note: rawNote,
     };
@@ -196,11 +229,15 @@ function buildCaseHandoff(draft: AskVetiosCaseDraft, ready: boolean): AskVetiosC
                     },
                     diagnostic_tests: {
                         mentioned: draft.labs_or_tests,
+                        imaging: draft.imaging,
                     },
                     metadata: {
                         ask_vetios_case_draft: true,
                         raw_note: draft.raw_note,
                         red_flags: draft.red_flags,
+                        treatments: draft.treatments,
+                        outcome_signals: draft.outcome_signals,
+                        clinician_confirmation_status: 'not_captured',
                     },
                 },
             },

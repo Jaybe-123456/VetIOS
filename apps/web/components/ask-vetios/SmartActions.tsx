@@ -97,14 +97,19 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
 
     const readiness = Math.round((metadata.intake_readiness_score ?? 0) * 100);
     const handoff = metadata.case_handoff;
-    const statusLabel = (metadata.intake_status ?? 'needs_minimum').replace(/_/g, ' ');
+    const statusLabel = (metadata.case_graph_status ?? metadata.intake_status ?? 'needs_minimum').replace(/_/g, ' ');
     const rows = [
         { label: 'Species', value: draft?.species && draft.species !== 'unknown' ? draft.species : null },
         { label: 'Age/Sex', value: [draft?.age_years ? `${draft.age_years}y` : null, draft?.sex].filter(Boolean).join(' / ') },
         { label: 'Duration', value: draft?.duration },
         { label: 'Signs', value: draft?.clinical_signs?.join(', ') },
         { label: 'Labs', value: draft?.labs_or_tests?.join(', ') },
+        { label: 'Imaging', value: draft?.imaging?.join(', ') },
+        { label: 'Treatment', value: draft?.treatments?.join(', ') },
+        { label: 'Outcome', value: draft?.outcome_signals?.join(', ') },
     ].filter((row) => row.value && row.value.trim().length > 0);
+    const graphSnapshot = metadata.case_graph_snapshot;
+    const requiredActions = graphSnapshot?.promotion.required_next_actions ?? [];
 
     const openInference = () => {
         if (!handoff?.ready) return;
@@ -173,6 +178,16 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
                             </button>
                         ))}
                     </div>
+                </div>
+            )}
+
+            {graphSnapshot && (
+                <div className="flex flex-wrap gap-1.5">
+                    {requiredActions.slice(0, 5).map((action) => (
+                        <span key={action} className="border border-white/10 bg-black/20 px-2 py-1 font-mono text-[9px] uppercase tracking-[0.12em] text-white/45">
+                            {action.replace(/_/g, ' ')}
+                        </span>
+                    ))}
                 </div>
             )}
         </div>

@@ -21,6 +21,7 @@ import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/service';
 import { buildHeuristicResponse as buildAskVetiosHeuristicResponse, type AskVetiosHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
 import { buildAskVetiosIntake } from '@/lib/askVetios/intake';
+import { buildAskVetiosCaseGraphSnapshot } from '@/lib/askVetios/caseGraph';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -332,6 +333,12 @@ function withAskVetiosIntake<T extends AskVetiosResponseBody>(
             nextMetadata.urgency_level = 'emergency';
         }
     }
+    const caseGraphSnapshot = buildAskVetiosCaseGraphSnapshot({
+        intake,
+        responseMetadata: nextMetadata,
+    });
+    nextMetadata.case_graph_snapshot = caseGraphSnapshot;
+    nextMetadata.case_graph_status = caseGraphSnapshot.status;
 
     return {
         ...response,
@@ -349,6 +356,10 @@ function readStringArray(value: unknown): string[] {
     return Array.isArray(value)
         ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
         : [];
+}
+
+function readString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function mergeStrings(...groups: string[][]): string[] {
@@ -474,22 +485,41 @@ async function logAskVetiosQuery(
     try {
         const parsed = parseAskVetIOSQuery(message);
         const responseSections = inferResponseSections(response, parsed.query_type);
-        const { data, error } = await getSupabaseServer()
+        const caseGraphSnapshot = readCaseGraphSnapshot(response);
+        const row: Record<string, unknown> = {
+            tenant_id: null,
+            query_text: message,
+            parsed_query: parsed,
+            species: parsed.species === 'unknown' ? null : parsed.species,
+            condition: parsed.condition,
+            query_type: parsed.query_type,
+            response_sections: responseSections,
+            images_resolved: 0,
+            papers_returned: 0,
+            response_latency_ms: Date.now() - startTime,
+        };
+        if (caseGraphSnapshot) {
+            row.case_graph_snapshot = caseGraphSnapshot;
+            row.case_graph_status = readString(caseGraphSnapshot.status) ?? 'draft';
+        }
+
+        const client = getSupabaseServer();
+        let { data, error } = await client
             .from('ask_vetios_queries')
-            .insert({
-                tenant_id: null,
-                query_text: message,
-                parsed_query: parsed,
-                species: parsed.species === 'unknown' ? null : parsed.species,
-                condition: parsed.condition,
-                query_type: parsed.query_type,
-                response_sections: responseSections,
-                images_resolved: 0,
-                papers_returned: 0,
-                response_latency_ms: Date.now() - startTime,
-            })
+            .insert(row)
             .select('id')
             .single();
+        if (error && isMissingCaseGraphColumns(error)) {
+            delete row.case_graph_snapshot;
+            delete row.case_graph_status;
+            const retry = await client
+                .from('ask_vetios_queries')
+                .insert(row)
+                .select('id')
+                .single();
+            data = retry.data;
+            error = retry.error;
+        }
         if (error || !data?.id) return null;
         return String(data.id);
     } catch {
@@ -505,4 +535,19 @@ function inferResponseSections(response: Record<string, unknown>, queryType: str
     if (queryType === 'research') sections.add('research_sources');
     if (response.mode === 'clinical') sections.add('diagnosis_support');
     return Array.from(sections);
+}
+
+function readCaseGraphSnapshot(response: Record<string, unknown>): Record<string, unknown> | null {
+    const metadata = asRecord(response.metadata);
+    const snapshot = asRecord(metadata.case_graph_snapshot);
+    return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
+function isMissingCaseGraphColumns(error: { code?: string; message?: string }): boolean {
+    const message = error.message?.toLowerCase() ?? '';
+    return error.code === '42703'
+        || error.code === 'PGRST204'
+        || message.includes('case_graph_snapshot')
+        || message.includes('case_graph_status')
+        || message.includes('schema cache');
 }

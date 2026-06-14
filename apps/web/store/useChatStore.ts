@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { AskVetiosCaseGraphSnapshot, AskVetiosCaseGraphStatus } from '@/lib/askVetios/caseGraph';
 import type { AskVetiosCaseDraft, AskVetiosCaseHandoff, AskVetiosIntakeStatus } from '@/lib/askVetios/intake';
 
 export type MessageMode = 'educational' | 'clinical' | 'general' | 'operational';
@@ -49,6 +50,8 @@ export interface MessageMetadata {
     follow_up_questions?: string[];
     safety_notice?: string | null;
     case_handoff?: AskVetiosCaseHandoff;
+    case_graph_snapshot?: AskVetiosCaseGraphSnapshot;
+    case_graph_status?: AskVetiosCaseGraphStatus;
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';
