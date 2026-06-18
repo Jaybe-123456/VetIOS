@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AskVetiosCaseGraphSnapshot, AskVetiosCaseGraphStatus } from '@/lib/askVetios/caseGraph';
 import type { AskVetiosModelTrustSnapshot, AskVetiosModelTrustStatus } from '@/lib/askVetios/modelTrust';
+import type { AskVetiosVeterinaryRetrievalSnapshot, AskVetiosVeterinaryRetrievalStatus } from '@/lib/askVetios/veterinaryRetrieval';
 import type { AskVetiosCaseDraft, AskVetiosCaseHandoff, AskVetiosIntakeStatus } from '@/lib/askVetios/intake';
 
 export type MessageMode = 'educational' | 'clinical' | 'general' | 'operational';
@@ -20,8 +21,12 @@ export interface MessageMetadata {
     source_references?: { label: string; year?: string; url: string }[];
     rag_citations?: Array<{
         index: number;
+        chunk_id?: string;
+        document_id?: string;
+        source_id?: string;
         title: string;
         source_name: string;
+        source_type?: string;
         authority_tier?: string;
         url: string | null;
         year: string | null;
@@ -55,6 +60,8 @@ export interface MessageMetadata {
     case_graph_status?: AskVetiosCaseGraphStatus;
     model_trust_snapshot?: AskVetiosModelTrustSnapshot;
     model_trust_status?: AskVetiosModelTrustStatus;
+    veterinary_retrieval_snapshot?: AskVetiosVeterinaryRetrievalSnapshot;
+    veterinary_retrieval_status?: AskVetiosVeterinaryRetrievalStatus;
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';

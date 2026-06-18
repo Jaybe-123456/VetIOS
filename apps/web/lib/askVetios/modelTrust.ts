@@ -69,9 +69,13 @@ export function buildAskVetiosModelTrustSnapshot(
     const differentials = readDifferentials(metadata.diagnosis_ranked);
     const topConfidence = differentials[0]?.confidence ?? null;
     const ragGrounded = metadata.rag_grounded === true;
+    const veterinaryRetrievalStatus = readString(metadata.veterinary_retrieval_status);
+    const veterinaryGrounded = veterinaryRetrievalStatus === null
+        || veterinaryRetrievalStatus === 'non_clinical'
+        || veterinaryRetrievalStatus === 'veterinary_grounded';
     const citationCount = citations.length;
     const sourceReferenceCount = sourceReferences.length;
-    const citationQuality = ragGrounded && citationCount > 0
+    const citationQuality = ragGrounded && veterinaryGrounded && citationCount > 0
         ? 'grounded'
         : citationCount > 0 || sourceReferenceCount > 0 ? 'partial' : 'none';
     const clinical = input.mode === 'clinical' || input.intake.is_clinical_intake;
@@ -140,7 +144,7 @@ function buildWarnings(input: {
     if (input.abstentionRecommended) warnings.push('Minimum case facts are incomplete; ask follow-up questions before relying on ranking.');
     if (input.topConfidence !== null && input.topConfidence >= 0.85) warnings.push('High confidence still needs outcome confirmation before calibration claims.');
     if (input.missingFieldCount > 0) warnings.push('Missing fields reduce case graph and calibration quality.');
-    if (input.citationQuality === 'partial') warnings.push('Some references are present, but answer is not fully grounded by retrieved citations.');
+    if (input.citationQuality === 'partial') warnings.push('Some references are present, but answer is not fully grounded by veterinary retrieval policy.');
     return warnings;
 }
 

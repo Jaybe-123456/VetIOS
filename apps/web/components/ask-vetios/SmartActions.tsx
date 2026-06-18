@@ -110,6 +110,7 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
     ].filter((row) => row.value && row.value.trim().length > 0);
     const graphSnapshot = metadata.case_graph_snapshot;
     const trustSnapshot = metadata.model_trust_snapshot;
+    const retrievalSnapshot = metadata.veterinary_retrieval_snapshot;
     const requiredActions = graphSnapshot?.promotion.required_next_actions ?? [];
 
     const openInference = () => {
@@ -164,6 +165,17 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
                 </div>
             )}
 
+            {retrievalSnapshot && (
+                <VeterinaryRetrievalPanel
+                    status={metadata.veterinary_retrieval_status ?? retrievalSnapshot.status}
+                    citationCount={retrievalSnapshot.grounding.citation_count}
+                    authorityTiers={retrievalSnapshot.grounding.authority_tiers}
+                    sourceTypes={retrievalSnapshot.grounding.source_types}
+                    sourceGaps={retrievalSnapshot.source_gaps}
+                    catalogFallbackUsed={retrievalSnapshot.grounding.catalog_fallback_used}
+                />
+            )}
+
             {trustSnapshot && (
                 <ModelTrustPanel
                     status={metadata.model_trust_status ?? trustSnapshot.status}
@@ -204,6 +216,62 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
             )}
         </div>
     );
+}
+
+function VeterinaryRetrievalPanel({
+    status,
+    citationCount,
+    authorityTiers,
+    sourceTypes,
+    sourceGaps,
+    catalogFallbackUsed,
+}: {
+    status: string;
+    citationCount: number;
+    authorityTiers: string[];
+    sourceTypes: string[];
+    sourceGaps: string[];
+    catalogFallbackUsed: boolean;
+}) {
+    const tone = veterinaryRetrievalTone(status);
+    const sourceSummary = sourceTypes.length > 0 ? sourceTypes.slice(0, 2).join(' / ') : 'none';
+    const authoritySummary = authorityTiers.length > 0 ? authorityTiers.slice(0, 2).map((tier) => tier.replace(/_/g, ' ')).join(' / ') : 'none';
+
+    return (
+        <div className={cn('border px-3 py-2 font-mono', tone.shell)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[9px] uppercase tracking-[0.18em]">
+                    <Search className="h-3 w-3" />
+                    Veterinary retrieval
+                </div>
+                <span className="text-[9px] uppercase tracking-[0.16em]">{status.replace(/_/g, ' ')}</span>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-4">
+                <TrustMetric label="Citations" value={String(citationCount)} />
+                <TrustMetric label="Sources" value={sourceSummary} />
+                <TrustMetric label="Authority" value={authoritySummary} />
+                <TrustMetric label="Catalog" value={catalogFallbackUsed ? 'fallback' : 'corpus'} />
+            </div>
+            {sourceGaps.length > 0 && (
+                <div className="mt-2 border-t border-current/15 pt-2 text-[10px] leading-relaxed opacity-80">
+                    Missing: {sourceGaps.slice(0, 3).map((gap) => gap.replace(/_/g, ' ')).join(', ')}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function veterinaryRetrievalTone(status: string) {
+    if (status === 'veterinary_grounded') {
+        return { shell: 'border-accent/22 bg-accent/[0.035] text-accent/85' };
+    }
+    if (status === 'partially_grounded') {
+        return { shell: 'border-amber-400/25 bg-amber-400/5 text-amber-200/85' };
+    }
+    if (status === 'needs_curated_sources' || status === 'ungrounded') {
+        return { shell: 'border-red-400/22 bg-red-500/5 text-red-200/85' };
+    }
+    return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };
 }
 
 function ModelTrustPanel({

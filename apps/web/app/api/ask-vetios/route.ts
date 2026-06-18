@@ -23,6 +23,7 @@ import { buildHeuristicResponse as buildAskVetiosHeuristicResponse, type AskVeti
 import { buildAskVetiosIntake } from '@/lib/askVetios/intake';
 import { buildAskVetiosCaseGraphSnapshot } from '@/lib/askVetios/caseGraph';
 import { buildAskVetiosModelTrustSnapshot } from '@/lib/askVetios/modelTrust';
+import { buildAskVetiosVeterinaryRetrievalSnapshot } from '@/lib/askVetios/veterinaryRetrieval';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -340,6 +341,13 @@ function withAskVetiosIntake<T extends AskVetiosResponseBody>(
     });
     nextMetadata.case_graph_snapshot = caseGraphSnapshot;
     nextMetadata.case_graph_status = caseGraphSnapshot.status;
+    const veterinaryRetrievalSnapshot = buildAskVetiosVeterinaryRetrievalSnapshot({
+        mode: response.mode,
+        metadata: nextMetadata,
+        intake,
+    });
+    nextMetadata.veterinary_retrieval_snapshot = veterinaryRetrievalSnapshot;
+    nextMetadata.veterinary_retrieval_status = veterinaryRetrievalSnapshot.status;
     const modelTrustSnapshot = buildAskVetiosModelTrustSnapshot({
         mode: response.mode,
         metadata: nextMetadata,
@@ -442,14 +450,17 @@ function buildAskVetiosMetadata(
     base: Record<string, unknown> | null,
     agenticRagResult?: Awaited<ReturnType<typeof answerRagQuery>> | null,
 ) {
-    if (!agenticRagResult?.citations.length) {
+    if (!agenticRagResult) {
         return base;
     }
     return {
         ...(base ?? {}),
         rag_citations: agenticRagResult.citations,
         rag_retrieval_stats: agenticRagResult.retrieval_stats,
+        rag_plan: agenticRagResult.plan,
         rag_grounded: agenticRagResult.evaluation.grounded,
+        rag_evaluation_warnings: agenticRagResult.evaluation.warnings,
+        rag_query_id: agenticRagResult.query_id,
     };
 }
 
@@ -516,6 +527,11 @@ async function logAskVetiosQuery(
             row.model_trust_snapshot = modelTrustSnapshot;
             row.model_trust_status = readString(modelTrustSnapshot.status) ?? 'needs_review';
         }
+        const veterinaryRetrievalSnapshot = readVeterinaryRetrievalSnapshot(response);
+        if (veterinaryRetrievalSnapshot) {
+            row.veterinary_retrieval_snapshot = veterinaryRetrievalSnapshot;
+            row.veterinary_retrieval_status = readString(veterinaryRetrievalSnapshot.status) ?? 'ungrounded';
+        }
 
         const client = getSupabaseServer();
         let { data, error } = await client
@@ -528,6 +544,8 @@ async function logAskVetiosQuery(
             delete row.case_graph_status;
             delete row.model_trust_snapshot;
             delete row.model_trust_status;
+            delete row.veterinary_retrieval_snapshot;
+            delete row.veterinary_retrieval_status;
             const retry = await client
                 .from('ask_vetios_queries')
                 .insert(row)
@@ -565,6 +583,12 @@ function readModelTrustSnapshot(response: Record<string, unknown>): Record<strin
     return Object.keys(snapshot).length > 0 ? snapshot : null;
 }
 
+function readVeterinaryRetrievalSnapshot(response: Record<string, unknown>): Record<string, unknown> | null {
+    const metadata = asRecord(response.metadata);
+    const snapshot = asRecord(metadata.veterinary_retrieval_snapshot);
+    return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
 function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string }): boolean {
     const message = error.message?.toLowerCase() ?? '';
     return error.code === '42703'
@@ -573,5 +597,7 @@ function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string 
         || message.includes('case_graph_status')
         || message.includes('model_trust_snapshot')
         || message.includes('model_trust_status')
+        || message.includes('veterinary_retrieval_snapshot')
+        || message.includes('veterinary_retrieval_status')
         || message.includes('schema cache');
 }

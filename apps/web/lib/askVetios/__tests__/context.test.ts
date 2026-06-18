@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { detectSpeciesFromTexts } from '../context';
 import { buildAskVetiosCaseGraphSnapshot } from '../caseGraph';
 import { buildAskVetiosModelTrustSnapshot } from '../modelTrust';
+import { buildAskVetiosVeterinaryRetrievalSnapshot } from '../veterinaryRetrieval';
 import { ASK_VETIOS_CASE_DRAFT_STORAGE_KEY, buildAskVetiosIntake } from '../intake';
 
 describe('Ask VetIOS context detection', () => {
@@ -121,5 +122,72 @@ describe('Ask VetIOS context detection', () => {
         expect(trust.grounding.citation_quality).toBe('grounded');
         expect(trust.case_graph.draft_key).toBe(caseGraphSnapshot.draft_key);
         expect(trust.output_quality.confidence_band).toBe('moderate');
+    });
+
+    it('records ungrounded clinical Ask VetIOS answers as veterinary retrieval gaps', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Dog vomiting and lethargic for 2 days after possible rodenticide exposure.',
+        });
+        const snapshot = buildAskVetiosVeterinaryRetrievalSnapshot({
+            mode: 'clinical',
+            metadata: {
+                rag_grounded: false,
+                rag_citations: [],
+                rag_retrieval_stats: { strategy: 'hybrid', catalog_fallback_hits: 0 },
+            },
+            intake,
+        });
+
+        expect(snapshot.status).toBe('ungrounded');
+        expect(snapshot.policy.generic_web_memory_allowed).toBe(false);
+        expect(snapshot.query_context.toxicology_signal_present).toBe(true);
+        expect(snapshot.source_gaps).toContain('accepted_veterinary_citations');
+        expect(snapshot.warnings).toContain('Ask VetIOS has no accepted veterinary retrieval citations for this clinical answer.');
+    });
+
+    it('marks high-authority species-specific citations as veterinary grounded', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Canine, 7 year old neutered male, vomiting for 2 days. CBC, chemistry, cPLI, radiographs, and IV fluids.',
+        });
+        const citation = {
+            index: 1,
+            chunk_id: 'chunk-1',
+            document_id: 'document-1',
+            source_id: 'source-1',
+            title: 'Canine pancreatitis diagnostic workflow',
+            source_name: 'ACVIM specialist guideline',
+            source_type: 'guideline',
+            authority_tier: 'specialist_guideline',
+            url: 'https://vetios.test/acvim/canine-pancreatitis',
+            year: '2026',
+            quote: 'Canine pancreatitis workup integrates compatible signs, CBC, chemistry, pancreatic lipase testing, abdominal imaging, and IV fluid treatment.',
+            similarity: 0.82,
+            provenance: { source_url: 'https://vetios.test/acvim/canine-pancreatitis' },
+        };
+        const snapshot = buildAskVetiosVeterinaryRetrievalSnapshot({
+            mode: 'clinical',
+            metadata: {
+                rag_grounded: true,
+                rag_citations: [citation],
+                rag_retrieval_stats: { strategy: 'hybrid', catalog_fallback_hits: 0 },
+            },
+            intake,
+        });
+        const trust = buildAskVetiosModelTrustSnapshot({
+            mode: 'clinical',
+            metadata: {
+                diagnosis_ranked: [{ name: 'Pancreatitis', confidence: 0.72 }],
+                rag_grounded: true,
+                rag_citations: [citation],
+                veterinary_retrieval_status: snapshot.status,
+            },
+            intake,
+        });
+
+        expect(snapshot.status).toBe('veterinary_grounded');
+        expect(snapshot.grounding.high_authority_citation_count).toBe(1);
+        expect(snapshot.coverage.lab_reference).toBe(true);
+        expect(snapshot.coverage.species_specific).toBe(true);
+        expect(trust.grounding.citation_quality).toBe('grounded');
     });
 });
