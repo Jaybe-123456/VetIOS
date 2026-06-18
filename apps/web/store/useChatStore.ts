@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { AskVetiosCaseGraphSnapshot, AskVetiosCaseGraphStatus } from '@/lib/askVetios/caseGraph';
+import type { AskVetiosModelTrustSnapshot, AskVetiosModelTrustStatus } from '@/lib/askVetios/modelTrust';
 import type { AskVetiosCaseDraft, AskVetiosCaseHandoff, AskVetiosIntakeStatus } from '@/lib/askVetios/intake';
 
 export type MessageMode = 'educational' | 'clinical' | 'general' | 'operational';
@@ -52,6 +53,8 @@ export interface MessageMetadata {
     case_handoff?: AskVetiosCaseHandoff;
     case_graph_snapshot?: AskVetiosCaseGraphSnapshot;
     case_graph_status?: AskVetiosCaseGraphStatus;
+    model_trust_snapshot?: AskVetiosModelTrustSnapshot;
+    model_trust_status?: AskVetiosModelTrustStatus;
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';

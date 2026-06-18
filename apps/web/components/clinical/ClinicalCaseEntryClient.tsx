@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { CheckCircle2, FileText, Sparkles, Stethoscope } from 'lucide-react';
+import { CheckCircle2, FileText, MessageSquare, Sparkles, Stethoscope } from 'lucide-react';
 import { ClinicalCaseForm } from './ClinicalCaseForm';
 import type { ClinicalCaseFormDraft } from './ClinicalCaseForm';
 import type { ClinicalInferenceInput } from './clinicalTypes';
@@ -114,6 +114,13 @@ function FirstCaseQuickStart({ demoDraftEnabled }: { demoDraftEnabled: boolean }
                         className="inline-flex min-h-[40px] items-center justify-center rounded-md border border-white/10 px-3 text-sm text-white/68 transition hover:border-white/25 hover:text-white"
                     >
                         My cases
+                    </Link>
+                    <Link
+                        href="/ask-vetios"
+                        className="inline-flex min-h-[40px] items-center justify-center gap-2 rounded-md border border-white/10 bg-white/[0.03] px-3 text-sm text-white/72 transition hover:border-accent/35 hover:text-accent"
+                    >
+                        <MessageSquare className="h-4 w-4" />
+                        Ask VetIOS
                     </Link>
                 </div>
             </div>

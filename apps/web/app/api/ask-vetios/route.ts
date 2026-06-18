@@ -22,6 +22,7 @@ import { answerRagQuery, type AnswerRagQueryInput } from '@/lib/agenticRag/servi
 import { buildHeuristicResponse as buildAskVetiosHeuristicResponse, type AskVetiosHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
 import { buildAskVetiosIntake } from '@/lib/askVetios/intake';
 import { buildAskVetiosCaseGraphSnapshot } from '@/lib/askVetios/caseGraph';
+import { buildAskVetiosModelTrustSnapshot } from '@/lib/askVetios/modelTrust';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -339,6 +340,14 @@ function withAskVetiosIntake<T extends AskVetiosResponseBody>(
     });
     nextMetadata.case_graph_snapshot = caseGraphSnapshot;
     nextMetadata.case_graph_status = caseGraphSnapshot.status;
+    const modelTrustSnapshot = buildAskVetiosModelTrustSnapshot({
+        mode: response.mode,
+        metadata: nextMetadata,
+        intake,
+        caseGraphSnapshot,
+    });
+    nextMetadata.model_trust_snapshot = modelTrustSnapshot;
+    nextMetadata.model_trust_status = modelTrustSnapshot.status;
 
     return {
         ...response,
@@ -502,6 +511,11 @@ async function logAskVetiosQuery(
             row.case_graph_snapshot = caseGraphSnapshot;
             row.case_graph_status = readString(caseGraphSnapshot.status) ?? 'draft';
         }
+        const modelTrustSnapshot = readModelTrustSnapshot(response);
+        if (modelTrustSnapshot) {
+            row.model_trust_snapshot = modelTrustSnapshot;
+            row.model_trust_status = readString(modelTrustSnapshot.status) ?? 'needs_review';
+        }
 
         const client = getSupabaseServer();
         let { data, error } = await client
@@ -509,9 +523,11 @@ async function logAskVetiosQuery(
             .insert(row)
             .select('id')
             .single();
-        if (error && isMissingCaseGraphColumns(error)) {
+        if (error && isMissingAskVetiosMoatColumns(error)) {
             delete row.case_graph_snapshot;
             delete row.case_graph_status;
+            delete row.model_trust_snapshot;
+            delete row.model_trust_status;
             const retry = await client
                 .from('ask_vetios_queries')
                 .insert(row)
@@ -543,11 +559,19 @@ function readCaseGraphSnapshot(response: Record<string, unknown>): Record<string
     return Object.keys(snapshot).length > 0 ? snapshot : null;
 }
 
-function isMissingCaseGraphColumns(error: { code?: string; message?: string }): boolean {
+function readModelTrustSnapshot(response: Record<string, unknown>): Record<string, unknown> | null {
+    const metadata = asRecord(response.metadata);
+    const snapshot = asRecord(metadata.model_trust_snapshot);
+    return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
+function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string }): boolean {
     const message = error.message?.toLowerCase() ?? '';
     return error.code === '42703'
         || error.code === 'PGRST204'
         || message.includes('case_graph_snapshot')
         || message.includes('case_graph_status')
+        || message.includes('model_trust_snapshot')
+        || message.includes('model_trust_status')
         || message.includes('schema cache');
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { detectSpeciesFromTexts } from '../context';
 import { buildAskVetiosCaseGraphSnapshot } from '../caseGraph';
+import { buildAskVetiosModelTrustSnapshot } from '../modelTrust';
 import { ASK_VETIOS_CASE_DRAFT_STORAGE_KEY, buildAskVetiosIntake } from '../intake';
 
 describe('Ask VetIOS context detection', () => {
@@ -64,5 +65,61 @@ describe('Ask VetIOS context detection', () => {
         expect(snapshot.outcome.clinician_confirmation_status).toBe('not_captured');
         expect(snapshot.decision_support.top_differentials[0]).toEqual({ name: 'Pancreatitis', confidence: 0.72 });
         expect(snapshot.promotion.required_next_actions).toContain('clinician_confirmation');
+    });
+
+    it('marks clinical Ask VetIOS drafts without retrieval citations as needing evidence', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Dog vomiting and lethargic for 2 days.',
+        });
+        const caseGraphSnapshot = buildAskVetiosCaseGraphSnapshot({
+            intake,
+            responseMetadata: {
+                diagnosis_ranked: [{ name: 'Gastroenteritis', confidence: 0.64 }],
+            },
+        });
+        const trust = buildAskVetiosModelTrustSnapshot({
+            mode: 'clinical',
+            metadata: {
+                diagnosis_ranked: [{ name: 'Gastroenteritis', confidence: 0.64 }],
+            },
+            intake,
+            caseGraphSnapshot,
+        });
+
+        expect(trust.status).toBe('needs_evidence');
+        expect(trust.clinician_review_required).toBe(true);
+        expect(trust.grounding.citation_quality).toBe('none');
+        expect(trust.calibration_status).toBe('needs_outcome');
+        expect(trust.warnings).toContain('Clinical answer lacks retrieval citations; keep as draft until evidence is attached.');
+    });
+
+    it('marks grounded clinical Ask VetIOS drafts as ready for draft review telemetry', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Canine, 7 year old neutered male, vomiting and lethargy for 2 days. CBC and chemistry completed. Improved with IV fluids.',
+        });
+        const caseGraphSnapshot = buildAskVetiosCaseGraphSnapshot({
+            intake,
+            responseMetadata: {
+                diagnosis_ranked: [{ name: 'Pancreatitis', confidence: 0.72 }],
+                rag_grounded: true,
+                rag_citations: [{ index: 1, title: 'Pancreatitis review', source_name: 'VetIOS library', url: null, year: '2026' }],
+            },
+        });
+        const trust = buildAskVetiosModelTrustSnapshot({
+            mode: 'clinical',
+            metadata: {
+                diagnosis_ranked: [{ name: 'Pancreatitis', confidence: 0.72 }],
+                rag_grounded: true,
+                rag_citations: [{ index: 1, title: 'Pancreatitis review', source_name: 'VetIOS library', url: null, year: '2026' }],
+            },
+            intake,
+            caseGraphSnapshot,
+        });
+
+        expect(trust.status).toBe('grounded_draft');
+        expect(trust.clinician_review_required).toBe(false);
+        expect(trust.grounding.citation_quality).toBe('grounded');
+        expect(trust.case_graph.draft_key).toBe(caseGraphSnapshot.draft_key);
+        expect(trust.output_quality.confidence_band).toBe('moderate');
     });
 });

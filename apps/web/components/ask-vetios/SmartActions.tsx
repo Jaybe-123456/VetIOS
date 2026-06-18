@@ -109,6 +109,7 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
         { label: 'Outcome', value: draft?.outcome_signals?.join(', ') },
     ].filter((row) => row.value && row.value.trim().length > 0);
     const graphSnapshot = metadata.case_graph_snapshot;
+    const trustSnapshot = metadata.model_trust_snapshot;
     const requiredActions = graphSnapshot?.promotion.required_next_actions ?? [];
 
     const openInference = () => {
@@ -163,6 +164,17 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
                 </div>
             )}
 
+            {trustSnapshot && (
+                <ModelTrustPanel
+                    status={metadata.model_trust_status ?? trustSnapshot.status}
+                    citationQuality={trustSnapshot.grounding.citation_quality}
+                    hallucinationRisk={trustSnapshot.output_quality.hallucination_risk}
+                    calibrationStatus={trustSnapshot.calibration_status}
+                    reviewRequired={trustSnapshot.clinician_review_required}
+                    warning={trustSnapshot.warnings[0]}
+                />
+            )}
+
             {questions.length > 0 && (
                 <div className="space-y-2">
                     <div className="font-mono text-[9px] uppercase tracking-[0.18em] text-white/42">Missing Details</div>
@@ -192,6 +204,69 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
             )}
         </div>
     );
+}
+
+function ModelTrustPanel({
+    status,
+    citationQuality,
+    hallucinationRisk,
+    calibrationStatus,
+    reviewRequired,
+    warning,
+}: {
+    status: string;
+    citationQuality: string;
+    hallucinationRisk: string;
+    calibrationStatus: string;
+    reviewRequired: boolean;
+    warning?: string;
+}) {
+    const tone = modelTrustTone(status);
+
+    return (
+        <div className={cn('border px-3 py-2 font-mono', tone.shell)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[9px] uppercase tracking-[0.18em]">
+                    <Shield className="h-3 w-3" />
+                    Model trust
+                </div>
+                <span className="text-[9px] uppercase tracking-[0.16em]">{status.replace(/_/g, ' ')}</span>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-4">
+                <TrustMetric label="Evidence" value={citationQuality} />
+                <TrustMetric label="Risk" value={hallucinationRisk} />
+                <TrustMetric label="Calibration" value={calibrationStatus.replace(/_/g, ' ')} />
+                <TrustMetric label="Review" value={reviewRequired ? 'required' : 'draft'} />
+            </div>
+            {warning && (
+                <div className="mt-2 border-t border-current/15 pt-2 text-[10px] leading-relaxed opacity-80">
+                    {warning}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function TrustMetric({ label, value }: { label: string; value: string }) {
+    return (
+        <div className="bg-black/20 px-2 py-1.5">
+            <div className="text-[8px] uppercase tracking-[0.14em] opacity-50">{label}</div>
+            <div className="mt-0.5 text-[10px] uppercase tracking-[0.12em]">{value}</div>
+        </div>
+    );
+}
+
+function modelTrustTone(status: string) {
+    if (status === 'grounded_draft') {
+        return { shell: 'border-accent/22 bg-accent/[0.035] text-accent/85' };
+    }
+    if (status === 'needs_review') {
+        return { shell: 'border-amber-400/25 bg-amber-400/5 text-amber-200/85' };
+    }
+    if (status === 'needs_evidence') {
+        return { shell: 'border-red-400/22 bg-red-500/5 text-red-200/85' };
+    }
+    return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };
 }
 
 function CaseDraftRow({ label, value }: { label: string; value: string }) {

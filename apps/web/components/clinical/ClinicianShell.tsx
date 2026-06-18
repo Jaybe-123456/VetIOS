@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useEffect, useState } from 'react';
-import { ClipboardList, CreditCard, LockKeyhole, Menu, Plus, ServerCog, Stethoscope, TerminalSquare, UserCircle, X } from 'lucide-react';
+import { ClipboardList, CreditCard, LockKeyhole, Menu, MessageSquare, Plus, ServerCog, Stethoscope, TerminalSquare, UserCircle, X } from 'lucide-react';
 import { toast } from 'sonner';
 import UserNav from '@/components/UserNav';
 
@@ -60,6 +60,9 @@ export function ClinicianShell({ children }: { children: ReactNode }) {
                     <ClinicalNavLink href="/cases" active={pathname === '/cases'} icon={<ClipboardList className="h-4 w-4" />}>
                         My Cases
                     </ClinicalNavLink>
+                    <ClinicalNavLink href="/ask-vetios" active={pathname === '/ask-vetios'} icon={<MessageSquare className="h-4 w-4" />}>
+                        Ask VetIOS
+                    </ClinicalNavLink>
                     <ClinicalNavLink href="/profile" active={pathname === '/profile'} icon={<UserCircle className="h-4 w-4" />}>
                         Profile
                     </ClinicalNavLink>
@@ -114,6 +117,14 @@ export function ClinicianShell({ children }: { children: ReactNode }) {
                                 onClick={() => setDrawerOpen(false)}
                             >
                                 My Cases
+                            </ClinicalNavLink>
+                            <ClinicalNavLink
+                                href="/ask-vetios"
+                                active={pathname === '/ask-vetios'}
+                                icon={<MessageSquare className="h-4 w-4" />}
+                                onClick={() => setDrawerOpen(false)}
+                            >
+                                Ask VetIOS
                             </ClinicalNavLink>
                             <ClinicalNavLink
                                 href="/profile"
