@@ -48,6 +48,13 @@ export interface PublicEvidenceSnapshot {
         outcome_tracked_events: number;
         resistance_suspected_events: number;
     };
+    specialist_review: {
+        review_events: number;
+        completed_reviews: number;
+        corrected_or_partial_reviews: number;
+        learning_eligible_reviews: number;
+        pacs_linked_reviews: number;
+    };
     integrity: PublicEvidenceIntegrity;
 }
 
@@ -58,6 +65,7 @@ export interface PublicEvidenceIntegrity {
     cire_validation_ready: boolean;
     amr_loop_active: boolean;
     ask_vetios_governed: boolean;
+    specialist_review_loop_active: boolean;
     public_claim_posture: 'architecture_only' | 'measured_activity' | 'evidence_grade_claims';
 }
 
@@ -83,9 +91,10 @@ export async function getPublicEvidenceSnapshot(): Promise<PublicEvidenceSnapsho
             loadInferenceEvidence(client, target.tenantId, warnings),
             loadWorkflowEvidence(client, target.tenantId, warnings),
         ]);
-        const [askVetios, amr] = await Promise.all([
+        const [askVetios, amr, specialistReview] = await Promise.all([
             loadAskVetiosEvidence(client, warnings),
             loadAmrEvidence(client, target.tenantId, warnings),
+            loadSpecialistReviewEvidence(client, target.tenantId, warnings),
         ]);
         const evidenceBase = {
             dataset,
@@ -93,6 +102,7 @@ export async function getPublicEvidenceSnapshot(): Promise<PublicEvidenceSnapsho
             workflow,
             ask_vetios: askVetios,
             amr,
+            specialist_review: specialistReview,
         };
 
         return {
@@ -107,6 +117,7 @@ export async function getPublicEvidenceSnapshot(): Promise<PublicEvidenceSnapsho
             workflow,
             ask_vetios: askVetios,
             amr,
+            specialist_review: specialistReview,
             integrity: buildPublicEvidenceIntegrity({
                 configured: true,
                 ...evidenceBase,
@@ -266,6 +277,35 @@ async function loadAmrEvidence(
     };
 }
 
+async function loadSpecialistReviewEvidence(
+    client: SupabaseClient,
+    tenantId: string,
+    warnings: string[],
+): Promise<PublicEvidenceSnapshot['specialist_review']> {
+    const table = 'specialist_review_events';
+    const [
+        reviewEvents,
+        completedReviews,
+        correctedOrPartialReviews,
+        learningEligibleReviews,
+        pacsLinkedReviews,
+    ] = await Promise.all([
+        countRows(client, table, (query) => query.eq('tenant_id', tenantId), warnings, 'specialist review events'),
+        countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('review_status', 'completed'), warnings, 'completed specialist reviews'),
+        countRows(client, table, (query) => query.eq('tenant_id', tenantId).in('ai_disposition', ['corrected', 'partially_supported']), warnings, 'specialist correction reviews'),
+        countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('learning_eligible', true), warnings, 'learning-eligible specialist reviews'),
+        countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('pacs_status', 'linked'), warnings, 'PACS-linked specialist reviews'),
+    ]);
+
+    return {
+        review_events: reviewEvents,
+        completed_reviews: completedReviews,
+        corrected_or_partial_reviews: correctedOrPartialReviews,
+        learning_eligible_reviews: learningEligibleReviews,
+        pacs_linked_reviews: pacsLinkedReviews,
+    };
+}
+
 async function countRows(
     client: SupabaseClient,
     table: string,
@@ -289,6 +329,7 @@ export function buildPublicEvidenceIntegrity(input: {
     workflow: PublicEvidenceSnapshot['workflow'];
     ask_vetios: PublicEvidenceSnapshot['ask_vetios'];
     amr: PublicEvidenceSnapshot['amr'];
+    specialist_review: PublicEvidenceSnapshot['specialist_review'];
 }): PublicEvidenceIntegrity {
     if (!input.configured) {
         return {
@@ -298,6 +339,7 @@ export function buildPublicEvidenceIntegrity(input: {
             cire_validation_ready: false,
             amr_loop_active: false,
             ask_vetios_governed: false,
+            specialist_review_loop_active: false,
             public_claim_posture: 'architecture_only',
         };
     }
@@ -308,6 +350,12 @@ export function buildPublicEvidenceIntegrity(input: {
         || input.inference.cire_sample_size >= 30;
     const amrLoopActive = input.amr.stewardship_events > 0
         || input.amr.genomic_events > 0;
+    const specialistReviewLoopActive = input.specialist_review.review_events > 0
+        && (
+            input.specialist_review.completed_reviews > 0
+            || input.specialist_review.learning_eligible_reviews > 0
+            || input.specialist_review.corrected_or_partial_reviews > 0
+        );
     const askVetiosGoverned = input.ask_vetios.query_events > 0
         && (
             input.ask_vetios.case_graph_ready > 0
@@ -320,7 +368,8 @@ export function buildPublicEvidenceIntegrity(input: {
         || input.workflow.passive_signal_events > 0
         || input.ask_vetios.query_events > 0
         || input.amr.genomic_events > 0
-        || input.amr.stewardship_events > 0;
+        || input.amr.stewardship_events > 0
+        || input.specialist_review.review_events > 0;
     const status: PublicEvidenceIntegrity['status'] = outcomeConfirmedCorpus && cireValidationReady
         ? 'evidence_grade'
         : liveCountsAvailable ? 'collecting' : 'no_live_evidence';
@@ -335,6 +384,7 @@ export function buildPublicEvidenceIntegrity(input: {
         cire_validation_ready: cireValidationReady,
         amr_loop_active: amrLoopActive,
         ask_vetios_governed: askVetiosGoverned,
+        specialist_review_loop_active: specialistReviewLoopActive,
         public_claim_posture: publicClaimPosture,
     };
 }
@@ -397,6 +447,13 @@ function emptyEvidenceSnapshot(input: {
             outcome_tracked_events: 0,
             resistance_suspected_events: 0,
         },
+        specialist_review: {
+            review_events: 0,
+            completed_reviews: 0,
+            corrected_or_partial_reviews: 0,
+            learning_eligible_reviews: 0,
+            pacs_linked_reviews: 0,
+        },
         integrity: buildPublicEvidenceIntegrity({
             configured: input.configured,
             dataset: {
@@ -434,6 +491,13 @@ function emptyEvidenceSnapshot(input: {
                 culture_guided_events: 0,
                 outcome_tracked_events: 0,
                 resistance_suspected_events: 0,
+            },
+            specialist_review: {
+                review_events: 0,
+                completed_reviews: 0,
+                corrected_or_partial_reviews: 0,
+                learning_eligible_reviews: 0,
+                pacs_linked_reviews: 0,
             },
         }),
     };

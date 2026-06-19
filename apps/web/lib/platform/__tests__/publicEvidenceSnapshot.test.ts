@@ -10,6 +10,7 @@ describe('public evidence snapshot integrity', () => {
             workflow: workflow(),
             ask_vetios: askVetios(),
             amr: amr(),
+            specialist_review: specialistReview(),
         });
 
         expect(integrity.status).toBe('not_configured');
@@ -25,12 +26,14 @@ describe('public evidence snapshot integrity', () => {
             workflow: workflow(),
             ask_vetios: askVetios({ query_events: 8, regulatory_reviewable: 3 }),
             amr: amr({ stewardship_events: 2 }),
+            specialist_review: specialistReview({ review_events: 1, completed_reviews: 1 }),
         });
 
         expect(integrity.status).toBe('collecting');
         expect(integrity.public_claim_posture).toBe('measured_activity');
         expect(integrity.ask_vetios_governed).toBe(true);
         expect(integrity.amr_loop_active).toBe(true);
+        expect(integrity.specialist_review_loop_active).toBe(true);
         expect(integrity.outcome_confirmed_corpus).toBe(false);
     });
 
@@ -47,6 +50,7 @@ describe('public evidence snapshot integrity', () => {
             workflow: workflow({ passive_signal_events: 15 }),
             ask_vetios: askVetios({ query_events: 20, grounded_drafts: 5, regulatory_reviewable: 5 }),
             amr: amr({ stewardship_events: 10, outcome_tracked_events: 4 }),
+            specialist_review: specialistReview({ review_events: 6, completed_reviews: 4, learning_eligible_reviews: 2 }),
         });
 
         expect(integrity.status).toBe('evidence_grade');
@@ -108,6 +112,17 @@ function amr(overrides: Partial<PublicEvidenceSnapshot['amr']> = {}): PublicEvid
         culture_guided_events: 0,
         outcome_tracked_events: 0,
         resistance_suspected_events: 0,
+        ...overrides,
+    };
+}
+
+function specialistReview(overrides: Partial<PublicEvidenceSnapshot['specialist_review']> = {}): PublicEvidenceSnapshot['specialist_review'] {
+    return {
+        review_events: 0,
+        completed_reviews: 0,
+        corrected_or_partial_reviews: 0,
+        learning_eligible_reviews: 0,
+        pacs_linked_reviews: 0,
         ...overrides,
     };
 }
