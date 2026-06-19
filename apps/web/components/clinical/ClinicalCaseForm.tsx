@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Dispatch, FormEvent, ReactNode, SetStateAction } from 'react';
 import { normalizeInferenceInput } from '@/lib/input/inputNormalizer';
 import { VoiceInputButton } from '@/components/voice/VoiceInputButton';
@@ -61,6 +61,18 @@ export function ClinicalCaseForm({ onSubmit, isLoading, initialDraft, onClearDra
     }), [patient.species, signs.symptoms]);
     const hasErrors = Boolean(errors.species || errors.symptoms);
     const readiness = useMemo(() => getReadiness(patient, signs), [patient, signs]);
+
+    useEffect(() => {
+        if (!initialDraft) return;
+        setPatient({ ...EMPTY_PATIENT, ...initialDraft.patient });
+        setSigns({ ...EMPTY_SIGNS, ...initialDraft.signs });
+        setLabs(initialDraft.labs ?? {});
+        setTouched({
+            species: Boolean(initialDraft.patient?.species),
+            symptoms: Boolean(initialDraft.signs?.symptoms),
+        });
+        setVoiceCapture(null);
+    }, [initialDraft]);
 
     function applyVoiceFields(fields: ExtractedClinicalFields) {
         setVoiceCapture(buildVoiceCaptureContext(fields));

@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { AskVetiosCaseGraphSnapshot, AskVetiosCaseGraphStatus } from '@/lib/askVetios/caseGraph';
 import type { AskVetiosModelTrustSnapshot, AskVetiosModelTrustStatus } from '@/lib/askVetios/modelTrust';
 import type { AskVetiosVeterinaryRetrievalSnapshot, AskVetiosVeterinaryRetrievalStatus } from '@/lib/askVetios/veterinaryRetrieval';
+import type { AskVetiosWorkflowIntegrationSnapshot, AskVetiosWorkflowIntegrationStatus } from '@/lib/askVetios/workflowIntegration';
 import type { AskVetiosCaseDraft, AskVetiosCaseHandoff, AskVetiosIntakeStatus } from '@/lib/askVetios/intake';
 
 export type MessageMode = 'educational' | 'clinical' | 'general' | 'operational';
@@ -62,6 +63,8 @@ export interface MessageMetadata {
     model_trust_status?: AskVetiosModelTrustStatus;
     veterinary_retrieval_snapshot?: AskVetiosVeterinaryRetrievalSnapshot;
     veterinary_retrieval_status?: AskVetiosVeterinaryRetrievalStatus;
+    workflow_integration_snapshot?: AskVetiosWorkflowIntegrationSnapshot;
+    workflow_integration_status?: AskVetiosWorkflowIntegrationStatus;
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';

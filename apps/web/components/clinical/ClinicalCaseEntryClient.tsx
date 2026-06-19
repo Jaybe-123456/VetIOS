@@ -1,9 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import { CheckCircle2, FileText, MessageSquare, Sparkles, Stethoscope } from 'lucide-react';
+import { ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY } from '@/lib/askVetios/intake';
 import { ClinicalCaseForm } from './ClinicalCaseForm';
 import type { ClinicalCaseFormDraft } from './ClinicalCaseForm';
 import type { ClinicalInferenceInput } from './clinicalTypes';
@@ -36,9 +37,27 @@ const DEMO_DRAFT: ClinicalCaseFormDraft = {
 
 export function ClinicalCaseEntryClient({ firstCaseMode = false, useDemoDraft = false }: ClinicalCaseEntryClientProps) {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [demoDraftEnabled, setDemoDraftEnabled] = useState(useDemoDraft);
+    const [askVetiosDraft, setAskVetiosDraft] = useState<ClinicalCaseFormDraft | undefined>();
+
+    useEffect(() => {
+        if (searchParams.get('source') !== 'ask-vetios') return;
+        try {
+            const storedDraft = window.localStorage.getItem(ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY);
+            if (!storedDraft) return;
+            const parsed = JSON.parse(storedDraft) as unknown;
+            const draft = normalizeStoredClinicalCaseDraft(parsed);
+            if (!draft) throw new Error('Invalid Ask VetIOS clinical case draft');
+            setAskVetiosDraft(draft);
+            setDemoDraftEnabled(false);
+            window.localStorage.removeItem(ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY);
+        } catch {
+            setError('Ask VetIOS case draft could not be loaded. Start a new case manually.');
+        }
+    }, [searchParams]);
 
     async function submitCase(input: ClinicalInferenceInput) {
         setIsLoading(true);
@@ -76,11 +95,33 @@ export function ClinicalCaseEntryClient({ firstCaseMode = false, useDemoDraft = 
             <ClinicalCaseForm
                 onSubmit={submitCase}
                 isLoading={isLoading}
-                initialDraft={demoDraftEnabled ? DEMO_DRAFT : undefined}
-                onClearDraft={() => setDemoDraftEnabled(false)}
+                initialDraft={askVetiosDraft ?? (demoDraftEnabled ? DEMO_DRAFT : undefined)}
+                onClearDraft={() => {
+                    setAskVetiosDraft(undefined);
+                    setDemoDraftEnabled(false);
+                }}
             />
         </div>
     );
+}
+
+function normalizeStoredClinicalCaseDraft(value: unknown): ClinicalCaseFormDraft | null {
+    const draft = asRecord(value);
+    if (!draft) return null;
+    return {
+        patient: pickStringRecord(asRecord(draft.patient), ['species', 'breed', 'age', 'ageUnit', 'sex']),
+        signs: pickStringRecord(asRecord(draft.signs), ['symptoms', 'duration', 'durationUnit', 'severity']),
+        labs: pickStringRecord(asRecord(draft.labs), ['WBC', 'PCV', 'BUN', 'Creatinine', 'Glucose']),
+    };
+}
+
+function pickStringRecord(record: Record<string, unknown> | null, keys: string[]): Record<string, string> | undefined {
+    if (!record) return undefined;
+    const entries = keys
+        .map((key) => [key, record[key]] as const)
+        .filter((entry): entry is readonly [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0)
+        .map(([key, value]) => [key, value.trim()]);
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 function FirstCaseQuickStart({ demoDraftEnabled }: { demoDraftEnabled: boolean }) {

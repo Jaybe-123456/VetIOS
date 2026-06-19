@@ -1,6 +1,7 @@
 import { detectSpeciesFromTexts, type DetectedVetiosSpecies } from '@/lib/askVetios/context';
 
 export const ASK_VETIOS_CASE_DRAFT_STORAGE_KEY = 'vetios.askVetios.caseDraft.v1';
+export const ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY = 'vetios.askVetios.clinicalCaseFormDraft.v1';
 
 export type AskVetiosIntakeStatus = 'non_clinical' | 'needs_minimum' | 'case_ready' | 'strong';
 
@@ -38,11 +39,31 @@ export interface AskVetiosCaseHandoffPayload {
     };
 }
 
+export interface AskVetiosClinicalCaseFormDraft {
+    patient?: Partial<{
+        species: string;
+        breed: string;
+        age: string;
+        ageUnit: string;
+        sex: string;
+    }>;
+    signs?: Partial<{
+        symptoms: string;
+        duration: string;
+        durationUnit: string;
+        severity: string;
+    }>;
+    labs?: Record<string, string>;
+}
+
 export interface AskVetiosCaseHandoff {
     ready: boolean;
     storage_key: typeof ASK_VETIOS_CASE_DRAFT_STORAGE_KEY;
     inference_href: string;
     payload: AskVetiosCaseHandoffPayload;
+    clinical_case_storage_key: typeof ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY;
+    clinical_case_href: string;
+    clinical_case_draft: AskVetiosClinicalCaseFormDraft;
 }
 
 export interface AskVetiosIntakeSummary {
@@ -210,6 +231,9 @@ function buildCaseHandoff(draft: AskVetiosCaseDraft, ready: boolean): AskVetiosC
         ready,
         storage_key: ASK_VETIOS_CASE_DRAFT_STORAGE_KEY,
         inference_href: '/inference?source=ask-vetios',
+        clinical_case_storage_key: ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY,
+        clinical_case_href: '/cases/new?source=ask-vetios',
+        clinical_case_draft: buildClinicalCaseFormDraft(draft),
         payload: {
             model: {
                 name: 'gpt-4o-mini',
@@ -243,6 +267,52 @@ function buildCaseHandoff(draft: AskVetiosCaseDraft, ready: boolean): AskVetiosC
             },
         },
     };
+}
+
+function buildClinicalCaseFormDraft(draft: AskVetiosCaseDraft): AskVetiosClinicalCaseFormDraft {
+    const duration = splitDuration(draft.duration);
+    return {
+        patient: {
+            species: speciesToFormValue(draft.species),
+            breed: draft.breed ?? undefined,
+            age: draft.age_years != null ? String(draft.age_years) : undefined,
+            ageUnit: draft.age_years != null ? 'years' : undefined,
+            sex: sexToFormValue(draft.sex),
+        },
+        signs: {
+            symptoms: draft.clinical_signs.join(', ') || undefined,
+            duration: duration?.value,
+            durationUnit: duration?.unit,
+            severity: draft.red_flags.length > 0 ? 'severe' : 'moderate',
+        },
+        labs: {},
+    };
+}
+
+function splitDuration(value: string | null): { value: string; unit: string } | null {
+    if (!value) return null;
+    const match = value.match(/^(\d+(?:\.\d+)?)\s*(hours?|hrs?|days?|weeks?|months?)$/i);
+    if (!match?.[1] || !match[2]) return null;
+    const unit = match[2].toLowerCase();
+    if (unit.startsWith('hour') || unit.startsWith('hr')) return { value: match[1], unit: 'hours' };
+    if (unit.startsWith('week')) return { value: match[1], unit: 'weeks' };
+    return { value: match[1], unit: 'days' };
+}
+
+function speciesToFormValue(value: AskVetiosCaseDraft['species']): string | undefined {
+    if (value === 'unknown') return undefined;
+    return titleCase(value);
+}
+
+function sexToFormValue(value: string | null): string | undefined {
+    if (!value) return undefined;
+    if (value === 'neutered male') return 'Male neutered';
+    if (value === 'intact male') return 'Male intact';
+    if (value === 'spayed female') return 'Female spayed';
+    if (value === 'intact female') return 'Female intact';
+    if (value === 'male') return 'Male intact';
+    if (value === 'female') return 'Female intact';
+    return undefined;
 }
 
 function extractMatches(text: string, dictionary: Array<{ label: string; patterns: RegExp[] }>): string[] {

@@ -24,6 +24,7 @@ import { buildAskVetiosIntake } from '@/lib/askVetios/intake';
 import { buildAskVetiosCaseGraphSnapshot } from '@/lib/askVetios/caseGraph';
 import { buildAskVetiosModelTrustSnapshot } from '@/lib/askVetios/modelTrust';
 import { buildAskVetiosVeterinaryRetrievalSnapshot } from '@/lib/askVetios/veterinaryRetrieval';
+import { buildAskVetiosWorkflowIntegrationSnapshot } from '@/lib/askVetios/workflowIntegration';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -356,6 +357,14 @@ function withAskVetiosIntake<T extends AskVetiosResponseBody>(
     });
     nextMetadata.model_trust_snapshot = modelTrustSnapshot;
     nextMetadata.model_trust_status = modelTrustSnapshot.status;
+    const workflowIntegrationSnapshot = buildAskVetiosWorkflowIntegrationSnapshot({
+        mode: response.mode,
+        metadata: nextMetadata,
+        intake,
+        caseGraphSnapshot,
+    });
+    nextMetadata.workflow_integration_snapshot = workflowIntegrationSnapshot;
+    nextMetadata.workflow_integration_status = workflowIntegrationSnapshot.status;
 
     return {
         ...response,
@@ -532,6 +541,11 @@ async function logAskVetiosQuery(
             row.veterinary_retrieval_snapshot = veterinaryRetrievalSnapshot;
             row.veterinary_retrieval_status = readString(veterinaryRetrievalSnapshot.status) ?? 'ungrounded';
         }
+        const workflowIntegrationSnapshot = readWorkflowIntegrationSnapshot(response);
+        if (workflowIntegrationSnapshot) {
+            row.workflow_integration_snapshot = workflowIntegrationSnapshot;
+            row.workflow_integration_status = readString(workflowIntegrationSnapshot.status) ?? 'needs_intake';
+        }
 
         const client = getSupabaseServer();
         let { data, error } = await client
@@ -546,6 +560,8 @@ async function logAskVetiosQuery(
             delete row.model_trust_status;
             delete row.veterinary_retrieval_snapshot;
             delete row.veterinary_retrieval_status;
+            delete row.workflow_integration_snapshot;
+            delete row.workflow_integration_status;
             const retry = await client
                 .from('ask_vetios_queries')
                 .insert(row)
@@ -589,6 +605,12 @@ function readVeterinaryRetrievalSnapshot(response: Record<string, unknown>): Rec
     return Object.keys(snapshot).length > 0 ? snapshot : null;
 }
 
+function readWorkflowIntegrationSnapshot(response: Record<string, unknown>): Record<string, unknown> | null {
+    const metadata = asRecord(response.metadata);
+    const snapshot = asRecord(metadata.workflow_integration_snapshot);
+    return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
 function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string }): boolean {
     const message = error.message?.toLowerCase() ?? '';
     return error.code === '42703'
@@ -599,5 +621,7 @@ function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string 
         || message.includes('model_trust_status')
         || message.includes('veterinary_retrieval_snapshot')
         || message.includes('veterinary_retrieval_status')
+        || message.includes('workflow_integration_snapshot')
+        || message.includes('workflow_integration_status')
         || message.includes('schema cache');
 }

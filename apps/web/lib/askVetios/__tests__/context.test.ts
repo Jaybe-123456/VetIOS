@@ -3,7 +3,12 @@ import { detectSpeciesFromTexts } from '../context';
 import { buildAskVetiosCaseGraphSnapshot } from '../caseGraph';
 import { buildAskVetiosModelTrustSnapshot } from '../modelTrust';
 import { buildAskVetiosVeterinaryRetrievalSnapshot } from '../veterinaryRetrieval';
-import { ASK_VETIOS_CASE_DRAFT_STORAGE_KEY, buildAskVetiosIntake } from '../intake';
+import { buildAskVetiosWorkflowIntegrationSnapshot } from '../workflowIntegration';
+import {
+    ASK_VETIOS_CASE_DRAFT_STORAGE_KEY,
+    ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY,
+    buildAskVetiosIntake,
+} from '../intake';
 
 describe('Ask VetIOS context detection', () => {
     it('prioritizes the current user query over assistant content', () => {
@@ -38,6 +43,10 @@ describe('Ask VetIOS context detection', () => {
         expect(intake.case_draft.outcome_signals).toContain('improved');
         expect(intake.case_draft.red_flags).toContain('possible GDV/bloat pattern');
         expect(intake.case_handoff.storage_key).toBe(ASK_VETIOS_CASE_DRAFT_STORAGE_KEY);
+        expect(intake.case_handoff.clinical_case_storage_key).toBe(ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY);
+        expect(intake.case_handoff.clinical_case_href).toBe('/cases/new?source=ask-vetios');
+        expect(intake.case_handoff.clinical_case_draft.patient?.species).toBe('Canine');
+        expect(intake.case_handoff.clinical_case_draft.signs?.duration).toBe('2');
         expect(intake.case_handoff.payload.input.input_signature.species).toBe('canine');
     });
 
@@ -189,5 +198,41 @@ describe('Ask VetIOS context detection', () => {
         expect(snapshot.coverage.lab_reference).toBe(true);
         expect(snapshot.coverage.species_specific).toBe(true);
         expect(trust.grounding.citation_quality).toBe('grounded');
+    });
+
+    it('builds a workflow integration snapshot for case and inference handoff readiness', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Canine, 7 year old neutered male, vomiting for 2 days. CBC, chemistry, radiographs, and IV fluids. Improved overnight.',
+        });
+        const caseGraphSnapshot = buildAskVetiosCaseGraphSnapshot({
+            intake,
+            responseMetadata: {
+                diagnosis_ranked: [{ name: 'Pancreatitis', confidence: 0.72 }],
+                recommended_tests: ['cPLI', 'abdominal ultrasound'],
+                veterinary_retrieval_status: 'veterinary_grounded',
+                model_trust_status: 'grounded_draft',
+            },
+        });
+        const workflow = buildAskVetiosWorkflowIntegrationSnapshot({
+            mode: 'clinical',
+            metadata: {
+                diagnosis_ranked: [{ name: 'Pancreatitis', confidence: 0.72 }],
+                recommended_tests: ['cPLI', 'abdominal ultrasound'],
+                veterinary_retrieval_status: 'veterinary_grounded',
+                model_trust_status: 'grounded_draft',
+            },
+            intake,
+            caseGraphSnapshot,
+        });
+
+        expect(workflow.status).toBe('outcome_workflow_ready');
+        expect(workflow.handoffs.clinical_case_form_ready).toBe(true);
+        expect(workflow.handoffs.inference_ready).toBe(true);
+        expect(workflow.handoffs.case_graph_ready).toBe(true);
+        expect(workflow.connected_data.lab_data).toBe(true);
+        expect(workflow.downstream_workflows.diagnostic_review).toBe('ready');
+        expect(workflow.downstream_workflows.outcome_capture).toBe('ready');
+        expect(workflow.next_actions).toContain('open_case_form');
+        expect(workflow.next_actions).toContain('open_inference');
     });
 });

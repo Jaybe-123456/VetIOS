@@ -111,7 +111,14 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
     const graphSnapshot = metadata.case_graph_snapshot;
     const trustSnapshot = metadata.model_trust_snapshot;
     const retrievalSnapshot = metadata.veterinary_retrieval_snapshot;
+    const workflowSnapshot = metadata.workflow_integration_snapshot;
     const requiredActions = graphSnapshot?.promotion.required_next_actions ?? [];
+
+    const openCaseDraft = () => {
+        if (!handoff?.ready) return;
+        window.localStorage.setItem(handoff.clinical_case_storage_key, JSON.stringify(handoff.clinical_case_draft));
+        window.location.assign(handoff.clinical_case_href);
+    };
 
     const openInference = () => {
         if (!handoff?.ready) return;
@@ -141,6 +148,15 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
                     </div>
                     <button
                         type="button"
+                        onClick={openCaseDraft}
+                        disabled={!handoff?.ready}
+                        className="inline-flex items-center gap-1.5 border border-accent/35 bg-accent/10 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-white/30"
+                    >
+                        <ClipboardList className="h-3 w-3" />
+                        Open Case
+                    </button>
+                    <button
+                        type="button"
                         onClick={openInference}
                         disabled={!handoff?.ready}
                         className="inline-flex items-center gap-1.5 border border-accent/35 bg-accent/10 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-accent transition-colors hover:bg-accent/15 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/[0.03] disabled:text-white/30"
@@ -163,6 +179,15 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
                 <div className="border border-red-500/20 bg-red-500/5 px-3 py-2 font-mono text-[10px] leading-relaxed text-red-300/80">
                     {metadata.safety_notice}
                 </div>
+            )}
+
+            {workflowSnapshot && (
+                <WorkflowIntegrationPanel
+                    status={metadata.workflow_integration_status ?? workflowSnapshot.status}
+                    handoffs={workflowSnapshot.handoffs}
+                    downstream={workflowSnapshot.downstream_workflows}
+                    nextActions={workflowSnapshot.next_actions}
+                />
             )}
 
             {retrievalSnapshot && (
@@ -216,6 +241,66 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
             )}
         </div>
     );
+}
+
+function WorkflowIntegrationPanel({
+    status,
+    handoffs,
+    downstream,
+    nextActions,
+}: {
+    status: string;
+    handoffs: {
+        clinical_case_form_ready: boolean;
+        inference_ready: boolean;
+        case_graph_ready: boolean;
+        clinician_confirmation_required: boolean;
+    };
+    downstream: Record<string, 'ready' | 'blocked'>;
+    nextActions: string[];
+}) {
+    const tone = workflowIntegrationTone(status);
+    const readyCount = Object.values(downstream).filter((value) => value === 'ready').length;
+
+    return (
+        <div className={cn('border px-3 py-2 font-mono', tone.shell)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[9px] uppercase tracking-[0.18em]">
+                    <ClipboardList className="h-3 w-3" />
+                    Workflow integration
+                </div>
+                <span className="text-[9px] uppercase tracking-[0.16em]">{status.replace(/_/g, ' ')}</span>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-4">
+                <TrustMetric label="Case" value={handoffs.clinical_case_form_ready ? 'ready' : 'blocked'} />
+                <TrustMetric label="Inference" value={handoffs.inference_ready ? 'ready' : 'blocked'} />
+                <TrustMetric label="Graph" value={handoffs.case_graph_ready ? 'ready' : 'blocked'} />
+                <TrustMetric label="Flows" value={`${readyCount}/${Object.keys(downstream).length}`} />
+            </div>
+            {nextActions.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {nextActions.slice(0, 4).map((action) => (
+                        <span key={action} className="border border-current/15 bg-black/20 px-2 py-1 text-[9px] uppercase tracking-[0.12em] opacity-80">
+                            {action.replace(/_/g, ' ')}
+                        </span>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function workflowIntegrationTone(status: string) {
+    if (status === 'outcome_workflow_ready' || status === 'diagnostics_workflow_ready') {
+        return { shell: 'border-accent/22 bg-accent/[0.035] text-accent/85' };
+    }
+    if (status === 'case_handoff_ready') {
+        return { shell: 'border-amber-400/25 bg-amber-400/5 text-amber-200/85' };
+    }
+    if (status === 'needs_intake') {
+        return { shell: 'border-red-400/22 bg-red-500/5 text-red-200/85' };
+    }
+    return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };
 }
 
 function VeterinaryRetrievalPanel({
