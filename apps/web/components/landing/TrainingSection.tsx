@@ -1,6 +1,6 @@
 'use client';
 
-import { Database, Gauge, Link2, ShieldCheck } from 'lucide-react';
+import { Database, Gauge, Link2, MessageSquareText, ShieldCheck, Syringe } from 'lucide-react';
 import type { PublicEvidenceSnapshot } from '@/lib/platform/publicEvidenceSnapshot';
 
 export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot: PublicEvidenceSnapshot }) {
@@ -59,6 +59,7 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
                             <EvidenceItem label="Governance lineage" value="Live" detail="Inference events carry prompt, schema, model, and CIRE lineage." />
                             <EvidenceItem label="PIMS workflow intake" value="Live" detail="Clinic workflow events normalize into passive signal contracts." />
                             <EvidenceItem label="CIRE claim status" value={titleCase(evidenceSnapshot.inference.cire_status)} detail={cireDetail(evidenceSnapshot)} />
+                            <EvidenceItem label="Claim posture" value={titleCase(evidenceSnapshot.integrity.public_claim_posture)} detail={integrityDetail(evidenceSnapshot)} />
                         </div>
                     </div>
 
@@ -81,6 +82,11 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
                                 </div>
                             ))}
                         </div>
+                        {evidenceSnapshot.warnings.length > 0 && (
+                            <div className="mt-5 border border-[#4D3512] bg-[#100A02] p-3 text-[11px] leading-5 text-[#F5A623]">
+                                {evidenceSnapshot.warnings.slice(0, 2).join(' ')}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -130,6 +136,20 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
             status: snapshot.workflow.passive_signal_events > 0 ? 'measured' : 'ready',
             icon: Link2,
         },
+        {
+            label: 'Ask VetIOS governance',
+            value: formatNumber(snapshot.ask_vetios.query_events),
+            detail: `${formatNumber(snapshot.ask_vetios.regulatory_reviewable)} reviewable CDS drafts and ${formatNumber(snapshot.ask_vetios.human_review_required)} human-review routes recorded.`,
+            status: snapshot.ask_vetios.query_events > 0 ? 'measured' : 'pending',
+            icon: MessageSquareText,
+        },
+        {
+            label: 'AMR loop',
+            value: formatNumber(snapshot.amr.stewardship_events),
+            detail: `${formatNumber(snapshot.amr.culture_guided_events)} culture-guided stewardship events and ${formatNumber(snapshot.amr.outcome_tracked_events)} outcome-tracked events.`,
+            status: snapshot.amr.stewardship_events > 0 || snapshot.amr.genomic_events > 0 ? 'measured' : 'ready',
+            icon: Syringe,
+        },
     ];
 }
 
@@ -146,6 +166,9 @@ function buildTerminalRows(snapshot: PublicEvidenceSnapshot): Array<{ key: strin
         { key: 'inferences', value: formatNumber(snapshot.inference.inference_events) },
         { key: 'outcomes', value: formatNumber(snapshot.inference.outcome_linked_inferences) },
         { key: 'cire', value: titleCase(snapshot.inference.cire_status), tone: snapshot.inference.cire_status === 'validated' ? undefined : 'warning' },
+        { key: 'ask', value: `${formatNumber(snapshot.ask_vetios.query_events)} governed queries` },
+        { key: 'amr', value: `${formatNumber(snapshot.amr.stewardship_events)} stewardship events` },
+        { key: 'posture', value: titleCase(snapshot.integrity.public_claim_posture), tone: snapshot.integrity.public_claim_posture === 'evidence_grade_claims' ? undefined : 'warning' },
         { key: 'connectors', value: `${formatNumber(snapshot.workflow.connector_templates)} templates` },
         ...(snapshot.error ? [{ key: 'snapshot', value: snapshot.error, tone: 'warning' as const }] : []),
     ];
@@ -159,6 +182,19 @@ function cireDetail(snapshot: PublicEvidenceSnapshot): string {
         return `${formatNumber(snapshot.inference.cire_sample_size)} outcome-linked inference pairs collected; validation threshold not yet met.`;
     }
     return 'Awaiting outcome-linked inference pairs before reliability claims are evidence-grade.';
+}
+
+function integrityDetail(snapshot: PublicEvidenceSnapshot): string {
+    if (snapshot.integrity.public_claim_posture === 'evidence_grade_claims') {
+        return 'Outcome-confirmed evidence and CIRE validation support evidence-grade reliability claims.';
+    }
+    if (snapshot.integrity.public_claim_posture === 'measured_activity') {
+        return 'Live counters are active, but outcome-confirmed reliability claims still need more confirmed pairs.';
+    }
+    if (!snapshot.configured) {
+        return 'Public evidence tenant is not configured, so the page reports architecture only.';
+    }
+    return 'Architecture is present, but live evidence counters are still at zero.';
 }
 
 function formatNumber(value: number): string {
