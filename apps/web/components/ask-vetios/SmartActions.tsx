@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Activity, AlertTriangle, BookOpen,
     ClipboardCheck, ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle,
-    Eye, ImageIcon, Pill, GitBranch, LibraryBig, ExternalLink, UserCheck, LockKeyhole
+    Eye, ImageIcon, Pill, GitBranch, LibraryBig, ExternalLink, UserCheck, LockKeyhole, Scale
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MessageMetadata } from '@/store/useChatStore';
@@ -114,6 +114,7 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
     const workflowSnapshot = metadata.workflow_integration_snapshot;
     const humanReviewSnapshot = metadata.human_review_snapshot;
     const aiSecuritySnapshot = metadata.ai_security_snapshot;
+    const regulatoryClaimsSnapshot = metadata.regulatory_claims_snapshot;
     const requiredActions = graphSnapshot?.promotion.required_next_actions ?? [];
 
     const openCaseDraft = () => {
@@ -201,6 +202,18 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
                     tokenBudgetEnforced={aiSecuritySnapshot.controls.rate_limit.token_budget_enforced}
                     signals={aiSecuritySnapshot.signals}
                     nextActions={aiSecuritySnapshot.next_actions}
+                />
+            )}
+
+            {regulatoryClaimsSnapshot && (
+                <RegulatoryClaimsPanel
+                    status={metadata.regulatory_claims_status ?? regulatoryClaimsSnapshot.status}
+                    risk={regulatoryClaimsSnapshot.claims_policy.device_claim_risk}
+                    posture={regulatoryClaimsSnapshot.claims_policy.allowed_user_posture}
+                    reviewRequired={regulatoryClaimsSnapshot.claims_policy.professional_review_required}
+                    independentlyReviewable={regulatoryClaimsSnapshot.claims_policy.independent_review_basis_available}
+                    blockedClaims={regulatoryClaimsSnapshot.blocked_claims}
+                    nextActions={regulatoryClaimsSnapshot.next_actions}
                 />
             )}
 
@@ -385,6 +398,71 @@ function aiSecurityTone(status: string) {
         return { shell: 'border-amber-400/25 bg-amber-400/5 text-amber-200/85' };
     }
     if (status === 'guarded') {
+        return { shell: 'border-accent/22 bg-accent/[0.035] text-accent/85' };
+    }
+    return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };
+}
+
+function RegulatoryClaimsPanel({
+    status,
+    risk,
+    posture,
+    reviewRequired,
+    independentlyReviewable,
+    blockedClaims,
+    nextActions,
+}: {
+    status: string;
+    risk: string;
+    posture: string;
+    reviewRequired: boolean;
+    independentlyReviewable: boolean;
+    blockedClaims: string[];
+    nextActions: string[];
+}) {
+    const tone = regulatoryClaimsTone(status);
+
+    return (
+        <div className={cn('border px-3 py-2 font-mono', tone.shell)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[9px] uppercase tracking-[0.18em]">
+                    <Scale className="h-3 w-3" />
+                    Claims discipline
+                </div>
+                <span className="text-[9px] uppercase tracking-[0.16em]">{status.replace(/_/g, ' ')}</span>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-4">
+                <TrustMetric label="Risk" value={risk} />
+                <TrustMetric label="Posture" value={posture.replace(/_/g, ' ')} />
+                <TrustMetric label="Review" value={reviewRequired ? 'required' : 'clear'} />
+                <TrustMetric label="Basis" value={independentlyReviewable ? 'reviewable' : 'missing'} />
+            </div>
+            {blockedClaims.length > 0 && (
+                <div className="mt-2 border-t border-current/15 pt-2 text-[10px] leading-relaxed opacity-80">
+                    Blocked: {blockedClaims.slice(0, 2).map((claim) => claim.replace(/_/g, ' ')).join(', ')}
+                </div>
+            )}
+            {nextActions.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {nextActions.slice(0, 4).map((action) => (
+                        <span key={action} className="border border-current/15 bg-black/20 px-2 py-1 text-[9px] uppercase tracking-[0.12em] opacity-80">
+                            {action.replace(/_/g, ' ')}
+                        </span>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function regulatoryClaimsTone(status: string) {
+    if (status === 'restricted_claims') {
+        return { shell: 'border-red-400/25 bg-red-500/5 text-red-200/85' };
+    }
+    if (status === 'claims_review_required') {
+        return { shell: 'border-amber-400/25 bg-amber-400/5 text-amber-200/85' };
+    }
+    if (status === 'cds_reviewable') {
         return { shell: 'border-accent/22 bg-accent/[0.035] text-accent/85' };
     }
     return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };

@@ -27,6 +27,7 @@ import { buildAskVetiosVeterinaryRetrievalSnapshot } from '@/lib/askVetios/veter
 import { buildAskVetiosWorkflowIntegrationSnapshot } from '@/lib/askVetios/workflowIntegration';
 import { buildAskVetiosHumanReviewSnapshot } from '@/lib/askVetios/humanReview';
 import { buildAskVetiosAiSecuritySnapshot } from '@/lib/askVetios/aiSecurity';
+import { buildAskVetiosRegulatoryClaimsSnapshot } from '@/lib/askVetios/regulatoryClaims';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -383,6 +384,14 @@ function withAskVetiosIntake<T extends AskVetiosResponseBody>(
     });
     nextMetadata.ai_security_snapshot = aiSecuritySnapshot;
     nextMetadata.ai_security_status = aiSecuritySnapshot.status;
+    const regulatoryClaimsSnapshot = buildAskVetiosRegulatoryClaimsSnapshot({
+        mode: response.mode,
+        content: response.content,
+        metadata: nextMetadata,
+        intake,
+    });
+    nextMetadata.regulatory_claims_snapshot = regulatoryClaimsSnapshot;
+    nextMetadata.regulatory_claims_status = regulatoryClaimsSnapshot.status;
 
     return {
         ...response,
@@ -574,6 +583,11 @@ async function logAskVetiosQuery(
             row.ai_security_snapshot = aiSecuritySnapshot;
             row.ai_security_status = readString(aiSecuritySnapshot.status) ?? 'guarded';
         }
+        const regulatoryClaimsSnapshot = readRegulatoryClaimsSnapshot(response);
+        if (regulatoryClaimsSnapshot) {
+            row.regulatory_claims_snapshot = regulatoryClaimsSnapshot;
+            row.regulatory_claims_status = readString(regulatoryClaimsSnapshot.status) ?? 'claims_review_required';
+        }
 
         const client = getSupabaseServer();
         let { data, error } = await client
@@ -594,6 +608,8 @@ async function logAskVetiosQuery(
             delete row.human_review_status;
             delete row.ai_security_snapshot;
             delete row.ai_security_status;
+            delete row.regulatory_claims_snapshot;
+            delete row.regulatory_claims_status;
             const retry = await client
                 .from('ask_vetios_queries')
                 .insert(row)
@@ -655,6 +671,12 @@ function readAiSecuritySnapshot(response: Record<string, unknown>): Record<strin
     return Object.keys(snapshot).length > 0 ? snapshot : null;
 }
 
+function readRegulatoryClaimsSnapshot(response: Record<string, unknown>): Record<string, unknown> | null {
+    const metadata = asRecord(response.metadata);
+    const snapshot = asRecord(metadata.regulatory_claims_snapshot);
+    return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
 function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string }): boolean {
     const message = error.message?.toLowerCase() ?? '';
     return error.code === '42703'
@@ -671,5 +693,7 @@ function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string 
         || message.includes('human_review_status')
         || message.includes('ai_security_snapshot')
         || message.includes('ai_security_status')
+        || message.includes('regulatory_claims_snapshot')
+        || message.includes('regulatory_claims_status')
         || message.includes('schema cache');
 }

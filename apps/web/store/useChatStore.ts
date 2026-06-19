@@ -6,6 +6,7 @@ import type { AskVetiosVeterinaryRetrievalSnapshot, AskVetiosVeterinaryRetrieval
 import type { AskVetiosWorkflowIntegrationSnapshot, AskVetiosWorkflowIntegrationStatus } from '@/lib/askVetios/workflowIntegration';
 import type { AskVetiosHumanReviewSnapshot, AskVetiosHumanReviewStatus } from '@/lib/askVetios/humanReview';
 import type { AskVetiosAiSecuritySnapshot, AskVetiosAiSecurityStatus } from '@/lib/askVetios/aiSecurity';
+import type { AskVetiosRegulatoryClaimsSnapshot, AskVetiosRegulatoryClaimsStatus } from '@/lib/askVetios/regulatoryClaims';
 import type { AskVetiosCaseDraft, AskVetiosCaseHandoff, AskVetiosIntakeStatus } from '@/lib/askVetios/intake';
 
 export type MessageMode = 'educational' | 'clinical' | 'general' | 'operational';
@@ -71,6 +72,8 @@ export interface MessageMetadata {
     human_review_status?: AskVetiosHumanReviewStatus;
     ai_security_snapshot?: AskVetiosAiSecuritySnapshot;
     ai_security_status?: AskVetiosAiSecurityStatus;
+    regulatory_claims_snapshot?: AskVetiosRegulatoryClaimsSnapshot;
+    regulatory_claims_status?: AskVetiosRegulatoryClaimsStatus;
     ensemble_metadata?: {
         openai_status: 'success' | 'failed' | 'disabled';
         hf_status: 'success' | 'failed' | 'disabled';
