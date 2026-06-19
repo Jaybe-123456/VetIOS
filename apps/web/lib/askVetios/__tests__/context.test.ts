@@ -4,6 +4,7 @@ import { buildAskVetiosCaseGraphSnapshot } from '../caseGraph';
 import { buildAskVetiosModelTrustSnapshot } from '../modelTrust';
 import { buildAskVetiosVeterinaryRetrievalSnapshot } from '../veterinaryRetrieval';
 import { buildAskVetiosWorkflowIntegrationSnapshot } from '../workflowIntegration';
+import { buildAskVetiosHumanReviewSnapshot } from '../humanReview';
 import {
     ASK_VETIOS_CASE_DRAFT_STORAGE_KEY,
     ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY,
@@ -234,5 +235,75 @@ describe('Ask VetIOS context detection', () => {
         expect(workflow.downstream_workflows.outcome_capture).toBe('ready');
         expect(workflow.next_actions).toContain('open_case_form');
         expect(workflow.next_actions).toContain('open_inference');
+    });
+
+    it('routes emergency Ask VetIOS drafts to urgent human review', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Dog collapsed with difficulty breathing and pale gums for 1 hour.',
+        });
+        const review = buildAskVetiosHumanReviewSnapshot({
+            mode: 'clinical',
+            metadata: {
+                urgency_level: 'emergency',
+                model_trust_status: 'needs_review',
+                veterinary_retrieval_status: 'ungrounded',
+            },
+            intake,
+        });
+
+        expect(review.status).toBe('emergency_review_required');
+        expect(review.reviewer_route).toBe('emergency_veterinarian');
+        expect(review.escalation.emergency).toBe(true);
+        expect(review.triggers).toContain('emergency_red_flags_present');
+        expect(review.next_actions).toContain('emergency_veterinary_review_now');
+    });
+
+    it('routes imaging-heavy clinical drafts to specialist review', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Canine, 7 year old neutered male, vomiting for 2 days. CBC, chemistry, abdominal ultrasound, and radiographs completed.',
+        });
+        const review = buildAskVetiosHumanReviewSnapshot({
+            mode: 'clinical',
+            metadata: {
+                diagnosis_ranked: [{ name: 'Pancreatitis', confidence: 0.72 }],
+                model_trust_status: 'grounded_draft',
+                veterinary_retrieval_status: 'veterinary_grounded',
+            },
+            intake,
+        });
+
+        expect(review.status).toBe('specialist_review_recommended');
+        expect(review.reviewer_route).toBe('diagnostic_imaging');
+        expect(review.escalation.specialist).toBe(true);
+        expect(review.triggers).toContain('imaging_review_needed');
+        expect(review.next_actions).toContain('specialist_imaging_review');
+    });
+
+    it('keeps grounded routine clinical drafts on clinician confirmation', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Canine, 7 year old neutered male, vomiting for 2 days. CBC and chemistry completed. Improved overnight.',
+        });
+        const caseGraphSnapshot = buildAskVetiosCaseGraphSnapshot({
+            intake,
+            responseMetadata: {
+                diagnosis_ranked: [{ name: 'Gastroenteritis', confidence: 0.62 }],
+            },
+        });
+        const review = buildAskVetiosHumanReviewSnapshot({
+            mode: 'clinical',
+            metadata: {
+                diagnosis_ranked: [{ name: 'Gastroenteritis', confidence: 0.62 }],
+                model_trust_status: 'grounded_draft',
+                veterinary_retrieval_status: 'veterinary_grounded',
+            },
+            intake,
+            caseGraphSnapshot,
+        });
+
+        expect(review.status).toBe('clinician_review_required');
+        expect(review.reviewer_route).toBe('primary_clinician');
+        expect(review.review_required).toBe(true);
+        expect(review.handoff.case_graph_ready).toBe(true);
+        expect(review.next_actions).toContain('clinician_confirmation');
     });
 });

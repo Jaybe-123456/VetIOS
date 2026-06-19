@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Activity, AlertTriangle, BookOpen,
     ClipboardCheck, ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle,
-    Eye, ImageIcon, Pill, GitBranch, LibraryBig, ExternalLink
+    Eye, ImageIcon, Pill, GitBranch, LibraryBig, ExternalLink, UserCheck
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MessageMetadata } from '@/store/useChatStore';
@@ -112,6 +112,7 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
     const trustSnapshot = metadata.model_trust_snapshot;
     const retrievalSnapshot = metadata.veterinary_retrieval_snapshot;
     const workflowSnapshot = metadata.workflow_integration_snapshot;
+    const humanReviewSnapshot = metadata.human_review_snapshot;
     const requiredActions = graphSnapshot?.promotion.required_next_actions ?? [];
 
     const openCaseDraft = () => {
@@ -187,6 +188,18 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
                     handoffs={workflowSnapshot.handoffs}
                     downstream={workflowSnapshot.downstream_workflows}
                     nextActions={workflowSnapshot.next_actions}
+                />
+            )}
+
+            {humanReviewSnapshot && (
+                <HumanReviewPanel
+                    status={metadata.human_review_status ?? humanReviewSnapshot.status}
+                    reviewerRoute={humanReviewSnapshot.reviewer_route}
+                    reviewRequired={humanReviewSnapshot.review_required}
+                    emergency={humanReviewSnapshot.escalation.emergency}
+                    specialist={humanReviewSnapshot.escalation.specialist}
+                    triggers={humanReviewSnapshot.triggers}
+                    nextActions={humanReviewSnapshot.next_actions}
                 />
             )}
 
@@ -301,6 +314,81 @@ function workflowIntegrationTone(status: string) {
         return { shell: 'border-red-400/22 bg-red-500/5 text-red-200/85' };
     }
     return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };
+}
+
+function HumanReviewPanel({
+    status,
+    reviewerRoute,
+    reviewRequired,
+    emergency,
+    specialist,
+    triggers,
+    nextActions,
+}: {
+    status: string;
+    reviewerRoute: string;
+    reviewRequired: boolean;
+    emergency: boolean;
+    specialist: boolean;
+    triggers: string[];
+    nextActions: string[];
+}) {
+    const tone = humanReviewTone(status);
+    const escalation = emergency ? 'ER' : specialist ? 'specialist' : reviewRequired ? 'clinician' : 'none';
+
+    return (
+        <div className={cn('border px-3 py-2 font-mono', tone.shell)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[9px] uppercase tracking-[0.18em]">
+                    <UserCheck className="h-3 w-3" />
+                    Human review
+                </div>
+                <span className="text-[9px] uppercase tracking-[0.16em]">{status.replace(/_/g, ' ')}</span>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-4">
+                <TrustMetric label="Route" value={humanReviewRouteLabel(reviewerRoute)} />
+                <TrustMetric label="Review" value={reviewRequired ? 'required' : 'clear'} />
+                <TrustMetric label="Escalate" value={escalation} />
+                <TrustMetric label="Triggers" value={String(triggers.length)} />
+            </div>
+            {triggers[0] && (
+                <div className="mt-2 border-t border-current/15 pt-2 text-[10px] leading-relaxed opacity-80">
+                    {triggers[0].replace(/_/g, ' ')}
+                </div>
+            )}
+            {nextActions.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {nextActions.slice(0, 4).map((action) => (
+                        <span key={action} className="border border-current/15 bg-black/20 px-2 py-1 text-[9px] uppercase tracking-[0.12em] opacity-80">
+                            {action.replace(/_/g, ' ')}
+                        </span>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function humanReviewTone(status: string) {
+    if (status === 'emergency_review_required') {
+        return { shell: 'border-red-400/25 bg-red-500/5 text-red-200/85' };
+    }
+    if (status === 'specialist_review_recommended') {
+        return { shell: 'border-amber-400/25 bg-amber-400/5 text-amber-200/85' };
+    }
+    if (status === 'clinician_review_required') {
+        return { shell: 'border-accent/22 bg-accent/[0.035] text-accent/85' };
+    }
+    return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };
+}
+
+function humanReviewRouteLabel(route: string): string {
+    if (route === 'emergency_veterinarian') return 'ER';
+    if (route === 'diagnostic_imaging') return 'imaging';
+    if (route === 'internal_medicine') return 'internal med';
+    if (route === 'primary_clinician') return 'clinician';
+    if (route === 'toxicology') return 'tox';
+    return 'none';
 }
 
 function VeterinaryRetrievalPanel({

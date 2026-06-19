@@ -25,6 +25,7 @@ import { buildAskVetiosCaseGraphSnapshot } from '@/lib/askVetios/caseGraph';
 import { buildAskVetiosModelTrustSnapshot } from '@/lib/askVetios/modelTrust';
 import { buildAskVetiosVeterinaryRetrievalSnapshot } from '@/lib/askVetios/veterinaryRetrieval';
 import { buildAskVetiosWorkflowIntegrationSnapshot } from '@/lib/askVetios/workflowIntegration';
+import { buildAskVetiosHumanReviewSnapshot } from '@/lib/askVetios/humanReview';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -365,6 +366,14 @@ function withAskVetiosIntake<T extends AskVetiosResponseBody>(
     });
     nextMetadata.workflow_integration_snapshot = workflowIntegrationSnapshot;
     nextMetadata.workflow_integration_status = workflowIntegrationSnapshot.status;
+    const humanReviewSnapshot = buildAskVetiosHumanReviewSnapshot({
+        mode: response.mode,
+        metadata: nextMetadata,
+        intake,
+        caseGraphSnapshot,
+    });
+    nextMetadata.human_review_snapshot = humanReviewSnapshot;
+    nextMetadata.human_review_status = humanReviewSnapshot.status;
 
     return {
         ...response,
@@ -546,6 +555,11 @@ async function logAskVetiosQuery(
             row.workflow_integration_snapshot = workflowIntegrationSnapshot;
             row.workflow_integration_status = readString(workflowIntegrationSnapshot.status) ?? 'needs_intake';
         }
+        const humanReviewSnapshot = readHumanReviewSnapshot(response);
+        if (humanReviewSnapshot) {
+            row.human_review_snapshot = humanReviewSnapshot;
+            row.human_review_status = readString(humanReviewSnapshot.status) ?? 'clinician_review_required';
+        }
 
         const client = getSupabaseServer();
         let { data, error } = await client
@@ -562,6 +576,8 @@ async function logAskVetiosQuery(
             delete row.veterinary_retrieval_status;
             delete row.workflow_integration_snapshot;
             delete row.workflow_integration_status;
+            delete row.human_review_snapshot;
+            delete row.human_review_status;
             const retry = await client
                 .from('ask_vetios_queries')
                 .insert(row)
@@ -611,6 +627,12 @@ function readWorkflowIntegrationSnapshot(response: Record<string, unknown>): Rec
     return Object.keys(snapshot).length > 0 ? snapshot : null;
 }
 
+function readHumanReviewSnapshot(response: Record<string, unknown>): Record<string, unknown> | null {
+    const metadata = asRecord(response.metadata);
+    const snapshot = asRecord(metadata.human_review_snapshot);
+    return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
 function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string }): boolean {
     const message = error.message?.toLowerCase() ?? '';
     return error.code === '42703'
@@ -623,5 +645,7 @@ function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string 
         || message.includes('veterinary_retrieval_status')
         || message.includes('workflow_integration_snapshot')
         || message.includes('workflow_integration_status')
+        || message.includes('human_review_snapshot')
+        || message.includes('human_review_status')
         || message.includes('schema cache');
 }
