@@ -26,6 +26,7 @@ import { buildAskVetiosModelTrustSnapshot } from '@/lib/askVetios/modelTrust';
 import { buildAskVetiosVeterinaryRetrievalSnapshot } from '@/lib/askVetios/veterinaryRetrieval';
 import { buildAskVetiosWorkflowIntegrationSnapshot } from '@/lib/askVetios/workflowIntegration';
 import { buildAskVetiosHumanReviewSnapshot } from '@/lib/askVetios/humanReview';
+import { buildAskVetiosAiSecuritySnapshot } from '@/lib/askVetios/aiSecurity';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -374,6 +375,14 @@ function withAskVetiosIntake<T extends AskVetiosResponseBody>(
     });
     nextMetadata.human_review_snapshot = humanReviewSnapshot;
     nextMetadata.human_review_status = humanReviewSnapshot.status;
+    const aiSecuritySnapshot = buildAskVetiosAiSecuritySnapshot({
+        mode: response.mode,
+        metadata: nextMetadata,
+        intake,
+        caseGraphSnapshot,
+    });
+    nextMetadata.ai_security_snapshot = aiSecuritySnapshot;
+    nextMetadata.ai_security_status = aiSecuritySnapshot.status;
 
     return {
         ...response,
@@ -560,6 +569,11 @@ async function logAskVetiosQuery(
             row.human_review_snapshot = humanReviewSnapshot;
             row.human_review_status = readString(humanReviewSnapshot.status) ?? 'clinician_review_required';
         }
+        const aiSecuritySnapshot = readAiSecuritySnapshot(response);
+        if (aiSecuritySnapshot) {
+            row.ai_security_snapshot = aiSecuritySnapshot;
+            row.ai_security_status = readString(aiSecuritySnapshot.status) ?? 'guarded';
+        }
 
         const client = getSupabaseServer();
         let { data, error } = await client
@@ -578,6 +592,8 @@ async function logAskVetiosQuery(
             delete row.workflow_integration_status;
             delete row.human_review_snapshot;
             delete row.human_review_status;
+            delete row.ai_security_snapshot;
+            delete row.ai_security_status;
             const retry = await client
                 .from('ask_vetios_queries')
                 .insert(row)
@@ -633,6 +649,12 @@ function readHumanReviewSnapshot(response: Record<string, unknown>): Record<stri
     return Object.keys(snapshot).length > 0 ? snapshot : null;
 }
 
+function readAiSecuritySnapshot(response: Record<string, unknown>): Record<string, unknown> | null {
+    const metadata = asRecord(response.metadata);
+    const snapshot = asRecord(metadata.ai_security_snapshot);
+    return Object.keys(snapshot).length > 0 ? snapshot : null;
+}
+
 function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string }): boolean {
     const message = error.message?.toLowerCase() ?? '';
     return error.code === '42703'
@@ -647,5 +669,7 @@ function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string 
         || message.includes('workflow_integration_status')
         || message.includes('human_review_snapshot')
         || message.includes('human_review_status')
+        || message.includes('ai_security_snapshot')
+        || message.includes('ai_security_status')
         || message.includes('schema cache');
 }

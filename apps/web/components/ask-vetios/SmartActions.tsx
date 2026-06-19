@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     Activity, AlertTriangle, BookOpen,
     ClipboardCheck, ClipboardList, Dna, FlaskConical, Play, Shield, Syringe, X, Microscope, Search, CheckCircle,
-    Eye, ImageIcon, Pill, GitBranch, LibraryBig, ExternalLink, UserCheck
+    Eye, ImageIcon, Pill, GitBranch, LibraryBig, ExternalLink, UserCheck, LockKeyhole
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { MessageMetadata } from '@/store/useChatStore';
@@ -113,6 +113,7 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
     const retrievalSnapshot = metadata.veterinary_retrieval_snapshot;
     const workflowSnapshot = metadata.workflow_integration_snapshot;
     const humanReviewSnapshot = metadata.human_review_snapshot;
+    const aiSecuritySnapshot = metadata.ai_security_snapshot;
     const requiredActions = graphSnapshot?.promotion.required_next_actions ?? [];
 
     const openCaseDraft = () => {
@@ -188,6 +189,18 @@ function CaseDraftPanel({ metadata, onFollowUp }: {
                     handoffs={workflowSnapshot.handoffs}
                     downstream={workflowSnapshot.downstream_workflows}
                     nextActions={workflowSnapshot.next_actions}
+                />
+            )}
+
+            {aiSecuritySnapshot && (
+                <AiSecurityPanel
+                    status={metadata.ai_security_status ?? aiSecuritySnapshot.status}
+                    riskLevel={aiSecuritySnapshot.risk.level}
+                    findingCount={aiSecuritySnapshot.risk.finding_count}
+                    adminToolsAllowed={aiSecuritySnapshot.controls.tool_policy.admin_tools_allowed}
+                    tokenBudgetEnforced={aiSecuritySnapshot.controls.rate_limit.token_budget_enforced}
+                    signals={aiSecuritySnapshot.signals}
+                    nextActions={aiSecuritySnapshot.next_actions}
                 />
             )}
 
@@ -312,6 +325,67 @@ function workflowIntegrationTone(status: string) {
     }
     if (status === 'needs_intake') {
         return { shell: 'border-red-400/22 bg-red-500/5 text-red-200/85' };
+    }
+    return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };
+}
+
+function AiSecurityPanel({
+    status,
+    riskLevel,
+    findingCount,
+    adminToolsAllowed,
+    tokenBudgetEnforced,
+    signals,
+    nextActions,
+}: {
+    status: string;
+    riskLevel: string;
+    findingCount: number;
+    adminToolsAllowed: boolean;
+    tokenBudgetEnforced: boolean;
+    signals: Record<string, boolean>;
+    nextActions: string[];
+}) {
+    const tone = aiSecurityTone(status);
+    const activeSignals = Object.values(signals).filter(Boolean).length;
+
+    return (
+        <div className={cn('border px-3 py-2 font-mono', tone.shell)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[9px] uppercase tracking-[0.18em]">
+                    <LockKeyhole className="h-3 w-3" />
+                    AI security
+                </div>
+                <span className="text-[9px] uppercase tracking-[0.16em]">{status.replace(/_/g, ' ')}</span>
+            </div>
+            <div className="mt-2 grid gap-1.5 sm:grid-cols-4">
+                <TrustMetric label="Risk" value={riskLevel} />
+                <TrustMetric label="Signals" value={String(activeSignals || findingCount)} />
+                <TrustMetric label="Admin" value={adminToolsAllowed ? 'allowed' : 'blocked'} />
+                <TrustMetric label="Budget" value={tokenBudgetEnforced ? 'enforced' : 'missing'} />
+            </div>
+            {nextActions.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {nextActions.slice(0, 4).map((action) => (
+                        <span key={action} className="border border-current/15 bg-black/20 px-2 py-1 text-[9px] uppercase tracking-[0.12em] opacity-80">
+                            {action.replace(/_/g, ' ')}
+                        </span>
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function aiSecurityTone(status: string) {
+    if (status === 'security_review_required') {
+        return { shell: 'border-red-400/25 bg-red-500/5 text-red-200/85' };
+    }
+    if (status === 'restricted') {
+        return { shell: 'border-amber-400/25 bg-amber-400/5 text-amber-200/85' };
+    }
+    if (status === 'guarded') {
+        return { shell: 'border-accent/22 bg-accent/[0.035] text-accent/85' };
     }
     return { shell: 'border-white/10 bg-white/[0.025] text-white/56' };
 }
