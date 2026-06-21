@@ -15,6 +15,11 @@ export const MACHINE_CREDENTIAL_SCOPES = [
     'signals:ingest',
     'signals:connect',
     'signals:read',
+    'federation:read',
+    'federation:write',
+    'federation:node',
+    'federation:admin',
+    'secure_aggregation:write',
     'machine:manage',
 ] as const;
 

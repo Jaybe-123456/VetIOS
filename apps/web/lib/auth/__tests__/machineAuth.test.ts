@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
 import {
+    normalizeMachineCredentialScopes,
     validateConnectorInstallationAccess,
     type ClinicalApiActor,
     type ConnectorInstallationRecord,
 } from '../machineAuth';
+
+describe('machine credential scopes', () => {
+    it('keeps federation node and secure aggregation scopes available for live partner nodes', () => {
+        expect(normalizeMachineCredentialScopes([
+            'federation:read',
+            'federation:node',
+            'secure_aggregation:write',
+            'unsupported:scope',
+        ])).toEqual([
+            'federation:read',
+            'federation:node',
+            'secure_aggregation:write',
+        ]);
+    });
+});
 
 describe('connector installation authorization', () => {
     it('allows a marketplace PIMS installation to use any supported passive connector type', () => {
