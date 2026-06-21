@@ -1820,6 +1820,39 @@ export const FEDERATED_UPDATE_SUBMISSIONS = {
     },
 } as const;
 
+export const FEDERATED_MODEL_PROMOTION_EVENTS = {
+    TABLE: 'federated_model_promotion_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        request_id: 'request_id',
+        federation_round_id: 'federation_round_id',
+        model_registry_entry_id: 'model_registry_entry_id',
+        federation_key: 'federation_key',
+        round_key: 'round_key',
+        task_type: 'task_type',
+        candidate_model_version: 'candidate_model_version',
+        candidate_dataset_version: 'candidate_dataset_version',
+        promotion_stage: 'promotion_stage',
+        promotion_status: 'promotion_status',
+        participant_count: 'participant_count',
+        accepted_update_submissions: 'accepted_update_submissions',
+        eligible_outcome_snapshots: 'eligible_outcome_snapshots',
+        outcome_confirmed_rows: 'outcome_confirmed_rows',
+        provenance_verified_rows: 'provenance_verified_rows',
+        trust_scored_rows: 'trust_scored_rows',
+        average_trust_score: 'average_trust_score',
+        secure_aggregation_status: 'secure_aggregation_status',
+        source_artifact_hash: 'source_artifact_hash',
+        aggregate_payload_hash: 'aggregate_payload_hash',
+        blockers: 'blockers',
+        warnings: 'warnings',
+        evidence: 'evidence',
+        observed_at: 'observed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const OWNER_ACCOUNTS = {
     TABLE: 'owner_accounts',
     COLUMNS: {

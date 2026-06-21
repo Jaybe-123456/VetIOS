@@ -9,6 +9,7 @@ import { resolveExperimentApiActor } from '@/lib/auth/internalApi';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
+import { registerFederatedRoundCandidateModels } from '@/lib/federation/modelPromotion';
 import {
     enrollFederationTenant,
     getFederationControlPlaneSnapshot,
@@ -75,6 +76,11 @@ type FederationAction =
     | {
         action: 'run_due_automation';
         federation_key?: string | null;
+    }
+    | {
+        action: 'register_federated_candidate';
+        federation_key?: string | null;
+        federation_round_id?: string | null;
     };
 
 export const runtime = 'nodejs';
@@ -229,6 +235,18 @@ export async function POST(req: Request) {
                     actor: authContext.userId,
                 }),
             };
+        } else if (action === 'register_federated_candidate') {
+            const promotionBody = body.data as Extract<FederationAction, { action: 'register_federated_candidate' }>;
+            const federationRoundId = normalizeUuid(promotionBody.federation_round_id);
+            if (!federationRoundId) {
+                throw new Error('federation_round_id is required for federated candidate registration.');
+            }
+            result = {
+                promotion: await registerFederatedRoundCandidateModels(adminClient, {
+                    federationRoundId,
+                    actor: authContext.userId,
+                }),
+            };
         } else {
             return NextResponse.json({ error: 'Unsupported federation action.', request_id: requestId }, { status: 400 });
         }
@@ -304,6 +322,14 @@ function normalizeRequiredFederationKey(value: unknown): string {
 
 function normalizeTenantId(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeUuid(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)
+        ? normalized
+        : null;
 }
 
 function normalizeParticipationMode(value: unknown): FederationParticipationMode | null {
