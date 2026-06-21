@@ -221,6 +221,7 @@ function evidence(overrides: {
         trust_ops: {
             external_attestations: 0,
             external_certifications: 0,
+            external_validations: 0,
             last_signal_at: null,
             ...overrides.trust_ops,
         },

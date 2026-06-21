@@ -171,6 +171,7 @@ export interface MoatCompletionEvidence {
     trust_ops: {
         external_attestations: number;
         external_certifications: number;
+        external_validations: number;
         last_signal_at: string | null;
     };
 }
@@ -394,7 +395,9 @@ export function buildMoatCompletionAssessment(
 }
 
 export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): MoatCompletionDigest[] {
-    const externalValidationCount = evidence.trust_ops.external_attestations + evidence.trust_ops.external_certifications;
+    const externalValidationCount = evidence.trust_ops.external_attestations
+        + evidence.trust_ops.external_certifications
+        + evidence.trust_ops.external_validations;
     const lastCoreSignal = latestIso([
         evidence.dataset.last_signal_at,
         evidence.inference.last_signal_at,
@@ -1015,16 +1018,26 @@ async function loadTrustOpsEvidence(
     tenantId: string,
     warnings: string[],
 ): Promise<MoatCompletionEvidence['trust_ops']> {
-    const [externalAttestations, externalCertifications, lastAttestationAt, lastCertificationAt] = await Promise.all([
+    const [
+        externalAttestations,
+        externalCertifications,
+        externalValidations,
+        lastAttestationAt,
+        lastCertificationAt,
+        lastExternalValidationAt,
+    ] = await Promise.all([
         countRows(client, 'model_attestations', (query) => query.eq('tenant_id', tenantId).eq('verification_status', 'verified'), warnings, 'verified model attestations'),
         countRows(client, 'model_certifications', (query) => query.eq('tenant_id', tenantId).eq('status', 'active'), warnings, 'active model certifications'),
+        countRows(client, 'external_validation_events', (query) => query.eq('tenant_id', tenantId).eq('evidence_grade', 'externally_verified'), warnings, 'externally verified validation events'),
         latestTimestamp(client, 'model_attestations', 'created_at', (query) => query.eq('tenant_id', tenantId), warnings, 'model attestation latest signal'),
         latestTimestamp(client, 'model_certifications', 'created_at', (query) => query.eq('tenant_id', tenantId), warnings, 'model certification latest signal'),
+        latestTimestamp(client, 'external_validation_events', 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'external validation latest signal'),
     ]);
     return {
         external_attestations: externalAttestations,
         external_certifications: externalCertifications,
-        last_signal_at: latestIso([lastAttestationAt, lastCertificationAt]),
+        external_validations: externalValidations,
+        last_signal_at: latestIso([lastAttestationAt, lastCertificationAt, lastExternalValidationAt]),
     };
 }
 
