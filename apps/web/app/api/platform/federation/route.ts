@@ -13,9 +13,14 @@ import {
     buildFederatedAggregateArtifacts,
     type FederatedAggregateTaskType,
 } from '@/lib/federation/aggregateBuilder';
+import {
+    runFederatedChampionSurveillance,
+    type FederatedChampionSurveillanceThresholds,
+} from '@/lib/federation/championSurveillance';
 import { generateFederatedCandidateEvidence } from '@/lib/federation/evidenceGenerator';
 import { registerFederatedRoundCandidateModels } from '@/lib/federation/modelPromotion';
 import { runFederatedPromotionAutomation } from '@/lib/federation/promotionAutomation';
+import type { LearningTaskType } from '@/lib/learningEngine/types';
 import {
     finalizeFederationRoundSecureAggregation,
     issueFederationRoundNodeTasks,
@@ -150,6 +155,16 @@ type FederationAction =
         calibration_evidence?: Record<string, unknown>;
         regression_evidence?: Record<string, unknown>;
         evidence?: Record<string, unknown>;
+    }
+    | {
+        action: 'run_federated_champion_surveillance';
+        federation_key?: string | null;
+        model_registry_id?: string | null;
+        model_version?: string | null;
+        task_type?: LearningTaskType | string | null;
+        execute_rollback?: boolean | string | null;
+        window_hours?: number | string | null;
+        thresholds?: Record<string, unknown>;
     };
 
 export const runtime = 'nodejs';
@@ -422,6 +437,20 @@ export async function POST(req: Request) {
                     actor: authContext.userId,
                 }),
             };
+        } else if (action === 'run_federated_champion_surveillance') {
+            const surveillanceBody = body.data as Extract<FederationAction, { action: 'run_federated_champion_surveillance' }>;
+            result = {
+                champion_surveillance: await runFederatedChampionSurveillance(adminClient, {
+                    tenantId: authContext.tenantId,
+                    actor: authContext.userId,
+                    modelRegistryId: normalizeUuid(surveillanceBody.model_registry_id),
+                    modelVersion: normalizeOptionalText(surveillanceBody.model_version),
+                    taskType: normalizeLearningTaskType(surveillanceBody.task_type),
+                    executeRollback: normalizeBoolean(surveillanceBody.execute_rollback) ?? false,
+                    windowHours: normalizePositiveNumber(surveillanceBody.window_hours),
+                    thresholds: normalizeSurveillanceThresholds(surveillanceBody.thresholds),
+                }),
+            };
         } else {
             return NextResponse.json({ error: 'Unsupported federation action.', request_id: requestId }, { status: 400 });
         }
@@ -544,6 +573,44 @@ function normalizeAggregateTaskTypes(value: unknown): FederatedAggregateTaskType
         .map((entry) => typeof entry === 'string' ? entry.trim() : '')
         .filter((entry): entry is FederatedAggregateTaskType => allowed.has(entry as FederatedAggregateTaskType));
     return normalized.length > 0 ? Array.from(new Set(normalized)) : undefined;
+}
+
+function normalizeLearningTaskType(value: unknown): LearningTaskType | null {
+    return value === 'diagnosis' || value === 'severity' || value === 'hybrid' ? value : null;
+}
+
+function normalizeSurveillanceThresholds(value: unknown): Partial<FederatedChampionSurveillanceThresholds> {
+    const record = asRecord(value);
+    const thresholds: Partial<FederatedChampionSurveillanceThresholds> = {};
+    const minimumOutcomeLinkedEvents = normalizePositiveInteger(record.minimum_outcome_linked_events ?? record.minimumOutcomeLinkedEvents);
+    if (minimumOutcomeLinkedEvents != null) {
+        thresholds.minimumOutcomeLinkedEvents = minimumOutcomeLinkedEvents;
+    }
+    const maximumErrorRate = normalizeFractionalNumber(record.maximum_error_rate ?? record.maximumErrorRate);
+    if (maximumErrorRate != null) {
+        thresholds.maximumErrorRate = maximumErrorRate;
+    }
+    const maximumDangerousFalseNegativeRate = normalizeFractionalNumber(record.maximum_dangerous_false_negative_rate ?? record.maximumDangerousFalseNegativeRate);
+    if (maximumDangerousFalseNegativeRate != null) {
+        thresholds.maximumDangerousFalseNegativeRate = maximumDangerousFalseNegativeRate;
+    }
+    const maximumMeanCalibrationError = normalizeFractionalNumber(record.maximum_mean_calibration_error ?? record.maximumMeanCalibrationError);
+    if (maximumMeanCalibrationError != null) {
+        thresholds.maximumMeanCalibrationError = maximumMeanCalibrationError;
+    }
+    const maximumMeanDriftScore = normalizeFractionalNumber(record.maximum_mean_drift_score ?? record.maximumMeanDriftScore);
+    if (maximumMeanDriftScore != null) {
+        thresholds.maximumMeanDriftScore = maximumMeanDriftScore;
+    }
+    const maximumMeanSimulationDegradation = normalizeFractionalNumber(record.maximum_mean_simulation_degradation ?? record.maximumMeanSimulationDegradation);
+    if (maximumMeanSimulationDegradation != null) {
+        thresholds.maximumMeanSimulationDegradation = maximumMeanSimulationDegradation;
+    }
+    const watchFraction = normalizeFractionalNumber(record.watch_fraction ?? record.watchFraction);
+    if (watchFraction != null) {
+        thresholds.watchFraction = watchFraction;
+    }
+    return thresholds;
 }
 
 function normalizePositiveInteger(value: unknown): number | null {
