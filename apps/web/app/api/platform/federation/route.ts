@@ -18,9 +18,18 @@ import {
     type FederatedChampionSurveillanceThresholds,
 } from '@/lib/federation/championSurveillance';
 import { generateFederatedCandidateEvidence } from '@/lib/federation/evidenceGenerator';
+import { generateFederatedExternalValidationPackets } from '@/lib/federation/externalValidation';
 import { registerFederatedRoundCandidateModels } from '@/lib/federation/modelPromotion';
 import { runFederatedPromotionAutomation } from '@/lib/federation/promotionAutomation';
 import type { LearningTaskType } from '@/lib/learningEngine/types';
+import {
+    EXTERNAL_VALIDATION_ATTESTATION_STATUSES,
+    EXTERNAL_VALIDATION_ATTESTOR_KINDS,
+    EXTERNAL_VALIDATION_VERIFICATION_STATUSES,
+    type ExternalValidationAttestationStatus,
+    type ExternalValidationAttestorKind,
+    type ExternalValidationVerificationStatus,
+} from '@/lib/platform/externalValidation';
 import {
     finalizeFederationRoundSecureAggregation,
     issueFederationRoundNodeTasks,
@@ -155,6 +164,23 @@ type FederationAction =
         calibration_evidence?: Record<string, unknown>;
         regression_evidence?: Record<string, unknown>;
         evidence?: Record<string, unknown>;
+    }
+    | {
+        action: 'generate_federated_external_validation';
+        federation_key?: string | null;
+        federation_round_id?: string | null;
+        candidate_model_version?: string | null;
+        attestor_kind?: string | null;
+        attestor_ref?: string | null;
+        attestation_status?: string | null;
+        verification_status?: string | null;
+        signature_algorithm?: string | null;
+        signature_hash?: string | null;
+        signing_key_fingerprint?: string | null;
+        source_system?: string | null;
+        source_ref?: string | null;
+        evidence?: Record<string, unknown>;
+        observed_at?: string | null;
     }
     | {
         action: 'run_federated_champion_surveillance';
@@ -437,6 +463,33 @@ export async function POST(req: Request) {
                     actor: authContext.userId,
                 }),
             };
+        } else if (action === 'generate_federated_external_validation') {
+            const validationBody = body.data as Extract<FederationAction, { action: 'generate_federated_external_validation' }>;
+            const federationRoundId = normalizeUuid(validationBody.federation_round_id);
+            if (!federationRoundId) {
+                throw new Error('federation_round_id is required for federated external validation generation.');
+            }
+            result = {
+                external_validation: await generateFederatedExternalValidationPackets(adminClient, {
+                    tenantId: authContext.tenantId,
+                    federationRoundId,
+                    candidateModelVersion: normalizeOptionalText(validationBody.candidate_model_version),
+                    options: {
+                        attestorKind: normalizeExternalValidationAttestorKind(validationBody.attestor_kind),
+                        attestorRef: normalizeOptionalText(validationBody.attestor_ref),
+                        attestationStatus: normalizeExternalValidationAttestationStatus(validationBody.attestation_status),
+                        verificationStatus: normalizeExternalValidationVerificationStatus(validationBody.verification_status),
+                        signatureAlgorithm: normalizeOptionalText(validationBody.signature_algorithm),
+                        signatureHash: normalizeHash(validationBody.signature_hash),
+                        signingKeyFingerprint: normalizeOptionalText(validationBody.signing_key_fingerprint),
+                        sourceSystem: normalizeOptionalText(validationBody.source_system),
+                        sourceRef: normalizeOptionalText(validationBody.source_ref),
+                        operatorEvidence: asRecord(validationBody.evidence),
+                        actor: authContext.userId,
+                        observedAt: normalizeIsoDate(validationBody.observed_at),
+                    },
+                }),
+            };
         } else if (action === 'run_federated_champion_surveillance') {
             const surveillanceBody = body.data as Extract<FederationAction, { action: 'run_federated_champion_surveillance' }>;
             result = {
@@ -579,6 +632,24 @@ function normalizeLearningTaskType(value: unknown): LearningTaskType | null {
     return value === 'diagnosis' || value === 'severity' || value === 'hybrid' ? value : null;
 }
 
+function normalizeExternalValidationAttestorKind(value: unknown): ExternalValidationAttestorKind | null {
+    return EXTERNAL_VALIDATION_ATTESTOR_KINDS.includes(value as ExternalValidationAttestorKind)
+        ? value as ExternalValidationAttestorKind
+        : null;
+}
+
+function normalizeExternalValidationAttestationStatus(value: unknown): ExternalValidationAttestationStatus | null {
+    return EXTERNAL_VALIDATION_ATTESTATION_STATUSES.includes(value as ExternalValidationAttestationStatus)
+        ? value as ExternalValidationAttestationStatus
+        : null;
+}
+
+function normalizeExternalValidationVerificationStatus(value: unknown): ExternalValidationVerificationStatus | null {
+    return EXTERNAL_VALIDATION_VERIFICATION_STATUSES.includes(value as ExternalValidationVerificationStatus)
+        ? value as ExternalValidationVerificationStatus
+        : null;
+}
+
 function normalizeSurveillanceThresholds(value: unknown): Partial<FederatedChampionSurveillanceThresholds> {
     const record = asRecord(value);
     const thresholds: Partial<FederatedChampionSurveillanceThresholds> = {};
@@ -620,6 +691,12 @@ function normalizePositiveInteger(value: unknown): number | null {
 
 function normalizeOptionalText(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeHash(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
 }
 
 function normalizeIsoDate(value: unknown): string | null {
