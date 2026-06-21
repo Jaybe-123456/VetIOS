@@ -48,6 +48,7 @@ function createEmptySnapshot(): FederationControlPlaneSnapshot {
         recent_rounds: [],
         recent_artifacts: [],
         recent_secure_contributions: [],
+        recent_outcome_eligibility_snapshots: [],
         summary: {
             active_memberships: 0,
             coordinator_memberships: 0,
@@ -57,6 +58,7 @@ function createEmptySnapshot(): FederationControlPlaneSnapshot {
             completed_rounds: 0,
             secure_rounds: 0,
             secure_contributions: 0,
+            outcome_eligible_participants: 0,
             latest_round_completed_at: null,
         },
         refreshed_at: new Date().toISOString(),

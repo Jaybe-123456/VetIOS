@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
     FEDERATED_SECURE_AGGREGATION_CONTRIBUTIONS,
+    FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS,
     FEDERATED_SITE_SNAPSHOTS,
     FEDERATION_MEMBERSHIPS,
     FEDERATION_ROUNDS,
@@ -16,6 +17,14 @@ import {
     type FederationAutomationState,
     type FederationGovernancePolicy,
 } from '@/lib/federation/policy';
+import {
+    buildFederatedOutcomeEligibilityDigest,
+    evaluateFederatedOutcomeEligibilityForRound,
+    normalizeFederatedOutcomeEligibilityStatus,
+    type FederatedOutcomeEligibilityDigest,
+    type FederatedOutcomeEligibilityInput,
+    type FederatedOutcomeEligibilityStatus,
+} from '@/lib/federation/outcomeEligibility';
 import { decodeDiagnosisArtifact, decodeSeverityArtifact } from '@/lib/learningEngine/modelRegistryConnector';
 import { createSupabaseLearningEngineStore } from '@/lib/learningEngine/supabaseStore';
 import type {
@@ -117,6 +126,40 @@ export interface SecureAggregationContributionRecord {
     created_at: string;
 }
 
+export interface FederatedOutcomeEligibilitySnapshotRecord extends FederatedOutcomeEligibilityInput {
+    id: string;
+    tenant_id: string;
+    request_id: string;
+    federation_key: string;
+    partner_ref: string | null;
+    membership_id: string | null;
+    evidence_window_start: string | null;
+    evidence_window_end: string;
+    outcome_confirmed_rows: number;
+    lab_confirmed_rows: number;
+    expert_reviewed_rows: number;
+    synthetic_rows_excluded: number;
+    consented_network_learning_rows: number;
+    provenance_verified_rows: number;
+    trust_scored_rows: number;
+    amr_outcome_linked_rows: number;
+    external_validation_events: number;
+    minimum_required_rows: number;
+    minimum_provenance_rows: number;
+    minimum_trust_scored_rows: number;
+    minimum_external_validations: number;
+    minimum_trust_score: number;
+    average_trust_score: number;
+    eligibility_status: FederatedOutcomeEligibilityStatus;
+    blockers: string[];
+    source_hash_bundle: Record<string, unknown>;
+    source_table_counts: Record<string, unknown>;
+    source_record_digest: string | null;
+    evidence: Record<string, unknown>;
+    observed_at: string;
+    created_at: string;
+}
+
 export interface FederationControlPlaneSnapshot {
     tenant_id: string;
     memberships: FederationMembershipRecord[];
@@ -124,6 +167,7 @@ export interface FederationControlPlaneSnapshot {
     recent_rounds: FederationRoundRecord[];
     recent_artifacts: ModelDeltaArtifactRecord[];
     recent_secure_contributions: SecureAggregationContributionRecord[];
+    recent_outcome_eligibility_snapshots: FederatedOutcomeEligibilitySnapshotRecord[];
     summary: {
         active_memberships: number;
         coordinator_memberships: number;
@@ -133,6 +177,7 @@ export interface FederationControlPlaneSnapshot {
         completed_rounds: number;
         secure_rounds: number;
         secure_contributions: number;
+        outcome_eligible_participants: number;
         latest_round_completed_at: string | null;
     };
     refreshed_at: string;
@@ -190,12 +235,15 @@ export async function getFederationControlPlaneSnapshot(
 ): Promise<FederationControlPlaneSnapshot> {
     const memberships = await listVisibleFederationMemberships(client, tenantId, options.federationKey ?? null);
     const federationKeys = uniqueStrings(memberships.map((membership) => membership.federation_key));
-    const [snapshots, rounds] = await Promise.all([
+    const [snapshots, rounds, outcomeEligibilitySnapshots] = await Promise.all([
         federationKeys.length > 0
             ? listSiteSnapshotsForFederations(client, federationKeys, 60)
             : Promise.resolve([]),
         federationKeys.length > 0
             ? listRoundsForFederations(client, federationKeys, 20)
+            : Promise.resolve([]),
+        federationKeys.length > 0
+            ? listLatestOutcomeEligibilitySnapshotsForFederations(client, federationKeys, 120)
             : Promise.resolve([]),
     ]);
     const artifacts = rounds.length > 0
@@ -215,6 +263,7 @@ export async function getFederationControlPlaneSnapshot(
         recent_rounds: rounds,
         recent_artifacts: artifacts,
         recent_secure_contributions: secureContributions,
+        recent_outcome_eligibility_snapshots: outcomeEligibilitySnapshots,
         summary: {
             active_memberships: activeMemberships.length,
             coordinator_memberships: memberships.filter((membership) => membership.coordinator_tenant_id === tenantId).length,
@@ -224,6 +273,9 @@ export async function getFederationControlPlaneSnapshot(
             completed_rounds: rounds.filter((round) => round.status === 'completed').length,
             secure_rounds: rounds.filter((round) => asRecord(round.aggregate_payload.secure_aggregation).status === 'secure_aggregation_ready').length,
             secure_contributions: secureContributions.length,
+            outcome_eligible_participants: uniqueStrings(outcomeEligibilitySnapshots
+                .filter((snapshot) => buildFederatedOutcomeEligibilityDigest(snapshot).eligibility_status === 'eligible')
+                .map((snapshot) => snapshot.tenant_id)).length,
             latest_round_completed_at: latestRound?.completed_at ?? null,
         },
         refreshed_at: new Date().toISOString(),
@@ -495,12 +547,13 @@ export async function publishFederatedSiteSnapshots(
     const learningStore = createSupabaseLearningEngineStore(client);
 
     return Promise.all(activeMemberships.map(async (membership) => {
-        const [datasets, benchmarks, calibrations, audits, registryEntries] = await Promise.all([
+        const [datasets, benchmarks, calibrations, audits, registryEntries, outcomeEligibilitySnapshot] = await Promise.all([
             experimentStore.listLearningDatasetVersions(membership.tenant_id, 24),
             experimentStore.listLearningBenchmarkReports(membership.tenant_id, 24),
             experimentStore.listLearningCalibrationReports(membership.tenant_id, 24),
             experimentStore.listLearningAuditEvents(membership.tenant_id, 24),
             learningStore.listModelRegistryEntries(membership.tenant_id),
+            getLatestOutcomeEligibilitySnapshot(client, membership.tenant_id, membership.federation_key),
         ]);
 
         const champions = registryEntries.filter((entry) => entry.is_champion);
@@ -516,6 +569,7 @@ export async function publishFederatedSiteSnapshots(
         const totalDatasetRows = datasets.reduce((sum, dataset) => sum + dataset.row_count, 0);
         const latestCalibrationEce = calibrations[0]?.ece_score ?? null;
         const averageCalibrationEce = averageNumbers(calibrations.map((calibration) => calibration.ece_score));
+        const outcomeEligibility = buildFederatedOutcomeEligibilityDigest(outcomeEligibilitySnapshot);
         const supportSummary = {
             benchmark_pass_rate: benchmarks.length > 0 ? benchmarkPassCount / benchmarks.length : null,
             latest_calibration_ece: latestCalibrationEce,
@@ -526,12 +580,20 @@ export async function publishFederatedSiteSnapshots(
                 diagnosisChampion?.model_version ?? null,
                 severityChampion?.model_version ?? null,
             ]),
+            outcome_eligibility_status: outcomeEligibility.eligibility_status,
+            outcome_confirmed_rows: outcomeEligibility.counts.outcome_confirmed_rows,
+            consented_network_learning_rows: outcomeEligibility.counts.consented_network_learning_rows,
+            provenance_verified_rows: outcomeEligibility.counts.provenance_verified_rows,
+            trust_scored_rows: outcomeEligibility.counts.trust_scored_rows,
+            federated_outcome_eligibility: toOutcomeEligibilitySummary(outcomeEligibility),
         };
         const qualitySummary = {
             benchmark_pass_rate: benchmarks.length > 0 ? benchmarkPassCount / benchmarks.length : null,
             calibration_avg_ece: averageCalibrationEce,
             audit_event_density: audits.length,
             participation_mode: membership.participation_mode,
+            outcome_eligibility_score: outcomeEligibility.eligibility_score,
+            outcome_eligibility_blockers: outcomeEligibility.blockers,
         };
         const payload = {
             generated_by: 'federation_service_v1',
@@ -561,6 +623,7 @@ export async function publishFederatedSiteSnapshots(
                 brier_score: calibration.brier_score,
                 created_at: calibration.created_at,
             })),
+            federated_outcome_eligibility: toOutcomeEligibilitySummary(outcomeEligibility),
         };
 
         const inserted = await insertSiteSnapshot(client, {
@@ -1158,6 +1221,8 @@ function evaluateParticipantGovernanceReasons(
         reasons.push('calibration ECE above threshold');
     }
 
+    reasons.push(...evaluateFederatedOutcomeEligibilityForRound(readOutcomeEligibilitySummary(snapshot)));
+
     return reasons;
 }
 
@@ -1260,6 +1325,56 @@ async function listLatestSnapshotsForFederation(
         }
     }
     return Array.from(deduped.values());
+}
+
+async function listLatestOutcomeEligibilitySnapshotsForFederations(
+    client: SupabaseClient,
+    federationKeys: string[],
+    limit: number,
+): Promise<FederatedOutcomeEligibilitySnapshotRecord[]> {
+    const C = FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.COLUMNS;
+    const { data, error } = await client
+        .from(FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE)
+        .select('*')
+        .in(C.federation_key, federationKeys)
+        .order(C.observed_at, { ascending: false })
+        .limit(limit);
+
+    if (error) {
+        throw new Error(`Failed to list federated outcome eligibility snapshots: ${error.message}`);
+    }
+
+    const deduped = new Map<string, FederatedOutcomeEligibilitySnapshotRecord>();
+    for (const row of data ?? []) {
+        const snapshot = mapFederatedOutcomeEligibilitySnapshot(asRecord(row));
+        const key = `${snapshot.federation_key}:${snapshot.tenant_id}`;
+        if (!deduped.has(key)) {
+            deduped.set(key, snapshot);
+        }
+    }
+    return Array.from(deduped.values());
+}
+
+async function getLatestOutcomeEligibilitySnapshot(
+    client: SupabaseClient,
+    tenantId: string,
+    federationKey: string,
+): Promise<FederatedOutcomeEligibilitySnapshotRecord | null> {
+    const C = FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.COLUMNS;
+    const { data, error } = await client
+        .from(FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE)
+        .select('*')
+        .eq(C.tenant_id, tenantId)
+        .eq(C.federation_key, federationKey)
+        .order(C.observed_at, { ascending: false })
+        .limit(1);
+
+    if (error) {
+        return null;
+    }
+
+    const row = Array.isArray(data) ? data[0] : null;
+    return row ? mapFederatedOutcomeEligibilitySnapshot(asRecord(row)) : null;
 }
 
 async function listRoundsForFederations(
@@ -2056,6 +2171,90 @@ function mapSecureAggregationContribution(row: Record<string, unknown>): SecureA
     };
 }
 
+function mapFederatedOutcomeEligibilitySnapshot(row: Record<string, unknown>): FederatedOutcomeEligibilitySnapshotRecord {
+    return {
+        id: String(row.id),
+        tenant_id: readString(row.tenant_id) ?? 'unknown_tenant',
+        request_id: readString(row.request_id) ?? 'unknown_request',
+        federation_key: readString(row.federation_key) ?? 'unknown_federation',
+        partner_ref: readString(row.partner_ref),
+        membership_id: readString(row.membership_id),
+        evidence_window_start: readString(row.evidence_window_start),
+        evidence_window_end: String(row.evidence_window_end ?? row.observed_at ?? row.created_at),
+        outcome_confirmed_rows: readNumber(row.outcome_confirmed_rows) ?? 0,
+        lab_confirmed_rows: readNumber(row.lab_confirmed_rows) ?? 0,
+        expert_reviewed_rows: readNumber(row.expert_reviewed_rows) ?? 0,
+        synthetic_rows_excluded: readNumber(row.synthetic_rows_excluded) ?? 0,
+        consented_network_learning_rows: readNumber(row.consented_network_learning_rows) ?? 0,
+        provenance_verified_rows: readNumber(row.provenance_verified_rows) ?? 0,
+        trust_scored_rows: readNumber(row.trust_scored_rows) ?? 0,
+        amr_outcome_linked_rows: readNumber(row.amr_outcome_linked_rows) ?? 0,
+        external_validation_events: readNumber(row.external_validation_events) ?? 0,
+        minimum_required_rows: readNumber(row.minimum_required_rows) ?? 20,
+        minimum_provenance_rows: readNumber(row.minimum_provenance_rows) ?? 20,
+        minimum_trust_scored_rows: readNumber(row.minimum_trust_scored_rows) ?? 20,
+        minimum_external_validations: readNumber(row.minimum_external_validations) ?? 0,
+        minimum_trust_score: readNumber(row.minimum_trust_score) ?? 0.7,
+        average_trust_score: readNumber(row.average_trust_score) ?? 0,
+        eligibility_status: normalizeFederatedOutcomeEligibilityStatus(row.eligibility_status),
+        blockers: readStringArray(row.blockers),
+        source_hash_bundle: asRecord(row.source_hash_bundle),
+        source_table_counts: asRecord(row.source_table_counts),
+        source_record_digest: readString(row.source_record_digest),
+        evidence: asRecord(row.evidence),
+        observed_at: String(row.observed_at ?? row.created_at),
+        created_at: String(row.created_at ?? row.observed_at),
+    };
+}
+
+function toOutcomeEligibilitySummary(
+    digest: FederatedOutcomeEligibilityDigest,
+): Record<string, unknown> {
+    return {
+        present: digest.present,
+        eligibility_status: digest.eligibility_status,
+        eligibility_score: digest.eligibility_score,
+        blockers: digest.blockers,
+        counts: digest.counts,
+        minimums: digest.minimums,
+        latest_signal_at: digest.latest_signal_at,
+    };
+}
+
+function readOutcomeEligibilitySummary(
+    snapshot: FederatedSiteSnapshotRecord,
+): FederatedOutcomeEligibilityInput | null {
+    const support = asRecord(snapshot.support_summary.federated_outcome_eligibility);
+    const payload = asRecord(snapshot.snapshot_payload.federated_outcome_eligibility);
+    const source = Object.keys(support).length > 0 ? support : payload;
+    if (Object.keys(source).length === 0) {
+        return null;
+    }
+    const counts = asRecord(source.counts);
+    const minimums = asRecord(source.minimums);
+
+    return {
+        outcome_confirmed_rows: readNumber(counts.outcome_confirmed_rows) ?? undefined,
+        lab_confirmed_rows: readNumber(counts.lab_confirmed_rows) ?? undefined,
+        expert_reviewed_rows: readNumber(counts.expert_reviewed_rows) ?? undefined,
+        synthetic_rows_excluded: readNumber(counts.synthetic_rows_excluded) ?? undefined,
+        consented_network_learning_rows: readNumber(counts.consented_network_learning_rows) ?? undefined,
+        provenance_verified_rows: readNumber(counts.provenance_verified_rows) ?? undefined,
+        trust_scored_rows: readNumber(counts.trust_scored_rows) ?? undefined,
+        amr_outcome_linked_rows: readNumber(counts.amr_outcome_linked_rows) ?? undefined,
+        external_validation_events: readNumber(counts.external_validation_events) ?? undefined,
+        average_trust_score: readNumber(counts.average_trust_score) ?? undefined,
+        minimum_required_rows: readNumber(minimums.minimum_required_rows) ?? undefined,
+        minimum_provenance_rows: readNumber(minimums.minimum_provenance_rows) ?? undefined,
+        minimum_trust_scored_rows: readNumber(minimums.minimum_trust_scored_rows) ?? undefined,
+        minimum_external_validations: readNumber(minimums.minimum_external_validations) ?? undefined,
+        minimum_trust_score: readNumber(minimums.minimum_trust_score) ?? undefined,
+        eligibility_status: readString(source.eligibility_status),
+        blockers: readStringArray(source.blockers),
+        observed_at: readString(source.latest_signal_at),
+    };
+}
+
 function averageNumbers(values: Array<number | null>): number | null {
     const valid = values.filter((value): value is number => value != null && Number.isFinite(value));
     if (valid.length === 0) {
@@ -2148,6 +2347,13 @@ function readString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.trim();
     return normalized.length > 0 ? normalized : null;
+}
+
+function readStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((entry) => readString(entry))
+        .filter((entry): entry is string => entry != null);
 }
 
 function readNumber(value: unknown): number | null {
