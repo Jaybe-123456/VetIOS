@@ -120,6 +120,49 @@ describe('moat completion scoring', () => {
         expect(securityLayer?.claim_posture).toBe('architecture_only');
         expect(snapshot.summary.defensible).toBeGreaterThanOrEqual(1);
     });
+
+    it('scores federated learning from outcome eligibility, masked updates, promotion, and surveillance evidence', () => {
+        const snapshot = buildMoatCompletionSnapshot(evidence({
+            federation: {
+                activation_events: 4,
+                active_nodes: 3,
+                attested_nodes: 3,
+                secure_ready_nodes: 3,
+                heartbeat_healthy_nodes: 3,
+                outcome_eligibility_snapshots: 3,
+                eligible_outcome_snapshots: 3,
+                outcome_confirmed_rows: 42,
+                provenance_verified_rows: 45,
+                trust_scored_rows: 46,
+                external_validation_events: 1,
+                runtime_events: 12,
+                task_events: 9,
+                submitted_tasks: 6,
+                update_submissions: 6,
+                accepted_update_submissions: 6,
+                signed_update_submissions: 6,
+                promotion_events: 2,
+                candidate_registered_events: 2,
+                promotion_gate_required_events: 0,
+                champion_surveillance_events: 1,
+                last_signal_at: '2026-06-21T12:00:00.000Z',
+            },
+        }));
+
+        const federation = snapshot.moats.find((moat) => moat.moat_key === 'federation_activation');
+
+        expect(federation?.moat_name).toBe('Outcome-Confirmed Federated Learning');
+        expect(federation?.completion_level).toBe('operating');
+        expect(federation?.claim_posture).toBe('measured_activity');
+        expect(federation?.live_event_count).toBe(37);
+        expect(federation?.outcome_confirmed_count).toBe(42);
+        expect(federation?.provenance_verified_count).toBe(56);
+        expect(federation?.trust_scored_count).toBe(59);
+        expect(federation?.external_validation_count).toBe(1);
+        expect(federation?.missing_evidence).toContain('defensible_outcome_volume_50');
+        expect(federation?.evidence.source_tables).toContain('federated_update_submissions');
+        expect(federation?.evidence.source_tables).toContain('learning_audit_events');
+    });
 });
 
 function emptyCounts() {
@@ -215,6 +258,25 @@ function evidence(overrides: {
             attested_nodes: 0,
             secure_ready_nodes: 0,
             heartbeat_healthy_nodes: 0,
+            outcome_eligibility_snapshots: 0,
+            eligible_outcome_snapshots: 0,
+            outcome_confirmed_rows: 0,
+            provenance_verified_rows: 0,
+            trust_scored_rows: 0,
+            external_validation_events: 0,
+            runtime_events: 0,
+            online_runtime_events: 0,
+            heartbeat_events: 0,
+            task_events: 0,
+            submitted_tasks: 0,
+            update_submissions: 0,
+            accepted_update_submissions: 0,
+            signed_update_submissions: 0,
+            promotion_events: 0,
+            candidate_registered_events: 0,
+            promotion_gate_required_events: 0,
+            champion_surveillance_events: 0,
+            rollback_required_surveillance_events: 0,
             last_signal_at: null,
             ...overrides.federation,
         },

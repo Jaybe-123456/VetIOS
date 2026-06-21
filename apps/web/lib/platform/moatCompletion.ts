@@ -1,6 +1,17 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { loadCireValidationReport } from '@/lib/cire/validation';
-import { AI_INFERENCE_EVENTS, CLINICAL_CASES, CLINICAL_OUTCOME_EVENTS, PASSIVE_SIGNAL_EVENTS } from '@/lib/db/schemaContracts';
+import {
+    AI_INFERENCE_EVENTS,
+    CLINICAL_CASES,
+    CLINICAL_OUTCOME_EVENTS,
+    FEDERATED_MODEL_PROMOTION_EVENTS,
+    FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS,
+    FEDERATED_UPDATE_SUBMISSIONS,
+    FEDERATION_NODE_RUNTIME_EVENTS,
+    FEDERATION_ROUND_NODE_TASKS,
+    LEARNING_AUDIT_EVENTS,
+    PASSIVE_SIGNAL_EVENTS,
+} from '@/lib/db/schemaContracts';
 
 export const MOAT_COMPLETION_LEVELS = [
     'not_started',
@@ -166,6 +177,25 @@ export interface MoatCompletionEvidence {
         attested_nodes: number;
         secure_ready_nodes: number;
         heartbeat_healthy_nodes: number;
+        outcome_eligibility_snapshots: number;
+        eligible_outcome_snapshots: number;
+        outcome_confirmed_rows: number;
+        provenance_verified_rows: number;
+        trust_scored_rows: number;
+        external_validation_events: number;
+        runtime_events: number;
+        online_runtime_events: number;
+        heartbeat_events: number;
+        task_events: number;
+        submitted_tasks: number;
+        update_submissions: number;
+        accepted_update_submissions: number;
+        signed_update_submissions: number;
+        promotion_events: number;
+        candidate_registered_events: number;
+        promotion_gate_required_events: number;
+        champion_surveillance_events: number;
+        rollback_required_surveillance_events: number;
         last_signal_at: string | null;
     };
     trust_ops: {
@@ -398,6 +428,8 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
     const externalValidationCount = evidence.trust_ops.external_attestations
         + evidence.trust_ops.external_certifications
         + evidence.trust_ops.external_validations;
+    const federationExternalValidationCount = externalValidationCount
+        + evidence.federation.external_validation_events;
     const lastCoreSignal = latestIso([
         evidence.dataset.last_signal_at,
         evidence.inference.last_signal_at,
@@ -408,6 +440,23 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
         evidence.case_graph_promotion.last_signal_at,
     ]);
     const outcomeLinkedTrust = evidence.inference.outcome_linked_inferences + evidence.inference.cire_sample_size;
+    const federationLiveEvidence = evidence.federation.activation_events
+        + evidence.federation.outcome_eligibility_snapshots
+        + evidence.federation.runtime_events
+        + evidence.federation.task_events
+        + evidence.federation.update_submissions
+        + evidence.federation.promotion_events
+        + evidence.federation.champion_surveillance_events;
+    const federationProvenanceEvidence = evidence.federation.attested_nodes
+        + evidence.federation.provenance_verified_rows
+        + evidence.federation.accepted_update_submissions
+        + evidence.federation.candidate_registered_events;
+    const federationTrustEvidence = evidence.federation.secure_ready_nodes
+        + evidence.federation.heartbeat_healthy_nodes
+        + evidence.federation.trust_scored_rows
+        + evidence.federation.accepted_update_submissions
+        + evidence.federation.promotion_gate_required_events
+        + evidence.federation.champion_surveillance_events;
 
     return [
         buildMoatCompletionAssessment({
@@ -647,35 +696,58 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
         }),
         buildMoatCompletionAssessment({
             moat_key: 'federation_activation',
-            moat_name: 'Outcome-Confirmed Federation Activation',
+            moat_name: 'Outcome-Confirmed Federated Learning',
             value_capture_layer: 'federation',
             foundation_ready: true,
             hard_to_substitute: true,
             two_quarter_replicability: 'not_replicable_short_term',
             scarcity_basis: [
                 'multi_clinic_participant_activation',
-                'attested_secure_aggregation',
-                'fresh_node_heartbeat_evidence',
+                'outcome_confirmed_federated_eligibility',
+                'masked_update_and_promotion_lineage',
+                'post_promotion_surveillance_evidence',
             ],
+            requires_external_validation: true,
             counts: {
-                live_event_count: evidence.federation.activation_events,
-                outcome_confirmed_count: evidence.federation.active_nodes,
-                provenance_verified_count: evidence.federation.attested_nodes,
-                trust_scored_count: evidence.federation.secure_ready_nodes + evidence.federation.heartbeat_healthy_nodes,
-                external_validation_count: 0,
+                live_event_count: federationLiveEvidence,
+                outcome_confirmed_count: evidence.federation.outcome_confirmed_rows,
+                provenance_verified_count: federationProvenanceEvidence,
+                trust_scored_count: federationTrustEvidence,
+                external_validation_count: federationExternalValidationCount,
                 last_signal_at: evidence.federation.last_signal_at,
             },
             defensible_minimums: {
-                live_event_count: 25,
-                outcome_confirmed_count: 3,
-                provenance_verified_count: 3,
-                trust_scored_count: 3,
+                live_event_count: 50,
+                outcome_confirmed_count: 50,
+                provenance_verified_count: 50,
+                trust_scored_count: 50,
+                external_validation_count: 1,
             },
             evidence: {
-                source_tables: ['federation_activation_events'],
+                source_tables: [
+                    'federation_activation_events',
+                    'federated_outcome_eligibility_snapshots',
+                    'federation_node_runtime_events',
+                    'federation_round_node_tasks',
+                    'federated_update_submissions',
+                    'federated_model_promotion_events',
+                    'learning_audit_events',
+                ],
                 active_nodes: evidence.federation.active_nodes,
                 attested_nodes: evidence.federation.attested_nodes,
                 secure_ready_nodes: evidence.federation.secure_ready_nodes,
+                eligible_outcome_snapshots: evidence.federation.eligible_outcome_snapshots,
+                outcome_confirmed_rows: evidence.federation.outcome_confirmed_rows,
+                provenance_verified_rows: evidence.federation.provenance_verified_rows,
+                trust_scored_rows: evidence.federation.trust_scored_rows,
+                update_submissions: evidence.federation.update_submissions,
+                accepted_update_submissions: evidence.federation.accepted_update_submissions,
+                signed_update_submissions: evidence.federation.signed_update_submissions,
+                candidate_registered_events: evidence.federation.candidate_registered_events,
+                promotion_gate_required_events: evidence.federation.promotion_gate_required_events,
+                champion_surveillance_events: evidence.federation.champion_surveillance_events,
+                rollback_required_surveillance_events: evidence.federation.rollback_required_surveillance_events,
+                external_validation_count: federationExternalValidationCount,
             },
             owner_label: 'Federation Ops',
         }),
@@ -991,15 +1063,81 @@ async function loadFederationEvidence(
     tenantId: string,
     warnings: string[],
 ): Promise<MoatCompletionEvidence['federation']> {
-    const table = 'federation_activation_events';
-    const [activationEvents, activeNodes, readyNodes, attestedNodes, secureReadyNodes, heartbeatHealthyNodes, lastSignalAt] = await Promise.all([
-        countRows(client, table, (query) => query.eq('tenant_id', tenantId), warnings, 'federation activation events'),
-        countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('activation_status', 'active'), warnings, 'active federation nodes'),
-        countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('activation_status', 'ready'), warnings, 'ready federation nodes'),
-        countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('attestation_status', 'verified'), warnings, 'attested federation nodes'),
-        countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('secure_aggregation_status', 'ready'), warnings, 'secure aggregation ready federation nodes'),
-        countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('heartbeat_status', 'healthy'), warnings, 'healthy federation nodes'),
-        latestTimestamp(client, table, 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'federation latest signal'),
+    const activationTable = 'federation_activation_events';
+    const E = FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.COLUMNS;
+    const R = FEDERATION_NODE_RUNTIME_EVENTS.COLUMNS;
+    const T = FEDERATION_ROUND_NODE_TASKS.COLUMNS;
+    const U = FEDERATED_UPDATE_SUBMISSIONS.COLUMNS;
+    const P = FEDERATED_MODEL_PROMOTION_EVENTS.COLUMNS;
+    const A = LEARNING_AUDIT_EVENTS.COLUMNS;
+    const [
+        activationEvents,
+        activeNodes,
+        readyNodes,
+        attestedNodes,
+        secureReadyNodes,
+        heartbeatHealthyNodes,
+        lastActivationAt,
+        outcomeEligibilitySnapshots,
+        eligibleOutcomeSnapshots,
+        outcomeConfirmedRows,
+        provenanceVerifiedRows,
+        trustScoredRows,
+        externalValidationEvents,
+        lastEligibilityAt,
+        runtimeEvents,
+        onlineRuntimeEvents,
+        heartbeatEvents,
+        lastRuntimeAt,
+        taskEvents,
+        submittedTasks,
+        lastTaskAt,
+        updateSubmissions,
+        acceptedUpdateSubmissions,
+        signedUpdateSubmissions,
+        lastUpdateAt,
+        promotionEvents,
+        candidateRegisteredEvents,
+        promotionGateRequiredEvents,
+        lastPromotionAt,
+        championSurveillanceEvents,
+        rollbackRequiredSurveillanceEvents,
+        lastSurveillanceAt,
+    ] = await Promise.all([
+        countRows(client, activationTable, (query) => query.eq('tenant_id', tenantId), warnings, 'federation activation events'),
+        countRows(client, activationTable, (query) => query.eq('tenant_id', tenantId).eq('activation_status', 'active'), warnings, 'active federation nodes'),
+        countRows(client, activationTable, (query) => query.eq('tenant_id', tenantId).eq('activation_status', 'ready'), warnings, 'ready federation nodes'),
+        countRows(client, activationTable, (query) => query.eq('tenant_id', tenantId).eq('attestation_status', 'verified'), warnings, 'attested federation nodes'),
+        countRows(client, activationTable, (query) => query.eq('tenant_id', tenantId).eq('secure_aggregation_status', 'ready'), warnings, 'secure aggregation ready federation nodes'),
+        countRows(client, activationTable, (query) => query.eq('tenant_id', tenantId).eq('heartbeat_status', 'healthy'), warnings, 'healthy federation nodes'),
+        latestTimestamp(client, activationTable, 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'federation activation latest signal'),
+        countRows(client, FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE, (query) => query.eq(E.tenant_id, tenantId), warnings, 'federated outcome eligibility snapshots'),
+        countRows(client, FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE, (query) => query.eq(E.tenant_id, tenantId).eq(E.eligibility_status, 'eligible'), warnings, 'eligible federated outcome snapshots'),
+        sumColumn(client, FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE, E.outcome_confirmed_rows, (query) => query.eq(E.tenant_id, tenantId), warnings, 'federated outcome confirmed rows'),
+        sumColumn(client, FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE, E.provenance_verified_rows, (query) => query.eq(E.tenant_id, tenantId), warnings, 'federated provenance verified rows'),
+        sumColumn(client, FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE, E.trust_scored_rows, (query) => query.eq(E.tenant_id, tenantId), warnings, 'federated trust-scored rows'),
+        sumColumn(client, FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE, E.external_validation_events, (query) => query.eq(E.tenant_id, tenantId), warnings, 'federated external validation events'),
+        latestTimestamp(client, FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE, E.observed_at, (query) => query.eq(E.tenant_id, tenantId), warnings, 'federated outcome eligibility latest signal'),
+        countRows(client, FEDERATION_NODE_RUNTIME_EVENTS.TABLE, (query) => query.eq(R.tenant_id, tenantId), warnings, 'federation node runtime events'),
+        countRows(client, FEDERATION_NODE_RUNTIME_EVENTS.TABLE, (query) => query.eq(R.tenant_id, tenantId).eq(R.node_status, 'online'), warnings, 'online federation runtime events'),
+        countRows(client, FEDERATION_NODE_RUNTIME_EVENTS.TABLE, (query) => query.eq(R.tenant_id, tenantId).eq(R.runtime_event, 'heartbeat'), warnings, 'federation heartbeat runtime events'),
+        latestTimestamp(client, FEDERATION_NODE_RUNTIME_EVENTS.TABLE, R.observed_at, (query) => query.eq(R.tenant_id, tenantId), warnings, 'federation runtime latest signal'),
+        countRows(client, FEDERATION_ROUND_NODE_TASKS.TABLE, (query) => query.eq(T.tenant_id, tenantId), warnings, 'federation round node tasks'),
+        countRows(client, FEDERATION_ROUND_NODE_TASKS.TABLE, (query) => query.eq(T.tenant_id, tenantId).in(T.task_status, ['submitted', 'accepted']), warnings, 'submitted federation round node tasks'),
+        latestTimestamp(client, FEDERATION_ROUND_NODE_TASKS.TABLE, T.created_at, (query) => query.eq(T.tenant_id, tenantId), warnings, 'federation task latest signal'),
+        countRows(client, FEDERATED_UPDATE_SUBMISSIONS.TABLE, (query) => query.eq(U.tenant_id, tenantId), warnings, 'federated update submissions'),
+        countRows(client, FEDERATED_UPDATE_SUBMISSIONS.TABLE, (query) => query.eq(U.tenant_id, tenantId).eq(U.submission_status, 'accepted'), warnings, 'accepted federated update submissions'),
+        countRows(client, FEDERATED_UPDATE_SUBMISSIONS.TABLE, (query) => query.eq(U.tenant_id, tenantId).not(U.signature_hash, 'is', null), warnings, 'signed federated update submissions'),
+        latestTimestamp(client, FEDERATED_UPDATE_SUBMISSIONS.TABLE, U.observed_at, (query) => query.eq(U.tenant_id, tenantId), warnings, 'federated update latest signal'),
+        countRows(client, FEDERATED_MODEL_PROMOTION_EVENTS.TABLE, (query) => query.eq(P.tenant_id, tenantId), warnings, 'federated model promotion events'),
+        countRows(client, FEDERATED_MODEL_PROMOTION_EVENTS.TABLE, (query) => query.eq(P.tenant_id, tenantId).in(P.promotion_status, ['candidate_registered', 'already_registered']), warnings, 'registered federated candidate events'),
+        countRows(client, FEDERATED_MODEL_PROMOTION_EVENTS.TABLE, (query) => query.eq(P.tenant_id, tenantId).eq(P.promotion_status, 'promotion_gate_required'), warnings, 'federated promotion gate-required events'),
+        latestTimestamp(client, FEDERATED_MODEL_PROMOTION_EVENTS.TABLE, P.observed_at, (query) => query.eq(P.tenant_id, tenantId), warnings, 'federated model promotion latest signal'),
+        countRows(client, LEARNING_AUDIT_EVENTS.TABLE, (query) => query.eq(A.tenant_id, tenantId).eq(A.event_type, 'federated_champion_surveillance'), warnings, 'federated champion surveillance events'),
+        countRows(client, LEARNING_AUDIT_EVENTS.TABLE, (query) => query.eq(A.tenant_id, tenantId).eq(A.event_type, 'federated_champion_surveillance').contains(A.event_payload, {
+            decision: { status: 'rollback_required' },
+        }), warnings, 'rollback-required federated champion surveillance events'),
+        latestTimestamp(client, LEARNING_AUDIT_EVENTS.TABLE, A.created_at, (query) => query.eq(A.tenant_id, tenantId).eq(A.event_type, 'federated_champion_surveillance'), warnings, 'federated champion surveillance latest signal'),
     ]);
 
     return {
@@ -1009,7 +1147,34 @@ async function loadFederationEvidence(
         attested_nodes: attestedNodes,
         secure_ready_nodes: secureReadyNodes,
         heartbeat_healthy_nodes: heartbeatHealthyNodes,
-        last_signal_at: lastSignalAt,
+        outcome_eligibility_snapshots: outcomeEligibilitySnapshots,
+        eligible_outcome_snapshots: eligibleOutcomeSnapshots,
+        outcome_confirmed_rows: outcomeConfirmedRows,
+        provenance_verified_rows: provenanceVerifiedRows,
+        trust_scored_rows: trustScoredRows,
+        external_validation_events: externalValidationEvents,
+        runtime_events: runtimeEvents,
+        online_runtime_events: onlineRuntimeEvents,
+        heartbeat_events: heartbeatEvents,
+        task_events: taskEvents,
+        submitted_tasks: submittedTasks,
+        update_submissions: updateSubmissions,
+        accepted_update_submissions: acceptedUpdateSubmissions,
+        signed_update_submissions: signedUpdateSubmissions,
+        promotion_events: promotionEvents,
+        candidate_registered_events: candidateRegisteredEvents,
+        promotion_gate_required_events: promotionGateRequiredEvents,
+        champion_surveillance_events: championSurveillanceEvents,
+        rollback_required_surveillance_events: rollbackRequiredSurveillanceEvents,
+        last_signal_at: latestIso([
+            lastActivationAt,
+            lastEligibilityAt,
+            lastRuntimeAt,
+            lastTaskAt,
+            lastUpdateAt,
+            lastPromotionAt,
+            lastSurveillanceAt,
+        ]),
     };
 }
 
@@ -1055,6 +1220,23 @@ async function countRows(
         return 0;
     }
     return count ?? 0;
+}
+
+async function sumColumn(
+    client: SupabaseClient,
+    table: string,
+    column: string,
+    applyFilters: (query: any) => any,
+    warnings: string[],
+    label: string,
+): Promise<number> {
+    const query = applyFilters(client.from(table).select(column));
+    const { data, error } = await query;
+    if (error) {
+        warnings.push(`${label} unavailable: ${readErrorMessage(error)}`);
+        return 0;
+    }
+    return (data ?? []).reduce((sum: number, row: Record<string, unknown>) => sum + normalizeCount(row[column], 0), 0);
 }
 
 async function latestTimestamp(
