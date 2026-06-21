@@ -9,6 +9,10 @@ import { resolveExperimentApiActor } from '@/lib/auth/internalApi';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
+import {
+    buildFederatedAggregateArtifacts,
+    type FederatedAggregateTaskType,
+} from '@/lib/federation/aggregateBuilder';
 import { registerFederatedRoundCandidateModels } from '@/lib/federation/modelPromotion';
 import {
     finalizeFederationRoundSecureAggregation,
@@ -112,6 +116,15 @@ type FederationAction =
         action: 'finalize_secure_aggregation';
         federation_key?: string | null;
         federation_round_id?: string | null;
+        minimum_accepted_updates?: number | string | null;
+        mark_completed?: boolean | string | null;
+        evidence?: Record<string, unknown>;
+    }
+    | {
+        action: 'build_federated_aggregate_artifacts';
+        federation_key?: string | null;
+        federation_round_id?: string | null;
+        task_types?: FederatedAggregateTaskType[] | string | null;
         minimum_accepted_updates?: number | string | null;
         mark_completed?: boolean | string | null;
         evidence?: Record<string, unknown>;
@@ -334,6 +347,23 @@ export async function POST(req: Request) {
                     evidence: asRecord(finalizeBody.evidence),
                 }),
             };
+        } else if (action === 'build_federated_aggregate_artifacts') {
+            const aggregateBody = body.data as Extract<FederationAction, { action: 'build_federated_aggregate_artifacts' }>;
+            const federationRoundId = normalizeUuid(aggregateBody.federation_round_id);
+            if (!federationRoundId) {
+                throw new Error('federation_round_id is required for federated aggregate artifact building.');
+            }
+            result = {
+                aggregate_artifacts: await buildFederatedAggregateArtifacts(adminClient, {
+                    federationRoundId,
+                    actorTenantId: authContext.authMode === 'internal_token' ? null : authContext.tenantId,
+                    actor: authContext.userId,
+                    taskTypes: normalizeAggregateTaskTypes(aggregateBody.task_types),
+                    minimumAcceptedUpdates: normalizePositiveInteger(aggregateBody.minimum_accepted_updates),
+                    markCompleted: normalizeBoolean(aggregateBody.mark_completed) ?? false,
+                    evidence: asRecord(aggregateBody.evidence),
+                }),
+            };
         } else {
             return NextResponse.json({ error: 'Unsupported federation action.', request_id: requestId }, { status: 400 });
         }
@@ -443,6 +473,19 @@ function normalizeUpdateReviewStatus(value: unknown): CoordinatorUpdateReviewSta
         return value;
     }
     return 'accepted';
+}
+
+function normalizeAggregateTaskTypes(value: unknown): FederatedAggregateTaskType[] | undefined {
+    const raw = Array.isArray(value)
+        ? value
+        : typeof value === 'string'
+            ? value.split(',')
+            : [];
+    const allowed = new Set<FederatedAggregateTaskType>(['diagnosis', 'severity']);
+    const normalized = raw
+        .map((entry) => typeof entry === 'string' ? entry.trim() : '')
+        .filter((entry): entry is FederatedAggregateTaskType => allowed.has(entry as FederatedAggregateTaskType));
+    return normalized.length > 0 ? Array.from(new Set(normalized)) : undefined;
 }
 
 function normalizePositiveInteger(value: unknown): number | null {
