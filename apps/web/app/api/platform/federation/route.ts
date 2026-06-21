@@ -14,6 +14,7 @@ import {
     type FederatedAggregateTaskType,
 } from '@/lib/federation/aggregateBuilder';
 import { registerFederatedRoundCandidateModels } from '@/lib/federation/modelPromotion';
+import { runFederatedPromotionAutomation } from '@/lib/federation/promotionAutomation';
 import {
     finalizeFederationRoundSecureAggregation,
     issueFederationRoundNodeTasks,
@@ -124,6 +125,16 @@ type FederationAction =
         action: 'build_federated_aggregate_artifacts';
         federation_key?: string | null;
         federation_round_id?: string | null;
+        task_types?: FederatedAggregateTaskType[] | string | null;
+        minimum_accepted_updates?: number | string | null;
+        mark_completed?: boolean | string | null;
+        evidence?: Record<string, unknown>;
+    }
+    | {
+        action: 'run_federated_promotion_automation';
+        federation_key?: string | null;
+        federation_round_id?: string | null;
+        build_aggregate_artifacts?: boolean | string | null;
         task_types?: FederatedAggregateTaskType[] | string | null;
         minimum_accepted_updates?: number | string | null;
         mark_completed?: boolean | string | null;
@@ -362,6 +373,24 @@ export async function POST(req: Request) {
                     minimumAcceptedUpdates: normalizePositiveInteger(aggregateBody.minimum_accepted_updates),
                     markCompleted: normalizeBoolean(aggregateBody.mark_completed) ?? false,
                     evidence: asRecord(aggregateBody.evidence),
+                }),
+            };
+        } else if (action === 'run_federated_promotion_automation') {
+            const automationBody = body.data as Extract<FederationAction, { action: 'run_federated_promotion_automation' }>;
+            const federationRoundId = normalizeUuid(automationBody.federation_round_id);
+            if (!federationRoundId) {
+                throw new Error('federation_round_id is required for federated promotion automation.');
+            }
+            result = {
+                promotion_automation: await runFederatedPromotionAutomation(adminClient, {
+                    federationRoundId,
+                    actorTenantId: authContext.authMode === 'internal_token' ? null : authContext.tenantId,
+                    actor: authContext.userId,
+                    buildAggregateArtifacts: normalizeBoolean(automationBody.build_aggregate_artifacts) ?? true,
+                    aggregateTaskTypes: normalizeAggregateTaskTypes(automationBody.task_types),
+                    minimumAcceptedUpdates: normalizePositiveInteger(automationBody.minimum_accepted_updates),
+                    markRoundCompleted: normalizeBoolean(automationBody.mark_completed) ?? false,
+                    aggregateEvidence: asRecord(automationBody.evidence),
                 }),
             };
         } else {
