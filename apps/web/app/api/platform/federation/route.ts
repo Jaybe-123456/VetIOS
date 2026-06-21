@@ -11,6 +11,13 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { registerFederatedRoundCandidateModels } from '@/lib/federation/modelPromotion';
 import {
+    finalizeFederationRoundSecureAggregation,
+    issueFederationRoundNodeTasks,
+    reviewFederatedUpdateSubmission,
+    type CoordinatorTaskType,
+    type CoordinatorUpdateReviewStatus,
+} from '@/lib/federation/coordinatorRuntime';
+import {
     enrollFederationTenant,
     getFederationControlPlaneSnapshot,
     publishFederatedSiteSnapshots,
@@ -81,6 +88,33 @@ type FederationAction =
         action: 'register_federated_candidate';
         federation_key?: string | null;
         federation_round_id?: string | null;
+    }
+    | {
+        action: 'issue_round_node_tasks';
+        federation_key?: string | null;
+        federation_round_id?: string | null;
+        task_types?: CoordinatorTaskType[] | string | null;
+        dataset_policy?: Record<string, unknown>;
+        secure_aggregation_config?: Record<string, unknown>;
+        task_payload?: Record<string, unknown>;
+        due_at?: string | null;
+    }
+    | {
+        action: 'review_update_submission';
+        federation_key?: string | null;
+        federation_round_id?: string | null;
+        submission_id?: string | null;
+        review_status?: CoordinatorUpdateReviewStatus | null;
+        review_reason?: string | null;
+        evidence?: Record<string, unknown>;
+    }
+    | {
+        action: 'finalize_secure_aggregation';
+        federation_key?: string | null;
+        federation_round_id?: string | null;
+        minimum_accepted_updates?: number | string | null;
+        mark_completed?: boolean | string | null;
+        evidence?: Record<string, unknown>;
     };
 
 export const runtime = 'nodejs';
@@ -247,6 +281,59 @@ export async function POST(req: Request) {
                     actor: authContext.userId,
                 }),
             };
+        } else if (action === 'issue_round_node_tasks') {
+            const taskBody = body.data as Extract<FederationAction, { action: 'issue_round_node_tasks' }>;
+            const federationRoundId = normalizeUuid(taskBody.federation_round_id);
+            if (!federationRoundId) {
+                throw new Error('federation_round_id is required for federation node task issuance.');
+            }
+            result = {
+                node_tasks: await issueFederationRoundNodeTasks(adminClient, {
+                    federationRoundId,
+                    actorTenantId: authContext.authMode === 'internal_token' ? null : authContext.tenantId,
+                    actor: authContext.userId,
+                    taskTypes: normalizeCoordinatorTaskTypes(taskBody.task_types),
+                    datasetPolicy: asRecord(taskBody.dataset_policy),
+                    secureAggregationConfig: asRecord(taskBody.secure_aggregation_config),
+                    taskPayload: asRecord(taskBody.task_payload),
+                    dueAt: normalizeIsoDate(taskBody.due_at),
+                }),
+            };
+        } else if (action === 'review_update_submission') {
+            const reviewBody = body.data as Extract<FederationAction, { action: 'review_update_submission' }>;
+            const federationRoundId = normalizeUuid(reviewBody.federation_round_id);
+            const submissionId = normalizeUuid(reviewBody.submission_id);
+            const reviewStatus = normalizeUpdateReviewStatus(reviewBody.review_status);
+            if (!federationRoundId || !submissionId) {
+                throw new Error('federation_round_id and submission_id are required for federated update review.');
+            }
+            result = {
+                update_review: await reviewFederatedUpdateSubmission(adminClient, {
+                    federationRoundId,
+                    submissionId,
+                    actorTenantId: authContext.authMode === 'internal_token' ? null : authContext.tenantId,
+                    actor: authContext.userId,
+                    reviewStatus,
+                    reviewReason: normalizeOptionalText(reviewBody.review_reason),
+                    evidence: asRecord(reviewBody.evidence),
+                }),
+            };
+        } else if (action === 'finalize_secure_aggregation') {
+            const finalizeBody = body.data as Extract<FederationAction, { action: 'finalize_secure_aggregation' }>;
+            const federationRoundId = normalizeUuid(finalizeBody.federation_round_id);
+            if (!federationRoundId) {
+                throw new Error('federation_round_id is required for secure aggregation finalization.');
+            }
+            result = {
+                secure_aggregation: await finalizeFederationRoundSecureAggregation(adminClient, {
+                    federationRoundId,
+                    actorTenantId: authContext.authMode === 'internal_token' ? null : authContext.tenantId,
+                    actor: authContext.userId,
+                    minimumAcceptedUpdates: normalizePositiveInteger(finalizeBody.minimum_accepted_updates),
+                    markCompleted: normalizeBoolean(finalizeBody.mark_completed) ?? false,
+                    evidence: asRecord(finalizeBody.evidence),
+                }),
+            };
         } else {
             return NextResponse.json({ error: 'Unsupported federation action.', request_id: requestId }, { status: 400 });
         }
@@ -330,6 +417,47 @@ function normalizeUuid(value: unknown): string | null {
     return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(normalized)
         ? normalized
         : null;
+}
+
+function normalizeCoordinatorTaskTypes(value: unknown): CoordinatorTaskType[] | undefined {
+    const raw = Array.isArray(value)
+        ? value
+        : typeof value === 'string'
+            ? value.split(',')
+            : [];
+    const allowed = new Set<CoordinatorTaskType>([
+        'diagnosis_delta',
+        'severity_delta',
+        'support_summary',
+        'secure_aggregation_key',
+        'unmask_share',
+    ]);
+    const normalized = raw
+        .map((entry) => typeof entry === 'string' ? entry.trim() : '')
+        .filter((entry): entry is CoordinatorTaskType => allowed.has(entry as CoordinatorTaskType));
+    return normalized.length > 0 ? Array.from(new Set(normalized)) : undefined;
+}
+
+function normalizeUpdateReviewStatus(value: unknown): CoordinatorUpdateReviewStatus {
+    if (value === 'accepted' || value === 'rejected' || value === 'quarantined') {
+        return value;
+    }
+    return 'accepted';
+}
+
+function normalizePositiveInteger(value: unknown): number | null {
+    const number = normalizePositiveNumber(value);
+    return number == null ? null : Math.max(0, Math.round(number));
+}
+
+function normalizeOptionalText(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function normalizeIsoDate(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
 }
 
 function normalizeParticipationMode(value: unknown): FederationParticipationMode | null {
