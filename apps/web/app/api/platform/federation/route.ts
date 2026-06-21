@@ -13,6 +13,7 @@ import {
     buildFederatedAggregateArtifacts,
     type FederatedAggregateTaskType,
 } from '@/lib/federation/aggregateBuilder';
+import { generateFederatedCandidateEvidence } from '@/lib/federation/evidenceGenerator';
 import { registerFederatedRoundCandidateModels } from '@/lib/federation/modelPromotion';
 import { runFederatedPromotionAutomation } from '@/lib/federation/promotionAutomation';
 import {
@@ -138,6 +139,16 @@ type FederationAction =
         task_types?: FederatedAggregateTaskType[] | string | null;
         minimum_accepted_updates?: number | string | null;
         mark_completed?: boolean | string | null;
+        evidence?: Record<string, unknown>;
+    }
+    | {
+        action: 'generate_federated_candidate_evidence';
+        federation_key?: string | null;
+        federation_round_id?: string | null;
+        candidate_model_version?: string | null;
+        benchmark_evidence?: Record<string, unknown>;
+        calibration_evidence?: Record<string, unknown>;
+        regression_evidence?: Record<string, unknown>;
         evidence?: Record<string, unknown>;
     };
 
@@ -391,6 +402,24 @@ export async function POST(req: Request) {
                     minimumAcceptedUpdates: normalizePositiveInteger(automationBody.minimum_accepted_updates),
                     markRoundCompleted: normalizeBoolean(automationBody.mark_completed) ?? false,
                     aggregateEvidence: asRecord(automationBody.evidence),
+                }),
+            };
+        } else if (action === 'generate_federated_candidate_evidence') {
+            const evidenceBody = body.data as Extract<FederationAction, { action: 'generate_federated_candidate_evidence' }>;
+            const candidateModelVersion = normalizeOptionalText(evidenceBody.candidate_model_version);
+            if (!candidateModelVersion) {
+                throw new Error('candidate_model_version is required for federated candidate evidence generation.');
+            }
+            result = {
+                candidate_evidence: await generateFederatedCandidateEvidence(adminClient, {
+                    tenantId: authContext.tenantId,
+                    candidateModelVersion,
+                    federationRoundId: normalizeUuid(evidenceBody.federation_round_id),
+                    benchmarkEvidence: asRecord(evidenceBody.benchmark_evidence),
+                    calibrationEvidence: asRecord(evidenceBody.calibration_evidence),
+                    regressionEvidence: asRecord(evidenceBody.regression_evidence),
+                    operatorEvidence: asRecord(evidenceBody.evidence),
+                    actor: authContext.userId,
                 }),
             };
         } else {
