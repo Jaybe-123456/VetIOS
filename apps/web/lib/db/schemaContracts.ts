@@ -1764,6 +1764,39 @@ export const FEDERATION_NODE_RUNTIME_EVENTS = {
     },
 } as const;
 
+export const FEDERATION_NODE_ATTESTATION_EVENTS = {
+    TABLE: 'federation_node_attestation_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        request_id: 'request_id',
+        federation_key: 'federation_key',
+        partner_ref: 'partner_ref',
+        node_ref: 'node_ref',
+        membership_id: 'membership_id',
+        attestation_event: 'attestation_event',
+        attestation_status: 'attestation_status',
+        verification_status: 'verification_status',
+        deployment_environment: 'deployment_environment',
+        software_version: 'software_version',
+        software_artifact_hash: 'software_artifact_hash',
+        build_provenance_hash: 'build_provenance_hash',
+        sbom_hash: 'sbom_hash',
+        signed_payload_hash: 'signed_payload_hash',
+        signature_algorithm: 'signature_algorithm',
+        signature_hash: 'signature_hash',
+        signing_key_fingerprint: 'signing_key_fingerprint',
+        transparency_log_ref: 'transparency_log_ref',
+        attestation_score: 'attestation_score',
+        allowed_task_types: 'allowed_task_types',
+        expires_at: 'expires_at',
+        blockers: 'blockers',
+        evidence: 'evidence',
+        observed_at: 'observed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const FEDERATION_ROUND_NODE_TASKS = {
     TABLE: 'federation_round_node_tasks',
     COLUMNS: {

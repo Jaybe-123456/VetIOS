@@ -38,6 +38,17 @@ import {
     type CoordinatorUpdateReviewStatus,
 } from '@/lib/federation/coordinatorRuntime';
 import {
+    FEDERATION_NODE_ATTESTATION_ENVIRONMENTS,
+    FEDERATION_NODE_ATTESTATION_EVENT_KINDS,
+    FEDERATION_NODE_ATTESTATION_STATUSES,
+    FEDERATION_NODE_ATTESTATION_VERIFICATION_STATUSES,
+    recordFederationNodeAttestationEvent,
+    type FederationNodeAttestationEnvironment,
+    type FederationNodeAttestationEventKind,
+    type FederationNodeAttestationStatus,
+    type FederationNodeAttestationVerificationStatus,
+} from '@/lib/federation/nodeAttestation';
+import {
     enrollFederationTenant,
     getFederationControlPlaneSnapshot,
     publishFederatedSiteSnapshots,
@@ -118,6 +129,32 @@ type FederationAction =
         secure_aggregation_config?: Record<string, unknown>;
         task_payload?: Record<string, unknown>;
         due_at?: string | null;
+    }
+    | {
+        action: 'record_federation_node_attestation';
+        federation_key?: string | null;
+        target_tenant_id?: string | null;
+        node_ref?: string | null;
+        partner_ref?: string | null;
+        membership_id?: string | null;
+        attestation_event?: string | null;
+        attestation_status?: string | null;
+        verification_status?: string | null;
+        deployment_environment?: string | null;
+        software_version?: string | null;
+        software_artifact_hash?: string | null;
+        build_provenance_hash?: string | null;
+        sbom_hash?: string | null;
+        signed_payload_hash?: string | null;
+        signature_algorithm?: string | null;
+        signature_hash?: string | null;
+        signing_key_fingerprint?: string | null;
+        transparency_log_ref?: string | null;
+        allowed_task_types?: CoordinatorTaskType[] | string | null;
+        expires_at?: string | null;
+        blockers?: string[] | string | null;
+        evidence?: Record<string, unknown>;
+        observed_at?: string | null;
     }
     | {
         action: 'review_update_submission';
@@ -375,6 +412,39 @@ export async function POST(req: Request) {
                     dueAt: normalizeIsoDate(taskBody.due_at),
                 }),
             };
+        } else if (action === 'record_federation_node_attestation') {
+            const attestationBody = body.data as Extract<FederationAction, { action: 'record_federation_node_attestation' }>;
+            const nodeRef = normalizeOptionalText(attestationBody.node_ref);
+            if (!nodeRef) {
+                throw new Error('node_ref is required for federation node attestation.');
+            }
+            result = {
+                node_attestation: await recordFederationNodeAttestationEvent(adminClient, {
+                    tenantId: normalizeTenantId(attestationBody.target_tenant_id) ?? authContext.tenantId,
+                    federationKey,
+                    nodeRef,
+                    partnerRef: normalizeOptionalText(attestationBody.partner_ref),
+                    membershipId: normalizeUuid(attestationBody.membership_id),
+                    attestationEvent: normalizeNodeAttestationEventKind(attestationBody.attestation_event),
+                    attestationStatus: normalizeNodeAttestationStatus(attestationBody.attestation_status),
+                    verificationStatus: normalizeNodeAttestationVerificationStatus(attestationBody.verification_status),
+                    deploymentEnvironment: normalizeNodeAttestationEnvironment(attestationBody.deployment_environment),
+                    softwareVersion: normalizeOptionalText(attestationBody.software_version),
+                    softwareArtifactHash: normalizeHash(attestationBody.software_artifact_hash),
+                    buildProvenanceHash: normalizeHash(attestationBody.build_provenance_hash),
+                    sbomHash: normalizeHash(attestationBody.sbom_hash),
+                    signedPayloadHash: normalizeHash(attestationBody.signed_payload_hash),
+                    signatureAlgorithm: normalizeOptionalText(attestationBody.signature_algorithm),
+                    signatureHash: normalizeHash(attestationBody.signature_hash),
+                    signingKeyFingerprint: normalizeOptionalText(attestationBody.signing_key_fingerprint),
+                    transparencyLogRef: normalizeOptionalText(attestationBody.transparency_log_ref),
+                    allowedTaskTypes: normalizeCoordinatorTaskTypes(attestationBody.allowed_task_types),
+                    expiresAt: normalizeIsoDate(attestationBody.expires_at),
+                    blockers: normalizeTextList(attestationBody.blockers),
+                    evidence: asRecord(attestationBody.evidence),
+                    observedAt: normalizeIsoDate(attestationBody.observed_at),
+                }),
+            };
         } else if (action === 'review_update_submission') {
             const reviewBody = body.data as Extract<FederationAction, { action: 'review_update_submission' }>;
             const federationRoundId = normalizeUuid(reviewBody.federation_round_id);
@@ -615,6 +685,30 @@ function normalizeUpdateReviewStatus(value: unknown): CoordinatorUpdateReviewSta
     return 'accepted';
 }
 
+function normalizeNodeAttestationEventKind(value: unknown): FederationNodeAttestationEventKind | null {
+    return FEDERATION_NODE_ATTESTATION_EVENT_KINDS.includes(value as FederationNodeAttestationEventKind)
+        ? value as FederationNodeAttestationEventKind
+        : null;
+}
+
+function normalizeNodeAttestationStatus(value: unknown): FederationNodeAttestationStatus | null {
+    return FEDERATION_NODE_ATTESTATION_STATUSES.includes(value as FederationNodeAttestationStatus)
+        ? value as FederationNodeAttestationStatus
+        : null;
+}
+
+function normalizeNodeAttestationVerificationStatus(value: unknown): FederationNodeAttestationVerificationStatus | null {
+    return FEDERATION_NODE_ATTESTATION_VERIFICATION_STATUSES.includes(value as FederationNodeAttestationVerificationStatus)
+        ? value as FederationNodeAttestationVerificationStatus
+        : null;
+}
+
+function normalizeNodeAttestationEnvironment(value: unknown): FederationNodeAttestationEnvironment | null {
+    return FEDERATION_NODE_ATTESTATION_ENVIRONMENTS.includes(value as FederationNodeAttestationEnvironment)
+        ? value as FederationNodeAttestationEnvironment
+        : null;
+}
+
 function normalizeAggregateTaskTypes(value: unknown): FederatedAggregateTaskType[] | undefined {
     const raw = Array.isArray(value)
         ? value
@@ -830,6 +924,21 @@ function normalizeTenantIdList(value: unknown): string[] {
         return value
             .split(/[\s,]+/)
             .map((entry) => normalizeTenantId(entry))
+            .filter((entry): entry is string => entry != null);
+    }
+    return [];
+}
+
+function normalizeTextList(value: unknown): string[] {
+    if (Array.isArray(value)) {
+        return value
+            .map((entry) => normalizeOptionalText(entry))
+            .filter((entry): entry is string => entry != null);
+    }
+    if (typeof value === 'string') {
+        return value
+            .split(/[\s,]+/)
+            .map((entry) => normalizeOptionalText(entry))
             .filter((entry): entry is string => entry != null);
     }
     return [];

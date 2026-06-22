@@ -9,6 +9,12 @@ import {
     FEDERATION_ROUNDS,
 } from '@/lib/db/schemaContracts';
 import {
+    buildFederationNodeAttestationAssessment,
+    loadLatestFederationNodeAttestation,
+    type FederationNodeAttestationAssessment,
+    type FederationNodeAttestationRow,
+} from '@/lib/federation/nodeAttestation';
+import {
     buildFederationNodeProtocolAssessment,
     type FederationNodeRuntimeEvent,
     type FederationNodeStatus,
@@ -227,6 +233,8 @@ export async function getCurrentFederationRoundForNode(
     membership: FederationMembershipRow;
     round: FederationRoundRow | null;
     tasks: FederationRoundNodeTaskRow[];
+    latest_node_attestation: FederationNodeAttestationRow | null;
+    node_attestation_assessment: FederationNodeAttestationAssessment | null;
     latest_runtime_event: FederationNodeRuntimeEventRow | null;
     assessment: ReturnType<typeof buildFederationNodeProtocolAssessment> | null;
 }> {
@@ -243,12 +251,15 @@ export async function getCurrentFederationRoundForNode(
     } else {
         latestRuntime = await loadLatestRuntimeEvent(client, identity, null);
     }
+    const latestAttestation = await loadLatestFederationNodeAttestation(client, identity);
 
     return {
         identity,
         membership,
         round,
         tasks,
+        latest_node_attestation: latestAttestation,
+        node_attestation_assessment: latestAttestation ? buildFederationNodeAttestationAssessment(latestAttestation) : null,
         latest_runtime_event: latestRuntime,
         assessment: latestRuntime ? buildFederationNodeProtocolAssessment({
             ...latestRuntime,
@@ -270,6 +281,8 @@ export async function getFederationRoundNodeStatus(
     membership: FederationMembershipRow;
     round: FederationRoundRow;
     tasks: FederationRoundNodeTaskRow[];
+    latest_node_attestation: FederationNodeAttestationRow | null;
+    node_attestation_assessment: FederationNodeAttestationAssessment | null;
     latest_runtime_event: FederationNodeRuntimeEventRow | null;
     submissions: FederatedUpdateSubmissionRow[];
     assessment: ReturnType<typeof buildFederationNodeProtocolAssessment> | null;
@@ -287,12 +300,15 @@ export async function getFederationRoundNodeStatus(
         loadLatestRuntimeEvent(client, identity, round.id),
         listNodeUpdateSubmissionsForRound(client, identity, round.id),
     ]);
+    const latestAttestation = await loadLatestFederationNodeAttestation(client, identity);
 
     return {
         identity,
         membership,
         round,
         tasks,
+        latest_node_attestation: latestAttestation,
+        node_attestation_assessment: latestAttestation ? buildFederationNodeAttestationAssessment(latestAttestation) : null,
         latest_runtime_event: latestRuntime,
         submissions,
         assessment: latestRuntime ? buildFederationNodeProtocolAssessment({
@@ -315,6 +331,7 @@ export async function recordFederationNodeRuntimeEvent(
         partnerRef: input.partnerRef,
     });
     const membership = await requireActiveFederationMembership(client, identity);
+    const attestationGate = await requireContributionReadyNodeAttestation(client, identity);
     const C = FEDERATION_NODE_RUNTIME_EVENT_TABLE.COLUMNS;
     const now = new Date().toISOString();
     const runtimeEvent = input.runtimeEvent ?? 'heartbeat';
@@ -338,7 +355,12 @@ export async function recordFederationNodeRuntimeEvent(
             [C.outcome_eligibility_status]: normalizeOutcomeEligibilityStatus(input.outcomeEligibilityStatus),
             [C.last_heartbeat_at]: input.lastHeartbeatAt ?? (runtimeEvent === 'heartbeat' ? now : null),
             [C.blockers]: normalizeBlockers(input.blockers),
-            [C.evidence]: input.evidence ?? {},
+            [C.evidence]: {
+                ...(input.evidence ?? {}),
+                node_attestation_id: attestationGate.attestation.id,
+                node_attestation_score: attestationGate.assessment.attestation_score,
+                node_attestation_verification_status: attestationGate.attestation.verification_status,
+            },
             [C.observed_at]: input.observedAt ?? now,
         })
         .select('*')
@@ -379,6 +401,7 @@ export async function pullFederationRoundNodeTask(
     });
     await requireActiveFederationMembership(client, identity);
     const task = await loadNodeTaskById(client, identity, round.id, input.taskId);
+    await requireContributionReadyNodeAttestation(client, identity, task.task_type);
     const pulledTask = await markTaskStatus(client, task, task.task_status === 'submitted' || task.task_status === 'accepted' ? task.task_status : 'pulled');
     const runtimeEvent = await recordFederationNodeRuntimeEvent(client, actor, {
         federationKey: identity.federationKey,
@@ -431,6 +454,11 @@ export async function submitFederatedUpdate(
         ? await loadNodeTaskById(client, identity, round.id, input.body.roundNodeTaskId)
         : null;
     const contributionRole = input.body.contributionRole ?? contributionRoleForTaskType(task?.task_type);
+    const attestationGate = await requireContributionReadyNodeAttestation(
+        client,
+        identity,
+        task?.task_type ?? taskTypeForContributionRole(contributionRole),
+    );
     const requestId = input.body.requestId ?? randomUUID();
     const C = FEDERATED_UPDATE_SUBMISSIONS.COLUMNS;
     const { data, error } = await client
@@ -456,7 +484,12 @@ export async function submitFederatedUpdate(
             [C.signing_key_fingerprint]: normalizeOptionalText(input.body.signingKeyFingerprint, 160),
             [C.masked_update_summary]: input.body.maskedUpdateSummary ?? {},
             [C.public_summary]: input.body.publicSummary ?? {},
-            [C.evidence]: input.body.evidence ?? {},
+            [C.evidence]: {
+                ...(input.body.evidence ?? {}),
+                node_attestation_id: attestationGate.attestation.id,
+                node_attestation_score: attestationGate.assessment.attestation_score,
+                node_attestation_verification_status: attestationGate.attestation.verification_status,
+            },
             [C.observed_at]: input.body.observedAt ?? new Date().toISOString(),
         })
         .select('*')
@@ -530,6 +563,41 @@ async function requireActiveFederationMembership(
     }
 
     return mapMembership(asRecord(data));
+}
+
+async function requireContributionReadyNodeAttestation(
+    client: SupabaseClient,
+    identity: FederationNodeIdentity,
+    taskType?: FederationRoundNodeTaskType | null,
+): Promise<{
+    attestation: FederationNodeAttestationRow;
+    assessment: FederationNodeAttestationAssessment;
+}> {
+    let attestation: FederationNodeAttestationRow | null;
+    try {
+        attestation = await loadLatestFederationNodeAttestation(client, identity);
+    } catch (error) {
+        throw new FederationNodeRuntimeError(
+            503,
+            error instanceof Error ? error.message : 'Failed to load federation node attestation.',
+        );
+    }
+    if (!attestation) {
+        throw new FederationNodeRuntimeError(403, 'Federation node attestation is required before live node contribution.');
+    }
+
+    const assessment = buildFederationNodeAttestationAssessment({
+        ...attestation,
+        task_type: taskType ?? null,
+    });
+    if (!assessment.contribution_allowed) {
+        throw new FederationNodeRuntimeError(
+            403,
+            `Federation node attestation does not allow contribution: ${assessment.blockers.join(', ') || 'attestation_score_below_threshold'}.`,
+        );
+    }
+
+    return { attestation, assessment };
 }
 
 async function loadLatestNodeVisibleRound(
@@ -907,6 +975,13 @@ function normalizeNodeStatus(value: unknown): FederationNodeStatus {
 
 function normalizeUpdateRole(value: unknown): FederatedUpdateRole {
     return FEDERATED_UPDATE_ROLES.includes(value as FederatedUpdateRole) ? value as FederatedUpdateRole : 'diagnosis';
+}
+
+function taskTypeForContributionRole(role: FederatedUpdateRole): FederationRoundNodeTaskType {
+    if (role === 'severity') return 'severity_delta';
+    if (role === 'support') return 'support_summary';
+    if (role === 'unmask_share') return 'unmask_share';
+    return 'diagnosis_delta';
 }
 
 function normalizeBlockers(value: unknown): string[] {
