@@ -10,6 +10,7 @@ import type {
 export interface FederatedCandidateEvidenceInput {
     candidateModelVersion: string;
     registryEntries: ModelRegistryEntryRecord[];
+    runtimeEvidence?: FederatedRuntimeEvidenceInput | Record<string, unknown>;
     benchmarkEvidence?: Record<string, unknown>;
     calibrationEvidence?: Record<string, unknown>;
     regressionEvidence?: Record<string, unknown>;
@@ -32,6 +33,70 @@ export interface FederatedRegressionRunDraft {
     completed_at: string;
     started_at: string;
     created_by: string;
+}
+
+export interface FederatedRuntimeDeltaEvidence {
+    updateSubmissionId?: string | null;
+    nodeRef?: string | null;
+    participantRef?: string | null;
+    contributionRole?: string | null;
+    taskType?: string | null;
+    submissionStatus?: string | null;
+    outcomeEligibilitySnapshotId?: string | null;
+    eligibleRecordCount?: number | null;
+    outcomeConfirmedRows?: number | null;
+    provenanceVerifiedRows?: number | null;
+    trustScoredRows?: number | null;
+    averageTrustScore?: number | null;
+    payloadCommitmentHash?: string | null;
+    maskCommitmentHash?: string | null;
+    metricSummary?: Record<string, unknown> | null;
+    publicSummary?: Record<string, unknown> | null;
+    evidence?: Record<string, unknown> | null;
+}
+
+export interface FederatedRuntimeEvidenceInput {
+    participantCount?: number | null;
+    acceptedUpdateSubmissions?: number | null;
+    quarantinedUpdateSubmissions?: number | null;
+    eligibleOutcomeSnapshots?: number | null;
+    outcomeConfirmedRows?: number | null;
+    provenanceVerifiedRows?: number | null;
+    trustScoredRows?: number | null;
+    averageTrustScore?: number | null;
+    secureAggregationStatus?: string | null;
+    externalValidationCount?: number | null;
+    minimumParticipants?: number | null;
+    minimumAcceptedUpdates?: number | null;
+    minimumOutcomeConfirmedRows?: number | null;
+    minimumAverageTrustScore?: number | null;
+    safetyCaseCount?: number | null;
+    safetyIncidentCount?: number | null;
+    hallucinationIncidentCount?: number | null;
+    falseNegativeIncidentCount?: number | null;
+    adversarialCaseCount?: number | null;
+    adversarialPassed?: number | null;
+    adversarialFailed?: number | null;
+    adversarialScore?: number | null;
+    expectedCalibrationError?: number | null;
+    brierScore?: number | null;
+    regressionFixtureCount?: number | null;
+    regressionFailedCount?: number | null;
+    regressionPassedCount?: number | null;
+    regressionTotalReplayed?: number | null;
+    regressionRate?: number | null;
+    regressionThresholdPct?: number | null;
+    candidateBlocked?: boolean | null;
+    updateSummaries?: FederatedRuntimeDeltaEvidence[] | null;
+    sourceHashBundle?: Record<string, unknown> | null;
+}
+
+export interface FederatedDerivedCandidateEvidence {
+    benchmarkEvidence: Record<string, unknown>;
+    calibrationEvidence: Record<string, unknown>;
+    regressionEvidence: Record<string, unknown>;
+    operatorEvidence: Record<string, unknown>;
+    warnings: string[];
 }
 
 export interface FederatedCandidateEvidencePlan {
@@ -62,6 +127,7 @@ export async function generateFederatedCandidateEvidence(
         tenantId: string;
         candidateModelVersion: string;
         federationRoundId?: string | null;
+        runtimeEvidence?: FederatedRuntimeEvidenceInput | Record<string, unknown>;
         benchmarkEvidence?: Record<string, unknown>;
         calibrationEvidence?: Record<string, unknown>;
         regressionEvidence?: Record<string, unknown>;
@@ -84,6 +150,7 @@ export async function generateFederatedCandidateEvidence(
     const plan = buildFederatedCandidateEvidencePlan({
         candidateModelVersion: input.candidateModelVersion,
         registryEntries,
+        runtimeEvidence: input.runtimeEvidence,
         benchmarkEvidence: input.benchmarkEvidence,
         calibrationEvidence: input.calibrationEvidence,
         regressionEvidence: input.regressionEvidence,
@@ -132,8 +199,20 @@ export function buildFederatedCandidateEvidencePlan(
     input: FederatedCandidateEvidenceInput,
 ): FederatedCandidateEvidencePlan {
     const now = input.now ?? new Date().toISOString();
+    const derivedEvidence = input.runtimeEvidence
+        ? deriveFederatedCandidateEvidenceFromRuntime({
+            candidateModelVersion: input.candidateModelVersion,
+            registryEntries: input.registryEntries,
+            runtimeEvidence: input.runtimeEvidence,
+            now,
+        })
+        : null;
+    const benchmarkEvidence = mergeEvidence(derivedEvidence?.benchmarkEvidence, input.benchmarkEvidence);
+    const calibrationEvidence = mergeEvidence(derivedEvidence?.calibrationEvidence, input.calibrationEvidence);
+    const regressionEvidence = mergeEvidence(derivedEvidence?.regressionEvidence, input.regressionEvidence);
+    const operatorEvidence = mergeEvidence(derivedEvidence?.operatorEvidence, input.operatorEvidence);
     const blockers = new Set<string>();
-    const warnings = new Set<string>();
+    const warnings = new Set<string>(derivedEvidence?.warnings ?? []);
     const benchmarkReports: Array<Omit<LearningBenchmarkReportRecord, 'id' | 'created_at'>> = [];
     const calibrationReports: Array<Omit<LearningCalibrationReportRecord, 'id' | 'created_at'>> = [];
 
@@ -145,7 +224,7 @@ export function buildFederatedCandidateEvidencePlan(
         const taskReport = buildBenchmarkReport({
             entry,
             kind: 'task',
-            evidence: selectBenchmarkEvidence(input.benchmarkEvidence, ['tasks', entry.task_type, 'task']),
+            evidence: selectBenchmarkEvidence(benchmarkEvidence, ['tasks', entry.task_type, 'task']),
             now,
         });
         benchmarkReports.push(taskReport);
@@ -154,7 +233,7 @@ export function buildFederatedCandidateEvidencePlan(
         const safetyReport = buildBenchmarkReport({
             entry,
             kind: 'safety',
-            evidence: selectBenchmarkEvidence(input.benchmarkEvidence, ['safety']),
+            evidence: selectBenchmarkEvidence(benchmarkEvidence, ['safety']),
             now,
         });
         benchmarkReports.push(safetyReport);
@@ -163,7 +242,7 @@ export function buildFederatedCandidateEvidencePlan(
         const adversarialReport = buildBenchmarkReport({
             entry,
             kind: 'adversarial',
-            evidence: selectBenchmarkEvidence(input.benchmarkEvidence, ['adversarial', 'adversarial_safety']),
+            evidence: selectBenchmarkEvidence(benchmarkEvidence, ['adversarial', 'adversarial_safety']),
             now,
         });
         benchmarkReports.push(adversarialReport);
@@ -172,7 +251,7 @@ export function buildFederatedCandidateEvidencePlan(
         if (entry.task_type === 'diagnosis' || entry.task_type === 'hybrid') {
             const calibrationReport = buildCalibrationReport({
                 entry,
-                evidence: selectCalibrationEvidence(input.calibrationEvidence, entry.task_type),
+                evidence: selectCalibrationEvidence(calibrationEvidence, entry.task_type),
                 now,
             });
             calibrationReports.push(calibrationReport);
@@ -186,8 +265,8 @@ export function buildFederatedCandidateEvidencePlan(
     const regressionRun = buildRegressionRunDraft({
         candidateModelVersion: input.candidateModelVersion,
         tenantId: input.registryEntries[0]?.tenant_id ?? 'unknown_tenant',
-        evidence: input.regressionEvidence,
-        operatorEvidence: input.operatorEvidence,
+        evidence: regressionEvidence,
+        operatorEvidence,
         actor: input.actor,
         now,
     });
@@ -210,6 +289,227 @@ export function buildFederatedCandidateEvidencePlan(
         promotion_gate_posture: blockerList.length === 0 ? 'gate_ready' : 'blocked_pending_runtime_evidence',
         automatic_champion_promotion_allowed: false,
         manual_promotion_route: '/api/learning/promote',
+    };
+}
+
+export function deriveFederatedCandidateEvidenceFromRuntime(input: {
+    candidateModelVersion: string;
+    registryEntries: ModelRegistryEntryRecord[];
+    runtimeEvidence: FederatedRuntimeEvidenceInput | Record<string, unknown>;
+    now?: string;
+}): FederatedDerivedCandidateEvidence {
+    const runtime = asRecord(input.runtimeEvidence);
+    const now = input.now ?? new Date().toISOString();
+    const updateSummaries = readUpdateSummaries(runtime);
+    const acceptedUpdates = updateSummaries.filter((update) => {
+        const status = readText(update.submissionStatus) ?? readText(update.submission_status);
+        return !status || status === 'accepted' || status === 'submitted';
+    });
+    const taskTypes = uniqueNonEmpty(input.registryEntries.map((entry) => entry.task_type));
+    const minimumParticipants = readFirstNumber(runtime, ['minimumParticipants', 'minimum_participants']) ?? 2;
+    const minimumAcceptedUpdates = readFirstNumber(runtime, ['minimumAcceptedUpdates', 'minimum_accepted_updates']) ?? minimumParticipants;
+    const minimumOutcomeRows = readFirstNumber(runtime, ['minimumOutcomeConfirmedRows', 'minimum_outcome_confirmed_rows']) ?? 20;
+    const minimumTrustScore = readFirstNumber(runtime, ['minimumAverageTrustScore', 'minimum_average_trust_score']) ?? 0.7;
+    const participantCount = readFirstNumber(runtime, ['participantCount', 'participant_count'])
+        ?? uniqueNonEmpty(acceptedUpdates.map((update) => readText(update.nodeRef) ?? readText(update.node_ref) ?? readText(update.participantRef) ?? readText(update.participant_ref))).length;
+    const acceptedUpdateSubmissions = readFirstNumber(runtime, ['acceptedUpdateSubmissions', 'accepted_update_submissions', 'accepted_updates'])
+        ?? acceptedUpdates.length;
+    const quarantinedUpdateSubmissions = readFirstNumber(runtime, ['quarantinedUpdateSubmissions', 'quarantined_update_submissions']) ?? 0;
+    const eligibleOutcomeSnapshots = readFirstNumber(runtime, ['eligibleOutcomeSnapshots', 'eligible_outcome_snapshots'])
+        ?? uniqueNonEmpty(acceptedUpdates.map((update) => readText(update.outcomeEligibilitySnapshotId) ?? readText(update.outcome_eligibility_snapshot_id))).length;
+    const outcomeConfirmedRows = readFirstNumber(runtime, ['outcomeConfirmedRows', 'outcome_confirmed_rows'])
+        ?? sumNumbers(acceptedUpdates.map((update) => readFirstNumber(update, ['outcomeConfirmedRows', 'outcome_confirmed_rows', 'eligibleRecordCount', 'eligible_record_count'])));
+    const provenanceVerifiedRows = readFirstNumber(runtime, ['provenanceVerifiedRows', 'provenance_verified_rows'])
+        ?? sumNumbers(acceptedUpdates.map((update) => readFirstNumber(update, ['provenanceVerifiedRows', 'provenance_verified_rows', 'eligibleRecordCount', 'eligible_record_count'])));
+    const trustScoredRows = readFirstNumber(runtime, ['trustScoredRows', 'trust_scored_rows'])
+        ?? sumNumbers(acceptedUpdates.map((update) => readFirstNumber(update, ['trustScoredRows', 'trust_scored_rows', 'eligibleRecordCount', 'eligible_record_count'])));
+    const averageTrustScore = readFirstNumber(runtime, ['averageTrustScore', 'average_trust_score'])
+        ?? weightedTrustScore(acceptedUpdates);
+    const secureAggregationStatus = readText(runtime.secureAggregationStatus)
+        ?? readText(runtime.secure_aggregation_status)
+        ?? 'missing';
+    const secureAggregationReady = secureAggregationStatus === 'secure_aggregation_ready'
+        || secureAggregationStatus === 'live_node_commitments_ready'
+        || secureAggregationStatus === 'ready';
+    const taskMetrics = {
+        participant_count: participantCount,
+        accepted_update_submissions: acceptedUpdateSubmissions,
+        quarantined_update_submissions: quarantinedUpdateSubmissions,
+        eligible_outcome_snapshots: eligibleOutcomeSnapshots,
+        outcome_confirmed_rows: outcomeConfirmedRows,
+        provenance_verified_rows: provenanceVerifiedRows,
+        trust_scored_rows: trustScoredRows,
+        average_trust_score: roundMetric(averageTrustScore),
+        secure_aggregation_status: secureAggregationStatus,
+        minimum_participants: minimumParticipants,
+        minimum_accepted_updates: minimumAcceptedUpdates,
+        minimum_outcome_confirmed_rows: minimumOutcomeRows,
+        minimum_average_trust_score: minimumTrustScore,
+    };
+
+    const taskEvidenceByType = Object.fromEntries(taskTypes.map((taskType) => {
+        const roleUpdates = acceptedUpdates.filter((update) => updateMatchesTask(update, taskType));
+        const taskOutcomeRows = readFirstNumber(runtime, [`${taskType}_outcome_confirmed_rows`])
+            ?? sumNumbers(roleUpdates.map((update) => readFirstNumber(update, ['outcomeConfirmedRows', 'outcome_confirmed_rows', 'eligibleRecordCount', 'eligible_record_count'])))
+            ?? outcomeConfirmedRows;
+        const taskAcceptedUpdates = roleUpdates.length > 0 ? roleUpdates.length : acceptedUpdateSubmissions;
+        const localAccuracy = meanMetric(roleUpdates, ['accuracy', 'candidate_accuracy', 'validation_accuracy']);
+        const score = weightedMean([
+            clamp01((localAccuracy ?? averageTrustScore) ?? 0),
+            clamp01((averageTrustScore ?? 0) / minimumTrustScore),
+            clamp01(taskOutcomeRows / minimumOutcomeRows),
+            clamp01(taskAcceptedUpdates / minimumAcceptedUpdates),
+            secureAggregationReady ? 1 : 0,
+        ]);
+        const pass = participantCount >= minimumParticipants
+            && taskAcceptedUpdates >= minimumAcceptedUpdates
+            && taskOutcomeRows >= minimumOutcomeRows
+            && provenanceVerifiedRows >= minimumOutcomeRows
+            && trustScoredRows >= minimumOutcomeRows
+            && averageTrustScore >= minimumTrustScore
+            && secureAggregationReady
+            && quarantinedUpdateSubmissions === 0;
+
+        return [taskType, {
+            pass,
+            case_count: taskOutcomeRows,
+            minimum_case_count: minimumOutcomeRows,
+            score,
+            runtime_metrics: taskMetrics,
+            local_metric_summary: {
+                accuracy: localAccuracy,
+                update_count: taskAcceptedUpdates,
+            },
+            evidence_digest: stableHash({ taskType, taskMetrics, roleUpdates }),
+            generated_at: now,
+        }];
+    }));
+
+    const safetyCaseCount = readFirstNumber(runtime, ['safetyCaseCount', 'safety_case_count'])
+        ?? readFirstNumber(asRecord(runtime.safety), ['case_count', 'fixture_count', 'sample_count']);
+    const safetyIncidentCount = readFirstNumber(runtime, ['safetyIncidentCount', 'safety_incident_count'])
+        ?? readFirstNumber(asRecord(runtime.safety), ['incident_count'])
+        ?? 0;
+    const hallucinationIncidentCount = readFirstNumber(runtime, ['hallucinationIncidentCount', 'hallucination_incident_count'])
+        ?? readFirstNumber(asRecord(runtime.safety), ['hallucination_incident_count'])
+        ?? 0;
+    const falseNegativeIncidentCount = readFirstNumber(runtime, ['falseNegativeIncidentCount', 'false_negative_incident_count'])
+        ?? readFirstNumber(asRecord(runtime.safety), ['false_negative_incident_count'])
+        ?? 0;
+    const safetyTotalIncidents = safetyIncidentCount + hallucinationIncidentCount + falseNegativeIncidentCount;
+    const safetyScore = safetyCaseCount && safetyCaseCount > 0
+        ? clamp01(1 - safetyTotalIncidents / safetyCaseCount)
+        : 0;
+    const safetyEvidence = {
+        pass: safetyCaseCount != null && safetyCaseCount > 0 && safetyTotalIncidents === 0,
+        case_count: safetyCaseCount ?? 0,
+        minimum_case_count: 1,
+        score: safetyScore,
+        safety_incident_count: safetyIncidentCount,
+        hallucination_incident_count: hallucinationIncidentCount,
+        false_negative_incident_count: falseNegativeIncidentCount,
+        evidence_digest: stableHash({ safety: runtime.safety, safetyCaseCount, safetyTotalIncidents }),
+        generated_at: now,
+    };
+
+    const adversarial = asRecord(runtime.adversarial);
+    const adversarialCaseCount = readFirstNumber(runtime, ['adversarialCaseCount', 'adversarial_case_count'])
+        ?? readFirstNumber(adversarial, ['case_count', 'fixture_count', 'sample_count'])
+        ?? 0;
+    const adversarialFailed = readFirstNumber(runtime, ['adversarialFailed', 'adversarial_failed'])
+        ?? readFirstNumber(adversarial, ['failed'])
+        ?? 0;
+    const adversarialPassed = readFirstNumber(runtime, ['adversarialPassed', 'adversarial_passed'])
+        ?? readFirstNumber(adversarial, ['passed'])
+        ?? Math.max(0, adversarialCaseCount - adversarialFailed);
+    const adversarialScore = clamp01(readFirstNumber(runtime, ['adversarialScore', 'adversarial_score'])
+        ?? readFirstNumber(adversarial, ['score', 'summary_score'])
+        ?? (adversarialCaseCount > 0 ? adversarialPassed / adversarialCaseCount : 0));
+    const adversarialEvidence = {
+        pass: adversarialCaseCount > 0 && adversarialFailed === 0,
+        case_count: adversarialCaseCount,
+        minimum_case_count: 1,
+        passed: adversarialPassed,
+        failed: adversarialFailed,
+        score: adversarialScore,
+        evidence_digest: stableHash({ adversarial, adversarialCaseCount, adversarialFailed }),
+        generated_at: now,
+    };
+
+    const calibration = asRecord(runtime.calibration);
+    const expectedCalibrationError = readFirstNumber(runtime, ['expectedCalibrationError', 'expected_calibration_error', 'ece'])
+        ?? readFirstNumber(calibration, ['expected_calibration_error', 'ece', 'ece_score'])
+        ?? meanMetric(acceptedUpdates, ['expected_calibration_error', 'ece', 'ece_score']);
+    const brierScore = readFirstNumber(runtime, ['brierScore', 'brier_score'])
+        ?? readFirstNumber(calibration, ['brier_score', 'brier'])
+        ?? meanMetric(acceptedUpdates, ['brier_score', 'brier']);
+    const calibrationEvidence = {
+        row_count: readFirstNumber(calibration, ['row_count', 'case_count', 'sample_count']) ?? outcomeConfirmedRows,
+        expected_calibration_error: expectedCalibrationError,
+        brier_score: brierScore,
+        status: expectedCalibrationError != null && expectedCalibrationError <= 0.12 ? 'pass' : 'insufficient',
+        evidence_digest: stableHash({ calibration, expectedCalibrationError, brierScore }),
+        generated_at: now,
+    };
+
+    const regression = asRecord(runtime.regression);
+    const regressionFixtureCount = readFirstNumber(runtime, ['regressionFixtureCount', 'regression_fixture_count'])
+        ?? readFirstNumber(regression, ['fixture_count'])
+        ?? 0;
+    const regressionFailed = readFirstNumber(runtime, ['regressionFailedCount', 'regression_failed_count'])
+        ?? readFirstNumber(regression, ['failed'])
+        ?? 0;
+    const regressionPassed = readFirstNumber(runtime, ['regressionPassedCount', 'regression_passed_count'])
+        ?? readFirstNumber(regression, ['passed'])
+        ?? Math.max(0, regressionFixtureCount - regressionFailed);
+    const regressionTotalReplayed = readFirstNumber(runtime, ['regressionTotalReplayed', 'regression_total_replayed'])
+        ?? readFirstNumber(regression, ['total_replayed'])
+        ?? 0;
+    const regressionEvidence = {
+        fixture_count: regressionFixtureCount,
+        passed: regressionPassed,
+        failed: regressionFailed,
+        total_replayed: regressionTotalReplayed,
+        regression_rate: readFirstNumber(runtime, ['regressionRate', 'regression_rate']) ?? readFirstNumber(regression, ['regression_rate']),
+        threshold_pct: readFirstNumber(runtime, ['regressionThresholdPct', 'regression_threshold_pct']) ?? readFirstNumber(regression, ['threshold_pct']) ?? 10,
+        blocked: readFirstBoolean(runtime, ['candidateBlocked', 'candidate_blocked'])
+            ?? readFirstBoolean(regression, ['blocked', 'candidate_blocked'])
+            ?? false,
+        evidence_digest: stableHash({ regression, regressionFixtureCount, regressionFailed, regressionTotalReplayed }),
+        generated_at: now,
+    };
+
+    const warnings = [
+        ...(safetyCaseCount == null || safetyCaseCount <= 0 ? ['derived_runtime_safety_evidence_missing'] : []),
+        ...(adversarialCaseCount <= 0 ? ['derived_runtime_adversarial_evidence_missing'] : []),
+        ...(expectedCalibrationError == null ? ['derived_runtime_calibration_ece_missing'] : []),
+        ...(regressionFixtureCount <= 0 && regressionTotalReplayed <= 0 ? ['derived_runtime_regression_evidence_missing'] : []),
+    ];
+
+    return {
+        benchmarkEvidence: {
+            tasks: taskEvidenceByType,
+            task: taskTypes.length === 1 ? taskEvidenceByType[taskTypes[0]] : undefined,
+            safety: safetyEvidence,
+            adversarial: adversarialEvidence,
+        },
+        calibrationEvidence,
+        regressionEvidence,
+        operatorEvidence: {
+            evidence_source: 'federated_runtime_evidence_derivation',
+            candidate_model_version: input.candidateModelVersion,
+            generated_at: now,
+            source_hash_bundle: asRecord(runtime.sourceHashBundle ?? runtime.source_hash_bundle),
+            runtime_metrics: taskMetrics,
+            evidence_digest: stableHash(runtime),
+            research_basis: [
+                'federated_averaging_round_local_updates',
+                'secure_aggregation_commitment_only_updates',
+                'federated_benchmark_heterogeneity_and_realistic_split_evaluation',
+                'calibration_and_post_deployment_regression_gating',
+            ],
+        },
+        warnings,
     };
 }
 
@@ -457,12 +757,13 @@ function selectBenchmarkEvidence(
     keys: string[],
 ): Record<string, unknown> {
     const root = asRecord(evidence);
+    const taskMap = asRecord(root.tasks);
     for (const key of keys) {
-        const nested = asRecord(root[key]);
-        if (Object.keys(nested).length > 0) return nested;
-        const taskMap = asRecord(root.tasks);
         const taskNested = asRecord(taskMap[key]);
         if (Object.keys(taskNested).length > 0) return taskNested;
+        if (key === 'tasks') continue;
+        const nested = asRecord(root[key]);
+        if (Object.keys(nested).length > 0) return nested;
     }
     return root;
 }
@@ -475,6 +776,118 @@ function selectCalibrationEvidence(
     const byTask = asRecord(asRecord(root.tasks)[taskType]);
     if (Object.keys(byTask).length > 0) return byTask;
     return root;
+}
+
+function mergeEvidence(
+    derived: Record<string, unknown> | undefined,
+    explicit: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+    if (!derived) return explicit;
+    if (!explicit) return derived;
+    return {
+        ...derived,
+        ...explicit,
+        tasks: {
+            ...asRecord(derived.tasks),
+            ...asRecord(explicit.tasks),
+        },
+    };
+}
+
+function readUpdateSummaries(runtime: Record<string, unknown>): Record<string, unknown>[] {
+    const raw = runtime.updateSummaries
+        ?? runtime.update_summaries
+        ?? runtime.deltaSummaries
+        ?? runtime.delta_summaries
+        ?? runtime.update_submissions
+        ?? runtime.accepted_updates;
+    return Array.isArray(raw)
+        ? raw.map(asRecord).filter((entry) => Object.keys(entry).length > 0)
+        : [];
+}
+
+function updateMatchesTask(update: Record<string, unknown>, taskType: string): boolean {
+    const role = readText(update.contributionRole) ?? readText(update.contribution_role);
+    const updateTaskType = readText(update.taskType) ?? readText(update.task_type);
+    if (updateTaskType) return updateTaskType === taskType;
+    if (!role) return true;
+    if (taskType === 'diagnosis') return role === 'diagnosis';
+    if (taskType === 'severity') return role === 'severity';
+    if (taskType === 'hybrid') return role === 'support' || role === 'diagnosis' || role === 'severity';
+    return false;
+}
+
+function readFirstNumber(record: Record<string, unknown>, keys: string[]): number | null {
+    for (const key of keys) {
+        const value = readNumber(record[key]);
+        if (value != null) return value;
+    }
+    return null;
+}
+
+function readFirstBoolean(record: Record<string, unknown>, keys: string[]): boolean | null {
+    for (const key of keys) {
+        const value = readBoolean(record[key]);
+        if (value != null) return value;
+    }
+    return null;
+}
+
+function sumNumbers(values: Array<number | null>): number {
+    return values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+}
+
+function weightedTrustScore(updates: Record<string, unknown>[]): number {
+    const weighted = updates
+        .map((update) => {
+            const rows = readFirstNumber(update, ['trustScoredRows', 'trust_scored_rows', 'eligibleRecordCount', 'eligible_record_count'])
+                ?? 0;
+            const score = readFirstNumber(update, ['averageTrustScore', 'average_trust_score']);
+            return score == null ? null : { rows, score };
+        })
+        .filter((entry): entry is { rows: number; score: number } => entry != null);
+    const rowTotal = weighted.reduce((sum, entry) => sum + Math.max(0, entry.rows), 0);
+    if (rowTotal <= 0) return 0;
+    return weighted.reduce((sum, entry) => sum + entry.score * Math.max(0, entry.rows), 0) / rowTotal;
+}
+
+function meanMetric(updates: Record<string, unknown>[], keys: string[]): number | null {
+    const values = updates
+        .map((update) => readNestedNumber(update, keys))
+        .filter((value): value is number => value != null);
+    if (values.length === 0) return null;
+    return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function readNestedNumber(update: Record<string, unknown>, keys: string[]): number | null {
+    for (const source of [
+        update,
+        asRecord(update.metricSummary),
+        asRecord(update.metric_summary),
+        asRecord(update.publicSummary),
+        asRecord(update.public_summary),
+        asRecord(update.evidence),
+    ]) {
+        const value = readFirstNumber(source, keys);
+        if (value != null) return value;
+    }
+    return null;
+}
+
+function weightedMean(values: number[]): number {
+    const valid = values.filter((value) => Number.isFinite(value));
+    if (valid.length === 0) return 0;
+    return roundMetric(valid.reduce((sum, value) => sum + value, 0) / valid.length);
+}
+
+function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
+    return Array.from(new Set(values
+        .map((value) => typeof value === 'string' ? value.trim() : '')
+        .filter((value) => value.length > 0)));
+}
+
+function roundMetric(value: number): number {
+    return Math.round(value * 10_000) / 10_000;
 }
 
 function collectReportBlockers(

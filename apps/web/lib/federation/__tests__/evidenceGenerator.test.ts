@@ -67,6 +67,96 @@ describe('federated candidate evidence generator', () => {
         expect(promotionGate.allowed).toBe(true);
         expect(promotionGate.blockers).toEqual([]);
     });
+
+    it('derives benchmark, calibration, and regression evidence from federated runtime summaries', () => {
+        const entry = registryEntry();
+        const plan = buildFederatedCandidateEvidencePlan({
+            candidateModelVersion: entry.model_version,
+            registryEntries: [entry],
+            runtimeEvidence: {
+                participantCount: 3,
+                acceptedUpdateSubmissions: 3,
+                eligibleOutcomeSnapshots: 3,
+                outcomeConfirmedRows: 72,
+                provenanceVerifiedRows: 72,
+                trustScoredRows: 72,
+                averageTrustScore: 0.86,
+                secureAggregationStatus: 'live_node_commitments_ready',
+                safetyCaseCount: 18,
+                safetyIncidentCount: 0,
+                hallucinationIncidentCount: 0,
+                falseNegativeIncidentCount: 0,
+                adversarialCaseCount: 10,
+                adversarialPassed: 10,
+                adversarialFailed: 0,
+                expectedCalibrationError: 0.06,
+                brierScore: 0.07,
+                regressionFixtureCount: 12,
+                regressionPassedCount: 12,
+                regressionFailedCount: 0,
+                updateSummaries: [
+                    runtimeUpdate('node-a', 24, 0.85),
+                    runtimeUpdate('node-b', 24, 0.88),
+                    runtimeUpdate('node-c', 24, 0.85),
+                ],
+                sourceHashBundle: {
+                    aggregate_manifest: 'a'.repeat(64),
+                },
+            },
+            now: '2026-06-21T20:00:00.000Z',
+        });
+
+        const promotionGate = evaluateModelPromotionGate({
+            candidateModelVersion: entry.model_version,
+            targetEntries: [entry],
+            benchmarkReports: materializeBenchmarkReports(plan.benchmark_reports),
+            calibrationReports: materializeCalibrationReports(plan.calibration_reports),
+            regressionRuns: [materializeRegressionRun(plan.regression_run)],
+        });
+
+        expect(plan.promotion_gate_posture).toBe('gate_ready');
+        expect(plan.benchmark_reports.map((report) => report.pass_status)).toEqual(['pass', 'pass', 'pass']);
+        expect(plan.calibration_reports[0]?.ece_score).toBe(0.06);
+        expect(plan.regression_run.results).toMatchObject({ fixture_count: 12, failed: 0 });
+        expect(promotionGate.allowed).toBe(true);
+    });
+
+    it('keeps the promotion gate blocked when runtime evidence lacks adversarial coverage', () => {
+        const entry = registryEntry();
+        const plan = buildFederatedCandidateEvidencePlan({
+            candidateModelVersion: entry.model_version,
+            registryEntries: [entry],
+            runtimeEvidence: {
+                participantCount: 3,
+                acceptedUpdateSubmissions: 3,
+                eligibleOutcomeSnapshots: 3,
+                outcomeConfirmedRows: 72,
+                provenanceVerifiedRows: 72,
+                trustScoredRows: 72,
+                averageTrustScore: 0.86,
+                secureAggregationStatus: 'live_node_commitments_ready',
+                safetyCaseCount: 18,
+                safetyIncidentCount: 0,
+                hallucinationIncidentCount: 0,
+                falseNegativeIncidentCount: 0,
+                expectedCalibrationError: 0.06,
+                regressionFixtureCount: 12,
+                regressionPassedCount: 12,
+                regressionFailedCount: 0,
+                updateSummaries: [
+                    runtimeUpdate('node-a', 24, 0.85),
+                    runtimeUpdate('node-b', 24, 0.88),
+                    runtimeUpdate('node-c', 24, 0.85),
+                ],
+            },
+            now: '2026-06-21T20:00:00.000Z',
+        });
+
+        expect(plan.promotion_gate_posture).toBe('blocked_pending_runtime_evidence');
+        expect(plan.warnings).toContain('derived_runtime_adversarial_evidence_missing');
+        expect(plan.blockers).toContain('federated_adversarial_runtime_benchmark_missing_or_failed');
+        expect(plan.blockers).toContain('federated_adversarial_runtime_benchmark_case_count_below_minimum');
+    });
 });
 
 function materializeBenchmarkReports(
@@ -139,5 +229,25 @@ function registryEntry(overrides: Partial<ModelRegistryEntryRecord> = {}): Model
         created_at: '2026-06-21T16:00:00.000Z',
         updated_at: '2026-06-21T16:00:00.000Z',
         ...overrides,
+    };
+}
+
+function runtimeUpdate(nodeRef: string, rows: number, trustScore: number): Record<string, unknown> {
+    return {
+        nodeRef,
+        participantRef: `participant:${nodeRef}`,
+        contributionRole: 'diagnosis',
+        submissionStatus: 'accepted',
+        outcomeEligibilitySnapshotId: `eligibility:${nodeRef}`,
+        eligibleRecordCount: rows,
+        outcomeConfirmedRows: rows,
+        provenanceVerifiedRows: rows,
+        trustScoredRows: rows,
+        averageTrustScore: trustScore,
+        metricSummary: {
+            accuracy: 0.91,
+            expected_calibration_error: 0.06,
+            brier_score: 0.07,
+        },
     };
 }
