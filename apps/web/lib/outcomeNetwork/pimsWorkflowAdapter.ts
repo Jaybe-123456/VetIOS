@@ -119,17 +119,25 @@ function buildConnectorPayload(input: {
     };
 
     switch (input.connectorType) {
-        case 'lab_result':
+        case 'lab_result': {
+            const abnormalFlag = readText(input.payload, ['abnormal_flag', 'flag', 'interpretation']);
+            const criticalFlag = readText(input.payload, ['critical_flag', 'panic_flag']);
+            const abnormal = readBoolean(input.payload, ['abnormal', 'is_abnormal', 'flagged'])
+                ?? inferLabAbnormalFlag(abnormalFlag);
+            const critical = readBoolean(input.payload, ['critical', 'is_critical'])
+                ?? inferLabCriticalFlag(criticalFlag ?? abnormalFlag);
             return {
                 ...basePayload,
                 analyte: readText(input.payload, ['analyte', 'test_name', 'panel_name', 'panel', 'name']),
                 value: readScalar(input.payload, ['value', 'result_value', 'result']),
                 units: readText(input.payload, ['units', 'unit']),
                 reference_range: readText(input.payload, ['reference_range', 'range']),
-                abnormal: readBoolean(input.payload, ['abnormal', 'is_abnormal', 'flagged']),
-                critical: readBoolean(input.payload, ['critical', 'is_critical']),
+                abnormal,
+                critical,
+                abnormal_flag: abnormalFlag,
                 primary_condition_class: readText(input.payload, ['primary_condition_class', 'condition_class', 'diagnosis_class']),
             };
+        }
         case 'prescription_refill':
             return {
                 ...basePayload,
@@ -179,6 +187,23 @@ function inferRecheckStatus(eventType: string | null, payload: Record<string, un
     if (hasAny(text, ['complete', 'completed', 'checked out', 'finished'])) return 'completed';
     if (hasAny(text, ['cancel', 'cancelled', 'canceled'])) return 'cancelled';
     return 'scheduled';
+}
+
+function inferLabAbnormalFlag(flag: string | null): boolean | null {
+    if (!flag) return null;
+    const normalized = flag.trim().toLowerCase();
+    if (['h', 'l', 'hh', 'll', 'high', 'low', 'abnormal', 'positive', 'detected', 'critical'].includes(normalized)) {
+        return true;
+    }
+    if (['n', 'normal', 'negative', 'not detected', 'none'].includes(normalized)) return false;
+    return null;
+}
+
+function inferLabCriticalFlag(flag: string | null): boolean | null {
+    if (!flag) return null;
+    const normalized = flag.trim().toLowerCase();
+    if (['hh', 'll', 'critical', 'panic'].includes(normalized)) return true;
+    return null;
 }
 
 function inferRefillStatus(eventType: string | null, payload: Record<string, unknown>): string {
