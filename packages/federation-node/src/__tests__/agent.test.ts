@@ -3,6 +3,9 @@ import {
     assessLearningRecordEligibility,
     buildMaskedUpdateCommitment,
     buildOutcomeEligibilitySnapshotDraft,
+    buildTrainedMaskedUpdateCommitment,
+    trainLocalFederatedTask,
+    VetiosFederationNodeAgent,
     type FederationRoundTask,
     type LocalClinicalLearningRecord,
 } from '../index.ts';
@@ -63,6 +66,54 @@ assert.match(commitment.payload_commitment_hash, /^[a-f0-9]{64}$/);
 assert.match(commitment.mask_commitment_hash, /^[a-f0-9]{64}$/);
 assert.equal(commitment.masked_update_summary.raw_delta_included, false);
 assert.equal(commitment.evidence.local_training_data_shared, false);
+
+const trained = trainLocalFederatedTask({
+    task,
+    records,
+    tenantId: 'tenant-a',
+    federationKey: 'one_health_amr',
+    partnerRef: 'clinic-a',
+});
+assert.equal(trained.dataset.snapshot_draft.eligibility_status, 'eligible');
+assert.equal(trained.delta.task_type, 'diagnosis_delta');
+assert.equal(trained.delta.contribution_role, 'diagnosis');
+assert.equal(trained.delta.eligible_record_count, 20);
+assert.match(trained.delta.delta_digest, /^[a-f0-9]{64}$/);
+assert.ok(trained.delta.feature_count > 0);
+assert.ok(trained.delta.delta_norm > 0);
+assert.equal(trained.delta.evidence.raw_records_shared, false);
+
+const trainedCommitment = buildTrainedMaskedUpdateCommitment({
+    task,
+    dataset: trained.dataset,
+    delta: trained.delta,
+    outcomeEligibilitySnapshotId: 'eligibility-001',
+    secret: 'local-node-secret',
+    requestId: '22222222-2222-4222-8222-222222222222',
+});
+assert.equal(trainedCommitment.contribution_role, 'diagnosis');
+assert.match(trainedCommitment.payload_commitment_hash, /^[a-f0-9]{64}$/);
+assert.equal(trainedCommitment.masked_update_summary.raw_delta_included, false);
+assert.equal(trainedCommitment.masked_update_summary.raw_records_included, false);
+assert.equal(trainedCommitment.masked_update_summary.delta_digest, trained.delta.delta_digest);
+assert.equal(trainedCommitment.evidence.model_delta_materialized, true);
+assert.equal(trainedCommitment.evidence.raw_model_delta_shared, false);
+
+const agent = new VetiosFederationNodeAgent({
+    client: {
+        pullTask: async () => ({}),
+        submitUpdate: async () => ({ accepted: true }),
+    } as never,
+    records,
+    secret: 'local-node-secret',
+    tenantId: 'tenant-a',
+    federationKey: 'one_health_amr',
+    partnerRef: 'clinic-a',
+    outcomeEligibilitySnapshotId: 'eligibility-001',
+});
+const agentPrepared = agent.trainTask(task);
+assert.equal(agentPrepared.delta.delta_digest, trained.delta.delta_digest);
+assert.equal(agentPrepared.commitment.evidence.local_training_data_shared, false);
 
 const blocked = assessLearningRecordEligibility({
     local_record_id: 'blocked',

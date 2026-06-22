@@ -19,9 +19,65 @@ Primary package responsibilities:
 - Normalize local veterinary records into a de-identified learning view.
 - Score whether local records are eligible for federation.
 - Produce site-level eligibility snapshots for VetIOS federation activation.
-- Build task-specific masked update commitment payloads.
+- Train deterministic local task deltas over eligible outcome-confirmed records.
+- Build task-specific masked model-delta commitment payloads.
 - Call the VetIOS federation node API for heartbeat, task pull, and update
   submission.
 
-This package is intentionally not a trainer yet. It is the node contract that a
-local trainer will sit behind.
+The local runner is intentionally conservative: raw records and raw model
+deltas stay on the clinic/lab node. VetIOS receives eligibility summaries,
+record digests, aggregate task metrics, and masked delta commitments only.
+
+Minimal local execution flow:
+
+```ts
+import {
+  VetiosFederationNodeAgent,
+  VetiosFederationNodeClient,
+} from '@vetios/federation-node';
+
+const client = new VetiosFederationNodeClient({
+  baseUrl: process.env.VETIOS_BASE_URL!,
+  machineToken: process.env.VETIOS_MACHINE_TOKEN!,
+  federationKey: 'one_health_amr',
+  nodeRef: 'clinic-a-node',
+  partnerRef: 'clinic-a',
+});
+
+const agent = new VetiosFederationNodeAgent({
+  client,
+  records: localOutcomeConfirmedRecords,
+  secret: process.env.VETIOS_NODE_SECRET!,
+  tenantId: process.env.VETIOS_TENANT_ID!,
+  federationKey: 'one_health_amr',
+  partnerRef: 'clinic-a',
+  outcomeEligibilitySnapshotId: 'snapshot-id-from-vetios',
+});
+
+const { commitment } = agent.trainTask(taskFromVetios);
+await client.submitUpdate(taskFromVetios.federation_round_id, commitment);
+```
+
+CLI dry run:
+
+```bash
+vetios-federation-node \
+  --records records.json \
+  --task task.json \
+  --tenant-id tenant-a \
+  --secret "$VETIOS_NODE_SECRET" \
+  --out commitment.json
+```
+
+CLI submit mode:
+
+```bash
+vetios-federation-node \
+  --records records.json \
+  --task task.json \
+  --tenant-id tenant-a \
+  --base-url "$VETIOS_BASE_URL" \
+  --machine-token "$VETIOS_MACHINE_TOKEN" \
+  --secret "$VETIOS_NODE_SECRET" \
+  --submit
+```

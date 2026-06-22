@@ -137,6 +137,47 @@ export interface MaskedUpdateCommitment {
     evidence: Record<string, unknown>;
 }
 
+export interface LocalOutcomeDataset {
+    tenant_id: string;
+    federation_key: string;
+    partner_ref: string | null;
+    records: LocalClinicalLearningRecord[];
+    eligibilities: LearningRecordEligibility[];
+    eligible_records: LearningRecordEligibility[];
+    snapshot_draft: FederatedOutcomeEligibilitySnapshotDraft;
+    record_digest: string;
+    policy_hash: string;
+}
+
+export interface LocalFederatedModelDelta {
+    schema: 'vetios_local_model_delta_v1';
+    task_type: FederationNodeTaskType;
+    contribution_role: FederatedUpdateRole;
+    eligible_record_count: number;
+    training_record_count: number;
+    holdout_record_count: number;
+    feature_count: number;
+    label_count: number;
+    record_digest: string;
+    delta_digest: string;
+    delta_norm: number;
+    feature_weights: Record<string, number>;
+    label_distribution: Record<string, number>;
+    species_distribution: Record<string, number>;
+    metric_summary: {
+        local_accuracy: number | null;
+        majority_label: string | null;
+        holdout_coverage: number;
+        average_trust_score: number;
+        calibration_proxy: number | null;
+    };
+    evidence: Record<string, unknown>;
+}
+
+export interface TrainedMaskedUpdateCommitment extends MaskedUpdateCommitment {
+    local_delta: LocalFederatedModelDelta;
+}
+
 export interface VetiosFederationNodeClientOptions {
     baseUrl: string;
     machineToken: string;
@@ -144,6 +185,20 @@ export interface VetiosFederationNodeClientOptions {
     nodeRef: string;
     partnerRef?: string | null;
     fetchImpl?: typeof fetch;
+}
+
+export interface FederationNodeAgentOptions {
+    client: VetiosFederationNodeClient;
+    records: LocalClinicalLearningRecord[];
+    secret: string;
+    tenantId: string;
+    federationKey: string;
+    partnerRef?: string | null;
+    policy?: Partial<EligibilityPolicy>;
+    minimumRequiredRows?: number;
+    minimumProvenanceRows?: number;
+    minimumTrustScoredRows?: number;
+    outcomeEligibilitySnapshotId?: string | null;
 }
 
 const DEFAULT_POLICY: EligibilityPolicy = {
@@ -269,6 +324,154 @@ export function buildOutcomeEligibilitySnapshotDraft(input: {
     };
 }
 
+export function buildLocalOutcomeDataset(input: {
+    tenantId: string;
+    federationKey: string;
+    partnerRef?: string | null;
+    records: LocalClinicalLearningRecord[];
+    policy?: Partial<EligibilityPolicy>;
+    minimumRequiredRows?: number;
+    minimumProvenanceRows?: number;
+    minimumTrustScoredRows?: number;
+}): LocalOutcomeDataset {
+    const policy = { ...DEFAULT_POLICY, ...(input.policy ?? {}) };
+    const eligibilities = input.records.map((record) => assessLearningRecordEligibility(record, policy));
+    const eligibleRecords = eligibilities.filter((row) => row.eligible_for_federation);
+    const snapshotDraft = buildOutcomeEligibilitySnapshotDraft({
+        tenantId: input.tenantId,
+        federationKey: input.federationKey,
+        partnerRef: input.partnerRef,
+        records: input.records,
+        policy,
+        minimumRequiredRows: input.minimumRequiredRows,
+        minimumProvenanceRows: input.minimumProvenanceRows,
+        minimumTrustScoredRows: input.minimumTrustScoredRows,
+    });
+
+    return {
+        tenant_id: input.tenantId,
+        federation_key: input.federationKey,
+        partner_ref: input.partnerRef ?? null,
+        records: input.records,
+        eligibilities,
+        eligible_records: eligibleRecords,
+        snapshot_draft: snapshotDraft,
+        record_digest: snapshotDraft.source_record_digest,
+        policy_hash: stableHash(policy),
+    };
+}
+
+export function trainLocalFederatedTask(input: {
+    task: FederationRoundTask;
+    records: LocalClinicalLearningRecord[];
+    tenantId: string;
+    federationKey: string;
+    partnerRef?: string | null;
+    policy?: Partial<EligibilityPolicy>;
+    minimumRequiredRows?: number;
+    minimumProvenanceRows?: number;
+    minimumTrustScoredRows?: number;
+}): {
+    dataset: LocalOutcomeDataset;
+    delta: LocalFederatedModelDelta;
+} {
+    const dataset = buildLocalOutcomeDataset({
+        tenantId: input.tenantId,
+        federationKey: input.federationKey,
+        partnerRef: input.partnerRef,
+        records: input.records,
+        policy: input.policy,
+        minimumRequiredRows: input.minimumRequiredRows,
+        minimumProvenanceRows: input.minimumProvenanceRows,
+        minimumTrustScoredRows: input.minimumTrustScoredRows,
+    });
+    const delta = buildLocalFederatedModelDelta(input.task, dataset);
+    return { dataset, delta };
+}
+
+export function buildTrainedMaskedUpdateCommitment(input: {
+    task: FederationRoundTask;
+    dataset: LocalOutcomeDataset;
+    delta: LocalFederatedModelDelta;
+    outcomeEligibilitySnapshotId?: string | null;
+    secret: string;
+    requestId?: string;
+}): TrainedMaskedUpdateCommitment {
+    const payloadCommitmentHash = stableHash({
+        federation_round_id: input.task.federation_round_id,
+        round_node_task_id: input.task.id,
+        contribution_role: input.delta.contribution_role,
+        record_digest: input.delta.record_digest,
+        delta_digest: input.delta.delta_digest,
+        plan_hash: input.task.plan_hash,
+        trainer_schema: input.delta.schema,
+    });
+    const maskNonce = stableHash({
+        node_ref: input.task.node_ref,
+        task_id: input.task.id,
+        secret_commitment: stableHash(input.secret),
+        delta_digest: input.delta.delta_digest,
+    });
+    const maskCommitmentHash = stableHash({
+        payload_commitment_hash: payloadCommitmentHash,
+        mask_nonce: maskNonce,
+        secure_aggregation_config: input.task.secure_aggregation_config ?? {},
+    });
+    const signedPayloadHash = stableHash({
+        payload_commitment_hash: payloadCommitmentHash,
+        mask_commitment_hash: maskCommitmentHash,
+        evaluation_digest: stableHash(input.delta.metric_summary),
+    });
+
+    return {
+        request_id: input.requestId ?? randomUUID(),
+        round_node_task_id: input.task.id,
+        outcome_eligibility_snapshot_id: input.outcomeEligibilitySnapshotId ?? null,
+        node_ref: input.task.node_ref,
+        partner_ref: input.task.partner_ref,
+        contribution_role: input.delta.contribution_role,
+        payload_commitment_hash: payloadCommitmentHash,
+        mask_commitment_hash: maskCommitmentHash,
+        signed_payload_hash: signedPayloadHash,
+        signature_algorithm: 'sha256-hmac-simulation',
+        signature_hash: stableHash(`${signedPayloadHash}:${input.secret}`),
+        signing_key_fingerprint: stableHash(input.secret).slice(0, 32),
+        masked_update_summary: {
+            schema: 'vetios_masked_model_delta_commitment_v1',
+            local_delta_schema: input.delta.schema,
+            contribution_role: input.delta.contribution_role,
+            eligible_record_count: input.delta.eligible_record_count,
+            feature_count: input.delta.feature_count,
+            label_count: input.delta.label_count,
+            delta_digest: input.delta.delta_digest,
+            delta_norm: input.delta.delta_norm,
+            record_digest: input.delta.record_digest,
+            metric_summary: input.delta.metric_summary,
+            raw_delta_included: false,
+            raw_records_included: false,
+        },
+        public_summary: {
+            species_counts: input.delta.species_distribution,
+            eligible_record_count: input.delta.eligible_record_count,
+            average_trust_score: input.delta.metric_summary.average_trust_score,
+            contribution_role: input.delta.contribution_role,
+            task_type: input.delta.task_type,
+        },
+        evidence: {
+            generated_by: '@vetios/federation-node',
+            local_runner: 'deterministic_outcome_delta_v1',
+            task_plan_hash: input.task.plan_hash,
+            dataset_policy_hash: input.dataset.policy_hash,
+            outcome_eligibility_status: input.dataset.snapshot_draft.eligibility_status,
+            secure_aggregation_boundary: 'masked_delta_commitments_no_raw_delta',
+            model_delta_materialized: true,
+            local_training_data_shared: false,
+            raw_model_delta_shared: false,
+        },
+        local_delta: input.delta,
+    };
+}
+
 export function buildMaskedUpdateCommitment(input: {
     task: FederationRoundTask;
     eligibleRecords: LearningRecordEligibility[];
@@ -330,6 +533,68 @@ export function buildMaskedUpdateCommitment(input: {
             local_training_data_shared: false,
         },
     };
+}
+
+export class VetiosFederationNodeAgent {
+    private readonly options: FederationNodeAgentOptions;
+
+    constructor(options: FederationNodeAgentOptions) {
+        this.options = options;
+    }
+
+    buildDataset(): LocalOutcomeDataset {
+        return buildLocalOutcomeDataset({
+            tenantId: this.options.tenantId,
+            federationKey: this.options.federationKey,
+            partnerRef: this.options.partnerRef,
+            records: this.options.records,
+            policy: this.options.policy,
+            minimumRequiredRows: this.options.minimumRequiredRows,
+            minimumProvenanceRows: this.options.minimumProvenanceRows,
+            minimumTrustScoredRows: this.options.minimumTrustScoredRows,
+        });
+    }
+
+    trainTask(task: FederationRoundTask): {
+        dataset: LocalOutcomeDataset;
+        delta: LocalFederatedModelDelta;
+        commitment: TrainedMaskedUpdateCommitment;
+    } {
+        const { dataset, delta } = trainLocalFederatedTask({
+            task,
+            records: this.options.records,
+            tenantId: this.options.tenantId,
+            federationKey: this.options.federationKey,
+            partnerRef: this.options.partnerRef,
+            policy: this.options.policy,
+            minimumRequiredRows: this.options.minimumRequiredRows,
+            minimumProvenanceRows: this.options.minimumProvenanceRows,
+            minimumTrustScoredRows: this.options.minimumTrustScoredRows,
+        });
+        const commitment = buildTrainedMaskedUpdateCommitment({
+            task,
+            dataset,
+            delta,
+            outcomeEligibilitySnapshotId: this.options.outcomeEligibilitySnapshotId,
+            secret: this.options.secret,
+        });
+        return { dataset, delta, commitment };
+    }
+
+    async runTask(task: FederationRoundTask): Promise<{
+        dataset: LocalOutcomeDataset;
+        delta: LocalFederatedModelDelta;
+        commitment: TrainedMaskedUpdateCommitment;
+        submission: unknown;
+    }> {
+        await this.options.client.pullTask(task.federation_round_id, task.id);
+        const result = this.trainTask(task);
+        const submission = await this.options.client.submitUpdate(task.federation_round_id, result.commitment);
+        return {
+            ...result,
+            submission,
+        };
+    }
 }
 
 export class VetiosFederationNodeClient {
@@ -399,6 +664,134 @@ export class VetiosFederationNodeClient {
             'Content-Type': 'application/json',
         };
     }
+}
+
+function buildLocalFederatedModelDelta(
+    task: FederationRoundTask,
+    dataset: LocalOutcomeDataset,
+): LocalFederatedModelDelta {
+    const eligibleIds = new Set(dataset.eligible_records.map((row) => row.local_record_id));
+    const eligibleSourceRecords = dataset.records.filter((record) => eligibleIds.has(record.local_record_id));
+    const eligibleById = new Map(dataset.eligible_records.map((row) => [row.local_record_id, row]));
+    const examples = eligibleSourceRecords.map((record) => ({
+        record,
+        eligibility: eligibleById.get(record.local_record_id),
+        features: extractModelFeatures(record),
+        label: labelForTask(task.task_type, record),
+        hash: stableHash({
+            local_record_id: record.local_record_id,
+            task_type: task.task_type,
+            record_hash: eligibleById.get(record.local_record_id)?.record_hash,
+        }),
+    })).filter((example) => example.eligibility != null && example.features.length > 0 && example.label != null);
+
+    const trainingExamples = examples.filter((example) => holdoutBucket(example.hash) !== 0);
+    const holdoutExamples = examples.filter((example) => holdoutBucket(example.hash) === 0);
+    const trainingSet = trainingExamples.length > 0 ? trainingExamples : examples;
+    const labelDistribution = countBy(examples.map((example) => example.label ?? 'unknown'));
+    const speciesDistribution = countBy(examples.map((example) => normalizeText(example.record.species) ?? 'unknown'));
+    const featureWeights = buildFeatureWeights(task.task_type, trainingSet.map((example) => ({
+        features: example.features,
+        label: example.label ?? 'unknown',
+        trustScore: example.eligibility?.trust_score ?? 0,
+    })));
+    const majorityLabel = majorityValue(trainingSet.map((example) => example.label ?? 'unknown'));
+    const localAccuracy = holdoutExamples.length > 0 && majorityLabel
+        ? roundScore(holdoutExamples.filter((example) => example.label === majorityLabel).length / holdoutExamples.length)
+        : null;
+    const deltaDigest = stableHash({
+        schema: 'vetios_local_model_delta_v1',
+        task_type: task.task_type,
+        plan_hash: task.plan_hash,
+        record_digest: dataset.record_digest,
+        feature_weights: featureWeights,
+        label_distribution: labelDistribution,
+    });
+
+    return {
+        schema: 'vetios_local_model_delta_v1',
+        task_type: task.task_type,
+        contribution_role: contributionRoleForTaskType(task.task_type),
+        eligible_record_count: dataset.eligible_records.length,
+        training_record_count: trainingSet.length,
+        holdout_record_count: holdoutExamples.length,
+        feature_count: Object.keys(featureWeights).length,
+        label_count: Object.keys(labelDistribution).length,
+        record_digest: dataset.record_digest,
+        delta_digest: deltaDigest,
+        delta_norm: vectorNorm(Object.values(featureWeights)),
+        feature_weights: featureWeights,
+        label_distribution: labelDistribution,
+        species_distribution: speciesDistribution,
+        metric_summary: {
+            local_accuracy: localAccuracy,
+            majority_label: majorityLabel,
+            holdout_coverage: examples.length > 0 ? roundScore(holdoutExamples.length / examples.length) : 0,
+            average_trust_score: average(dataset.eligible_records.map((record) => record.trust_score)),
+            calibration_proxy: localAccuracy == null ? null : roundScore(Math.abs(localAccuracy - average(dataset.eligible_records.map((record) => record.trust_score)))),
+        },
+        evidence: {
+            generated_by: '@vetios/federation-node',
+            local_runner: 'deterministic_outcome_delta_v1',
+            task_plan_hash: task.plan_hash,
+            raw_records_shared: false,
+            raw_delta_shared: false,
+            eligible_record_count: dataset.eligible_records.length,
+            source_record_digest: dataset.record_digest,
+        },
+    };
+}
+
+function buildFeatureWeights(
+    taskType: FederationNodeTaskType,
+    examples: Array<{ features: string[]; label: string; trustScore: number }>,
+): Record<string, number> {
+    const weights: Record<string, number> = {};
+    for (const example of examples) {
+        const labelPrefix = taskType === 'support_summary' || taskType === 'secure_aggregation_key'
+            ? 'support'
+            : example.label;
+        const contributionWeight = Math.max(0.1, example.trustScore);
+        for (const feature of example.features) {
+            const key = `${labelPrefix}::${feature}`;
+            weights[key] = roundScore((weights[key] ?? 0) + contributionWeight);
+        }
+    }
+    return Object.fromEntries(Object.entries(weights).sort(([left], [right]) => left.localeCompare(right)));
+}
+
+function extractModelFeatures(record: LocalClinicalLearningRecord): string[] {
+    const features = [
+        normalizeText(record.species) ? `species:${normalizeText(record.species)}` : null,
+        normalizeText(record.breed) ? `breed:${normalizeText(record.breed)}` : null,
+        normalizeText(record.sex) ? `sex:${normalizeText(record.sex)}` : null,
+        finiteNumber(record.age_years) != null ? `age_bucket:${bucketNumber(record.age_years, [1, 3, 7, 12])}` : null,
+        finiteNumber(record.duration_days) != null ? `duration_bucket:${bucketNumber(record.duration_days, [1, 3, 7, 14, 30])}` : null,
+        record.amr_related ? 'amr_related:true' : null,
+        record.culture_collected ? 'culture_collected:true' : null,
+        ...normalizeList(record.signs).map((sign) => `sign:${sign}`),
+        ...Object.keys(normalizeRecord(record.labs)).sort().map((key) => `lab:${normalizeText(key) ?? key}`),
+        ...Object.keys(normalizeRecord(record.imaging)).sort().map((key) => `imaging:${normalizeText(key) ?? key}`),
+        ...Object.keys(normalizeRecord(record.treatment)).sort().map((key) => `treatment:${normalizeText(key) ?? key}`),
+    ];
+    return features.filter((feature): feature is string => feature != null);
+}
+
+function labelForTask(taskType: FederationNodeTaskType, record: LocalClinicalLearningRecord): string | null {
+    if (taskType === 'severity_delta') return inferSeverityLabel(record);
+    if (taskType === 'support_summary' || taskType === 'secure_aggregation_key' || taskType === 'unmask_share') {
+        return record.amr_related || record.culture_collected ? 'amr_support' : 'clinical_support';
+    }
+    return normalizeText(record.diagnosis);
+}
+
+function inferSeverityLabel(record: LocalClinicalLearningRecord): string {
+    const signs = normalizeList(record.signs);
+    const outcome = normalizeText(record.outcome);
+    if (signs.some((sign) => sign.includes('collapse') || sign.includes('seizure') || sign.includes('dyspnea'))) return 'emergency';
+    if (outcome?.includes('death') || outcome?.includes('euthan')) return 'critical';
+    if (signs.some((sign) => sign.includes('fever') || sign.includes('lethargy') || sign.includes('anorexia'))) return 'urgent';
+    return 'routine';
 }
 
 function canonicalizeRecord(record: LocalClinicalLearningRecord): Record<string, unknown> {
@@ -489,6 +882,19 @@ function average(values: number[]): number {
     return roundScore(values.reduce((sum, value) => sum + value, 0) / values.length);
 }
 
+function majorityValue(values: string[]): string | null {
+    const counts = countBy(values);
+    const [label] = Object.entries(counts).sort((left, right) => {
+        const countDelta = right[1] - left[1];
+        return countDelta !== 0 ? countDelta : left[0].localeCompare(right[0]);
+    })[0] ?? [];
+    return label ?? null;
+}
+
+function vectorNorm(values: number[]): number {
+    return roundScore(Math.sqrt(values.reduce((sum, value) => sum + value * value, 0)));
+}
+
 function roundScore(value: number): number {
     return Math.round(value * 10_000) / 10_000;
 }
@@ -526,4 +932,19 @@ function normalizeList(value: string[] | null | undefined): string[] {
 
 function finiteNumber(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function bucketNumber(value: unknown, thresholds: number[]): string {
+    const numeric = finiteNumber(value);
+    if (numeric == null) return 'unknown';
+    for (const threshold of thresholds) {
+        if (numeric <= threshold) return `lte_${threshold}`;
+    }
+    return `gt_${thresholds[thresholds.length - 1] ?? 0}`;
+}
+
+function holdoutBucket(hash: string): number {
+    const prefix = hash.slice(0, 8);
+    const parsed = Number.parseInt(prefix, 16);
+    return Number.isFinite(parsed) ? parsed % 5 : 0;
 }

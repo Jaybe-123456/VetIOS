@@ -4,8 +4,21 @@
     "private": true,
     "license": "UNLICENSED",
     "type": "module",
-    "main": "./src/index.ts",
-    "types": "./src/index.ts",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        }
+    },
+    "bin": {
+        "vetios-federation-node": "./dist/cli.js"
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ],
     "scripts": {
         "typecheck": "tsc --noEmit",
         "test": "node --experimental-strip-types src/__tests__/agent.test.ts",
