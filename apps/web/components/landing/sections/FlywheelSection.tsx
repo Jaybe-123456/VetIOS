@@ -1,8 +1,15 @@
 'use client';
 
+import { useState } from 'react';
+import { motion } from 'framer-motion';
+import { flywheelStages } from '../data';
 import { Panel, Reveal } from '../shared';
+import { joinClasses } from '../utils';
 
 export default function FlywheelSection() {
+    const [activeStage, setActiveStage] = useState(0);
+    const selectedStage = flywheelStages[activeStage] ?? flywheelStages[0];
+
     return (
         <section className="landing-section">
             <Reveal>
@@ -20,6 +27,20 @@ export default function FlywheelSection() {
                     <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(21,230,195,0.1),transparent_60%)]" />
                     <div className="absolute left-1/2 top-1/2 hidden h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/6 lg:block" />
                     <div className="absolute left-1/2 top-1/2 hidden h-[280px] w-[280px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#38DCC6]/18 lg:block" />
+                    <motion.div
+                        className="absolute left-1/2 top-1/2 hidden h-[420px] w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-full lg:block"
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 12, repeat: Infinity, ease: 'linear' }}
+                    >
+                        <div className="absolute left-1/2 top-0 h-3 w-3 -translate-x-1/2 rounded-full bg-[#7CFF4E] shadow-[0_0_24px_rgba(124,255,78,0.95)]" />
+                    </motion.div>
+                    <motion.div
+                        className="absolute left-1/2 top-1/2 hidden h-[280px] w-[280px] -translate-x-1/2 -translate-y-1/2 rounded-full lg:block"
+                        animate={{ rotate: -360 }}
+                        transition={{ duration: 9, repeat: Infinity, ease: 'linear' }}
+                    >
+                        <div className="absolute left-1/2 top-0 h-2.5 w-2.5 -translate-x-1/2 rounded-full bg-[#38DCC6] shadow-[0_0_22px_rgba(56,220,198,0.9)]" />
+                    </motion.div>
 
                     <div className="relative hidden min-h-[440px] lg:block">
                         <div className="absolute left-1/2 top-1/2 h-40 w-40 -translate-x-1/2 -translate-y-1/2 rounded-full border border-[#7CFF4E]/25 bg-[#0B1117] shadow-[0_0_80px_rgba(21,230,195,0.12)]">
@@ -33,21 +54,33 @@ export default function FlywheelSection() {
                             </div>
                         </div>
 
-                        {[
-                            { title: 'Inference', left: '11%', top: '39%' },
-                            { title: 'Outcome', left: '36%', top: '11%' },
-                            { title: 'Simulation', left: '69%', top: '18%' },
-                            { title: 'Improved Intelligence', left: '77%', top: '57%' },
-                        ].map((item) => (
-                            <div
+                        {flywheelStages.map((item, index) => (
+                            <button
                                 key={item.title}
-                                className="absolute h-24 w-44 -translate-x-1/2 -translate-y-1/2 rounded-[26px] border border-white/10 bg-[#0F151D]/92 p-4 shadow-[0_18px_40px_rgba(0,0,0,0.28)]"
+                                type="button"
+                                onClick={() => setActiveStage(index)}
+                                className={joinClasses(
+                                    'absolute h-24 w-44 -translate-x-1/2 -translate-y-1/2 rounded-[26px] border p-4 text-left shadow-[0_18px_40px_rgba(0,0,0,0.28)] transition-all duration-300',
+                                    index === activeStage
+                                        ? 'border-[#7CFF4E]/35 bg-[#102016]/94 shadow-[0_0_40px_rgba(124,255,78,0.12)]'
+                                        : 'border-white/10 bg-[#0F151D]/92 hover:border-[#38DCC6]/28',
+                                )}
                                 style={{ left: item.left, top: item.top }}
                             >
                                 <div className="text-[11px] uppercase tracking-[0.24em] text-[#9AE4D1]">loop stage</div>
                                 <div className="mt-3 text-lg font-medium text-white">{item.title}</div>
-                            </div>
+                            </button>
                         ))}
+
+                        <motion.div
+                            key={selectedStage.title}
+                            className="absolute bottom-6 left-1/2 w-[420px] -translate-x-1/2 rounded-[24px] border border-white/10 bg-black/35 p-5 backdrop-blur-md"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                        >
+                            <div className="text-[10px] uppercase tracking-[0.22em] text-[#7CFF4E]">{selectedStage.metric}</div>
+                            <p className="mt-2 text-sm leading-6 text-white/66">{selectedStage.detail}</p>
+                        </motion.div>
                     </div>
 
                     <div className="relative grid gap-4 lg:hidden">
@@ -57,14 +90,22 @@ export default function FlywheelSection() {
                                 <div className="mt-2 px-3 text-sm font-medium leading-5 text-white">Improved Intelligence</div>
                             </div>
                         </div>
-                        {['Inference', 'Outcome', 'Simulation', 'Improved Intelligence'].map((item) => (
-                            <div
-                                key={item}
-                                className="rounded-[24px] border border-white/10 bg-[#0F151D]/92 p-5"
+                        {flywheelStages.map((item, index) => (
+                            <button
+                                key={item.title}
+                                type="button"
+                                onClick={() => setActiveStage(index)}
+                                className={joinClasses(
+                                    'rounded-[24px] border p-5 text-left transition-all',
+                                    index === activeStage ? 'border-[#7CFF4E]/35 bg-[#102016]/94' : 'border-white/10 bg-[#0F151D]/92',
+                                )}
                             >
                                 <div className="text-[11px] uppercase tracking-[0.24em] text-[#9AE4D1]">loop stage</div>
-                                <div className="mt-2 text-xl font-medium text-white">{item}</div>
-                            </div>
+                                <div className="mt-2 text-xl font-medium text-white">{item.title}</div>
+                                {index === activeStage && (
+                                    <p className="mt-3 text-sm leading-6 text-white/60">{item.detail}</p>
+                                )}
+                            </button>
                         ))}
                     </div>
                 </Panel>

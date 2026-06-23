@@ -1,9 +1,28 @@
 'use client';
 
-import { interfaceLogs, systemMetrics } from '../data';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { interfaceLogs, interfaceTabs, systemMetrics } from '../data';
 import { Panel, Reveal, SectionHeader } from '../shared';
+import { joinClasses } from '../utils';
 
 export default function InterfacePreviewSection() {
+    const [activeTab, setActiveTab] = useState<(typeof interfaceTabs)[number]['id']>('json');
+    const [visibleLogCount, setVisibleLogCount] = useState(3);
+    const logRef = useRef<HTMLDivElement | null>(null);
+    const activeCode = interfaceTabs.find((tab) => tab.id === activeTab) ?? interfaceTabs[0];
+
+    useEffect(() => {
+        const interval = window.setInterval(() => {
+            setVisibleLogCount((count) => (count >= interfaceLogs.length ? 3 : count + 1));
+        }, 900);
+        return () => window.clearInterval(interval);
+    }, []);
+
+    useEffect(() => {
+        logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: 'smooth' });
+    }, [visibleLogCount]);
+
     return (
         <section id="system" className="landing-section scroll-mt-28">
             <Reveal>
@@ -29,36 +48,36 @@ export default function InterfacePreviewSection() {
                         <div className="space-y-4">
                             <Panel className="rounded-[28px] border-white/8 bg-[#0B1117]/92 p-5">
                                 <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                                    {['case.input.json', 'runtime.trace', 'policy.guard'].map((tab, index) => (
-                                        <div
-                                            key={tab}
-                                            className={
-                                                index === 0
-                                                    ? 'shrink-0 rounded-full border border-[#38DCC6]/28 bg-[#38DCC6]/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#B9FFF0] sm:text-[11px] sm:tracking-[0.18em]'
-                                                    : 'shrink-0 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-white/46 sm:text-[11px] sm:tracking-[0.18em]'
-                                            }
+                                    {interfaceTabs.map((tab) => (
+                                        <button
+                                            type="button"
+                                            key={tab.id}
+                                            onClick={() => setActiveTab(tab.id)}
+                                            className={joinClasses(
+                                                'shrink-0 rounded-full border px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] transition-all sm:text-[11px] sm:tracking-[0.18em]',
+                                                activeTab === tab.id
+                                                    ? 'border-[#38DCC6]/28 bg-[#38DCC6]/10 text-[#B9FFF0]'
+                                                    : 'border-white/10 bg-white/[0.03] text-white/46 hover:border-white/18 hover:text-white/70',
+                                            )}
                                         >
-                                            {tab}
-                                        </div>
+                                            {tab.label}
+                                        </button>
                                     ))}
                                 </div>
 
                                 <div className="mt-5 grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
                                     <div className="overflow-x-auto rounded-[22px] border border-white/8 bg-[#090D12] p-4 font-mono text-[10px] leading-6 text-[#9FB0C0] sm:text-[11px]">
-                                        <div className="mb-3 text-white/44">{'// case.input.json (illustrative)'}</div>
-                                        <div>{'{'}</div>
-                                        <div className="pl-4">{'"model": { "name": "VetIOS Diagnostics", "version": "latest" },'}</div>
-                                        <div className="pl-4">{'"input": {'}</div>
-                                        <div className="pl-8">{'"input_signature": {'}</div>
-                                        <div className="pl-12">{'"species": "canine",'}</div>
-                                        <div className="pl-12">{'"symptoms": ["vomiting", "lethargy"],'}</div>
-                                        <div className="pl-12">{'"metadata": {'}</div>
-                                        <div className="pl-16">{'"labs": { "wbc": 4.1, "pcv": 29 },'}</div>
-                                        <div className="pl-16">{'"hydration": "low"'}</div>
-                                        <div className="pl-12">{'}'}</div>
-                                        <div className="pl-8">{'}'}</div>
-                                        <div className="pl-4">{'}'}</div>
-                                        <div>{'}'}</div>
+                                        <AnimatePresence mode="wait">
+                                            <motion.div
+                                                key={activeCode.id}
+                                                initial={{ opacity: 0, y: 8 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -8 }}
+                                            >
+                                                <div className="mb-3 text-white/44">{`// ${activeCode.title} (illustrative)`}</div>
+                                                <pre className="whitespace-pre-wrap">{activeCode.body}</pre>
+                                            </motion.div>
+                                        </AnimatePresence>
                                     </div>
 
                                     <div className="rounded-[22px] border border-white/8 bg-[#090D12] p-4">
@@ -113,12 +132,24 @@ export default function InterfacePreviewSection() {
                                     <div className="text-[11px] uppercase tracking-[0.24em] text-white/36">event log</div>
                                     <div className="text-xs text-[#9AE4D1]">streaming</div>
                                 </div>
-                                <div className="mt-4 space-y-3 font-mono text-[11px] leading-6 text-[#9FB0C0]">
-                                    {interfaceLogs.map((line) => (
-                                        <div key={line} className="rounded-2xl border border-white/6 bg-white/[0.02] px-3 py-2">
+                                <div ref={logRef} className="mt-4 max-h-[280px] space-y-3 overflow-hidden font-mono text-[11px] leading-6 text-[#9FB0C0]">
+                                    <AnimatePresence initial={false}>
+                                        {interfaceLogs.slice(0, visibleLogCount).map((line) => (
+                                            <motion.div
+                                                key={line}
+                                                className="rounded-2xl border border-white/6 bg-white/[0.02] px-3 py-2"
+                                                initial={{ opacity: 0, y: 8 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                exit={{ opacity: 0, y: -8 }}
+                                            >
                                             {line}
-                                        </div>
-                                    ))}
+                                            </motion.div>
+                                        ))}
+                                    </AnimatePresence>
+                                    <div className="flex items-center gap-2 text-[#7CFF4E]">
+                                        <span className="terminal-cursor h-4 w-2 bg-[#7CFF4E]/80" />
+                                        <span>tail -f vetios.events</span>
+                                    </div>
                                 </div>
                             </Panel>
 

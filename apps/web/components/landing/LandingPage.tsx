@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import TopNav from './TopNav';
 import HeroSection from './sections/HeroSection';
+import VideoSection from './sections/VideoSection';
 import ArchitectureSection from './sections/ArchitectureSection';
 import ModulesSection from './sections/ModulesSection';
 import FlywheelSection from './sections/FlywheelSection';
@@ -64,6 +65,7 @@ export default function LandingPage({ evidenceSnapshot }: { evidenceSnapshot: Pu
 
             <main className="relative z-10">
                 <HeroSection />
+                <VideoSection />
                 <ArchitectureSection />
                 <ModulesSection />
                 <FlywheelSection />

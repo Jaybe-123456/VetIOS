@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { ArrowRight, Menu, X } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 import { navigationItems } from './data';
 import { BrandMark } from './shared';
 import { joinClasses } from './utils';
@@ -25,7 +26,7 @@ export default function TopNav({
                 className={joinClasses(
                     'fixed top-0 z-50 w-full transition-all duration-300',
                     scrolled
-                        ? 'border-b border-white/10 bg-[#0B0F14]/78 backdrop-blur-md shadow-[0_18px_48px_rgba(0,0,0,0.32)]'
+                        ? 'accent-line-top border-b border-white/10 bg-[#0B0F14]/78 backdrop-blur-md shadow-[0_18px_48px_rgba(0,0,0,0.32)]'
                         : 'border-b border-transparent bg-transparent',
                 )}
             >
@@ -43,9 +44,10 @@ export default function TopNav({
                             <Link
                                 key={item.label}
                                 href={item.href}
-                                className="transition-colors duration-200 hover:text-white"
+                                className="group relative py-2 transition-colors duration-200 hover:text-white"
                             >
                                 {item.label}
+                                <span className="absolute bottom-0 left-0 h-px w-full origin-left scale-x-0 bg-gradient-to-r from-[#38DCC6] to-[#7CFF4E] opacity-80 shadow-[0_0_16px_rgba(56,220,198,0.45)] transition-transform duration-300 group-hover:scale-x-100" />
                             </Link>
                         ))}
                     </div>
@@ -71,63 +73,77 @@ export default function TopNav({
                 </div>
             </nav>
 
-            <div
-                className={joinClasses(
-                    'fixed inset-0 z-40 bg-black/65 backdrop-blur-sm transition-opacity duration-300 lg:hidden',
-                    menuOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0',
-                )}
-                onClick={onCloseMenu}
-                aria-hidden="true"
-            />
-
-            <div
-                className={joinClasses(
-                    'fixed bottom-0 right-0 top-0 z-50 flex w-full max-w-none flex-col overflow-y-auto border-l border-white/10 bg-[#0A0E13]/96 p-5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] transition-transform duration-300 sm:w-[86vw] sm:max-w-sm sm:p-6 lg:hidden',
-                    menuOpen ? 'translate-x-0' : 'translate-x-full',
-                )}
-            >
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <BrandMark compact />
-                        <span className="text-sm font-semibold tracking-[0.28em] text-white/55">VETIOS</span>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={onCloseMenu}
-                        className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 text-white/70"
-                        aria-label="Close navigation menu"
-                    >
-                        <X className="h-5 w-5" />
-                    </button>
-                </div>
-
-                <div className="mt-10 flex flex-col gap-4 text-base text-white/75 sm:mt-12 sm:gap-5">
-                    {navigationItems.map((item) => (
-                        <Link
-                            key={item.label}
-                            href={item.href}
+            <AnimatePresence>
+                {menuOpen && (
+                    <>
+                        <motion.div
+                            className="fixed inset-0 z-40 bg-black/65 backdrop-blur-sm lg:hidden"
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            transition={{ duration: 0.2 }}
                             onClick={onCloseMenu}
-                            className="rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 transition-colors hover:border-white/15 hover:text-white"
-                        >
-                            {item.label}
-                        </Link>
-                    ))}
-                </div>
+                            aria-hidden="true"
+                        />
 
-                <div className="mt-auto rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
-                    <p className="text-sm leading-6 text-white/58">
-                        Closed-loop inference, outcome learning, simulation, and observability in one platform surface.
-                    </p>
-                    <Link
-                        href="/signup"
-                        onClick={onCloseMenu}
-                        className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full border border-[#6BF7CF]/35 bg-[#6BF7CF]/10 px-4 py-3 text-sm font-medium text-[#C9FFF0] sm:w-auto sm:justify-start sm:py-2"
-                    >
-                        Access Platform
-                        <ArrowRight className="h-4 w-4" />
-                    </Link>
-                </div>
-            </div>
+                        <motion.div
+                            className="glass-card fixed bottom-0 right-0 top-0 z-50 flex w-full max-w-none flex-col overflow-y-auto border-l border-white/10 bg-[#0A0E13]/96 p-5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] sm:w-[86vw] sm:max-w-sm sm:p-6 lg:hidden"
+                            initial={{ x: '100%', opacity: 0.8 }}
+                            animate={{ x: 0, opacity: 1 }}
+                            exit={{ x: '100%', opacity: 0.8 }}
+                            transition={{ type: 'spring', stiffness: 280, damping: 30 }}
+                        >
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                    <BrandMark compact />
+                                    <span className="text-sm font-semibold tracking-[0.28em] text-white/55">VETIOS</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={onCloseMenu}
+                                    className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 text-white/70"
+                                    aria-label="Close navigation menu"
+                                >
+                                    <X className="h-5 w-5" />
+                                </button>
+                            </div>
+
+                            <div className="mt-10 flex flex-col gap-4 text-base text-white/75 sm:mt-12 sm:gap-5">
+                                {navigationItems.map((item, index) => (
+                                    <motion.div
+                                        key={item.label}
+                                        initial={{ x: 24, opacity: 0 }}
+                                        animate={{ x: 0, opacity: 1 }}
+                                        transition={{ delay: index * 0.04 }}
+                                    >
+                                        <Link
+                                            href={item.href}
+                                            onClick={onCloseMenu}
+                                            className="block rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-3 transition-colors hover:border-white/15 hover:text-white"
+                                        >
+                                            {item.label}
+                                        </Link>
+                                    </motion.div>
+                                ))}
+                            </div>
+
+                            <div className="mt-auto rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+                                <p className="text-sm leading-6 text-white/58">
+                                    Closed-loop inference, outcome learning, simulation, and observability in one platform surface.
+                                </p>
+                                <Link
+                                    href="/signup"
+                                    onClick={onCloseMenu}
+                                    className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-full border border-[#6BF7CF]/35 bg-[#6BF7CF]/10 px-4 py-3 text-sm font-medium text-[#C9FFF0] sm:w-auto sm:justify-start sm:py-2"
+                                >
+                                    Access Platform
+                                    <ArrowRight className="h-4 w-4" />
+                                </Link>
+                            </div>
+                        </motion.div>
+                    </>
+                )}
+            </AnimatePresence>
         </>
     );
 }

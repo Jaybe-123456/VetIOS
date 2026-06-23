@@ -1,9 +1,13 @@
 'use client';
 
+import { useState } from 'react';
+import { motion } from 'framer-motion';
 import { networkPoints } from '../data';
 import { Panel, Reveal, SectionHeader } from '../shared';
 
 export default function GlobalNetworkSection() {
+    const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+
     return (
         <section className="landing-section">
             <Reveal>
@@ -39,24 +43,41 @@ export default function GlobalNetworkSection() {
                                         <stop offset="100%" stopColor="rgba(124,255,78,0.36)" />
                                     </linearGradient>
                                 </defs>
-                                <path d="M92 272 C192 178 298 126 440 154" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
-                                <path d="M440 154 C548 180 626 198 756 162" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
-                                <path d="M756 162 C860 130 972 128 1094 198" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
-                                <path d="M440 154 C548 238 642 290 756 308" fill="none" stroke="url(#network-line)" strokeWidth="2.5" strokeDasharray="6 8" />
-                                <path d="M756 308 C852 276 958 242 1098 236" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
+                                <path className="animate-dash-flow" d="M92 272 C192 178 298 126 440 154" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
+                                <path className="animate-dash-flow animation-delay-200" d="M440 154 C548 180 626 198 756 162" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
+                                <path className="animate-dash-flow animation-delay-400" d="M756 162 C860 130 972 128 1094 198" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
+                                <path className="animate-dash-flow animation-delay-600" d="M440 154 C548 238 642 290 756 308" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
+                                <path className="animate-dash-flow animation-delay-800" d="M756 308 C852 276 958 242 1098 236" fill="none" stroke="url(#network-line)" strokeWidth="2.5" />
                             </svg>
 
                             {networkPoints.map((point) => (
-                                <div
+                                <motion.div
                                     key={point.label}
                                     className="absolute hidden -translate-x-1/2 -translate-y-1/2 sm:block"
                                     style={{ left: point.left, top: point.top }}
+                                    onMouseEnter={() => setHoveredNode(point.label)}
+                                    onMouseLeave={() => setHoveredNode(null)}
+                                    whileHover={{ scale: 1.04 }}
                                 >
                                     <div className="mx-auto h-3 w-3 rounded-full bg-[#6BF7CF] shadow-[0_0_16px_rgba(21,230,195,0.95)]" />
                                     <div className="mt-3 rounded-full border border-white/10 bg-[#0F151D]/90 px-3 py-1.5 text-[10px] uppercase tracking-[0.2em] text-white/65">
                                         {point.label}
                                     </div>
-                                </div>
+                                    {hoveredNode === point.label && (
+                                        <motion.div
+                                            className="absolute left-1/2 top-full z-10 mt-3 w-48 -translate-x-1/2 rounded-[18px] border border-[#38DCC6]/24 bg-[#071018]/95 p-3 text-left shadow-[0_18px_42px_rgba(0,0,0,0.42)] backdrop-blur-md"
+                                            initial={{ opacity: 0, y: -4 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                        >
+                                            <div className="text-[10px] uppercase tracking-[0.18em] text-[#9AE4D1]">node telemetry</div>
+                                            <div className="mt-3 grid gap-2 text-xs text-white/68">
+                                                <div className="flex justify-between gap-3"><span>latency</span><span className="text-white">{point.latency}</span></div>
+                                                <div className="flex justify-between gap-3"><span>CPU load</span><span className="text-white">{point.load}</span></div>
+                                                <div className="flex justify-between gap-3"><span>models</span><span className="text-white">{point.models}</span></div>
+                                            </div>
+                                        </motion.div>
+                                    )}
+                                </motion.div>
                             ))}
                         </div>
 

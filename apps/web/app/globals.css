@@ -767,6 +767,30 @@ html, body {
 .animate-scale-in      { animation: scaleIn 0.25s ease-out forwards; }
 .animate-pulse-glow    { animation: pulseGlow 2s ease-in-out infinite; }
 .animate-landing-pulse { animation: landingPulse 4.2s ease-in-out infinite; }
+
+@keyframes dashFlow {
+  0% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -44; }
+}
+
+@keyframes cursorBlink {
+  0%, 45% { opacity: 1; }
+  46%, 100% { opacity: 0.18; }
+}
+
+.animate-dash-flow {
+  stroke-dasharray: 12 14;
+  animation: dashFlow 2.8s linear infinite;
+}
+
+.animation-delay-200 { animation-delay: 0.2s; }
+.animation-delay-400 { animation-delay: 0.4s; }
+.animation-delay-600 { animation-delay: 0.6s; }
+.animation-delay-800 { animation-delay: 0.8s; }
+
+.terminal-cursor {
+  animation: cursorBlink 1s steps(2, start) infinite;
+}
 .animate-blink         { animation: blink 1.2s step-end infinite; }
 
 /* ── Sidebar overlay helpers ──────────────────────────────────────────────── */

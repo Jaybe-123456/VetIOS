@@ -1,11 +1,21 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { Database, Gauge, Link2, MessageSquareText, ShieldCheck, Stethoscope, Syringe } from 'lucide-react';
+import { motion, useInView, useSpring, useTransform } from 'framer-motion';
 import type { PublicEvidenceSnapshot } from '@/lib/platform/publicEvidenceSnapshot';
 
 export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot: PublicEvidenceSnapshot }) {
     const metrics = buildEvidenceMetrics(evidenceSnapshot);
     const terminalRows = buildTerminalRows(evidenceSnapshot);
+    const [visibleRows, setVisibleRows] = useState(5);
+
+    useEffect(() => {
+        const interval = window.setInterval(() => {
+            setVisibleRows((count) => (count >= terminalRows.length ? 5 : count + 1));
+        }, 700);
+        return () => window.clearInterval(interval);
+    }, [terminalRows.length]);
 
     return (
         <section className="relative overflow-hidden bg-[#050807] py-24 text-[#E8F5EE]">
@@ -27,7 +37,12 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
 
                 <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                     {metrics.map((metric) => (
-                        <div key={metric.label} className="rounded-lg border border-[#12352A] bg-[#07110D]/95 p-5">
+                        <motion.div
+                            key={metric.label}
+                            className="glass-card rounded-lg border-[#12352A] bg-[#07110D]/95 p-5"
+                            whileHover={{ y: -5 }}
+                            transition={{ type: 'spring', stiffness: 260, damping: 24 }}
+                        >
                             <div className="mb-4 flex items-center justify-between gap-3">
                                 <metric.icon className="h-5 w-5 text-[#00FF88]" aria-hidden="true" />
                                 <span className="rounded border border-[#1D4F3E] px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] text-[#79DDAE]">
@@ -37,9 +52,9 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
                             <div className="font-mono text-[11px] uppercase tracking-[0.16em] text-[#6B8A76]">
                                 {metric.label}
                             </div>
-                            <div className="mt-2 text-3xl font-semibold text-white">{metric.value}</div>
+                            <AnimatedMetricValue value={metric.rawValue} fallback={metric.value} />
                             <p className="mt-3 min-h-[44px] text-sm leading-6 text-[#8EA899]">{metric.detail}</p>
-                        </div>
+                        </motion.div>
                     ))}
                 </div>
 
@@ -64,7 +79,7 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
                         </div>
                     </div>
 
-                    <div className="rounded-lg border border-[#12352A] bg-[#020905] p-6 font-mono">
+                    <div className="rounded-lg border border-[#12352A] bg-[#020905] p-6 font-mono shadow-[0_0_50px_rgba(0,255,136,0.06)]">
                         <div className="mb-5 flex items-center gap-2">
                             <div className="h-2.5 w-2.5 rounded-full bg-[#FF5F56]" />
                             <div className="h-2.5 w-2.5 rounded-full bg-[#FFBD2E]" />
@@ -74,14 +89,23 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
                             </span>
                         </div>
                         <div className="space-y-2 text-xs leading-6">
-                            {terminalRows.map((row) => (
-                                <div key={row.key} className="grid grid-cols-[120px_1fr] gap-3">
+                            {terminalRows.slice(0, visibleRows).map((row) => (
+                                <motion.div
+                                    key={`${row.key}-${row.value}`}
+                                    className="grid grid-cols-[120px_1fr] gap-3"
+                                    initial={{ opacity: 0, y: 6 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                >
                                     <span className="text-[#00FF88]">{row.key}</span>
                                     <span className={row.tone === 'warning' ? 'text-[#F5A623]' : 'text-[#E8F5EE]'}>
                                         {row.value}
                                     </span>
-                                </div>
+                                </motion.div>
                             ))}
+                            <div className="flex items-center gap-2 pt-2 text-[#00FF88]">
+                                <span className="terminal-cursor h-4 w-2 bg-[#00FF88]" />
+                                <span>ingesting evidence events</span>
+                            </div>
                         </div>
                         {evidenceSnapshot.warnings.length > 0 && (
                             <div className="mt-5 border border-[#4D3512] bg-[#100A02] p-3 text-[11px] leading-5 text-[#F5A623]">
@@ -92,6 +116,23 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
                 </div>
             </div>
         </section>
+    );
+}
+
+function AnimatedMetricValue({ value, fallback }: { value: number; fallback: string }) {
+    const ref = useRef<HTMLDivElement | null>(null);
+    const inView = useInView(ref, { once: true, margin: '-80px' });
+    const spring = useSpring(inView ? value : 0, { stiffness: 90, damping: 22 });
+    const rounded = useTransform(spring, (latest) => Math.round(latest).toLocaleString());
+
+    if (!Number.isFinite(value)) {
+        return <div className="mt-2 text-3xl font-semibold text-white">{fallback}</div>;
+    }
+
+    return (
+        <motion.div ref={ref} className="mt-2 text-3xl font-semibold text-white">
+            {rounded}
+        </motion.div>
     );
 }
 
@@ -109,6 +150,7 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
     return [
         {
             label: 'Clinical cases',
+            rawValue: snapshot.dataset.clinical_cases,
             value: formatNumber(snapshot.dataset.clinical_cases),
             detail: snapshot.configured
                 ? `${formatNumber(snapshot.dataset.real_case_imports)} imported through the real-case path.`
@@ -118,6 +160,7 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
         },
         {
             label: 'Confirmed labels',
+            rawValue: snapshot.dataset.confirmed_labels,
             value: formatNumber(snapshot.dataset.confirmed_labels),
             detail: `${formatNumber(snapshot.dataset.learning_ready_cases)} cases are currently marked learning-ready.`,
             status: snapshot.dataset.confirmed_labels > 0 ? 'measured' : 'building',
@@ -125,6 +168,7 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
         },
         {
             label: 'CIRE pairs',
+            rawValue: snapshot.inference.cire_sample_size,
             value: formatNumber(snapshot.inference.cire_sample_size),
             detail: cireDetail(snapshot),
             status: titleCase(snapshot.inference.cire_status),
@@ -132,6 +176,7 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
         },
         {
             label: 'Workflow signals',
+            rawValue: snapshot.workflow.passive_signal_events,
             value: formatNumber(snapshot.workflow.passive_signal_events),
             detail: `${formatNumber(snapshot.workflow.pims_templates)} PIMS packs and ${formatNumber(snapshot.workflow.supported_connector_types)} passive event types are defined.`,
             status: snapshot.workflow.passive_signal_events > 0 ? 'measured' : 'ready',
@@ -139,6 +184,7 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
         },
         {
             label: 'Ask VetIOS governance',
+            rawValue: snapshot.ask_vetios.query_events,
             value: formatNumber(snapshot.ask_vetios.query_events),
             detail: `${formatNumber(snapshot.ask_vetios.regulatory_reviewable)} reviewable CDS drafts and ${formatNumber(snapshot.ask_vetios.human_review_required)} human-review routes recorded.`,
             status: snapshot.ask_vetios.query_events > 0 ? 'measured' : 'pending',
@@ -146,6 +192,7 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
         },
         {
             label: 'AMR loop',
+            rawValue: snapshot.amr.stewardship_events,
             value: formatNumber(snapshot.amr.stewardship_events),
             detail: `${formatNumber(snapshot.amr.culture_guided_events)} culture-guided stewardship events and ${formatNumber(snapshot.amr.outcome_tracked_events)} outcome-tracked events.`,
             status: snapshot.amr.stewardship_events > 0 || snapshot.amr.genomic_events > 0 ? 'measured' : 'ready',
@@ -153,6 +200,7 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
         },
         {
             label: 'Specialist reviews',
+            rawValue: snapshot.specialist_review.review_events,
             value: formatNumber(snapshot.specialist_review.review_events),
             detail: `${formatNumber(snapshot.specialist_review.completed_reviews)} completed reviews and ${formatNumber(snapshot.specialist_review.learning_eligible_reviews)} learning-eligible oversight signals.`,
             status: snapshot.specialist_review.review_events > 0 ? 'measured' : 'ready',
