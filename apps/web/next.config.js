@@ -52,7 +52,7 @@ const nextConfig = {
                             "img-src 'self' data: blob: https:",
                             "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://challenges.cloudflare.com",
                             "font-src 'self' https://fonts.gstatic.com",
-                            "frame-src 'self' https://challenges.cloudflare.com",
+                            "frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com https://challenges.cloudflare.com",
                             "frame-ancestors 'none'",
                         ].join('; '),
                     },

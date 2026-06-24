@@ -7,7 +7,7 @@ import { Panel, Reveal } from '../shared';
 
 const YOUTUBE_VIDEO_ID = 'kE5jfdzfwak';
 const YOUTUBE_WATCH_URL = 'https://youtu.be/kE5jfdzfwak?si=XmIAKlugvGdLT1Su';
-const YOUTUBE_EMBED_URL = `https://www.youtube-nocookie.com/embed/${YOUTUBE_VIDEO_ID}?rel=0&modestbranding=1&playsinline=1`;
+const YOUTUBE_EMBED_URL = `https://www.youtube-nocookie.com/embed/${YOUTUBE_VIDEO_ID}`;
 const YOUTUBE_THUMBNAIL_URL = `https://i.ytimg.com/vi/${YOUTUBE_VIDEO_ID}/hqdefault.jpg`;
 
 const mediaSignals = [
@@ -95,7 +95,7 @@ export default function VideoSection() {
                                         <iframe
                                             className="absolute inset-0 h-full w-full"
                                             src={YOUTUBE_EMBED_URL}
-                                            title="VetIOS field signal video"
+                                            title="VetIOS video"
                                             loading="lazy"
                                             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                                             referrerPolicy="strict-origin-when-cross-origin"
