@@ -65,8 +65,8 @@ export default function LandingPage({ evidenceSnapshot }: { evidenceSnapshot: Pu
 
             <main className="relative z-10">
                 <HeroSection />
-                <VideoSection />
                 <ArchitectureSection />
+                <VideoSection />
                 <ModulesSection />
                 <FlywheelSection />
                 <TrainingSection evidenceSnapshot={evidenceSnapshot} />
