@@ -20,50 +20,50 @@ export const navigationItems = [
 
 export const architectureNodes = [
     {
-        title: 'Input',
-        detail: 'Structured signals enter the platform with typed context, lineage, and policy state.',
+        title: 'Evidence Ingress',
+        detail: 'De-identified clinical signals enter with consent scope, source lineage, and policy state attached.',
         icon: FileJson2,
     },
     {
-        title: 'Inference',
-        detail: 'Models resolve ranked clinical hypotheses with confidence bands and runtime traces.',
+        title: 'Traceable Inference',
+        detail: 'Models produce ranked hypotheses with confidence bands, citations, runtime traces, and review gates.',
         icon: Cpu,
     },
     {
-        title: 'Outcome',
-        detail: 'Resolved cases stream back as supervisory signals with auditable attribution.',
+        title: 'Outcome Closure',
+        detail: 'Diagnoses, treatments, follow-ups, labs, and specialist review return as scarce supervisory evidence.',
         icon: Activity,
     },
     {
-        title: 'Simulation',
-        detail: 'Counterfactual traffic is replayed before changes move into production control paths.',
+        title: 'Federated Validation',
+        detail: 'Partner nodes contribute only eligible, outcome-confirmed, provenance-scored evidence into learning rounds.',
         icon: Orbit,
     },
     {
-        title: 'Intelligence',
-        detail: 'The system compounds into a stronger shared decision layer with every completed loop.',
+        title: 'Promotion Gate',
+        detail: 'Candidates advance only when benchmark, safety, drift, calibration, and rollback evidence clears governance.',
         icon: Workflow,
     },
 ] as const;
 
 export const modules = [
     {
-        title: 'Inference Engine',
+        title: 'Provenance Substrate',
         description:
-            'Clinical inputs are normalized, routed, and scored through a deterministic inference runtime with operator-visible confidence signals.',
-        icon: Cpu,
+            'Every usable learning record carries consent posture, source lineage, de-identification state, outcome linkage, and a trust score.',
+        icon: FileJson2,
     },
     {
-        title: 'Outcome Learning',
+        title: 'Outcome Learning Plane',
         description:
-            'Closed cases become supervision events that refine priors, evaluation baselines, and future decision quality.',
+            'Closed cases become governed supervision events only after clinician, lab, specialist, or follow-up confirmation is captured.',
         icon: RefreshCw,
     },
     {
-        title: 'Simulation Layer',
+        title: 'Federated Promotion Controls',
         description:
-            'New models and policy changes are pressure-tested against synthetic and replayed case traffic before rollout.',
-        icon: Orbit,
+            'Partner-node updates, benchmark packets, model cards, rollout monitors, and rollback decisions stay tied to evidence hashes.',
+        icon: Workflow,
     },
 ] as const;
 
@@ -112,6 +112,7 @@ export const heroCases = [
         ],
         trace: [
             'signal.accepted case:canine_4XK3',
+            'provenance.hash verified consent:network_learning',
             'normalizer.complete species:canine schema:v3',
             'retrieval.attach sources:4 lab_flags:2',
             'inference.rank parvovirus p=0.82',
@@ -131,6 +132,7 @@ export const heroCases = [
         ],
         trace: [
             'signal.accepted case:feline_9QK2',
+            'provenance.hash verified consent:network_learning',
             'normalizer.complete species:feline schema:v3',
             'lab.range.resolve creatinine:high',
             'inference.rank ckd p=0.76',
@@ -150,6 +152,7 @@ export const heroCases = [
         ],
         trace: [
             'signal.accepted case:equine_7LM1',
+            'provenance.hash verified consent:network_learning',
             'triage.red_flag emergency_colic=true',
             'normalizer.complete species:equine schema:v3',
             'inference.rank volvulus p=0.68',

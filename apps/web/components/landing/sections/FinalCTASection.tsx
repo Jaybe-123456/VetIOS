@@ -12,10 +12,10 @@ export default function FinalCTASection() {
                     <div className="max-w-3xl">
                         <div className="landing-eyebrow">final call</div>
                         <h2 className="mt-6 text-[2.3rem] font-semibold tracking-[-0.05em] text-white sm:text-4xl md:text-5xl">
-                            Build on intelligence, not isolated decisions.
+                            Build on the layer competitors cannot copy quickly.
                         </h2>
                         <p className="mt-4 max-w-2xl text-base leading-7 text-white/62 sm:mt-5 sm:text-lg sm:leading-8">
-                            VetIOS is building the infrastructure layer for veterinary intelligence systems.
+                            VetIOS is building the provenance-scored, outcome-confirmed clinical evidence layer underneath veterinary AI, AMR intelligence, and federated model promotion.
                         </p>
                         <p className="mt-6 text-sm font-medium tracking-wide text-white/45">
                             FOR DIRECT ASSISTANCE: <a href="mailto:johnbruce12g@gmail.com" className="text-[#6BF7CF] hover:text-[#7CFF4E] transition-colors underline decoration-white/20 underline-offset-4">johnbruce12g@gmail.com</a>
@@ -27,7 +27,7 @@ export default function FinalCTASection() {
                             href="/ask-vetios"
                             className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#E8EDF2] px-6 py-3.5 text-sm font-medium text-[#0B0F14] transition-transform duration-200 hover:-translate-y-0.5 sm:w-auto"
                         >
-                            Ask VetIOS
+                            Try Ask VetIOS
                             <ArrowRight className="h-4 w-4" />
                         </Link>
                         <Link
