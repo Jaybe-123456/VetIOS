@@ -183,6 +183,35 @@ export interface RagReadinessSummary {
     embedding_model?: string | null;
     embedding_dimensions?: number;
     embedding_live_provider_configured?: boolean;
+    veterinary_corpus?: RagVeterinaryCorpusReadiness | null;
     ready: boolean;
     warnings: string[];
+}
+
+export interface RagVeterinaryCorpusReadiness {
+    schema_version: 'vetios-veterinary-corpus-readiness-v1';
+    generated_at: string;
+    moat_status: 'operating' | 'foundation' | 'blocked';
+    corpus_version_hash: string;
+    sources: number;
+    documents: number;
+    chunks: number;
+    high_authority_sources: number;
+    authorized_sources: number;
+    versioned_sources: number;
+    source_version_coverage: number;
+    authorized_source_coverage: number;
+    high_authority_coverage: number;
+    red_team_case_count: number;
+    red_team_coverage: Record<string, number>;
+    domain_index: Array<{
+        domain: string;
+        status: 'covered' | 'thin' | 'missing';
+        source_count: number;
+        chunk_count: number;
+        high_authority_source_count: number;
+    }>;
+    blockers: string[];
+    warnings: string[];
+    research_basis: string[];
 }

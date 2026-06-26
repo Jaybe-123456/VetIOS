@@ -6,6 +6,7 @@ import type {
     RagDocumentRecord,
     RagSourceRecord,
     RagSourceType,
+    RagVeterinaryCorpusReadiness,
 } from './types';
 
 export type VeterinaryCorpusMoatStatus = 'operating' | 'foundation' | 'blocked';
@@ -194,6 +195,38 @@ export function buildVeterinaryCorpusManifest(input: {
             'self_reflective_retrieval_should_critique_citation_support',
             'clinical_retrieval_requires_authorized_versioned_sources_and_red_team_boundaries',
         ],
+    };
+}
+
+export function summarizeVeterinaryCorpusManifest(
+    manifest: VeterinaryCorpusManifest,
+): RagVeterinaryCorpusReadiness {
+    return {
+        schema_version: 'vetios-veterinary-corpus-readiness-v1',
+        generated_at: manifest.generated_at,
+        moat_status: manifest.moat_status,
+        corpus_version_hash: manifest.corpus_version_hash,
+        sources: manifest.sources,
+        documents: manifest.documents,
+        chunks: manifest.chunks,
+        high_authority_sources: manifest.high_authority_sources,
+        authorized_sources: manifest.authorized_sources,
+        versioned_sources: manifest.versioned_sources,
+        source_version_coverage: manifest.source_version_coverage,
+        authorized_source_coverage: manifest.authorized_source_coverage,
+        high_authority_coverage: manifest.high_authority_coverage,
+        red_team_case_count: manifest.red_team_suite.case_count,
+        red_team_coverage: manifest.red_team_suite.coverage,
+        domain_index: manifest.domain_index.map((entry) => ({
+            domain: entry.domain,
+            status: entry.status,
+            source_count: entry.source_count,
+            chunk_count: entry.chunk_count,
+            high_authority_source_count: entry.high_authority_source_count,
+        })),
+        blockers: manifest.blockers,
+        warnings: manifest.warnings.slice(0, 25),
+        research_basis: manifest.research_basis,
     };
 }
 

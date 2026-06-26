@@ -3,7 +3,16 @@ import { buildCatalogDocumentPlans } from './catalogConnectors';
 import { getRagEmbeddingReadiness } from './embedding';
 import { ingestRagDocument } from './service';
 import { getCuratedRagCatalog, type CuratedRagSourceDefinition } from './sourceCatalog';
-import type { RagReadinessSummary } from './types';
+import type {
+    RagChunkRecord,
+    RagDocumentRecord,
+    RagReadinessSummary,
+    RagSourceRecord,
+    RagVeterinaryCorpusReadiness,
+} from './types';
+import { buildVeterinaryCorpusManifest, summarizeVeterinaryCorpusManifest } from './veterinaryCorpus';
+
+const MAX_CORPUS_READINESS_ROWS = 5_000;
 
 export interface RagCatalogRunResult {
     run_id: string | null;
@@ -60,7 +69,7 @@ export async function refreshCuratedRagCatalog(input: {
 }
 
 export async function evaluateRagReadiness(client: SupabaseClient, tenantId: string): Promise<RagReadinessSummary> {
-    const [schemaCheck, sourceRows, documentRows, chunkRows, highAuthorityRows, staleDocumentRows, lastRefresh] = await Promise.all([
+    const [schemaCheck, sourceRows, documentRows, chunkRows, highAuthorityRows, staleDocumentRows, lastRefresh, veterinaryCorpus] = await Promise.all([
         checkRagSchema(client, tenantId),
         countRows(client, 'rag_sources', tenantId),
         countRows(client, 'rag_documents', tenantId),
@@ -68,6 +77,7 @@ export async function evaluateRagReadiness(client: SupabaseClient, tenantId: str
         countRows(client, 'rag_sources', tenantId, (query) => query.in('authority_tier', ['peer_reviewed', 'specialist_guideline', 'regulatory', 'institutional'])),
         countRows(client, 'rag_documents', tenantId, (query) => query.in('refresh_status', ['stale', 'failed'])),
         latestRefresh(client, tenantId),
+        loadVeterinaryCorpusReadiness(client, tenantId),
     ]);
 
     const sources = sourceRows.count;
@@ -76,7 +86,7 @@ export async function evaluateRagReadiness(client: SupabaseClient, tenantId: str
     const highAuthoritySources = highAuthorityRows.count;
     const staleDocuments = staleDocumentRows.count;
     const embeddingReadiness = getRagEmbeddingReadiness();
-    const schemaErrors = [schemaCheck, sourceRows, documentRows, chunkRows, highAuthorityRows, staleDocumentRows]
+    const schemaErrors = [schemaCheck, sourceRows, documentRows, chunkRows, highAuthorityRows, staleDocumentRows, veterinaryCorpus]
         .map((result) => result.error)
         .filter((error): error is string => Boolean(error));
     const warnings: string[] = [];
@@ -92,6 +102,13 @@ export async function evaluateRagReadiness(client: SupabaseClient, tenantId: str
     if (chunks === 0) warnings.push('No retrieval chunks are available.');
     if (highAuthoritySources === 0) warnings.push('No high-authority veterinary or medical sources are indexed.');
     if (staleDocuments > 0) warnings.push(`${staleDocuments} indexed document(s) need refresh or review.`);
+    if (veterinaryCorpus.summary) {
+        if (veterinaryCorpus.summary.moat_status !== 'operating') {
+            warnings.push(`Veterinary corpus moat is ${veterinaryCorpus.summary.moat_status}; source-version, authorization, or domain coverage evidence is incomplete.`);
+        }
+        warnings.push(...veterinaryCorpus.summary.blockers.map((blocker) => `Veterinary corpus blocker: ${blocker}`));
+        warnings.push(...veterinaryCorpus.summary.warnings.slice(0, 8).map((warning) => `Veterinary corpus warning: ${warning}`));
+    }
     warnings.push(...embeddingReadiness.warnings);
 
     return {
@@ -105,8 +122,62 @@ export async function evaluateRagReadiness(client: SupabaseClient, tenantId: str
         embedding_model: embeddingReadiness.embedding_model,
         embedding_dimensions: embeddingReadiness.embedding_dimensions,
         embedding_live_provider_configured: embeddingReadiness.embedding_live_provider_configured,
+        veterinary_corpus: veterinaryCorpus.summary,
         ready: sources > 0 && documents > 0 && chunks > 0 && highAuthoritySources > 0,
         warnings,
+    };
+}
+
+async function loadVeterinaryCorpusReadiness(
+    client: SupabaseClient,
+    tenantId: string,
+): Promise<{ summary: RagVeterinaryCorpusReadiness | null; error: string | null }> {
+    const [sources, documents, chunks] = await Promise.all([
+        loadCorpusRows<RagSourceRecord>(client, 'rag_sources', tenantId),
+        loadCorpusRows<RagDocumentRecord>(client, 'rag_documents', tenantId),
+        loadCorpusRows<RagChunkRecord>(client, 'rag_chunks', tenantId),
+    ]);
+    const error = sources.error ?? documents.error ?? chunks.error;
+    if (error) return { summary: null, error };
+
+    const manifest = buildVeterinaryCorpusManifest({
+        sources: sources.rows,
+        documents: documents.rows,
+        chunks: chunks.rows,
+    });
+    const summary = summarizeVeterinaryCorpusManifest(manifest);
+    const capped = sources.capped || documents.capped || chunks.capped;
+    if (capped) {
+        return {
+            summary: {
+                ...summary,
+                warnings: [
+                    ...summary.warnings,
+                    `Corpus readiness manifest is capped at ${MAX_CORPUS_READINESS_ROWS} rows per table; use offline audit export for full-corpus certification.`,
+                ],
+            },
+            error: null,
+        };
+    }
+    return { summary, error: null };
+}
+
+async function loadCorpusRows<T>(
+    client: SupabaseClient,
+    table: string,
+    tenantId: string,
+): Promise<{ rows: T[]; capped: boolean; error: string | null }> {
+    const { data, error } = await client
+        .from(table)
+        .select('*')
+        .eq('tenant_id', tenantId)
+        .limit(MAX_CORPUS_READINESS_ROWS + 1);
+
+    const rows = (data ?? []) as T[];
+    return {
+        rows: rows.slice(0, MAX_CORPUS_READINESS_ROWS),
+        capped: rows.length > MAX_CORPUS_READINESS_ROWS,
+        error: error?.message ?? null,
     };
 }
 

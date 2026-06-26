@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildVeterinaryCorpusManifest,
     evaluateVeterinaryCitationQuality,
+    summarizeVeterinaryCorpusManifest,
 } from '../veterinaryCorpus';
 import type {
     RagChunkRecord,
@@ -40,6 +41,13 @@ describe('veterinary retrieval corpus governance', () => {
         expect(manifest.domain_index.find((entry) => entry.domain === 'toxicology')?.status).toBe('covered');
         expect(manifest.domain_index.find((entry) => entry.domain === 'lab_reference')?.status).toBe('covered');
         expect(manifest.red_team_suite.case_count).toBeGreaterThanOrEqual(6);
+
+        const readiness = summarizeVeterinaryCorpusManifest(manifest);
+        expect(readiness.schema_version).toBe('vetios-veterinary-corpus-readiness-v1');
+        expect(readiness.moat_status).toBe('operating');
+        expect(readiness.corpus_version_hash).toBe(manifest.corpus_version_hash);
+        expect(readiness.red_team_case_count).toBe(manifest.red_team_suite.case_count);
+        expect(readiness.domain_index.find((entry) => entry.domain === 'toxicology')?.status).toBe('covered');
     });
 
     it('keeps corpus manifest at foundation when source versioning or license evidence is missing', () => {
