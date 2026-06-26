@@ -197,6 +197,7 @@ type FederationAction =
         federation_key?: string | null;
         federation_round_id?: string | null;
         candidate_model_version?: string | null;
+        runtime_evidence?: Record<string, unknown>;
         benchmark_evidence?: Record<string, unknown>;
         calibration_evidence?: Record<string, unknown>;
         regression_evidence?: Record<string, unknown>;
@@ -526,6 +527,7 @@ export async function POST(req: Request) {
                     tenantId: authContext.tenantId,
                     candidateModelVersion,
                     federationRoundId: normalizeUuid(evidenceBody.federation_round_id),
+                    runtimeEvidence: evidenceBody.runtime_evidence == null ? undefined : asRecord(evidenceBody.runtime_evidence),
                     benchmarkEvidence: asRecord(evidenceBody.benchmark_evidence),
                     calibrationEvidence: asRecord(evidenceBody.calibration_evidence),
                     regressionEvidence: asRecord(evidenceBody.regression_evidence),

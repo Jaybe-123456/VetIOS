@@ -1,5 +1,10 @@
 import { createHash } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import {
+    FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS,
+    FEDERATED_UPDATE_SUBMISSIONS,
+    FEDERATION_ROUNDS,
+} from '@/lib/db/schemaContracts';
 import { createSupabaseLearningEngineStore } from '@/lib/learningEngine/supabaseStore';
 import type {
     LearningBenchmarkReportRecord,
@@ -91,6 +96,55 @@ export interface FederatedRuntimeEvidenceInput {
     sourceHashBundle?: Record<string, unknown> | null;
 }
 
+export interface FederatedRuntimeRoundEvidenceRow {
+    id: string;
+    federation_key: string;
+    coordinator_tenant_id: string;
+    round_key: string;
+    status: string;
+    participant_count: number;
+    aggregate_payload: Record<string, unknown>;
+    candidate_artifact_payload: Record<string, unknown>;
+    completed_at?: string | null;
+}
+
+export interface FederatedRuntimeUpdateSubmissionRow {
+    id: string;
+    tenant_id: string;
+    federation_round_id: string;
+    outcome_eligibility_snapshot_id: string | null;
+    federation_key: string;
+    round_key: string;
+    node_ref: string;
+    partner_ref: string;
+    participant_ref: string;
+    contribution_role: string;
+    submission_status: string;
+    payload_commitment_hash: string | null;
+    mask_commitment_hash: string | null;
+    signed_payload_hash: string | null;
+    signature_hash: string | null;
+    masked_update_summary: Record<string, unknown>;
+    public_summary: Record<string, unknown>;
+    evidence: Record<string, unknown>;
+    observed_at?: string | null;
+    created_at?: string | null;
+}
+
+export interface FederatedRuntimeOutcomeEligibilitySnapshotRow {
+    id: string;
+    tenant_id: string;
+    eligibility_status: string | null;
+    outcome_confirmed_rows: number;
+    provenance_verified_rows: number;
+    trust_scored_rows: number;
+    average_trust_score: number;
+    external_validation_events: number;
+    source_record_digest: string | null;
+    source_hash_bundle: Record<string, unknown>;
+    evidence: Record<string, unknown>;
+}
+
 export interface FederatedDerivedCandidateEvidence {
     benchmarkEvidence: Record<string, unknown>;
     calibrationEvidence: Record<string, unknown>;
@@ -147,10 +201,19 @@ export async function generateFederatedCandidateEvidence(
         throw new Error('No model registry entries were found for the requested federated candidate.');
     }
 
+    const runtimeEvidence = input.runtimeEvidence
+        ?? (input.federationRoundId
+            ? await loadFederatedRuntimeEvidenceForRound(client, {
+                tenantId: input.tenantId,
+                federationRoundId: input.federationRoundId,
+                candidateModelVersion: input.candidateModelVersion,
+            })
+            : undefined);
+
     const plan = buildFederatedCandidateEvidencePlan({
         candidateModelVersion: input.candidateModelVersion,
         registryEntries,
-        runtimeEvidence: input.runtimeEvidence,
+        runtimeEvidence,
         benchmarkEvidence: input.benchmarkEvidence,
         calibrationEvidence: input.calibrationEvidence,
         regressionEvidence: input.regressionEvidence,
@@ -184,6 +247,9 @@ export async function generateFederatedCandidateEvidence(
             blockers: plan.blockers,
             warnings: plan.warnings,
             generated_by: input.actor ?? 'federation_evidence_generator',
+            runtime_evidence_source: runtimeEvidence
+                ? readText(asRecord(runtimeEvidence).evidence_source) ?? 'federated_runtime_ledger'
+                : 'explicit_or_missing',
         },
     });
 
@@ -192,6 +258,373 @@ export async function generateFederatedCandidateEvidence(
         created_benchmark_reports: createdBenchmarkReports,
         created_calibration_reports: createdCalibrationReports,
         regression_run: regressionRun,
+    };
+}
+
+export async function loadFederatedRuntimeEvidenceForRound(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        federationRoundId: string;
+        candidateModelVersion?: string | null;
+    },
+): Promise<FederatedRuntimeEvidenceInput & Record<string, unknown>> {
+    const round = await loadRuntimeRound(client, input);
+    const updateSubmissions = await loadRuntimeUpdateSubmissions(client, input.federationRoundId);
+    const snapshots = await loadRuntimeOutcomeEligibilitySnapshots(client, updateSubmissions);
+
+    return buildFederatedRuntimeEvidenceFromRows({
+        candidateModelVersion: input.candidateModelVersion,
+        round,
+        updateSubmissions,
+        outcomeEligibilitySnapshots: snapshots,
+    });
+}
+
+export function buildFederatedRuntimeEvidenceFromRows(input: {
+    candidateModelVersion?: string | null;
+    round: FederatedRuntimeRoundEvidenceRow;
+    updateSubmissions: FederatedRuntimeUpdateSubmissionRow[];
+    outcomeEligibilitySnapshots: FederatedRuntimeOutcomeEligibilitySnapshotRow[];
+}): FederatedRuntimeEvidenceInput & Record<string, unknown> {
+    const acceptedUpdates = input.updateSubmissions.filter((update) => update.submission_status === 'accepted');
+    const quarantinedUpdates = input.updateSubmissions.filter((update) => update.submission_status === 'quarantined');
+    const snapshotById = new Map(input.outcomeEligibilitySnapshots.map((snapshot) => [snapshot.id, snapshot]));
+    const linkedSnapshots = acceptedUpdates
+        .map((update) => update.outcome_eligibility_snapshot_id ? snapshotById.get(update.outcome_eligibility_snapshot_id) : null)
+        .filter((snapshot): snapshot is FederatedRuntimeOutcomeEligibilitySnapshotRow => snapshot != null);
+    const eligibleSnapshots = linkedSnapshots.filter((snapshot) => snapshot.eligibility_status === 'eligible');
+    const outcomeConfirmedRows = sumNumbers(eligibleSnapshots.map((snapshot) => snapshot.outcome_confirmed_rows));
+    const provenanceVerifiedRows = sumNumbers(eligibleSnapshots.map((snapshot) => snapshot.provenance_verified_rows));
+    const trustScoredRows = sumNumbers(eligibleSnapshots.map((snapshot) => snapshot.trust_scored_rows));
+    const averageTrustScore = weightedSnapshotTrustScore(eligibleSnapshots);
+    const secureAggregationStatus = resolveRuntimeSecureAggregationStatus(input.round, acceptedUpdates);
+    const evaluationSources = runtimeEvaluationSources(input.round);
+    const updateSummaries = acceptedUpdates.map((update) => {
+        const snapshot = update.outcome_eligibility_snapshot_id
+            ? snapshotById.get(update.outcome_eligibility_snapshot_id)
+            : null;
+        return buildRuntimeUpdateSummary(update, snapshot ?? null);
+    });
+    const safety = firstRecord(evaluationSources, ['safety', 'safety_evidence', 'safety_report']);
+    const adversarial = firstRecord(evaluationSources, ['adversarial', 'adversarial_evidence', 'adversarial_report']);
+    const calibration = firstRecord(evaluationSources, ['calibration', 'calibration_evidence', 'calibration_report']);
+    const regression = firstRecord(evaluationSources, ['regression', 'regression_evidence', 'regression_report']);
+    const sourceHashBundle = {
+        federation_round_id: input.round.id,
+        federation_key: input.round.federation_key,
+        round_key: input.round.round_key,
+        candidate_model_version: input.candidateModelVersion ?? null,
+        round_aggregate_payload_hash: stableHash(input.round.aggregate_payload),
+        candidate_artifact_payload_hash: stableHash(input.round.candidate_artifact_payload),
+        accepted_update_payload_hashes: uniqueNonEmpty(acceptedUpdates.map((update) => update.payload_commitment_hash)),
+        accepted_update_mask_hashes: uniqueNonEmpty(acceptedUpdates.map((update) => update.mask_commitment_hash)),
+        accepted_update_signature_hashes: uniqueNonEmpty(acceptedUpdates.map((update) => update.signature_hash)),
+        outcome_source_record_digests: uniqueNonEmpty(eligibleSnapshots.map((snapshot) => snapshot.source_record_digest)),
+        eligibility_source_hash_bundle_digest: stableHash(eligibleSnapshots.map((snapshot) => snapshot.source_hash_bundle)),
+        runtime_evidence_digest: stableHash({
+            round: input.round.id,
+            accepted_update_ids: acceptedUpdates.map((update) => update.id).sort(),
+            eligibility_snapshot_ids: eligibleSnapshots.map((snapshot) => snapshot.id).sort(),
+        }),
+    };
+
+    return {
+        evidence_source: 'federated_runtime_ledger',
+        candidate_model_version: input.candidateModelVersion ?? null,
+        federation_round_id: input.round.id,
+        federation_key: input.round.federation_key,
+        round_key: input.round.round_key,
+        round_status: input.round.status,
+        participantCount: input.round.participant_count || uniqueNonEmpty(acceptedUpdates.map((update) => update.node_ref || update.participant_ref)).length,
+        acceptedUpdateSubmissions: acceptedUpdates.length,
+        quarantinedUpdateSubmissions: quarantinedUpdates.length,
+        eligibleOutcomeSnapshots: eligibleSnapshots.length,
+        outcomeConfirmedRows,
+        provenanceVerifiedRows,
+        trustScoredRows,
+        averageTrustScore,
+        secureAggregationStatus,
+        externalValidationCount: sumNumbers(eligibleSnapshots.map((snapshot) => snapshot.external_validation_events)),
+        safetyCaseCount: readFirstNumberFromSources(evaluationSources, ['safetyCaseCount', 'safety_case_count', 'case_count', 'fixture_count']),
+        safetyIncidentCount: readFirstNumberFromSources(evaluationSources, ['safetyIncidentCount', 'safety_incident_count', 'incident_count']) ?? 0,
+        hallucinationIncidentCount: readFirstNumberFromSources(evaluationSources, ['hallucinationIncidentCount', 'hallucination_incident_count']) ?? 0,
+        falseNegativeIncidentCount: readFirstNumberFromSources(evaluationSources, ['falseNegativeIncidentCount', 'false_negative_incident_count']) ?? 0,
+        adversarialCaseCount: readFirstNumberFromSources([adversarial], ['case_count', 'fixture_count', 'sample_count']),
+        adversarialPassed: readFirstNumberFromSources([adversarial], ['passed']),
+        adversarialFailed: readFirstNumberFromSources([adversarial], ['failed']),
+        adversarialScore: readFirstNumberFromSources([adversarial], ['score', 'summary_score']),
+        expectedCalibrationError: readFirstNumberFromSources([calibration], ['expected_calibration_error', 'ece', 'ece_score']),
+        brierScore: readFirstNumberFromSources([calibration], ['brier_score', 'brier']),
+        regressionFixtureCount: readFirstNumberFromSources([regression], ['fixture_count']),
+        regressionFailedCount: readFirstNumberFromSources([regression], ['failed']),
+        regressionPassedCount: readFirstNumberFromSources([regression], ['passed']),
+        regressionTotalReplayed: readFirstNumberFromSources([regression], ['total_replayed']),
+        regressionRate: readFirstNumberFromSources([regression], ['regression_rate']),
+        regressionThresholdPct: readFirstNumberFromSources([regression], ['threshold_pct']),
+        candidateBlocked: readFirstBoolean(regression, ['blocked', 'candidate_blocked']),
+        safety,
+        adversarial,
+        calibration,
+        regression,
+        updateSummaries,
+        sourceHashBundle,
+        sourceTableCounts: {
+            federated_update_submissions: input.updateSubmissions.length,
+            accepted_update_submissions: acceptedUpdates.length,
+            federated_outcome_eligibility_snapshots: input.outcomeEligibilitySnapshots.length,
+            eligible_outcome_eligibility_snapshots: eligibleSnapshots.length,
+        },
+    };
+}
+
+async function loadRuntimeRound(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        federationRoundId: string;
+    },
+): Promise<FederatedRuntimeRoundEvidenceRow> {
+    const C = FEDERATION_ROUNDS.COLUMNS;
+    const { data, error } = await client
+        .from(FEDERATION_ROUNDS.TABLE)
+        .select('*')
+        .eq(C.id, input.federationRoundId)
+        .maybeSingle();
+
+    if (error) {
+        throw new Error(`Failed to load federation round runtime evidence: ${error.message}`);
+    }
+    if (!data) {
+        throw new Error('Federation round not found for candidate evidence generation.');
+    }
+
+    const round = mapRuntimeRound(asRecord(data));
+    if (round.coordinator_tenant_id && round.coordinator_tenant_id !== input.tenantId) {
+        throw new Error('Only the federation coordinator tenant can generate candidate runtime evidence for this round.');
+    }
+    return round;
+}
+
+async function loadRuntimeUpdateSubmissions(
+    client: SupabaseClient,
+    federationRoundId: string,
+): Promise<FederatedRuntimeUpdateSubmissionRow[]> {
+    const C = FEDERATED_UPDATE_SUBMISSIONS.COLUMNS;
+    const { data, error } = await client
+        .from(FEDERATED_UPDATE_SUBMISSIONS.TABLE)
+        .select('*')
+        .eq(C.federation_round_id, federationRoundId);
+
+    if (error) {
+        throw new Error(`Failed to load federated update runtime evidence: ${error.message}`);
+    }
+    return (data ?? []).map((row) => mapRuntimeUpdateSubmission(asRecord(row)));
+}
+
+async function loadRuntimeOutcomeEligibilitySnapshots(
+    client: SupabaseClient,
+    updateSubmissions: FederatedRuntimeUpdateSubmissionRow[],
+): Promise<FederatedRuntimeOutcomeEligibilitySnapshotRow[]> {
+    const ids = uniqueNonEmpty(updateSubmissions.map((submission) => submission.outcome_eligibility_snapshot_id));
+    if (ids.length === 0) return [];
+
+    const C = FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.COLUMNS;
+    const { data, error } = await client
+        .from(FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS.TABLE)
+        .select('*')
+        .in(C.id, ids);
+
+    if (error) {
+        throw new Error(`Failed to load federated outcome eligibility runtime evidence: ${error.message}`);
+    }
+    return (data ?? []).map((row) => mapRuntimeOutcomeEligibilitySnapshot(asRecord(row)));
+}
+
+function buildRuntimeUpdateSummary(
+    update: FederatedRuntimeUpdateSubmissionRow,
+    snapshot: FederatedRuntimeOutcomeEligibilitySnapshotRow | null,
+): FederatedRuntimeDeltaEvidence & Record<string, unknown> {
+    const metricSummary = mergeRecords(
+        asRecord(update.masked_update_summary.metric_summary ?? update.masked_update_summary.metricSummary),
+        asRecord(update.public_summary.metric_summary ?? update.public_summary.metricSummary),
+        asRecord(update.evidence.metric_summary ?? update.evidence.metricSummary),
+    );
+    const summarySources = [
+        metricSummary,
+        update.masked_update_summary,
+        update.public_summary,
+        update.evidence,
+    ];
+
+    return {
+        updateSubmissionId: update.id,
+        update_submission_id: update.id,
+        nodeRef: update.node_ref,
+        node_ref: update.node_ref,
+        participantRef: update.participant_ref,
+        participant_ref: update.participant_ref,
+        contributionRole: update.contribution_role,
+        contribution_role: update.contribution_role,
+        taskType: taskTypeForContributionRole(update.contribution_role),
+        task_type: taskTypeForContributionRole(update.contribution_role),
+        submissionStatus: update.submission_status,
+        submission_status: update.submission_status,
+        outcomeEligibilitySnapshotId: update.outcome_eligibility_snapshot_id,
+        outcome_eligibility_snapshot_id: update.outcome_eligibility_snapshot_id,
+        eligibleRecordCount: snapshot?.outcome_confirmed_rows ?? readFirstNumberFromSources(summarySources, ['eligibleRecordCount', 'eligible_record_count']),
+        eligible_record_count: snapshot?.outcome_confirmed_rows ?? readFirstNumberFromSources(summarySources, ['eligibleRecordCount', 'eligible_record_count']),
+        outcomeConfirmedRows: snapshot?.outcome_confirmed_rows ?? readFirstNumberFromSources(summarySources, ['outcomeConfirmedRows', 'outcome_confirmed_rows']),
+        outcome_confirmed_rows: snapshot?.outcome_confirmed_rows ?? readFirstNumberFromSources(summarySources, ['outcomeConfirmedRows', 'outcome_confirmed_rows']),
+        provenanceVerifiedRows: snapshot?.provenance_verified_rows ?? readFirstNumberFromSources(summarySources, ['provenanceVerifiedRows', 'provenance_verified_rows']),
+        provenance_verified_rows: snapshot?.provenance_verified_rows ?? readFirstNumberFromSources(summarySources, ['provenanceVerifiedRows', 'provenance_verified_rows']),
+        trustScoredRows: snapshot?.trust_scored_rows ?? readFirstNumberFromSources(summarySources, ['trustScoredRows', 'trust_scored_rows']),
+        trust_scored_rows: snapshot?.trust_scored_rows ?? readFirstNumberFromSources(summarySources, ['trustScoredRows', 'trust_scored_rows']),
+        averageTrustScore: snapshot?.average_trust_score ?? readFirstNumberFromSources(summarySources, ['averageTrustScore', 'average_trust_score']),
+        average_trust_score: snapshot?.average_trust_score ?? readFirstNumberFromSources(summarySources, ['averageTrustScore', 'average_trust_score']),
+        payloadCommitmentHash: update.payload_commitment_hash,
+        payload_commitment_hash: update.payload_commitment_hash,
+        maskCommitmentHash: update.mask_commitment_hash,
+        mask_commitment_hash: update.mask_commitment_hash,
+        metricSummary,
+        metric_summary: metricSummary,
+        publicSummary: update.public_summary,
+        public_summary: update.public_summary,
+        evidence: {
+            evidence_digest: stableHash(update.evidence),
+            source_record_digest: snapshot?.source_record_digest ?? null,
+            outcome_eligibility_status: snapshot?.eligibility_status ?? null,
+            raw_clinical_records_included: false,
+            raw_model_delta_included: false,
+        },
+    };
+}
+
+function runtimeEvaluationSources(round: FederatedRuntimeRoundEvidenceRow): Record<string, unknown>[] {
+    const aggregate = round.aggregate_payload;
+    const artifact = round.candidate_artifact_payload;
+    const acceptedAggregation = asRecord(aggregate.accepted_update_aggregation);
+    return [
+        aggregate,
+        asRecord(aggregate.federated_runtime_evidence),
+        asRecord(aggregate.runtime_evidence),
+        asRecord(aggregate.evaluation),
+        asRecord(aggregate.evaluation_packet),
+        acceptedAggregation,
+        asRecord(acceptedAggregation.evidence),
+        artifact,
+        asRecord(artifact.federated_runtime_evidence),
+        asRecord(artifact.runtime_evidence),
+        asRecord(artifact.evaluation),
+        asRecord(artifact.evaluation_packet),
+    ];
+}
+
+function firstRecord(sources: Record<string, unknown>[], keys: string[]): Record<string, unknown> {
+    for (const source of sources) {
+        for (const key of keys) {
+            const nested = asRecord(source[key]);
+            if (Object.keys(nested).length > 0) return nested;
+        }
+    }
+    return {};
+}
+
+function readFirstNumberFromSources(sources: Record<string, unknown>[], keys: string[]): number | null {
+    for (const source of sources) {
+        const direct = readFirstNumber(source, keys);
+        if (direct != null) return direct;
+        for (const nestedKey of ['metrics', 'summary', 'results']) {
+            const nested = asRecord(source[nestedKey]);
+            const nestedValue = readFirstNumber(nested, keys);
+            if (nestedValue != null) return nestedValue;
+        }
+    }
+    return null;
+}
+
+function resolveRuntimeSecureAggregationStatus(
+    round: FederatedRuntimeRoundEvidenceRow,
+    acceptedUpdates: FederatedRuntimeUpdateSubmissionRow[],
+): string {
+    const aggregate = round.aggregate_payload;
+    const explicitStatus = readText(asRecord(aggregate.secure_aggregation).status)
+        ?? readText(asRecord(aggregate.accepted_update_aggregation).secure_aggregation_status)
+        ?? readText(asRecord(asRecord(aggregate.accepted_update_aggregation).secure_aggregation).status);
+    if (explicitStatus) return explicitStatus;
+    if (
+        acceptedUpdates.length > 0
+        && acceptedUpdates.every((update) => isSha256(update.payload_commitment_hash) && isSha256(update.mask_commitment_hash))
+    ) {
+        return 'live_node_commitments_ready';
+    }
+    return 'missing';
+}
+
+function taskTypeForContributionRole(role: string | null | undefined): string {
+    if (role === 'severity') return 'severity';
+    if (role === 'support') return 'hybrid';
+    return 'diagnosis';
+}
+
+function weightedSnapshotTrustScore(snapshots: FederatedRuntimeOutcomeEligibilitySnapshotRow[]): number {
+    const totalRows = snapshots.reduce((sum, snapshot) => sum + Math.max(0, snapshot.trust_scored_rows), 0);
+    if (totalRows <= 0) return 0;
+    return snapshots.reduce((sum, snapshot) => sum + snapshot.average_trust_score * Math.max(0, snapshot.trust_scored_rows), 0) / totalRows;
+}
+
+function mapRuntimeRound(row: Record<string, unknown>): FederatedRuntimeRoundEvidenceRow {
+    return {
+        id: String(row.id),
+        federation_key: readText(row.federation_key) ?? '',
+        coordinator_tenant_id: readText(row.coordinator_tenant_id) ?? '',
+        round_key: readText(row.round_key) ?? '',
+        status: readText(row.status) ?? 'unknown',
+        participant_count: readNumber(row.participant_count) ?? 0,
+        aggregate_payload: asRecord(row.aggregate_payload),
+        candidate_artifact_payload: asRecord(row.candidate_artifact_payload),
+        completed_at: readText(row.completed_at),
+    };
+}
+
+function mapRuntimeUpdateSubmission(row: Record<string, unknown>): FederatedRuntimeUpdateSubmissionRow {
+    return {
+        id: String(row.id),
+        tenant_id: readText(row.tenant_id) ?? '',
+        federation_round_id: readText(row.federation_round_id) ?? '',
+        outcome_eligibility_snapshot_id: readText(row.outcome_eligibility_snapshot_id),
+        federation_key: readText(row.federation_key) ?? '',
+        round_key: readText(row.round_key) ?? '',
+        node_ref: readText(row.node_ref) ?? '',
+        partner_ref: readText(row.partner_ref) ?? '',
+        participant_ref: readText(row.participant_ref) ?? '',
+        contribution_role: readText(row.contribution_role) ?? 'diagnosis',
+        submission_status: readText(row.submission_status) ?? 'submitted',
+        payload_commitment_hash: readText(row.payload_commitment_hash),
+        mask_commitment_hash: readText(row.mask_commitment_hash),
+        signed_payload_hash: readText(row.signed_payload_hash),
+        signature_hash: readText(row.signature_hash),
+        masked_update_summary: asRecord(row.masked_update_summary),
+        public_summary: asRecord(row.public_summary),
+        evidence: asRecord(row.evidence),
+        observed_at: readText(row.observed_at),
+        created_at: readText(row.created_at),
+    };
+}
+
+function mapRuntimeOutcomeEligibilitySnapshot(row: Record<string, unknown>): FederatedRuntimeOutcomeEligibilitySnapshotRow {
+    return {
+        id: String(row.id),
+        tenant_id: readText(row.tenant_id) ?? '',
+        eligibility_status: readText(row.eligibility_status),
+        outcome_confirmed_rows: readNumber(row.outcome_confirmed_rows) ?? 0,
+        provenance_verified_rows: readNumber(row.provenance_verified_rows) ?? 0,
+        trust_scored_rows: readNumber(row.trust_scored_rows) ?? 0,
+        average_trust_score: readNumber(row.average_trust_score) ?? 0,
+        external_validation_events: readNumber(row.external_validation_events) ?? 0,
+        source_record_digest: readText(row.source_record_digest),
+        source_hash_bundle: asRecord(row.source_hash_bundle),
+        evidence: asRecord(row.evidence),
     };
 }
 
@@ -973,4 +1406,15 @@ function readStringArray(value: unknown): string[] {
 function clamp01(value: number | null): number {
     if (value == null || !Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(1, value));
+}
+
+function mergeRecords(...records: Array<Record<string, unknown>>): Record<string, unknown> {
+    return records.reduce<Record<string, unknown>>((merged, record) => ({
+        ...merged,
+        ...record,
+    }), {});
+}
+
+function isSha256(value: string | null | undefined): value is string {
+    return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 }

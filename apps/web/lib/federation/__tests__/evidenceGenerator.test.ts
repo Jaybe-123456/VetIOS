@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { buildFederatedCandidateEvidencePlan } from '@/lib/federation/evidenceGenerator';
+import {
+    buildFederatedCandidateEvidencePlan,
+    buildFederatedRuntimeEvidenceFromRows,
+} from '@/lib/federation/evidenceGenerator';
 import { evaluateModelPromotionGate, type RegressionRunEvidence } from '@/lib/learningEngine/promotionGate';
 import type {
     LearningBenchmarkReportRecord,
@@ -119,6 +122,64 @@ describe('federated candidate evidence generator', () => {
         expect(plan.calibration_reports[0]?.ece_score).toBe(0.06);
         expect(plan.regression_run.results).toMatchObject({ fixture_count: 12, failed: 0 });
         expect(promotionGate.allowed).toBe(true);
+    });
+
+    it('assembles runtime evidence from live federation ledger rows before generating reports', () => {
+        const entry = registryEntry();
+        const runtimeEvidence = buildFederatedRuntimeEvidenceFromRows({
+            candidateModelVersion: entry.model_version,
+            round: {
+                id: '11111111-1111-4111-8111-111111111111',
+                federation_key: 'one_health_amr',
+                coordinator_tenant_id: 'coordinator-tenant',
+                round_key: 'round-20260621',
+                status: 'completed',
+                participant_count: 3,
+                aggregate_payload: {
+                    accepted_update_aggregation: {
+                        status: 'aggregate_candidates_ready',
+                    },
+                    federated_runtime_evidence: {
+                        safety: { case_count: 18, incident_count: 0 },
+                        adversarial: { case_count: 10, passed: 10, failed: 0, score: 0.94 },
+                        regression: { fixture_count: 12, passed: 12, failed: 0 },
+                        calibration: { row_count: 72, expected_calibration_error: 0.06, brier_score: 0.07 },
+                    },
+                },
+                candidate_artifact_payload: {},
+                completed_at: '2026-06-21T20:00:00.000Z',
+            },
+            updateSubmissions: [
+                runtimeSubmission('submission-a', 'node-a', 'eligibility-a', 0.91),
+                runtimeSubmission('submission-b', 'node-b', 'eligibility-b', 0.9),
+                runtimeSubmission('submission-c', 'node-c', 'eligibility-c', 0.92),
+            ],
+            outcomeEligibilitySnapshots: [
+                runtimeEligibility('eligibility-a', 24, 0.85),
+                runtimeEligibility('eligibility-b', 24, 0.88),
+                runtimeEligibility('eligibility-c', 24, 0.85),
+            ],
+        });
+
+        const plan = buildFederatedCandidateEvidencePlan({
+            candidateModelVersion: entry.model_version,
+            registryEntries: [entry],
+            runtimeEvidence,
+            now: '2026-06-21T20:00:00.000Z',
+        });
+
+        expect(runtimeEvidence).toMatchObject({
+            evidence_source: 'federated_runtime_ledger',
+            participantCount: 3,
+            acceptedUpdateSubmissions: 3,
+            outcomeConfirmedRows: 72,
+            provenanceVerifiedRows: 72,
+            trustScoredRows: 72,
+            secureAggregationStatus: 'live_node_commitments_ready',
+        });
+        expect(runtimeEvidence.sourceHashBundle?.accepted_update_payload_hashes).toHaveLength(3);
+        expect(plan.promotion_gate_posture).toBe('gate_ready');
+        expect(plan.blockers).toEqual([]);
     });
 
     it('keeps the promotion gate blocked when runtime evidence lacks adversarial coverage', () => {
@@ -249,5 +310,52 @@ function runtimeUpdate(nodeRef: string, rows: number, trustScore: number): Recor
             expected_calibration_error: 0.06,
             brier_score: 0.07,
         },
+    };
+}
+
+function runtimeSubmission(id: string, nodeRef: string, eligibilityId: string, accuracy: number) {
+    return {
+        id,
+        tenant_id: `tenant-${nodeRef}`,
+        federation_round_id: '11111111-1111-4111-8111-111111111111',
+        outcome_eligibility_snapshot_id: eligibilityId,
+        federation_key: 'one_health_amr',
+        round_key: 'round-20260621',
+        node_ref: nodeRef,
+        partner_ref: `partner-${nodeRef}`,
+        participant_ref: `participant-${nodeRef}`,
+        contribution_role: 'diagnosis',
+        submission_status: 'accepted',
+        payload_commitment_hash: `${id.at(-1) ?? 'a'}`.repeat(64).slice(0, 64),
+        mask_commitment_hash: 'f'.repeat(64),
+        signed_payload_hash: 'e'.repeat(64),
+        signature_hash: 'd'.repeat(64),
+        masked_update_summary: {
+            metric_summary: {
+                accuracy,
+                expected_calibration_error: 0.06,
+                brier_score: 0.07,
+            },
+        },
+        public_summary: {},
+        evidence: {},
+    };
+}
+
+function runtimeEligibility(id: string, rows: number, trustScore: number) {
+    return {
+        id,
+        tenant_id: `tenant-${id}`,
+        eligibility_status: 'eligible',
+        outcome_confirmed_rows: rows,
+        provenance_verified_rows: rows,
+        trust_scored_rows: rows,
+        average_trust_score: trustScore,
+        external_validation_events: 1,
+        source_record_digest: 'c'.repeat(64),
+        source_hash_bundle: {
+            eligible_records: `${id}:digest`,
+        },
+        evidence: {},
     };
 }
