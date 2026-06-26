@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import {
     buildTrainedMaskedUpdateCommitment,
     trainLocalFederatedTask,
+    toFederatedUpdateSubmissionPayload,
     VetiosFederationNodeClient,
     type FederationRoundTask,
     type LocalClinicalLearningRecord,
@@ -84,10 +85,18 @@ async function main() {
             delta_norm: trained.delta.delta_norm,
             metric_summary: trained.delta.metric_summary,
         },
-        commitment: {
-            ...commitment,
-            local_delta: undefined,
+        secure_aggregation_materialization: {
+            schema: commitment.secure_aggregation_materialization.schema,
+            masking_protocol: commitment.secure_aggregation_materialization.masking_protocol,
+            dimension_count: commitment.secure_aggregation_materialization.dimension_count,
+            pairwise_mask_count: commitment.secure_aggregation_materialization.pairwise_mask_commitments.length,
+            unmask_share_count: commitment.secure_aggregation_materialization.unmask_share_commitments.length,
+            dropped_peer_refs: commitment.secure_aggregation_materialization.dropped_peer_refs,
+            masked_vector_digest: commitment.secure_aggregation_materialization.masked_vector_digest,
+            mask_commitment_hash: commitment.secure_aggregation_materialization.mask_commitment_hash,
+            evidence: commitment.secure_aggregation_materialization.evidence,
         },
+        submission_payload: toFederatedUpdateSubmissionPayload(commitment),
         submitted: options.submit,
         submission,
     };

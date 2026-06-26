@@ -20,13 +20,16 @@ Primary package responsibilities:
 - Score whether local records are eligible for federation.
 - Produce site-level eligibility snapshots for VetIOS federation activation.
 - Train deterministic local task deltas over eligible outcome-confirmed records.
-- Build task-specific masked model-delta commitment payloads.
+- Materialize pairwise secure-aggregation masks over the local delta.
+- Build task-specific masked model-delta commitment payloads without sending
+  raw records, raw vectors, or raw model deltas.
 - Call the VetIOS federation node API for heartbeat, task pull, and update
   submission.
 
 The local runner is intentionally conservative: raw records and raw model
 deltas stay on the clinic/lab node. VetIOS receives eligibility summaries,
-record digests, aggregate task metrics, and masked delta commitments only.
+record digests, aggregate task metrics, pairwise mask commitments, unmask-share
+commitments, and masked delta commitments only.
 
 Minimal local execution flow:
 
@@ -68,6 +71,16 @@ vetios-federation-node \
   --secret "$VETIOS_NODE_SECRET" \
   --out commitment.json
 ```
+
+Dry-run output includes:
+
+- `snapshot_draft`: site-level outcome eligibility evidence.
+- `local_delta_summary`: local training summary without raw feature vectors.
+- `secure_aggregation_materialization`: local mask commitment evidence.
+- `submission_payload`: the sanitized payload sent to VetIOS submit mode.
+
+The `submission_payload` intentionally excludes `local_delta` and the full
+local secure-aggregation materialization object.
 
 CLI submit mode:
 

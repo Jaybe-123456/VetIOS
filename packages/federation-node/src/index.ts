@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash, createHmac, randomUUID } from 'crypto';
 
 export type FederationNodeTaskType =
     | 'diagnosis_delta'
@@ -174,8 +174,54 @@ export interface LocalFederatedModelDelta {
     evidence: Record<string, unknown>;
 }
 
+export interface SecureAggregationPeer {
+    node_ref: string;
+    public_key_fingerprint?: string | null;
+    status?: 'active' | 'dropped' | 'unknown' | null;
+}
+
+export interface PairwiseMaskCommitment {
+    peer_node_ref: string;
+    direction: 'add' | 'subtract';
+    peer_public_key_fingerprint: string | null;
+    mask_seed_commitment_hash: string;
+    mask_vector_digest: string;
+    active: boolean;
+}
+
+export interface UnmaskShareCommitment {
+    peer_node_ref: string;
+    direction: 'add' | 'subtract';
+    share_commitment_hash: string;
+    reveal_policy: 'dropout_or_threshold_unmask_only';
+}
+
+export interface LocalSecureAggregationMaterialization {
+    schema: 'vetios_secure_aggregation_materialization_v1';
+    masking_protocol: 'pairwise_masked_commitment_v1';
+    federation_round_id: string;
+    round_node_task_id: string;
+    node_ref: string;
+    contribution_role: FederatedUpdateRole;
+    quantization: {
+        scale: number;
+        integer_precision: 'safe_integer';
+    };
+    dimension_count: number;
+    dimension_order_digest: string;
+    unmasked_vector_digest: string;
+    masked_vector_digest: string;
+    local_mask_sum_digest: string;
+    pairwise_mask_commitments: PairwiseMaskCommitment[];
+    unmask_share_commitments: UnmaskShareCommitment[];
+    dropped_peer_refs: string[];
+    mask_commitment_hash: string;
+    evidence: Record<string, unknown>;
+}
+
 export interface TrainedMaskedUpdateCommitment extends MaskedUpdateCommitment {
     local_delta: LocalFederatedModelDelta;
+    secure_aggregation_materialization: LocalSecureAggregationMaterialization;
 }
 
 export interface VetiosFederationNodeClientOptions {
@@ -397,26 +443,23 @@ export function buildTrainedMaskedUpdateCommitment(input: {
     secret: string;
     requestId?: string;
 }): TrainedMaskedUpdateCommitment {
+    const secureAggregationMaterialization = buildSecureAggregationMaterialization({
+        task: input.task,
+        delta: input.delta,
+        secret: input.secret,
+    });
     const payloadCommitmentHash = stableHash({
         federation_round_id: input.task.federation_round_id,
         round_node_task_id: input.task.id,
         contribution_role: input.delta.contribution_role,
         record_digest: input.delta.record_digest,
         delta_digest: input.delta.delta_digest,
+        masked_vector_digest: secureAggregationMaterialization.masked_vector_digest,
+        dimension_order_digest: secureAggregationMaterialization.dimension_order_digest,
         plan_hash: input.task.plan_hash,
         trainer_schema: input.delta.schema,
     });
-    const maskNonce = stableHash({
-        node_ref: input.task.node_ref,
-        task_id: input.task.id,
-        secret_commitment: stableHash(input.secret),
-        delta_digest: input.delta.delta_digest,
-    });
-    const maskCommitmentHash = stableHash({
-        payload_commitment_hash: payloadCommitmentHash,
-        mask_nonce: maskNonce,
-        secure_aggregation_config: input.task.secure_aggregation_config ?? {},
-    });
+    const maskCommitmentHash = secureAggregationMaterialization.mask_commitment_hash;
     const signedPayloadHash = stableHash({
         payload_commitment_hash: payloadCommitmentHash,
         mask_commitment_hash: maskCommitmentHash,
@@ -447,6 +490,16 @@ export function buildTrainedMaskedUpdateCommitment(input: {
             delta_norm: input.delta.delta_norm,
             record_digest: input.delta.record_digest,
             metric_summary: input.delta.metric_summary,
+            secure_aggregation: {
+                schema: secureAggregationMaterialization.schema,
+                masking_protocol: secureAggregationMaterialization.masking_protocol,
+                dimension_count: secureAggregationMaterialization.dimension_count,
+                pairwise_mask_count: secureAggregationMaterialization.pairwise_mask_commitments.length,
+                unmask_share_count: secureAggregationMaterialization.unmask_share_commitments.length,
+                masked_vector_digest: secureAggregationMaterialization.masked_vector_digest,
+                mask_commitment_hash: secureAggregationMaterialization.mask_commitment_hash,
+                dropped_peer_count: secureAggregationMaterialization.dropped_peer_refs.length,
+            },
             raw_delta_included: false,
             raw_records_included: false,
         },
@@ -463,12 +516,147 @@ export function buildTrainedMaskedUpdateCommitment(input: {
             task_plan_hash: input.task.plan_hash,
             dataset_policy_hash: input.dataset.policy_hash,
             outcome_eligibility_status: input.dataset.snapshot_draft.eligibility_status,
-            secure_aggregation_boundary: 'masked_delta_commitments_no_raw_delta',
+            secure_aggregation_boundary: 'pairwise_masked_delta_commitments_no_raw_delta',
+            secure_aggregation_materialized: true,
+            secure_aggregation_schema: secureAggregationMaterialization.schema,
             model_delta_materialized: true,
             local_training_data_shared: false,
             raw_model_delta_shared: false,
         },
         local_delta: input.delta,
+        secure_aggregation_materialization: secureAggregationMaterialization,
+    };
+}
+
+export function buildSecureAggregationMaterialization(input: {
+    task: FederationRoundTask;
+    delta: LocalFederatedModelDelta;
+    secret: string;
+}): LocalSecureAggregationMaterialization {
+    const config = normalizeRecord(input.task.secure_aggregation_config);
+    const scale = Math.max(1, Math.min(1_000_000, Math.round(finiteNumber(config.quantization_scale) ?? 10_000)));
+    const maskRange = Math.max(1, Math.min(1_000_000, Math.round(finiteNumber(config.mask_range) ?? 100_000)));
+    const peers = readSecureAggregationPeers(config, input.task.node_ref);
+    const activePeers = peers.filter((peer) => peer.status !== 'dropped');
+    const droppedPeerRefs = peers.filter((peer) => peer.status === 'dropped').map((peer) => peer.node_ref);
+    const dimensions = Object.keys(input.delta.feature_weights).sort();
+    const quantizedVector = Object.fromEntries(dimensions.map((dimension) => [
+        dimension,
+        Math.round((input.delta.feature_weights[dimension] ?? 0) * scale),
+    ]));
+    const maskSum = Object.fromEntries(dimensions.map((dimension) => [dimension, 0]));
+    const pairwiseMaskCommitments: PairwiseMaskCommitment[] = [];
+    const unmaskShareCommitments: UnmaskShareCommitment[] = [];
+
+    for (const peer of activePeers) {
+        const direction = input.task.node_ref.localeCompare(peer.node_ref) <= 0 ? 'add' : 'subtract';
+        const sign = direction === 'add' ? 1 : -1;
+        const seedMaterial = stableStringify({
+            protocol: 'pairwise_masked_commitment_v1',
+            federation_round_id: input.task.federation_round_id,
+            round_node_task_id: input.task.id,
+            local_node_ref: input.task.node_ref,
+            peer_node_ref: peer.node_ref,
+            ordered_pair: [input.task.node_ref, peer.node_ref].sort(),
+            peer_public_key_fingerprint: peer.public_key_fingerprint ?? null,
+            delta_digest: input.delta.delta_digest,
+        });
+        const maskSeed = hmacHex(input.secret, seedMaterial);
+        const maskVector = Object.fromEntries(dimensions.map((dimension, index) => {
+            const maskValue = pairwiseMaskValue(maskSeed, dimension, index, maskRange);
+            maskSum[dimension] = (maskSum[dimension] ?? 0) + sign * maskValue;
+            return [dimension, maskValue];
+        }));
+        const maskVectorDigest = stableHash(maskVector);
+
+        pairwiseMaskCommitments.push({
+            peer_node_ref: peer.node_ref,
+            direction,
+            peer_public_key_fingerprint: peer.public_key_fingerprint ?? null,
+            mask_seed_commitment_hash: stableHash({
+                protocol: 'pairwise_masked_commitment_v1',
+                seed_digest: stableHash(maskSeed),
+                federation_round_id: input.task.federation_round_id,
+                round_node_task_id: input.task.id,
+                peer_node_ref: peer.node_ref,
+            }),
+            mask_vector_digest: maskVectorDigest,
+            active: true,
+        });
+        unmaskShareCommitments.push({
+            peer_node_ref: peer.node_ref,
+            direction,
+            share_commitment_hash: stableHash({
+                protocol: 'pairwise_unmask_share_commitment_v1',
+                seed_digest: stableHash(maskSeed),
+                mask_vector_digest: maskVectorDigest,
+                federation_round_id: input.task.federation_round_id,
+                round_node_task_id: input.task.id,
+                peer_node_ref: peer.node_ref,
+                reveal_policy: 'dropout_or_threshold_unmask_only',
+            }),
+            reveal_policy: 'dropout_or_threshold_unmask_only',
+        });
+    }
+
+    const maskedVector = Object.fromEntries(dimensions.map((dimension) => [
+        dimension,
+        (quantizedVector[dimension] ?? 0) + (maskSum[dimension] ?? 0),
+    ]));
+    const dimensionOrderDigest = stableHash(dimensions);
+    const unmaskedVectorDigest = stableHash(quantizedVector);
+    const maskedVectorDigest = stableHash(maskedVector);
+    const localMaskSumDigest = stableHash(maskSum);
+    const sortedPairwiseCommitments = pairwiseMaskCommitments
+        .sort((left, right) => left.peer_node_ref.localeCompare(right.peer_node_ref));
+    const sortedUnmaskShares = unmaskShareCommitments
+        .sort((left, right) => left.peer_node_ref.localeCompare(right.peer_node_ref));
+    const maskCommitmentHash = stableHash({
+        schema: 'vetios_secure_aggregation_materialization_v1',
+        masking_protocol: 'pairwise_masked_commitment_v1',
+        federation_round_id: input.task.federation_round_id,
+        round_node_task_id: input.task.id,
+        node_ref: input.task.node_ref,
+        contribution_role: input.delta.contribution_role,
+        quantization_scale: scale,
+        dimension_order_digest: dimensionOrderDigest,
+        unmasked_vector_digest: unmaskedVectorDigest,
+        masked_vector_digest: maskedVectorDigest,
+        local_mask_sum_digest: localMaskSumDigest,
+        pairwise_mask_commitments: sortedPairwiseCommitments,
+        dropped_peer_refs: droppedPeerRefs,
+    });
+
+    return {
+        schema: 'vetios_secure_aggregation_materialization_v1',
+        masking_protocol: 'pairwise_masked_commitment_v1',
+        federation_round_id: input.task.federation_round_id,
+        round_node_task_id: input.task.id,
+        node_ref: input.task.node_ref,
+        contribution_role: input.delta.contribution_role,
+        quantization: {
+            scale,
+            integer_precision: 'safe_integer',
+        },
+        dimension_count: dimensions.length,
+        dimension_order_digest: dimensionOrderDigest,
+        unmasked_vector_digest: unmaskedVectorDigest,
+        masked_vector_digest: maskedVectorDigest,
+        local_mask_sum_digest: localMaskSumDigest,
+        pairwise_mask_commitments: sortedPairwiseCommitments,
+        unmask_share_commitments: sortedUnmaskShares,
+        dropped_peer_refs: droppedPeerRefs,
+        mask_commitment_hash: maskCommitmentHash,
+        evidence: {
+            generated_by: '@vetios/federation-node',
+            raw_delta_shared: false,
+            raw_records_shared: false,
+            masked_vector_shared_by_default: false,
+            pairwise_peer_count: peers.length,
+            active_pairwise_peer_count: activePeers.length,
+            dropped_peer_count: droppedPeerRefs.length,
+            limitations: activePeers.length === 0 ? ['pairwise_peers_missing'] : [],
+        },
     };
 }
 
@@ -532,6 +720,26 @@ export function buildMaskedUpdateCommitment(input: {
             secure_aggregation_boundary: 'commitments_only_no_raw_delta',
             local_training_data_shared: false,
         },
+    };
+}
+
+export function toFederatedUpdateSubmissionPayload(commitment: MaskedUpdateCommitment): MaskedUpdateCommitment {
+    return {
+        request_id: commitment.request_id,
+        round_node_task_id: commitment.round_node_task_id,
+        outcome_eligibility_snapshot_id: commitment.outcome_eligibility_snapshot_id,
+        node_ref: commitment.node_ref,
+        partner_ref: commitment.partner_ref,
+        contribution_role: commitment.contribution_role,
+        payload_commitment_hash: commitment.payload_commitment_hash,
+        mask_commitment_hash: commitment.mask_commitment_hash,
+        signed_payload_hash: commitment.signed_payload_hash,
+        signature_algorithm: commitment.signature_algorithm,
+        signature_hash: commitment.signature_hash,
+        signing_key_fingerprint: commitment.signing_key_fingerprint,
+        masked_update_summary: commitment.masked_update_summary,
+        public_summary: commitment.public_summary,
+        evidence: commitment.evidence,
     };
 }
 
@@ -638,7 +846,7 @@ export class VetiosFederationNodeClient {
     submitUpdate(roundId: string, commitment: MaskedUpdateCommitment) {
         return this.post(`/api/federation/v1/rounds/${roundId}/updates`, {
             federation_key: this.options.federationKey,
-            ...commitment,
+            ...toFederatedUpdateSubmissionPayload(commitment),
         });
     }
 
@@ -855,6 +1063,41 @@ function contributionRoleForTaskType(taskType: FederationNodeTaskType): Federate
     return 'diagnosis';
 }
 
+function readSecureAggregationPeers(config: Record<string, unknown>, nodeRef: string): SecureAggregationPeer[] {
+    const rawPeers = Array.isArray(config.peers)
+        ? config.peers
+        : Array.isArray(config.participants)
+            ? config.participants
+            : [];
+    const peers: SecureAggregationPeer[] = [];
+    for (const entry of rawPeers) {
+        const record = normalizeRecord(entry as Record<string, unknown>);
+        const peerNodeRef = normalizeText(record.node_ref ?? record.nodeRef ?? record.participant_ref ?? record.participantRef);
+        if (!peerNodeRef || peerNodeRef === normalizeText(nodeRef)) continue;
+        peers.push({
+            node_ref: peerNodeRef,
+            public_key_fingerprint: normalizeText(record.public_key_fingerprint ?? record.publicKeyFingerprint),
+            status: readPeerStatus(record.status),
+        });
+    }
+    return Array.from(new Map(peers.map((peer) => [peer.node_ref, peer])).values())
+        .sort((left, right) => left.node_ref.localeCompare(right.node_ref));
+}
+
+function readPeerStatus(value: unknown): NonNullable<SecureAggregationPeer['status']> {
+    if (value === 'active' || value === 'dropped' || value === 'unknown') return value;
+    return 'active';
+}
+
+function pairwiseMaskValue(seed: string, dimension: string, index: number, maskRange: number): number {
+    const digest = createHmac('sha256', seed)
+        .update(`${index}:${dimension}`)
+        .digest('hex');
+    const parsed = Number.parseInt(digest.slice(0, 12), 16);
+    const bounded = Number.isFinite(parsed) ? parsed % (maskRange * 2 + 1) : 0;
+    return bounded - maskRange;
+}
+
 async function readJsonResponse(response: Response): Promise<unknown> {
     const json = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -901,6 +1144,10 @@ function roundScore(value: number): number {
 
 function stableHash(value: unknown): string {
     return createHash('sha256').update(stableStringify(value)).digest('hex');
+}
+
+function hmacHex(secret: string, value: string): string {
+    return createHmac('sha256', secret).update(value).digest('hex');
 }
 
 function stableStringify(value: unknown): string {
