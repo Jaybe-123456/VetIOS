@@ -182,6 +182,72 @@ describe('federated candidate evidence generator', () => {
         expect(plan.blockers).toEqual([]);
     });
 
+    it('generates benchmark and regression packets from secure aggregate artifacts without operator-supplied reports', () => {
+        const entry = registryEntry();
+        const runtimeEvidence = buildFederatedRuntimeEvidenceFromRows({
+            candidateModelVersion: entry.model_version,
+            round: {
+                id: '11111111-1111-4111-8111-111111111111',
+                federation_key: 'one_health_amr',
+                coordinator_tenant_id: 'coordinator-tenant',
+                round_key: 'round-20260621',
+                status: 'completed',
+                participant_count: 3,
+                aggregate_payload: {
+                    accepted_update_aggregation: {
+                        status: 'aggregate_candidates_ready',
+                    },
+                },
+                candidate_artifact_payload: {
+                    diagnosis: aggregateArtifact(),
+                },
+                completed_at: '2026-06-21T20:00:00.000Z',
+            },
+            updateSubmissions: [
+                runtimeSubmission('submission-a', 'node-a', 'eligibility-a', 0.91),
+                runtimeSubmission('submission-b', 'node-b', 'eligibility-b', 0.9),
+                runtimeSubmission('submission-c', 'node-c', 'eligibility-c', 0.92),
+            ],
+            outcomeEligibilitySnapshots: [
+                runtimeEligibility('eligibility-a', 24, 0.85),
+                runtimeEligibility('eligibility-b', 24, 0.88),
+                runtimeEligibility('eligibility-c', 24, 0.85),
+            ],
+        });
+
+        const plan = buildFederatedCandidateEvidencePlan({
+            candidateModelVersion: entry.model_version,
+            registryEntries: [entry],
+            runtimeEvidence,
+            now: '2026-06-21T20:00:00.000Z',
+        });
+
+        const promotionGate = evaluateModelPromotionGate({
+            candidateModelVersion: entry.model_version,
+            targetEntries: [entry],
+            benchmarkReports: materializeBenchmarkReports(plan.benchmark_reports),
+            calibrationReports: materializeCalibrationReports(plan.calibration_reports),
+            regressionRuns: [materializeRegressionRun(plan.regression_run)],
+        });
+
+        expect(runtimeEvidence).toMatchObject({
+            secureAggregationStatus: 'secure_aggregation_ready',
+            aggregateArtifactCount: 1,
+            materializedAggregateArtifactCount: 1,
+        });
+        expect(plan.benchmark_reports.map((report) => report.pass_status)).toEqual(['pass', 'pass', 'pass']);
+        expect(plan.benchmark_reports[1]?.report_payload.evidence_summary).toMatchObject({
+            generated_from_aggregate_artifact: true,
+        });
+        expect(plan.regression_run.results).toMatchObject({
+            failed: 0,
+            blocked: false,
+        });
+        expect(Number(plan.regression_run.results.fixture_count)).toBeGreaterThan(0);
+        expect(plan.promotion_gate_posture).toBe('gate_ready');
+        expect(promotionGate.allowed).toBe(true);
+    });
+
     it('keeps the promotion gate blocked when runtime evidence lacks adversarial coverage', () => {
         const entry = registryEntry();
         const plan = buildFederatedCandidateEvidencePlan({
@@ -357,5 +423,38 @@ function runtimeEligibility(id: string, rows: number, trustScore: number) {
             eligible_records: `${id}:digest`,
         },
         evidence: {},
+    };
+}
+
+function aggregateArtifact(): Record<string, unknown> {
+    return {
+        artifact_type: 'federated_secure_aggregate_materialization_v1',
+        aggregation_mode: 'secure_aggregation_masked_vector_sum',
+        task_type: 'diagnosis',
+        model_version: 'fed-one-health-amr-round-20260621-diagnosis',
+        dataset_version: `federated:round-20260621:${'a'.repeat(64)}`,
+        accepted_update_count: 3,
+        accepted_node_refs: ['node-a', 'node-b', 'node-c'],
+        outcome_eligibility_snapshot_ids: ['eligibility-a', 'eligibility-b', 'eligibility-c'],
+        payload_commitment_hashes: ['1'.repeat(64), '2'.repeat(64), '3'.repeat(64)],
+        mask_commitment_hashes: ['4'.repeat(64), '5'.repeat(64), '6'.repeat(64)],
+        signature_hashes: ['7'.repeat(64), '8'.repeat(64), '9'.repeat(64)],
+        source_update_digest: 'a'.repeat(64),
+        raw_site_delta_artifacts_stored: false,
+        raw_clinical_rows_shared: false,
+        coordinator_visibility: 'commitments_public_summaries_and_secure_aggregate_only',
+        blockers: [],
+        secure_aggregate_materialization: {
+            status: 'materialized',
+            protocol: 'x25519_hkdf_pairwise_masked_v1',
+            accepted_update_count: 3,
+            quantization_scale: 1000,
+            dimension_count: 4,
+            dimension_order_digest: 'b'.repeat(64),
+            aggregate_masked_vector_digest: 'c'.repeat(64),
+            encrypted_unmask_share_envelope_count: 6,
+            dropout_recovery_evidence_status: 'decrypted_no_dropout_correction_needed',
+            blockers: [],
+        },
     };
 }

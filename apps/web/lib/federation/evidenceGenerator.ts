@@ -92,6 +92,10 @@ export interface FederatedRuntimeEvidenceInput {
     regressionRate?: number | null;
     regressionThresholdPct?: number | null;
     candidateBlocked?: boolean | null;
+    aggregateArtifactCount?: number | null;
+    materializedAggregateArtifactCount?: number | null;
+    aggregateArtifactSummaries?: Record<string, unknown>[] | null;
+    aggregateEvidencePacket?: Record<string, unknown> | null;
     updateSummaries?: FederatedRuntimeDeltaEvidence[] | null;
     sourceHashBundle?: Record<string, unknown> | null;
 }
@@ -299,7 +303,11 @@ export function buildFederatedRuntimeEvidenceFromRows(input: {
     const trustScoredRows = sumNumbers(eligibleSnapshots.map((snapshot) => snapshot.trust_scored_rows));
     const averageTrustScore = weightedSnapshotTrustScore(eligibleSnapshots);
     const secureAggregationStatus = resolveRuntimeSecureAggregationStatus(input.round, acceptedUpdates);
-    const evaluationSources = runtimeEvaluationSources(input.round);
+    const aggregateDerivedEvidence = buildAggregateArtifactDerivedEvidence(input.round);
+    const evaluationSources = [
+        ...runtimeEvaluationSources(input.round),
+        aggregateDerivedEvidence,
+    ];
     const updateSummaries = acceptedUpdates.map((update) => {
         const snapshot = update.outcome_eligibility_snapshot_id
             ? snapshotById.get(update.outcome_eligibility_snapshot_id)
@@ -363,6 +371,10 @@ export function buildFederatedRuntimeEvidenceFromRows(input: {
         regressionRate: readFirstNumberFromSources([regression], ['regression_rate']),
         regressionThresholdPct: readFirstNumberFromSources([regression], ['threshold_pct']),
         candidateBlocked: readFirstBoolean(regression, ['blocked', 'candidate_blocked']),
+        aggregateArtifactCount: readNumber(aggregateDerivedEvidence.aggregate_artifact_count),
+        materializedAggregateArtifactCount: readNumber(aggregateDerivedEvidence.materialized_aggregate_artifact_count),
+        aggregateArtifactSummaries: readRecordArray(aggregateDerivedEvidence.aggregate_artifact_summaries),
+        aggregateEvidencePacket: aggregateDerivedEvidence,
         safety,
         adversarial,
         calibration,
@@ -520,6 +532,208 @@ function runtimeEvaluationSources(round: FederatedRuntimeRoundEvidenceRow): Reco
     ];
 }
 
+function buildAggregateArtifactDerivedEvidence(
+    round: FederatedRuntimeRoundEvidenceRow,
+): Record<string, unknown> {
+    const artifacts = readAggregateArtifactsFromRound(round);
+    const artifactSummaries = artifacts.map((artifact, index) => summarizeAggregateArtifact(artifact, index));
+    const checks = artifactSummaries.flatMap((summary) => readRecordArray(summary.checks));
+    const safetyChecks = checks.filter((check) => readText(check.category) === 'safety');
+    const adversarialChecks = checks.filter((check) => readText(check.category) === 'adversarial');
+    const regressionChecks = checks;
+    const failedSafety = failedChecks(safetyChecks);
+    const failedAdversarial = failedChecks(adversarialChecks);
+    const failedRegression = failedChecks(regressionChecks);
+    const materializedArtifactCount = artifactSummaries.filter((summary) =>
+        readText(summary.secure_aggregation_status) === 'materialized',
+    ).length;
+    const sourceHashBundle = {
+        aggregate_artifact_payload_hashes: artifactSummaries.map((summary) => summary.artifact_payload_hash),
+        aggregate_artifact_source_update_digests: uniqueNonEmpty(artifactSummaries.map((summary) => readText(summary.source_update_digest))),
+        aggregate_artifact_vector_digests: uniqueNonEmpty(artifactSummaries.map((summary) => readText(summary.aggregate_masked_vector_digest))),
+        aggregate_artifact_evidence_digest: stableHash(artifactSummaries),
+    };
+
+    return {
+        evidence_source: 'federated_aggregate_artifact_invariant_generator',
+        aggregate_artifact_count: artifactSummaries.length,
+        materialized_aggregate_artifact_count: materializedArtifactCount,
+        aggregate_artifact_summaries: artifactSummaries,
+        source_hash_bundle: sourceHashBundle,
+        safety: {
+            pass: artifactSummaries.length > 0 && failedSafety === 0,
+            case_count: safetyChecks.length,
+            minimum_case_count: artifactSummaries.length > 0 ? 1 : 0,
+            score: passRate(safetyChecks),
+            generated_from_aggregate_artifact: true,
+            failed_invariant_count: failedSafety,
+            evidence_digest: stableHash({ safetyChecks, sourceHashBundle }),
+        },
+        adversarial: {
+            pass: artifactSummaries.length > 0 && failedAdversarial === 0,
+            case_count: adversarialChecks.length,
+            minimum_case_count: artifactSummaries.length > 0 ? 1 : 0,
+            passed: Math.max(0, adversarialChecks.length - failedAdversarial),
+            failed: failedAdversarial,
+            score: passRate(adversarialChecks),
+            generated_from_aggregate_artifact: true,
+            adversarial_focus: [
+                'raw_record_exfiltration',
+                'raw_delta_exfiltration',
+                'missing_mask_materialization',
+                'unverified_commitment_manifest',
+                'dropout_recovery_integrity',
+            ],
+            evidence_digest: stableHash({ adversarialChecks, sourceHashBundle }),
+        },
+        regression: {
+            fixture_count: regressionChecks.length,
+            passed: Math.max(0, regressionChecks.length - failedRegression),
+            failed: failedRegression,
+            total_replayed: regressionChecks.length,
+            regression_rate: regressionChecks.length > 0 ? roundMetric((failedRegression / regressionChecks.length) * 100) : null,
+            threshold_pct: 0,
+            blocked: failedRegression > 0 || artifactSummaries.length === 0,
+            generated_from_aggregate_artifact: true,
+            evidence_digest: stableHash({ regressionChecks, sourceHashBundle }),
+        },
+    };
+}
+
+function readAggregateArtifactsFromRound(round: FederatedRuntimeRoundEvidenceRow): Record<string, unknown>[] {
+    const roots: unknown[] = [
+        round.candidate_artifact_payload,
+        asRecord(round.aggregate_payload).candidate_artifacts,
+        asRecord(round.aggregate_payload).aggregate_artifacts,
+        asRecord(asRecord(round.aggregate_payload).accepted_update_aggregation).artifacts,
+    ];
+    const artifacts: Record<string, unknown>[] = [];
+    for (const root of roots) {
+        collectAggregateArtifacts(root, artifacts);
+    }
+    const seen = new Set<string>();
+    return artifacts.filter((artifact) => {
+        const digest = stableHash(artifact);
+        if (seen.has(digest)) return false;
+        seen.add(digest);
+        return true;
+    });
+}
+
+function collectAggregateArtifacts(value: unknown, artifacts: Record<string, unknown>[]) {
+    if (Array.isArray(value)) {
+        for (const item of value) collectAggregateArtifacts(item, artifacts);
+        return;
+    }
+    const record = asRecord(value);
+    if (Object.keys(record).length === 0) return;
+    if (isAggregateArtifactPayload(record)) {
+        artifacts.push(record);
+        return;
+    }
+    for (const child of Object.values(record)) {
+        const nested = asRecord(child);
+        if (Object.keys(nested).length > 0 && isAggregateArtifactPayload(nested)) {
+            artifacts.push(nested);
+        }
+    }
+}
+
+function isAggregateArtifactPayload(record: Record<string, unknown>): boolean {
+    const artifactType = readText(record.artifact_type);
+    return Boolean(
+        artifactType?.startsWith('federated_')
+        || Object.keys(asRecord(record.secure_aggregate_materialization)).length > 0
+        || readText(record.aggregation_mode)?.includes('secure_aggregation'),
+    );
+}
+
+function summarizeAggregateArtifact(
+    artifact: Record<string, unknown>,
+    index: number,
+): Record<string, unknown> {
+    const materialization = asRecord(artifact.secure_aggregate_materialization);
+    const blockers = [
+        ...readStringArray(artifact.blockers),
+        ...readStringArray(materialization.blockers),
+    ];
+    const acceptedUpdateCount = readNumber(artifact.accepted_update_count)
+        ?? readNumber(materialization.accepted_update_count)
+        ?? 0;
+    const outcomeSnapshotIds = readStringArray(artifact.outcome_eligibility_snapshot_ids);
+    const payloadCommitments = readStringArray(artifact.payload_commitment_hashes);
+    const maskCommitments = readStringArray(artifact.mask_commitment_hashes);
+    const signatureHashes = readStringArray(artifact.signature_hashes);
+    const materializationStatus = readText(materialization.status);
+    const materialized = materializationStatus === 'materialized';
+    const protocol = readText(materialization.protocol);
+    const envelopeCount = readNumber(materialization.encrypted_unmask_share_envelope_count) ?? 0;
+    const dropoutStatus = readText(materialization.dropout_recovery_evidence_status);
+    const checks = [
+        aggregateCheck('materialized_secure_aggregate', 'safety', materialized, materializationStatus ?? 'missing'),
+        aggregateCheck('raw_clinical_rows_not_shared', 'adversarial', readBoolean(artifact.raw_clinical_rows_shared) === false),
+        aggregateCheck('raw_site_delta_artifacts_not_stored', 'adversarial', readBoolean(artifact.raw_site_delta_artifacts_stored) === false),
+        aggregateCheck('coordinator_visibility_is_aggregate_only', 'adversarial', readText(artifact.coordinator_visibility)?.includes('secure_aggregate') === true),
+        aggregateCheck('outcome_snapshot_lineage_present', 'safety', outcomeSnapshotIds.length > 0 && outcomeSnapshotIds.length >= Math.max(1, acceptedUpdateCount)),
+        aggregateCheck('payload_commitments_present', 'regression', payloadCommitments.length >= Math.max(1, acceptedUpdateCount)),
+        aggregateCheck('mask_commitments_present', 'regression', maskCommitments.length >= Math.max(1, acceptedUpdateCount)),
+        aggregateCheck('signature_hashes_present', 'regression', signatureHashes.length >= Math.max(1, acceptedUpdateCount)),
+        aggregateCheck('source_update_digest_present', 'regression', isSha256(readText(artifact.source_update_digest))),
+        aggregateCheck('dimension_order_digest_present', 'regression', isSha256(readText(materialization.dimension_order_digest))),
+        aggregateCheck('aggregate_vector_digest_present', 'regression', isSha256(readText(materialization.aggregate_masked_vector_digest))),
+        aggregateCheck('encrypted_unmask_envelopes_present', 'adversarial', protocol !== 'x25519_hkdf_pairwise_masked_v1' || envelopeCount > 0),
+        aggregateCheck('dropout_recovery_not_blocked', 'adversarial', dropoutStatus !== 'encrypted_envelopes_missing'),
+        aggregateCheck('artifact_blockers_empty', 'regression', blockers.length === 0, blockers),
+    ];
+
+    return {
+        artifact_index: index,
+        task_type: readText(artifact.task_type),
+        artifact_type: readText(artifact.artifact_type),
+        aggregation_mode: readText(artifact.aggregation_mode),
+        model_version: readText(artifact.model_version),
+        dataset_version: readText(artifact.dataset_version),
+        accepted_update_count: acceptedUpdateCount,
+        accepted_node_count: readStringArray(artifact.accepted_node_refs).length,
+        outcome_eligibility_snapshot_count: outcomeSnapshotIds.length,
+        secure_aggregation_status: materializationStatus,
+        secure_aggregation_protocol: protocol,
+        aggregate_masked_vector_digest: readText(materialization.aggregate_masked_vector_digest),
+        dimension_order_digest: readText(materialization.dimension_order_digest),
+        encrypted_unmask_share_envelope_count: envelopeCount,
+        dropout_recovery_evidence_status: dropoutStatus,
+        source_update_digest: readText(artifact.source_update_digest),
+        artifact_payload_hash: stableHash(artifact),
+        blockers,
+        checks,
+        raw_clinical_rows_shared: readBoolean(artifact.raw_clinical_rows_shared),
+        raw_site_delta_artifacts_stored: readBoolean(artifact.raw_site_delta_artifacts_stored),
+    };
+}
+
+function aggregateCheck(
+    name: string,
+    category: 'safety' | 'adversarial' | 'regression',
+    pass: boolean,
+    detail?: unknown,
+): Record<string, unknown> {
+    return {
+        name,
+        category,
+        status: pass ? 'pass' : 'fail',
+        detail,
+    };
+}
+
+function failedChecks(checks: Record<string, unknown>[]): number {
+    return checks.filter((check) => readText(check.status) !== 'pass').length;
+}
+
+function passRate(checks: Record<string, unknown>[]): number {
+    if (checks.length === 0) return 0;
+    return roundMetric((checks.length - failedChecks(checks)) / checks.length);
+}
+
 function firstRecord(sources: Record<string, unknown>[], keys: string[]): Record<string, unknown> {
     for (const source of sources) {
         for (const key of keys) {
@@ -552,6 +766,8 @@ function resolveRuntimeSecureAggregationStatus(
         ?? readText(asRecord(aggregate.accepted_update_aggregation).secure_aggregation_status)
         ?? readText(asRecord(asRecord(aggregate.accepted_update_aggregation).secure_aggregation).status);
     if (explicitStatus) return explicitStatus;
+    const aggregateArtifactStatus = resolveAggregateArtifactSecureAggregationStatus(round);
+    if (aggregateArtifactStatus) return aggregateArtifactStatus;
     if (
         acceptedUpdates.length > 0
         && acceptedUpdates.every((update) => isSha256(update.payload_commitment_hash) && isSha256(update.mask_commitment_hash))
@@ -559,6 +775,21 @@ function resolveRuntimeSecureAggregationStatus(
         return 'live_node_commitments_ready';
     }
     return 'missing';
+}
+
+function resolveAggregateArtifactSecureAggregationStatus(round: FederatedRuntimeRoundEvidenceRow): string | null {
+    const artifacts = readAggregateArtifactsFromRound(round);
+    if (artifacts.some((artifact) =>
+        readText(asRecord(artifact.secure_aggregate_materialization).status) === 'materialized',
+    )) {
+        return 'secure_aggregation_ready';
+    }
+    if (artifacts.some((artifact) =>
+        readText(asRecord(artifact.secure_aggregate_materialization).status) === 'blocked',
+    )) {
+        return 'secure_aggregation_blocked';
+    }
+    return null;
 }
 
 function taskTypeForContributionRole(role: string | null | undefined): string {
@@ -763,6 +994,7 @@ export function deriveFederatedCandidateEvidenceFromRuntime(input: {
         ?? 'missing';
     const secureAggregationReady = secureAggregationStatus === 'secure_aggregation_ready'
         || secureAggregationStatus === 'live_node_commitments_ready'
+        || secureAggregationStatus === 'secure_aggregate_materialized'
         || secureAggregationStatus === 'ready';
     const taskMetrics = {
         participant_count: participantCount,
@@ -1354,6 +1586,7 @@ function publicEvidenceSummary(evidence: Record<string, unknown>): Record<string
         'blocked',
         'candidate_blocked',
         'status',
+        'generated_from_aggregate_artifact',
     ];
     return Object.fromEntries(allowedKeys
         .filter((key) => evidence[key] != null)
@@ -1400,6 +1633,12 @@ function readBoolean(value: unknown): boolean | null {
 function readStringArray(value: unknown): string[] {
     return Array.isArray(value)
         ? value.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0)
+        : [];
+}
+
+function readRecordArray(value: unknown): Record<string, unknown>[] {
+    return Array.isArray(value)
+        ? value.map(asRecord).filter((entry) => Object.keys(entry).length > 0)
         : [];
 }
 

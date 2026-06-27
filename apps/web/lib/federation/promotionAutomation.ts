@@ -6,6 +6,10 @@ import {
     type FederatedAggregateTaskType,
 } from '@/lib/federation/aggregateBuilder';
 import {
+    generateFederatedCandidateEvidence,
+    type GenerateFederatedCandidateEvidenceResult,
+} from '@/lib/federation/evidenceGenerator';
+import {
     registerFederatedRoundCandidateModels,
     type FederatedCandidateRegistrationResult,
     type FederatedModelPromotionAssessment,
@@ -39,10 +43,23 @@ export interface FederatedPromotionAutomationDecision {
     promotion_gate: PromotionGateResult | null;
 }
 
+export interface FederatedPromotionEvidenceGenerationSummary {
+    candidate_model_version: string;
+    status: 'generated' | 'failed';
+    benchmark_report_count: number;
+    calibration_report_count: number;
+    regression_run_created: boolean;
+    promotion_gate_posture: string | null;
+    blockers: string[];
+    warnings: string[];
+    error: string | null;
+}
+
 export interface FederatedPromotionAutomationResult {
     aggregate_artifacts: BuildFederatedAggregateArtifactsResult | null;
     aggregate_build_blockers: string[];
     registration: FederatedCandidateRegistrationResult;
+    evidence_generation: FederatedPromotionEvidenceGenerationSummary[];
     decisions: FederatedPromotionAutomationDecision[];
     automation_status: 'blocked' | 'manual_review_ready';
     automatic_champion_promotion_allowed: false;
@@ -154,8 +171,14 @@ export async function runFederatedPromotionAutomation(
         actor: input.actor,
         policy: input.policy,
     });
-    const store = createSupabaseLearningEngineStore(client);
     const tenantId = registration.round.coordinator_tenant_id;
+    const evidenceGeneration = await generatePromotionEvidenceForAssessments(client, {
+        tenantId,
+        federationRoundId: input.federationRoundId,
+        actor: input.actor,
+        assessments: registration.assessments,
+    });
+    const store = createSupabaseLearningEngineStore(client);
     const [registryEntries, benchmarkReports, calibrationReports] = await Promise.all([
         store.listModelRegistryEntries(tenantId),
         store.listBenchmarkReports(tenantId, 250),
@@ -190,16 +213,84 @@ export async function runFederatedPromotionAutomation(
     }
 
     const allBlockers = decisions.flatMap((decision) => decision.blockers);
+    const evidenceGenerationBlockers = evidenceGeneration
+        .filter((entry) => entry.status === 'failed')
+        .map((entry) => `candidate_evidence_generation_failed:${entry.candidate_model_version}`);
     const nextRequiredActions = uniqueStrings(decisions.flatMap((decision) => decision.next_required_actions));
+    if (evidenceGenerationBlockers.length > 0) {
+        nextRequiredActions.push('resolve_federated_candidate_evidence_generation_errors');
+    }
 
     return {
         aggregate_artifacts: aggregateResult,
         aggregate_build_blockers: aggregateBuildBlockers,
         registration,
+        evidence_generation: evidenceGeneration,
         decisions,
-        automation_status: allBlockers.length === 0 ? 'manual_review_ready' : 'blocked',
+        automation_status: allBlockers.length === 0 && evidenceGenerationBlockers.length === 0 ? 'manual_review_ready' : 'blocked',
         automatic_champion_promotion_allowed: false,
-        next_required_actions: nextRequiredActions,
+        next_required_actions: uniqueStrings(nextRequiredActions),
+    };
+}
+
+async function generatePromotionEvidenceForAssessments(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        federationRoundId: string;
+        actor: string | null;
+        assessments: FederatedCandidateRegistrationResult['assessments'];
+    },
+): Promise<FederatedPromotionEvidenceGenerationSummary[]> {
+    const candidateModelVersions = uniqueStrings(input.assessments
+        .map((assessment) => assessment.candidate_model_version)
+        .filter((version): version is string => typeof version === 'string' && version.length > 0));
+    const summaries: FederatedPromotionEvidenceGenerationSummary[] = [];
+    for (const candidateModelVersion of candidateModelVersions) {
+        try {
+            summaries.push(summarizeEvidenceGeneration(candidateModelVersion, await generateFederatedCandidateEvidence(client, {
+                tenantId: input.tenantId,
+                candidateModelVersion,
+                federationRoundId: input.federationRoundId,
+                operatorEvidence: {
+                    automation_stage: 'federated_promotion_automation',
+                    evidence_generation_trigger: 'post_aggregate_candidate_registration',
+                    raw_clinical_records_included: false,
+                    raw_model_deltas_included: false,
+                },
+                actor: input.actor,
+            })));
+        } catch (error) {
+            summaries.push({
+                candidate_model_version: candidateModelVersion,
+                status: 'failed',
+                benchmark_report_count: 0,
+                calibration_report_count: 0,
+                regression_run_created: false,
+                promotion_gate_posture: null,
+                blockers: ['candidate_evidence_generation_failed'],
+                warnings: [],
+                error: error instanceof Error ? error.message : 'Unknown federated candidate evidence generation error.',
+            });
+        }
+    }
+    return summaries;
+}
+
+function summarizeEvidenceGeneration(
+    candidateModelVersion: string,
+    result: GenerateFederatedCandidateEvidenceResult,
+): FederatedPromotionEvidenceGenerationSummary {
+    return {
+        candidate_model_version: candidateModelVersion,
+        status: 'generated',
+        benchmark_report_count: result.created_benchmark_reports.length,
+        calibration_report_count: result.created_calibration_reports.length,
+        regression_run_created: Boolean(result.regression_run),
+        promotion_gate_posture: result.plan.promotion_gate_posture,
+        blockers: result.plan.blockers,
+        warnings: result.plan.warnings,
+        error: null,
     };
 }
 
