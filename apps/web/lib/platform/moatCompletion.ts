@@ -134,6 +134,8 @@ export interface MoatCompletionEvidence {
     };
     workflow: {
         passive_signal_events: number;
+        integration_run_events: number;
+        ready_integration_runs: number;
         last_signal_at: string | null;
     };
     ask_vetios: {
@@ -144,7 +146,11 @@ export interface MoatCompletionEvidence {
         workflow_ready: number;
         human_review_required: number;
         security_review_required: number;
+        security_test_events: number;
+        security_incident_events: number;
         regulatory_reviewable: number;
+        regulatory_review_events: number;
+        regulatory_blocked_reviews: number;
         last_signal_at: string | null;
     };
     case_graph_promotion: {
@@ -160,6 +166,9 @@ export interface MoatCompletionEvidence {
         culture_guided_events: number;
         outcome_tracked_events: number;
         resistance_suspected_events: number;
+        lab_feed_events: number;
+        normalized_lab_feed_events: number;
+        one_health_export_ready_events: number;
         last_signal_at: string | null;
     };
     specialist_review: {
@@ -168,6 +177,9 @@ export interface MoatCompletionEvidence {
         corrected_or_partial_reviews: number;
         learning_eligible_reviews: number;
         pacs_linked_reviews: number;
+        operation_events: number;
+        assigned_operations: number;
+        outcome_closed_operations: number;
         last_signal_at: string | null;
     };
     federation: {
@@ -608,9 +620,13 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 'outcome_followup_hooks',
             ],
             counts: {
-                live_event_count: evidence.workflow.passive_signal_events + evidence.dataset.clinical_cases,
+                live_event_count: evidence.workflow.passive_signal_events
+                    + evidence.workflow.integration_run_events
+                    + evidence.dataset.clinical_cases,
                 outcome_confirmed_count: evidence.inference.outcome_linked_inferences,
-                provenance_verified_count: evidence.workflow.passive_signal_events + evidence.ask_vetios.workflow_ready,
+                provenance_verified_count: evidence.workflow.passive_signal_events
+                    + evidence.workflow.ready_integration_runs
+                    + evidence.ask_vetios.workflow_ready,
                 trust_scored_count: evidence.inference.cire_sample_size,
                 external_validation_count: 0,
                 last_signal_at: latestIso([evidence.workflow.last_signal_at, lastAskSignal, evidence.dataset.last_signal_at]),
@@ -622,8 +638,10 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 trust_scored_count: 30,
             },
             evidence: {
-                source_tables: ['passive_signal_events', 'ask_vetios_queries', 'clinical_cases'],
+                source_tables: ['passive_signal_events', 'workflow_integration_run_events', 'ask_vetios_queries', 'clinical_cases'],
                 passive_signal_events: evidence.workflow.passive_signal_events,
+                integration_run_events: evidence.workflow.integration_run_events,
+                ready_integration_runs: evidence.workflow.ready_integration_runs,
                 workflow_ready_queries: evidence.ask_vetios.workflow_ready,
             },
             owner_label: 'Workflow Ops',
@@ -641,9 +659,13 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 'outcome_linked_review_eligibility',
             ],
             counts: {
-                live_event_count: evidence.specialist_review.review_events + evidence.ask_vetios.human_review_required,
-                outcome_confirmed_count: evidence.specialist_review.learning_eligible_reviews,
-                provenance_verified_count: evidence.specialist_review.completed_reviews,
+                live_event_count: evidence.specialist_review.review_events
+                    + evidence.specialist_review.operation_events
+                    + evidence.ask_vetios.human_review_required,
+                outcome_confirmed_count: evidence.specialist_review.learning_eligible_reviews
+                    + evidence.specialist_review.outcome_closed_operations,
+                provenance_verified_count: evidence.specialist_review.completed_reviews
+                    + evidence.specialist_review.assigned_operations,
                 trust_scored_count: evidence.specialist_review.corrected_or_partial_reviews,
                 external_validation_count: 0,
                 last_signal_at: latestIso([evidence.specialist_review.last_signal_at, lastAskSignal]),
@@ -655,9 +677,12 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 trust_scored_count: 5,
             },
             evidence: {
-                source_tables: ['specialist_review_events', 'ask_vetios_queries'],
+                source_tables: ['specialist_review_events', 'specialist_review_operation_events', 'ask_vetios_queries'],
                 completed_reviews: evidence.specialist_review.completed_reviews,
                 learning_eligible_reviews: evidence.specialist_review.learning_eligible_reviews,
+                operation_events: evidence.specialist_review.operation_events,
+                assigned_operations: evidence.specialist_review.assigned_operations,
+                outcome_closed_operations: evidence.specialist_review.outcome_closed_operations,
             },
             owner_label: 'Clinical Review Ops',
         }),
@@ -674,10 +699,15 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 'resistance_signal_followup',
             ],
             counts: {
-                live_event_count: evidence.amr.stewardship_events + evidence.amr.genomic_events,
+                live_event_count: evidence.amr.stewardship_events
+                    + evidence.amr.genomic_events
+                    + evidence.amr.lab_feed_events,
                 outcome_confirmed_count: evidence.amr.outcome_tracked_events,
-                provenance_verified_count: evidence.amr.culture_guided_events + evidence.amr.genomic_events,
-                trust_scored_count: evidence.amr.resistance_suspected_events,
+                provenance_verified_count: evidence.amr.culture_guided_events
+                    + evidence.amr.genomic_events
+                    + evidence.amr.normalized_lab_feed_events,
+                trust_scored_count: evidence.amr.resistance_suspected_events
+                    + evidence.amr.one_health_export_ready_events,
                 external_validation_count: 0,
                 last_signal_at: evidence.amr.last_signal_at,
             },
@@ -688,9 +718,12 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 trust_scored_count: 5,
             },
             evidence: {
-                source_tables: ['amr_stewardship_events', 'amr_genomic_events'],
+                source_tables: ['amr_stewardship_events', 'amr_genomic_events', 'amr_lab_feed_surveillance_events'],
                 culture_guided_events: evidence.amr.culture_guided_events,
                 outcome_tracked_events: evidence.amr.outcome_tracked_events,
+                lab_feed_events: evidence.amr.lab_feed_events,
+                normalized_lab_feed_events: evidence.amr.normalized_lab_feed_events,
+                one_health_export_ready_events: evidence.amr.one_health_export_ready_events,
             },
             owner_label: 'AMR Ops',
         }),
@@ -766,9 +799,9 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             requires_outcome_loop: false,
             requires_trust_score: false,
             counts: {
-                live_event_count: evidence.ask_vetios.query_events,
+                live_event_count: evidence.ask_vetios.query_events + evidence.ask_vetios.security_test_events,
                 outcome_confirmed_count: 0,
-                provenance_verified_count: evidence.ask_vetios.security_review_required,
+                provenance_verified_count: evidence.ask_vetios.security_review_required + evidence.ask_vetios.security_test_events,
                 trust_scored_count: 0,
                 external_validation_count: externalValidationCount,
                 last_signal_at: latestIso([lastAskSignal, evidence.trust_ops.last_signal_at]),
@@ -780,8 +813,10 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             },
             requires_external_validation: true,
             evidence: {
-                source_tables: ['ask_vetios_queries', 'model_attestations'],
+                source_tables: ['ask_vetios_queries', 'ai_security_test_events', 'model_attestations'],
                 security_review_required: evidence.ask_vetios.security_review_required,
+                security_test_events: evidence.ask_vetios.security_test_events,
+                security_incident_events: evidence.ask_vetios.security_incident_events,
                 external_validation_count: externalValidationCount,
             },
             owner_label: 'Security Ops',
@@ -800,9 +835,9 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             ],
             requires_outcome_loop: false,
             counts: {
-                live_event_count: evidence.ask_vetios.query_events,
+                live_event_count: evidence.ask_vetios.query_events + evidence.ask_vetios.regulatory_review_events,
                 outcome_confirmed_count: 0,
-                provenance_verified_count: evidence.ask_vetios.regulatory_reviewable,
+                provenance_verified_count: evidence.ask_vetios.regulatory_reviewable + evidence.ask_vetios.regulatory_review_events,
                 trust_scored_count: evidence.ask_vetios.grounded_drafts,
                 external_validation_count: externalValidationCount,
                 last_signal_at: latestIso([lastAskSignal, evidence.trust_ops.last_signal_at]),
@@ -815,8 +850,10 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             },
             requires_external_validation: true,
             evidence: {
-                source_tables: ['ask_vetios_queries', 'model_attestations'],
+                source_tables: ['ask_vetios_queries', 'regulatory_claim_review_events', 'model_attestations'],
                 regulatory_reviewable: evidence.ask_vetios.regulatory_reviewable,
+                regulatory_review_events: evidence.ask_vetios.regulatory_review_events,
+                regulatory_blocked_reviews: evidence.ask_vetios.regulatory_blocked_reviews,
                 external_validation_count: externalValidationCount,
             },
             owner_label: 'Trust Ops',
@@ -929,13 +966,19 @@ async function loadWorkflowEvidence(
     warnings: string[],
 ): Promise<MoatCompletionEvidence['workflow']> {
     const P = PASSIVE_SIGNAL_EVENTS.COLUMNS;
-    const [passiveSignalEvents, lastSignalAt] = await Promise.all([
+    const runTable = 'workflow_integration_run_events';
+    const [passiveSignalEvents, integrationRunEvents, readyIntegrationRuns, lastPassiveAt, lastRunAt] = await Promise.all([
         countRows(client, PASSIVE_SIGNAL_EVENTS.TABLE, (query) => query.eq(P.tenant_id, tenantId), warnings, 'passive signal events'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId), warnings, 'workflow integration run events'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).eq('workflow_moat_status', 'operating'), warnings, 'operating workflow integration runs'),
         latestTimestamp(client, PASSIVE_SIGNAL_EVENTS.TABLE, P.created_at, (query) => query.eq(P.tenant_id, tenantId), warnings, 'passive signal latest signal'),
+        latestTimestamp(client, runTable, 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'workflow integration latest signal'),
     ]);
     return {
         passive_signal_events: passiveSignalEvents,
-        last_signal_at: lastSignalAt,
+        integration_run_events: integrationRunEvents,
+        ready_integration_runs: readyIntegrationRuns,
+        last_signal_at: latestIso([lastPassiveAt, lastRunAt]),
     };
 }
 
@@ -954,13 +997,19 @@ async function loadAskVetiosEvidence(
         workflowReady,
         humanReviewRequired,
         securityReviewRequired,
+        securityTestEvents,
+        securityIncidentEvents,
         regulatoryReviewable,
+        regulatoryReviewEvents,
+        regulatoryBlockedReviews,
         lastSignalAt,
+        lastSecurityAt,
+        lastRegulatoryAt,
     ] = await Promise.all([
         countRows(client, table, askScope, warnings, 'Ask VetIOS queries'),
         countRows(client, table, (query) => askScope(query).eq('case_graph_status', 'ready_for_case_graph'), warnings, 'Ask VetIOS case graph ready'),
         countRows(client, table, (query) => askScope(query).eq('model_trust_status', 'grounded_draft'), warnings, 'Ask VetIOS grounded drafts'),
-        countRows(client, table, (query) => askScope(query).eq('veterinary_retrieval_status', 'grounded_veterinary_context'), warnings, 'Ask VetIOS retrieval grounded'),
+        countRows(client, table, (query) => askScope(query).eq('veterinary_retrieval_status', 'veterinary_grounded'), warnings, 'Ask VetIOS retrieval grounded'),
         countRows(client, table, (query) => askScope(query).eq('workflow_integration_status', 'case_ready'), warnings, 'Ask VetIOS workflow ready'),
         countRows(client, table, (query) => askScope(query).in('human_review_status', [
             'clinician_review_required',
@@ -968,8 +1017,14 @@ async function loadAskVetiosEvidence(
             'emergency_review_required',
         ]), warnings, 'Ask VetIOS human review required'),
         countRows(client, table, (query) => askScope(query).eq('ai_security_status', 'security_review_required'), warnings, 'Ask VetIOS security review required'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS AI security test events'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('incident_required', true), warnings, 'Ask VetIOS AI security incident events'),
         countRows(client, table, (query) => askScope(query).eq('regulatory_claims_status', 'cds_reviewable'), warnings, 'Ask VetIOS regulatory reviewable'),
+        countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS regulatory review events'),
+        countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).in('claim_review_status', ['blocked', 'pending']), warnings, 'Ask VetIOS blocked regulatory reviews'),
         latestTimestamp(client, table, 'created_at', askScope, warnings, 'Ask VetIOS latest signal'),
+        latestTimestamp(client, 'ai_security_test_events', 'observed_at', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS security latest signal'),
+        latestTimestamp(client, 'regulatory_claim_review_events', 'observed_at', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS regulatory latest signal'),
     ]);
 
     return {
@@ -980,8 +1035,12 @@ async function loadAskVetiosEvidence(
         workflow_ready: workflowReady,
         human_review_required: humanReviewRequired,
         security_review_required: securityReviewRequired,
+        security_test_events: securityTestEvents,
+        security_incident_events: securityIncidentEvents,
         regulatory_reviewable: regulatoryReviewable,
-        last_signal_at: lastSignalAt,
+        regulatory_review_events: regulatoryReviewEvents,
+        regulatory_blocked_reviews: regulatoryBlockedReviews,
+        last_signal_at: latestIso([lastSignalAt, lastSecurityAt, lastRegulatoryAt]),
     };
 }
 
@@ -1013,14 +1072,31 @@ async function loadAmrEvidence(
     tenantId: string,
     warnings: string[],
 ): Promise<MoatCompletionEvidence['amr']> {
-    const [genomicEvents, stewardshipEvents, cultureGuidedEvents, outcomeTrackedEvents, resistanceSuspectedEvents, lastGenomicAt, lastStewardshipAt] = await Promise.all([
+    const labFeedTable = 'amr_lab_feed_surveillance_events';
+    const [
+        genomicEvents,
+        stewardshipEvents,
+        cultureGuidedEvents,
+        outcomeTrackedEvents,
+        resistanceSuspectedEvents,
+        labFeedEvents,
+        normalizedLabFeedEvents,
+        oneHealthExportReadyEvents,
+        lastGenomicAt,
+        lastStewardshipAt,
+        lastLabFeedAt,
+    ] = await Promise.all([
         countRows(client, 'amr_genomic_events', (query) => query.eq('tenant_id', tenantId), warnings, 'AMR genomic events'),
         countRows(client, 'amr_stewardship_events', (query) => query.eq('tenant_id', tenantId), warnings, 'AMR stewardship events'),
         countRows(client, 'amr_stewardship_events', (query) => query.eq('tenant_id', tenantId).eq('culture_collected', true), warnings, 'AMR culture-guided events'),
         countRows(client, 'amr_stewardship_events', (query) => query.eq('tenant_id', tenantId).not('outcome_status', 'is', null), warnings, 'AMR outcome-tracked events'),
         countRows(client, 'amr_stewardship_events', (query) => query.eq('tenant_id', tenantId).eq('resistance_suspected', true), warnings, 'AMR resistance-suspected events'),
+        countRows(client, labFeedTable, (query) => query.eq('tenant_id', tenantId), warnings, 'AMR lab feed surveillance events'),
+        countRows(client, labFeedTable, (query) => query.eq('tenant_id', tenantId).not('pathogen_key', 'is', null), warnings, 'AMR normalized lab feed events'),
+        countRows(client, labFeedTable, (query) => query.eq('tenant_id', tenantId).eq('one_health_export_ready', true), warnings, 'AMR One Health export-ready events'),
         latestTimestamp(client, 'amr_genomic_events', 'created_at', (query) => query.eq('tenant_id', tenantId), warnings, 'AMR genomic latest signal'),
         latestTimestamp(client, 'amr_stewardship_events', 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'AMR stewardship latest signal'),
+        latestTimestamp(client, labFeedTable, 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'AMR lab feed latest signal'),
     ]);
 
     return {
@@ -1029,7 +1105,10 @@ async function loadAmrEvidence(
         culture_guided_events: cultureGuidedEvents,
         outcome_tracked_events: outcomeTrackedEvents,
         resistance_suspected_events: resistanceSuspectedEvents,
-        last_signal_at: latestIso([lastGenomicAt, lastStewardshipAt]),
+        lab_feed_events: labFeedEvents,
+        normalized_lab_feed_events: normalizedLabFeedEvents,
+        one_health_export_ready_events: oneHealthExportReadyEvents,
+        last_signal_at: latestIso([lastGenomicAt, lastStewardshipAt, lastLabFeedAt]),
     };
 }
 
@@ -1039,13 +1118,29 @@ async function loadSpecialistReviewEvidence(
     warnings: string[],
 ): Promise<MoatCompletionEvidence['specialist_review']> {
     const table = 'specialist_review_events';
-    const [reviewEvents, completedReviews, correctedOrPartialReviews, learningEligibleReviews, pacsLinkedReviews, lastSignalAt] = await Promise.all([
+    const operationTable = 'specialist_review_operation_events';
+    const [
+        reviewEvents,
+        completedReviews,
+        correctedOrPartialReviews,
+        learningEligibleReviews,
+        pacsLinkedReviews,
+        operationEvents,
+        assignedOperations,
+        outcomeClosedOperations,
+        lastSignalAt,
+        lastOperationAt,
+    ] = await Promise.all([
         countRows(client, table, (query) => query.eq('tenant_id', tenantId), warnings, 'specialist review events'),
         countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('review_status', 'completed'), warnings, 'completed specialist reviews'),
         countRows(client, table, (query) => query.eq('tenant_id', tenantId).in('ai_disposition', ['corrected', 'partially_supported']), warnings, 'specialist correction reviews'),
         countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('learning_eligible', true), warnings, 'learning-eligible specialist reviews'),
         countRows(client, table, (query) => query.eq('tenant_id', tenantId).eq('pacs_status', 'linked'), warnings, 'PACS-linked specialist reviews'),
+        countRows(client, operationTable, (query) => query.eq('tenant_id', tenantId), warnings, 'specialist review operation events'),
+        countRows(client, operationTable, (query) => query.eq('tenant_id', tenantId).eq('assignment_status', 'assigned'), warnings, 'assigned specialist review operation events'),
+        countRows(client, operationTable, (query) => query.eq('tenant_id', tenantId).in('queue_status', ['closure_ready', 'learning_ready']), warnings, 'outcome-closed specialist review operation events'),
         latestTimestamp(client, table, 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'specialist review latest signal'),
+        latestTimestamp(client, operationTable, 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'specialist review operation latest signal'),
     ]);
 
     return {
@@ -1054,7 +1149,10 @@ async function loadSpecialistReviewEvidence(
         corrected_or_partial_reviews: correctedOrPartialReviews,
         learning_eligible_reviews: learningEligibleReviews,
         pacs_linked_reviews: pacsLinkedReviews,
-        last_signal_at: lastSignalAt,
+        operation_events: operationEvents,
+        assigned_operations: assignedOperations,
+        outcome_closed_operations: outcomeClosedOperations,
+        last_signal_at: latestIso([lastSignalAt, lastOperationAt]),
     };
 }
 
@@ -1258,6 +1356,13 @@ async function latestTimestamp(
 }
 
 function applyAskVetiosTenantScope(query: any, tenantId: string) {
+    if (UUID_PATTERN.test(tenantId)) {
+        return query.or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
+    }
+    return query.is('tenant_id', null);
+}
+
+function applyNullableTenantScope(query: any, tenantId: string) {
     if (UUID_PATTERN.test(tenantId)) {
         return query.or(`tenant_id.eq.${tenantId},tenant_id.is.null`);
     }

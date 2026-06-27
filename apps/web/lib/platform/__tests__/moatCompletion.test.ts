@@ -107,7 +107,9 @@ describe('moat completion scoring', () => {
             ask_vetios: {
                 query_events: 20,
                 security_review_required: 3,
+                security_test_events: 3,
                 regulatory_reviewable: 4,
+                regulatory_review_events: 4,
             },
         }));
 
@@ -119,6 +121,62 @@ describe('moat completion scoring', () => {
         expect(securityLayer?.completion_level).toBe('foundation');
         expect(securityLayer?.claim_posture).toBe('architecture_only');
         expect(snapshot.summary.defensible).toBeGreaterThanOrEqual(1);
+    });
+
+    it('counts operating ledgers for workflow, AMR, specialist, security, and regulatory maturity', () => {
+        const snapshot = buildMoatCompletionSnapshot(evidence({
+            workflow: {
+                passive_signal_events: 2,
+                integration_run_events: 8,
+                ready_integration_runs: 6,
+            },
+            specialist_review: {
+                review_events: 3,
+                operation_events: 5,
+                assigned_operations: 4,
+                outcome_closed_operations: 2,
+                completed_reviews: 2,
+                corrected_or_partial_reviews: 1,
+            },
+            amr: {
+                stewardship_events: 3,
+                lab_feed_events: 7,
+                normalized_lab_feed_events: 6,
+                one_health_export_ready_events: 2,
+                culture_guided_events: 2,
+                outcome_tracked_events: 1,
+            },
+            ask_vetios: {
+                query_events: 12,
+                workflow_ready: 4,
+                human_review_required: 2,
+                security_review_required: 1,
+                security_test_events: 6,
+                regulatory_reviewable: 3,
+                regulatory_review_events: 4,
+                regulatory_blocked_reviews: 1,
+                grounded_drafts: 3,
+            },
+        }));
+
+        const workflow = snapshot.moats.find((moat) => moat.moat_key === 'workflow_integration');
+        const specialist = snapshot.moats.find((moat) => moat.moat_key === 'specialist_review_loop');
+        const amr = snapshot.moats.find((moat) => moat.moat_key === 'amr_stewardship');
+        const security = snapshot.moats.find((moat) => moat.moat_key === 'ai_security_layer');
+        const regulatory = snapshot.moats.find((moat) => moat.moat_key === 'regulatory_claims_discipline');
+
+        expect(workflow?.live_event_count).toBe(10);
+        expect(workflow?.provenance_verified_count).toBe(12);
+        expect(workflow?.evidence.source_tables).toContain('workflow_integration_run_events');
+        expect(specialist?.live_event_count).toBe(10);
+        expect(specialist?.outcome_confirmed_count).toBe(2);
+        expect(amr?.live_event_count).toBe(10);
+        expect(amr?.provenance_verified_count).toBe(8);
+        expect(amr?.trust_scored_count).toBe(2);
+        expect(security?.live_event_count).toBe(18);
+        expect(security?.provenance_verified_count).toBe(7);
+        expect(regulatory?.live_event_count).toBe(16);
+        expect(regulatory?.provenance_verified_count).toBe(7);
     });
 
     it('scores federated learning from outcome eligibility, masked updates, promotion, and surveillance evidence', () => {
@@ -210,6 +268,8 @@ function evidence(overrides: {
         },
         workflow: {
             passive_signal_events: 0,
+            integration_run_events: 0,
+            ready_integration_runs: 0,
             last_signal_at: null,
             ...overrides.workflow,
         },
@@ -221,7 +281,11 @@ function evidence(overrides: {
             workflow_ready: 0,
             human_review_required: 0,
             security_review_required: 0,
+            security_test_events: 0,
+            security_incident_events: 0,
             regulatory_reviewable: 0,
+            regulatory_review_events: 0,
+            regulatory_blocked_reviews: 0,
             last_signal_at: null,
             ...overrides.ask_vetios,
         },
@@ -239,6 +303,9 @@ function evidence(overrides: {
             culture_guided_events: 0,
             outcome_tracked_events: 0,
             resistance_suspected_events: 0,
+            lab_feed_events: 0,
+            normalized_lab_feed_events: 0,
+            one_health_export_ready_events: 0,
             last_signal_at: null,
             ...overrides.amr,
         },
@@ -248,6 +315,9 @@ function evidence(overrides: {
             corrected_or_partial_reviews: 0,
             learning_eligible_reviews: 0,
             pacs_linked_reviews: 0,
+            operation_events: 0,
+            assigned_operations: 0,
+            outcome_closed_operations: 0,
             last_signal_at: null,
             ...overrides.specialist_review,
         },
