@@ -148,6 +148,25 @@ Service mode continuously:
 Use `--once` for a single service iteration, or `--max-iterations <n>` for a
 bounded smoke test.
 
+Key rotation:
+
+```bash
+vetios-federation-node rotate-keys \
+  --config .vetios-node/clinic-a-node.config.json \
+  --rotation-reason scheduled_rotation
+```
+
+Rotation mode:
+
+- Replaces the local X25519 node keypair in the state file.
+- Writes a public `*.key-rotation-v<n>.json` packet for the VetIOS coordinator.
+- Appends an audit JSONL event with old/new key fingerprints and version
+  numbers.
+- Does not export the private key, raw clinical records, or raw model deltas.
+
+Send the key rotation packet to the coordinator, then restart the node service
+so subsequent heartbeats and masked-update tasks use the rotated key version.
+
 Config-file equivalent:
 
 ```json

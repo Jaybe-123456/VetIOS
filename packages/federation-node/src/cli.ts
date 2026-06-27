@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import {
     buildTrainedMaskedUpdateCommitment,
@@ -15,6 +15,7 @@ import {
 interface CliOptions {
     init: boolean;
     service: boolean;
+    rotateKeys: boolean;
     configPath?: string;
     recordsPath?: string;
     recordSourcesPath?: string;
@@ -25,6 +26,8 @@ interface CliOptions {
     pollMs?: number;
     retryAttempts?: number;
     retryBaseMs?: number;
+    rotationReason?: string;
+    rotationPacketPath?: string;
     once: boolean;
     maxIterations?: number;
     outDir?: string;
@@ -89,6 +92,9 @@ interface NodeServiceState {
     node_private_key_der_base64: string;
     node_public_key_der_base64: string;
     node_public_key_fingerprint: string;
+    previous_node_public_key_fingerprint?: string | null;
+    rotated_at?: string | null;
+    rotation_count?: number;
     created_at: string;
     updated_at: string;
 }
@@ -97,6 +103,10 @@ async function main() {
     const options = parseArgs(process.argv.slice(2));
     if (options.init) {
         await runInitMode(options);
+        return;
+    }
+    if (options.rotateKeys) {
+        await runRotateKeysMode(options);
         return;
     }
     if (options.service) {
@@ -189,10 +199,11 @@ function parseArgs(args: string[]): CliOptions {
     const options: CliOptions = {
         init: args[0] === 'init' || args.includes('--init'),
         service: args[0] === 'service' || args.includes('--service'),
+        rotateKeys: args[0] === 'rotate-keys' || args.includes('--rotate-keys'),
         submit: false,
         once: false,
     };
-    const startIndex = args[0] === 'service' || args[0] === 'init' ? 1 : 0;
+    const startIndex = args[0] === 'service' || args[0] === 'init' || args[0] === 'rotate-keys' ? 1 : 0;
     for (let index = startIndex; index < args.length; index += 1) {
         const arg = args[index];
         if (arg === '--init') {
@@ -201,6 +212,10 @@ function parseArgs(args: string[]): CliOptions {
         }
         if (arg === '--service') {
             options.service = true;
+            continue;
+        }
+        if (arg === '--rotate-keys') {
+            options.rotateKeys = true;
             continue;
         }
         if (arg === '--submit') {
@@ -224,6 +239,8 @@ function parseArgs(args: string[]): CliOptions {
         if (arg === '--poll-ms') options.pollMs = parsePositiveInteger(value);
         if (arg === '--retry-attempts') options.retryAttempts = parsePositiveInteger(value);
         if (arg === '--retry-base-ms') options.retryBaseMs = parsePositiveInteger(value);
+        if (arg === '--rotation-reason') options.rotationReason = value;
+        if (arg === '--rotation-packet') options.rotationPacketPath = value;
         if (arg === '--max-iterations') options.maxIterations = parsePositiveInteger(value);
         if (arg === '--base-url') options.baseUrl = value;
         if (arg === '--machine-token') options.machineToken = value;
@@ -312,6 +329,84 @@ async function runInitMode(options: CliOptions): Promise<void> {
             'store VETIOS_MACHINE_TOKEN and VETIOS_NODE_SECRET in the host secret manager or environment',
             'send the enrollment packet to the VetIOS federation coordinator',
             'run vetios-federation-node service --config <config_path> --once for a smoke test',
+        ],
+    }, null, 2)}\n`);
+}
+
+async function runRotateKeysMode(options: CliOptions): Promise<void> {
+    const config = options.configPath ? await readJson<ServiceConfig>(options.configPath) : {};
+    const tenantId = requiredOption(options.tenantId ?? config.tenant_id ?? process.env.VETIOS_TENANT_ID, 'tenant id');
+    const federationKey = requiredOption(options.federationKey ?? config.federation_key ?? process.env.VETIOS_FEDERATION_KEY, 'federation key');
+    const nodeRef = requiredOption(options.nodeRef ?? config.node_ref ?? process.env.VETIOS_NODE_REF, 'node ref');
+    const partnerRef = options.partnerRef ?? config.partner_ref ?? process.env.VETIOS_PARTNER_REF ?? nodeRef;
+    const statePath = options.statePath ?? config.state_path ?? `.vetios-node/${nodeRef}.state.json`;
+    const logPath = options.logPath ?? config.log_path ?? `.vetios-node/${nodeRef}.audit.jsonl`;
+    const rotationReason = options.rotationReason ?? 'scheduled_rotation';
+    const existing = await loadOrCreateNodeServiceState(statePath, nodeRef);
+    const previousFingerprint = existing.node_public_key_fingerprint;
+    const rotatedAt = new Date().toISOString();
+    const rotated = createNodeServiceState({
+        nodeRef,
+        keyVersion: existing.key_version + 1,
+        createdAt: existing.created_at,
+        previousNodePublicKeyFingerprint: previousFingerprint,
+        rotatedAt,
+        rotationCount: (existing.rotation_count ?? 0) + 1,
+    });
+    const packetPath = options.rotationPacketPath
+        ?? join(dirname(statePath), `${nodeRef}.key-rotation-v${rotated.key_version}.json`);
+    const rotationPacket = {
+        schema: 'vetios_federation_node_key_rotation_packet_v1',
+        tenant_id: tenantId,
+        federation_key: federationKey,
+        node_ref: nodeRef,
+        partner_ref: partnerRef,
+        previous_node_public_key_fingerprint: previousFingerprint,
+        node_public_key_der_base64: rotated.node_public_key_der_base64,
+        node_public_key_fingerprint: rotated.node_public_key_fingerprint,
+        previous_key_version: existing.key_version,
+        key_version: rotated.key_version,
+        rotation_reason: rotationReason,
+        generated_at: rotated.updated_at,
+        private_key_exported: false,
+        raw_records_shared: false,
+        raw_model_delta_shared: false,
+    };
+    const audit = {
+        schema: 'vetios_federation_node_key_rotation_audit_v1',
+        status: 'rotated',
+        tenant_id: tenantId,
+        federation_key: federationKey,
+        node_ref: nodeRef,
+        partner_ref: partnerRef,
+        previous_node_public_key_fingerprint: previousFingerprint,
+        node_public_key_fingerprint: rotated.node_public_key_fingerprint,
+        previous_key_version: existing.key_version,
+        key_version: rotated.key_version,
+        rotation_reason: rotationReason,
+        observed_at: rotated.updated_at,
+        private_key_exported: false,
+        raw_records_shared: false,
+        raw_model_delta_shared: false,
+    };
+    await ensureParentDirectory(statePath);
+    await writeFile(statePath, `${JSON.stringify(rotated, null, 2)}\n`, 'utf8');
+    await ensureParentDirectory(packetPath);
+    await writeFile(packetPath, `${JSON.stringify(rotationPacket, null, 2)}\n`, 'utf8');
+    await appendAuditLog(logPath, audit);
+    process.stdout.write(`${JSON.stringify({
+        schema: 'vetios_federation_node_key_rotation_result_v1',
+        state_path: statePath,
+        rotation_packet_path: packetPath,
+        audit_log_path: logPath,
+        previous_node_public_key_fingerprint: previousFingerprint,
+        node_public_key_fingerprint: rotated.node_public_key_fingerprint,
+        previous_key_version: existing.key_version,
+        key_version: rotated.key_version,
+        private_key_exported: false,
+        next_steps: [
+            'send the key rotation packet to the VetIOS federation coordinator',
+            'restart the node service so future heartbeats use the rotated key',
         ],
     }, null, 2)}\n`);
 }
@@ -703,23 +798,37 @@ async function loadOrCreateNodeServiceState(path: string, nodeRef: string): Prom
     } catch {
         // Create a fresh local key state below.
     }
-    const now = new Date().toISOString();
-    const keyPair = generateKeyPairSync('x25519');
-    const privateDer = keyPair.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
-    const publicDer = keyPair.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
-    const state: NodeServiceState = {
-        schema: 'vetios_federation_node_service_state_v1',
-        node_ref: nodeRef,
-        key_version: 1,
-        node_private_key_der_base64: privateDer.toString('base64'),
-        node_public_key_der_base64: publicDer.toString('base64'),
-        node_public_key_fingerprint: createHash('sha256').update(publicDer).digest('hex').slice(0, 32),
-        created_at: now,
-        updated_at: now,
-    };
+    const state = createNodeServiceState({ nodeRef, keyVersion: 1 });
     await ensureParentDirectory(path);
     await writeFile(path, `${JSON.stringify(state, null, 2)}\n`, 'utf8');
     return state;
+}
+
+function createNodeServiceState(input: {
+    nodeRef: string;
+    keyVersion: number;
+    createdAt?: string;
+    previousNodePublicKeyFingerprint?: string | null;
+    rotatedAt?: string | null;
+    rotationCount?: number;
+}): NodeServiceState {
+    const updatedAt = input.rotatedAt ?? new Date().toISOString();
+    const keyPair = generateKeyPairSync('x25519');
+    const privateDer = keyPair.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+    const publicDer = keyPair.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+    return {
+        schema: 'vetios_federation_node_service_state_v1',
+        node_ref: input.nodeRef,
+        key_version: input.keyVersion,
+        node_private_key_der_base64: privateDer.toString('base64'),
+        node_public_key_der_base64: publicDer.toString('base64'),
+        node_public_key_fingerprint: createHash('sha256').update(publicDer).digest('hex').slice(0, 32),
+        previous_node_public_key_fingerprint: input.previousNodePublicKeyFingerprint ?? null,
+        rotated_at: input.rotatedAt ?? null,
+        rotation_count: input.rotationCount ?? 0,
+        created_at: input.createdAt ?? updatedAt,
+        updated_at: updatedAt,
+    };
 }
 
 function hydrateTaskWithNodeKey(task: FederationRoundTask, state: NodeServiceState): FederationRoundTask {
@@ -903,11 +1012,21 @@ function printUsage() {
     process.stderr.write(`Usage:
   vetios-federation-node --records records.json --task task.json --tenant-id <tenant> --secret <secret> [--out commitment.json]
 
+Initialize a deployable clinic/lab node:
+  vetios-federation-node init --tenant-id <tenant> --federation-key <key> --node-ref <node> --records exports/pims-cases.csv
+
 Optional submit mode:
   vetios-federation-node --records records.json --task task.json --tenant-id <tenant> --secret <secret> --base-url <url> --machine-token <token> --submit
 
+Service mode:
+  vetios-federation-node service --config .vetios-node/<node>.config.json
+
+Rotate local node keys:
+  vetios-federation-node rotate-keys --config .vetios-node/<node>.config.json --rotation-reason scheduled_rotation
+
 Environment fallbacks:
-  VETIOS_TENANT_ID, VETIOS_NODE_SECRET, VETIOS_BASE_URL, VETIOS_MACHINE_TOKEN
+  VETIOS_TENANT_ID, VETIOS_FEDERATION_KEY, VETIOS_NODE_REF, VETIOS_PARTNER_REF,
+  VETIOS_NODE_SECRET, VETIOS_BASE_URL, VETIOS_MACHINE_TOKEN
 `);
 }
 
