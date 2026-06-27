@@ -79,6 +79,10 @@ export default function AskVetIOSPage() {
     const [uploading, setUploading] = useState(false);
     const [chatUploads, setChatUploads] = useState<Record<string, UploadResponse[]>>({});
     const [voiceDraft, setVoiceDraft] = useState<{ id: string; text: string } | null>(null);
+    const [mobileViewport, setMobileViewport] = useState<{ height: number | null; keyboardOpen: boolean }>({
+        height: null,
+        keyboardOpen: false,
+    });
 
     // Auto-create first chat
     useEffect(() => {
@@ -88,6 +92,49 @@ export default function AskVetIOSPage() {
             switchChat(chats[0].id);
         }
     }, [chats, activeChatId, createChat, switchChat]);
+
+    useEffect(() => {
+        const updateMobileViewport = () => {
+            const visualViewport = window.visualViewport;
+            const height = Math.max(320, Math.floor(visualViewport?.height ?? window.innerHeight));
+            const activeElement = document.activeElement;
+            const focusedEditable = activeElement instanceof HTMLTextAreaElement
+                || activeElement instanceof HTMLInputElement
+                || activeElement instanceof HTMLSelectElement;
+            const isSmallViewport = window.matchMedia('(max-width: 768px)').matches;
+            const keyboardInset = visualViewport
+                ? Math.max(0, window.innerHeight - visualViewport.height - visualViewport.offsetTop)
+                : 0;
+            const screenHeight = window.screen?.height ?? window.innerHeight;
+            const keyboardOpen = isSmallViewport
+                && focusedEditable
+                && (keyboardInset > 80 || height < screenHeight * 0.78);
+
+            setMobileViewport((current) => (
+                current.height === height && current.keyboardOpen === keyboardOpen
+                    ? current
+                    : { height, keyboardOpen }
+            ));
+        };
+
+        updateMobileViewport();
+        const visualViewport = window.visualViewport;
+        window.addEventListener('resize', updateMobileViewport);
+        window.addEventListener('orientationchange', updateMobileViewport);
+        window.addEventListener('focusin', updateMobileViewport);
+        window.addEventListener('focusout', updateMobileViewport);
+        visualViewport?.addEventListener('resize', updateMobileViewport);
+        visualViewport?.addEventListener('scroll', updateMobileViewport);
+
+        return () => {
+            window.removeEventListener('resize', updateMobileViewport);
+            window.removeEventListener('orientationchange', updateMobileViewport);
+            window.removeEventListener('focusin', updateMobileViewport);
+            window.removeEventListener('focusout', updateMobileViewport);
+            visualViewport?.removeEventListener('resize', updateMobileViewport);
+            visualViewport?.removeEventListener('scroll', updateMobileViewport);
+        };
+    }, []);
 
     const sendMessage = useCallback(async (content: string) => {
         if (!activeChatId || !content.trim()) return;
@@ -368,8 +415,15 @@ const handleShare = useCallback(async () => {
 if (!username) return <UsernamePrompt />;
 
 return (
-    
-        <div className="h-full min-h-0 w-full flex bg-[#050505] text-white overflow-hidden">
+
+        <div
+            className="ask-vetios-shell min-h-0 w-full flex bg-[#050505] text-white overflow-hidden"
+            data-keyboard-open={mobileViewport.keyboardOpen ? 'true' : 'false'}
+            style={{
+                height: mobileViewport.height ? `${mobileViewport.height}px` : '100dvh',
+                maxHeight: mobileViewport.height ? `${mobileViewport.height}px` : '100dvh',
+            }}
+        >
             <VoiceInputButton
                 surface="ask_vetios"
                 onExtracted={handleVoiceDraft}
@@ -377,6 +431,8 @@ return (
                 label="Dictate Ask VetIOS query"
                 fillLabel="Fill draft"
                 submitLabel="Ask VetIOS"
+                className="ask-vetios-voice-fab"
+                panelClassName="ask-vetios-voice-panel"
             />
 
             {/* ── Chat history sidebar ─────────────────────────────────── */}
@@ -529,6 +585,7 @@ return (
                             disabled={isLoading}
                             uploadDisabled={uploading}
                             voiceDraft={voiceDraft}
+                            keyboardOpen={mobileViewport.keyboardOpen}
                         />
                     </div>
                 </div>

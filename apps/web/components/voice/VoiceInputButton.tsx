@@ -13,6 +13,8 @@ interface VoiceInputButtonProps {
     label?: string;
     fillLabel?: string;
     submitLabel?: string;
+    className?: string;
+    panelClassName?: string;
 }
 
 export function VoiceInputButton({
@@ -22,6 +24,8 @@ export function VoiceInputButton({
     label = 'Voice input',
     fillLabel = 'Fill form',
     submitLabel = 'Start conversation',
+    className,
+    panelClassName,
 }: VoiceInputButtonProps) {
     const speech = useSpeechRecognition();
     const [isOpen, setIsOpen] = useState(false);
@@ -132,6 +136,7 @@ export function VoiceInputButton({
                 className={[
                     'fixed bottom-5 right-5 z-[70] flex h-14 w-14 items-center justify-center rounded-full border text-black shadow-[0_0_30px_rgba(0,255,102,0.35)] transition hover:scale-105 focus:outline-none focus:ring-2 focus:ring-accent/60',
                     speech.isListening ? 'border-accent bg-accent animate-pulse' : 'border-accent/45 bg-accent',
+                    className,
                 ].join(' ')}
                 aria-label={label}
                 title={label}
@@ -140,7 +145,10 @@ export function VoiceInputButton({
             </button>
 
             {isOpen ? (
-                <section className="fixed bottom-24 right-4 z-[70] w-[min(25rem,calc(100vw-2rem))] rounded-lg border border-white/12 bg-[hsl(0_0%_6%)] p-3 text-white shadow-2xl">
+                <section className={[
+                    'fixed bottom-24 right-4 z-[70] w-[min(25rem,calc(100vw-2rem))] rounded-lg border border-white/12 bg-[hsl(0_0%_6%)] p-3 text-white shadow-2xl',
+                    panelClassName,
+                ].join(' ')}>
                     <div className="mb-3 flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                             <span className={[

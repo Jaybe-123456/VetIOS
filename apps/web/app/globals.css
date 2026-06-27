@@ -685,6 +685,45 @@ html, body {
   height: -webkit-fill-available;
 }
 
+/* Ask VetIOS command dock: visual-viewport aware mobile keyboard handling. */
+.ask-vetios-shell {
+  height: 100dvh;
+  max-height: 100dvh;
+  isolation: isolate;
+}
+
+.ask-vetios-voice-fab {
+  transition: transform 0.18s ease, opacity 0.18s ease, bottom 0.18s ease;
+}
+
+@media (max-width: 768px) {
+  .ask-vetios-shell {
+    min-height: 100svh;
+    width: 100vw;
+  }
+
+  .ask-vetios-voice-fab {
+    bottom: calc(7.75rem + env(safe-area-inset-bottom, 0px)) !important;
+    right: 1rem !important;
+    height: 3rem !important;
+    width: 3rem !important;
+  }
+
+  .ask-vetios-voice-panel {
+    bottom: calc(11.75rem + env(safe-area-inset-bottom, 0px)) !important;
+    max-height: min(64dvh, 28rem);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ask-vetios-shell[data-keyboard-open="true"] .ask-vetios-voice-fab,
+  .ask-vetios-shell[data-keyboard-open="true"] .ask-vetios-voice-panel {
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(0.92);
+  }
+}
+
 /* ── Mobile font size guards (already in base but strengthened) ─────────── */
 @media (max-width: 640px) {
   input, textarea, select {

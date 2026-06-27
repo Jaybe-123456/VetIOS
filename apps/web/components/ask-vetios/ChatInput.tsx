@@ -10,9 +10,10 @@ interface ChatInputProps {
   disabled?: boolean;
   uploadDisabled?: boolean;
   voiceDraft?: { id: string; text: string } | null;
+  keyboardOpen?: boolean;
 }
 
-export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabled, voiceDraft }: ChatInputProps) {
+export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabled, voiceDraft, keyboardOpen }: ChatInputProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -53,17 +54,26 @@ export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabl
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, [voiceDraft]);
 
+  const keepInputVisible = () => {
+    window.setTimeout(() => {
+      textareaRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }, 120);
+  };
+
   return (
     <div
-      className="relative z-10 px-3 pt-3"
-      style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom, 0.75rem))' }}
+      className={cn(
+        'relative z-10 px-2 pt-2 sm:px-3 sm:pt-3',
+        keyboardOpen && 'pt-1.5',
+      )}
+      style={{ paddingBottom: keyboardOpen ? '0.5rem' : 'max(0.75rem, env(safe-area-inset-bottom, 0.75rem))' }}
     >
       {/* Top accent bar — draws the eye to the input zone */}
       <div className="absolute top-0 left-0 right-0 h-[2px] bg-gradient-to-r from-transparent via-accent/60 to-transparent" />
 
       <form
         onSubmit={handleSubmit}
-        className="relative max-w-4xl mx-auto flex items-end gap-2"
+        className="relative max-w-4xl mx-auto flex items-end gap-1.5 sm:gap-2"
       >
         <input
           ref={fileInputRef}
@@ -78,7 +88,7 @@ export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabl
           title="Upload clinical file"
           onClick={() => fileInputRef.current?.click()}
           className={cn(
-            "w-12 h-12 shrink-0 flex items-center justify-center rounded-xl border-2 transition-all duration-300",
+            "h-11 w-11 shrink-0 flex items-center justify-center rounded-xl border-2 transition-all duration-300 sm:h-12 sm:w-12",
             disabled || uploadDisabled || !onUploadFile
               ? "bg-white/[0.02] border-white/8 text-white/20 cursor-not-allowed"
               : "bg-accent/5 border-accent/25 text-accent hover:bg-accent/10 hover:border-accent/60 active:scale-95"
@@ -92,13 +102,13 @@ export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabl
           <div className="absolute -inset-1 bg-accent/10 blur-lg rounded-2xl group-focus-within:bg-accent/20 transition-all duration-500 pointer-events-none" />
 
           <div className={cn(
-            "relative backdrop-blur-md border-2 rounded-xl px-4 py-3 transition-all duration-300",
+            "relative backdrop-blur-md border-2 rounded-xl px-3 py-2.5 transition-all duration-300 sm:px-4 sm:py-3",
             "bg-[#0d0d0d] border-accent/30 group-focus-within:border-accent/80",
             "shadow-[0_0_0_1px_rgba(0,255,102,0.08),0_4px_24px_rgba(0,255,102,0.08)]",
             "group-focus-within:shadow-[0_0_0_1px_rgba(0,255,102,0.2),0_4px_32px_rgba(0,255,102,0.15)]",
           )}>
             {/* Header row */}
-            <div className="flex items-center gap-2 mb-2">
+            <div className={cn("items-center gap-2 mb-1.5 sm:mb-2", keyboardOpen ? "hidden sm:flex" : "flex")}>
               <Terminal className="w-3.5 h-3.5 text-accent" />
               <span className="text-[10px] uppercase tracking-[0.25em] text-accent font-mono font-bold">
                 Command_Input
@@ -113,8 +123,11 @@ export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabl
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
+              onFocus={keepInputVisible}
               placeholder="Ask VetIOS..."
-              className="w-full bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-white placeholder:text-white/40 font-mono text-sm resize-none py-0 max-h-48 scrollbar-hide leading-relaxed"
+              inputMode="text"
+              enterKeyHint="send"
+              className="w-full min-h-[28px] bg-transparent border-none outline-none focus:outline-none focus:ring-0 text-white placeholder:text-white/40 font-mono text-base resize-none py-0 max-h-32 scrollbar-hide leading-relaxed sm:max-h-48 sm:text-sm"
               rows={1}
             />
           </div>
@@ -124,7 +137,7 @@ export default function ChatInput({ onSend, onUploadFile, disabled, uploadDisabl
           type="submit"
           disabled={!input.trim() || disabled}
           className={cn(
-            "w-12 h-12 shrink-0 flex items-center justify-center rounded-xl border-2 transition-all duration-300",
+            "h-11 w-11 shrink-0 flex items-center justify-center rounded-xl border-2 transition-all duration-300 sm:h-12 sm:w-12",
             input.trim() && !disabled
               ? "bg-accent border-accent text-black shadow-[0_0_24px_rgba(0,255,102,0.5)] hover:scale-105 active:scale-95"
               : "bg-accent/5 border-accent/20 text-accent/30 cursor-not-allowed"
