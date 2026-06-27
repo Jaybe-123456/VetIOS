@@ -961,11 +961,14 @@ export class VetiosFederationNodeClient {
     }
 
     pullTask(roundId: string, taskId: string) {
-        const params = new URLSearchParams({
-            federation_key: this.options.federationKey,
+        return this.post(`/api/federation/v1/rounds/${roundId}/tasks/${taskId}/pull`, {
             node_ref: this.options.nodeRef,
+            partner_ref: this.options.partnerRef,
+            evidence: {
+                pulled_by: '@vetios/federation-node',
+                federation_key: this.options.federationKey,
+            },
         });
-        return this.get(`/api/federation/v1/rounds/${roundId}/tasks/${taskId}/pull?${params.toString()}`);
     }
 
     submitUpdate(roundId: string, commitment: MaskedUpdateCommitment) {

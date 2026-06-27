@@ -9,6 +9,7 @@ import {
     trainLocalFederatedTask,
     toFederatedUpdateSubmissionPayload,
     VetiosFederationNodeAgent,
+    VetiosFederationNodeClient,
     type FederationRoundTask,
     type LocalClinicalLearningRecord,
 } from '../index.ts';
@@ -195,6 +196,26 @@ const agent = new VetiosFederationNodeAgent({
 const agentPrepared = agent.trainTask(task);
 assert.equal(agentPrepared.delta.delta_digest, trained.delta.delta_digest);
 assert.equal(agentPrepared.commitment.evidence.local_training_data_shared, false);
+
+const pullRequests: Array<{ url: string; init: RequestInit | undefined }> = [];
+const pullClient = new VetiosFederationNodeClient({
+    baseUrl: 'https://vetios.example',
+    machineToken: 'machine-token',
+    federationKey: 'one_health_amr',
+    nodeRef: 'clinic-a-node',
+    partnerRef: 'clinic-a',
+    fetchImpl: async (url, init) => {
+        pullRequests.push({ url: String(url), init });
+        return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+        });
+    },
+});
+await pullClient.pullTask('round-001', 'task-001');
+assert.equal(pullRequests[0]?.url, 'https://vetios.example/api/federation/v1/rounds/round-001/tasks/task-001/pull');
+assert.equal(pullRequests[0]?.init?.method, 'POST');
+assert.equal(JSON.parse(String(pullRequests[0]?.init?.body)).node_ref, 'clinic-a-node');
 
 const blocked = assessLearningRecordEligibility({
     local_record_id: 'blocked',

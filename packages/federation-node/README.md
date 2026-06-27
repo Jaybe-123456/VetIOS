@@ -94,3 +94,52 @@ vetios-federation-node \
   --secret "$VETIOS_NODE_SECRET" \
   --submit
 ```
+
+Service mode:
+
+```bash
+vetios-federation-node service \
+  --records records.json \
+  --base-url "$VETIOS_BASE_URL" \
+  --machine-token "$VETIOS_MACHINE_TOKEN" \
+  --tenant-id tenant-a \
+  --federation-key one_health_amr \
+  --node-ref clinic-a-node \
+  --partner-ref clinic-a \
+  --secret "$VETIOS_NODE_SECRET" \
+  --state .vetios-node/clinic-a-node.state.json \
+  --log .vetios-node/clinic-a-node.audit.jsonl
+```
+
+Service mode continuously:
+
+- Loads local outcome-confirmed records from the configured JSON file.
+- Creates or reuses a local X25519 node keypair in the state file.
+- Heartbeats with node public-key metadata and record eligibility evidence.
+- Pulls the current issued task for the node.
+- Injects the local private key into the task runtime config without sending it
+  to VetIOS.
+- Trains locally, submits the masked update, and appends an audit JSONL event.
+
+Use `--once` for a single service iteration, or `--max-iterations <n>` for a
+bounded smoke test.
+
+Config-file equivalent:
+
+```json
+{
+  "records_path": "records.json",
+  "state_path": ".vetios-node/clinic-a-node.state.json",
+  "log_path": ".vetios-node/clinic-a-node.audit.jsonl",
+  "poll_ms": 30000,
+  "base_url": "https://vetios.tech",
+  "tenant_id": "tenant-a",
+  "federation_key": "one_health_amr",
+  "node_ref": "clinic-a-node",
+  "partner_ref": "clinic-a"
+}
+```
+
+The service state file contains local private key material and must stay on the
+clinic or lab machine. The audit log intentionally stores only operational
+digests, task identifiers, commitment hashes, and submission status.
