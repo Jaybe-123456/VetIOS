@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import {
     resolveClinicalApiActor,
     validateConnectorInstallationAccess,
@@ -16,6 +17,11 @@ import {
     createOutcomeNetworkRepository,
     reconcileEpisodeMembership,
 } from '@/lib/outcomeNetwork/service';
+import {
+    buildWorkflowConnectorEvidence,
+    buildWorkflowIntegrationRunAuditDraft,
+    type WorkflowIntegrationRunAuditDraft,
+} from '@/lib/outcomeNetwork/workflowConnectorEvidence';
 import { normalizePassiveConnectorPayload } from '@/lib/outcomeNetwork/passiveConnectors';
 import { resolvePassiveConnectorWorkflow } from '@/lib/outcomeNetwork/pimsWorkflowAdapter';
 import { getSupabaseServer } from '@/lib/supabaseServer';
@@ -214,6 +220,61 @@ export async function POST(req: Request) {
             }
         }
 
+        let workflowEvidence = {
+            run_event_id: null as string | null,
+            status: null as string | null,
+            moat_posture: null as string | null,
+            readiness_score: null as number | null,
+            workflow_moat_status: null as string | null,
+            workflow_readiness_score: null as number | null,
+            warning: null as string | null,
+        };
+        try {
+            const workflowEvidencePacket = buildWorkflowConnectorEvidence({
+                connectorType: body.connector.connector_type ?? null,
+                vendorName: body.connector.vendor_name ?? null,
+                vendorAccountRef: body.connector.vendor_account_ref ?? null,
+                vendorEventType: body.connector.workflow_event_type ?? null,
+                patientId: body.connector.patient_id ?? null,
+                encounterId: body.connector.encounter_id ?? null,
+                caseId: body.connector.case_id ?? null,
+                episodeId: body.connector.episode_id ?? null,
+                observedAt: body.connector.observed_at ?? null,
+                payload: body.connector.payload,
+            });
+            const auditDraft = buildWorkflowIntegrationRunAuditDraft({
+                tenantId,
+                requestId,
+                signalEventId: signalEvent.id,
+                packet: workflowEvidencePacket,
+                evidence: {
+                    endpoint: '/api/signals/connect',
+                    source_id: sourceId,
+                    idempotent,
+                    reconcile_queued: reconcileQueued,
+                    outbox_event_id: outboxEventId,
+                    raw_payload_stored_in_workflow_ledger: false,
+                },
+            });
+            const persistedWorkflowEvidence = await persistWorkflowIntegrationRunEvent(supabase, auditDraft);
+            workflowEvidence = {
+                run_event_id: persistedWorkflowEvidence.id,
+                status: workflowEvidencePacket.evidence_status,
+                moat_posture: workflowEvidencePacket.moat_posture,
+                readiness_score: workflowEvidencePacket.readiness_score,
+                workflow_moat_status: auditDraft.workflow_moat_status,
+                workflow_readiness_score: auditDraft.workflow_readiness_score,
+                warning: persistedWorkflowEvidence.warning,
+            };
+        } catch (error) {
+            workflowEvidence = {
+                ...workflowEvidence,
+                warning: error instanceof Error
+                    ? `Workflow integration evidence was not generated: ${error.message}`
+                    : 'Workflow integration evidence was not generated.',
+            };
+        }
+
         revalidatePath('/dataset');
         revalidatePath('/outcome');
         revalidatePath('/inference');
@@ -236,6 +297,7 @@ export async function POST(req: Request) {
             reconcile_queued: reconcileQueued,
             outbox_event_id: outboxEventId,
             reconcile_error: reconcileError,
+            workflow_evidence: workflowEvidence,
             request_id: requestId,
         });
         withRequestHeaders(response.headers, requestId, startTime);
@@ -262,4 +324,36 @@ function shouldDeferSignalReconcile(
     return hasLegacyConnectorAccess
         || authMode === 'service_account'
         || authMode === 'connector_installation';
+}
+
+async function persistWorkflowIntegrationRunEvent(
+    client: SupabaseClient,
+    draft: WorkflowIntegrationRunAuditDraft,
+): Promise<{ id: string | null; warning: string | null }> {
+    const { data, error } = await client
+        .from('workflow_integration_run_events')
+        .insert(draft)
+        .select('id')
+        .single();
+
+    if (error || !data?.id) {
+        const message = error?.message ?? 'unknown persistence failure';
+        return {
+            id: null,
+            warning: isMissingWorkflowIntegrationRunStorage(message)
+                ? 'Workflow integration run ledger is not installed; apply supabase/migrations/20260622020000_workflow_integration_run_events.sql to persist PIMS/lab/PACS/follow-up evidence.'
+                : `Workflow integration run event was not persisted: ${message}`,
+        };
+    }
+
+    return { id: String(data.id), warning: null };
+}
+
+function isMissingWorkflowIntegrationRunStorage(message: string): boolean {
+    return message.includes('workflow_integration_run_events')
+        && (
+            message.includes('does not exist')
+            || message.includes('Could not find the table')
+            || message.includes('schema cache')
+        );
 }

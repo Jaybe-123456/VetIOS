@@ -147,6 +147,43 @@ export interface WorkflowIntegrationReadinessSnapshot {
     privacy_contract: string[];
 }
 
+export interface WorkflowIntegrationRunAuditDraft {
+    tenant_id: string;
+    request_id: string;
+    signal_event_id: string | null;
+    connector_type: PassiveConnectorType;
+    ingestion_profile: WorkflowConnectorIngestionProfile;
+    source_standard: WorkflowConnectorSourceStandard;
+    vendor_name: string | null;
+    vendor_account_ref_hash: string | null;
+    workflow_event_type: string | null;
+    evidence_status: WorkflowConnectorEvidenceStatus;
+    moat_posture: WorkflowConnectorEvidencePacket['moat_posture'];
+    readiness_score: number;
+    workflow_moat_status: WorkflowIntegrationMoatStatus;
+    workflow_readiness_score: number;
+    packets_evaluated: number;
+    ready_packets: number;
+    blocked_packets: number;
+    outcome_linked_packets: number;
+    diagnostic_packets: number;
+    required_capabilities: number;
+    required_capabilities_ready: number;
+    pims_workflow_packets: number;
+    lab_result_packets: number;
+    pacs_report_packets: number;
+    follow_up_packets: number;
+    source_payload_hash: string;
+    source_record_digest: string;
+    packet_hash: string;
+    packet: WorkflowConnectorEvidencePacket;
+    readiness_snapshot: WorkflowIntegrationReadinessSnapshot;
+    blockers: string[];
+    warnings: string[];
+    evidence: Record<string, unknown>;
+    observed_at: string;
+}
+
 const SAFE_FACT_KEYS = [
     'connector_type',
     'vendor_name',
@@ -427,6 +464,69 @@ export function buildWorkflowIntegrationReadiness(input: {
             'Owner contact details, patient names, microchips, and raw report text block readiness until transformed into hashes or safe facts.',
             'Operating status requires actual workflow/lab/PACS/follow-up packets, not marketplace connector configuration alone.',
         ],
+    };
+}
+
+export function buildWorkflowIntegrationRunAuditDraft(input: {
+    tenantId: string;
+    requestId: string;
+    signalEventId?: string | null;
+    packet: WorkflowConnectorEvidencePacket;
+    readiness?: WorkflowIntegrationReadinessSnapshot;
+    evidence?: Record<string, unknown>;
+    now?: string;
+}): WorkflowIntegrationRunAuditDraft {
+    const readiness = input.readiness
+        ?? buildWorkflowIntegrationReadiness({
+            packets: [input.packet],
+            now: input.now ?? input.packet.signal.observedAt,
+        });
+    const packet = input.packet;
+
+    return {
+        tenant_id: input.tenantId,
+        request_id: input.requestId,
+        signal_event_id: input.signalEventId ?? null,
+        connector_type: packet.connector.connector_type,
+        ingestion_profile: packet.connector.ingestion_profile,
+        source_standard: packet.connector.source_standard,
+        vendor_name: packet.connector.vendor_name,
+        vendor_account_ref_hash: packet.connector.vendor_account_ref_hash,
+        workflow_event_type: packet.connector.workflow_event_type,
+        evidence_status: packet.evidence_status,
+        moat_posture: packet.moat_posture,
+        readiness_score: packet.readiness_score,
+        workflow_moat_status: readiness.moat_status,
+        workflow_readiness_score: readiness.readiness_score,
+        packets_evaluated: readiness.packets_evaluated,
+        ready_packets: readiness.ready_packets,
+        blocked_packets: readiness.blocked_packets,
+        outcome_linked_packets: readiness.outcome_linked_packets,
+        diagnostic_packets: readiness.diagnostic_packets,
+        required_capabilities: readiness.required_capabilities,
+        required_capabilities_ready: readiness.required_capabilities_ready,
+        pims_workflow_packets: packet.connector.normalized_by === 'pims_workflow_adapter' ? 1 : 0,
+        lab_result_packets: packet.connector.ingestion_profile === 'lab_result_import' ? 1 : 0,
+        pacs_report_packets: packet.connector.ingestion_profile === 'pacs_report_import' ? 1 : 0,
+        follow_up_packets: packet.connector.ingestion_profile === 'appointment_follow_up_sync' ? 1 : 0,
+        source_payload_hash: packet.provenance.source_payload_hash,
+        source_record_digest: packet.provenance.source_record_digest,
+        packet_hash: hashJson(packet),
+        packet,
+        readiness_snapshot: readiness,
+        blockers: uniqueNonEmpty([...packet.blockers, ...readiness.blockers]).sort(),
+        warnings: uniqueNonEmpty([...packet.warnings, ...readiness.warnings]).sort(),
+        evidence: {
+            ...input.evidence,
+            packet_schema_version: packet.schema_version,
+            readiness_schema_version: readiness.schema_version,
+            raw_payload_stored: false,
+            raw_vendor_payload_stored: false,
+            raw_clinical_records_included: false,
+            source_payload_hash: packet.provenance.source_payload_hash,
+            source_record_digest: packet.provenance.source_record_digest,
+        },
+        observed_at: packet.signal.observedAt,
     };
 }
 

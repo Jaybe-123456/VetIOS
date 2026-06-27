@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkflowConnectorEvidence, buildWorkflowIntegrationReadiness } from '../workflowConnectorEvidence';
+import {
+    buildWorkflowConnectorEvidence,
+    buildWorkflowIntegrationReadiness,
+    buildWorkflowIntegrationRunAuditDraft,
+} from '../workflowConnectorEvidence';
 
 const PATIENT_ID = '11111111-1111-4111-8111-111111111111';
 const CASE_ID = '22222222-2222-4222-8222-222222222222';
@@ -241,5 +245,54 @@ describe('workflow connector evidence', () => {
         expect(readiness.moat_status).toBe('blocked');
         expect(readiness.blockers).toContain('blocked_connector_payloads_present');
         expect(readiness.capability_coverage.find((entry) => entry.capability === 'pims_workflow_sync')?.status).toBe('blocked');
+    });
+
+    it('builds a de-identified workflow integration run audit row for live connector ingress', () => {
+        const packet = buildWorkflowConnectorEvidence({
+            connectorType: 'imaging_report',
+            vendorName: 'VetPACS',
+            vendorAccountRef: 'clinic-account-7',
+            patientId: PATIENT_ID,
+            observedAt: '2026-06-22T14:00:00.000Z',
+            payload: {
+                report_id: 'pacs-report-77',
+                source_format: 'dicomweb',
+                modality: 'radiograph',
+                study_instance_uid: '1.2.840.113619.2.55.3.604688435.781.171905',
+                image_count: 4,
+                abnormal: true,
+                impression: 'Patchy bronchointerstitial pattern; recommend clinician review.',
+                primary_condition_class: 'respiratory',
+            },
+        });
+
+        const draft = buildWorkflowIntegrationRunAuditDraft({
+            tenantId: '33333333-3333-4333-8333-333333333333',
+            requestId: 'req-workflow-1',
+            signalEventId: '44444444-4444-4444-8444-444444444444',
+            packet,
+            evidence: {
+                endpoint: '/api/signals/connect',
+            },
+        });
+
+        expect(draft.connector_type).toBe('imaging_report');
+        expect(draft.ingestion_profile).toBe('pacs_report_import');
+        expect(draft.source_standard).toBe('dicomweb');
+        expect(draft.signal_event_id).toBe('44444444-4444-4444-8444-444444444444');
+        expect(draft.source_payload_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.source_record_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.packet_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.evidence).toMatchObject({
+            endpoint: '/api/signals/connect',
+            raw_payload_stored: false,
+            raw_vendor_payload_stored: false,
+            raw_clinical_records_included: false,
+        });
+        expect(JSON.stringify(draft.packet)).not.toContain('Patchy bronchointerstitial pattern');
+        expect(draft.packet.provenance.text_field_hashes.impression).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.pacs_report_packets).toBe(1);
+        expect(draft.lab_result_packets).toBe(0);
+        expect(draft.readiness_snapshot.privacy_contract.join(' ')).toContain('not raw vendor payload retention');
     });
 });
