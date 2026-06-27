@@ -95,6 +95,30 @@ vetios-federation-node \
   --submit
 ```
 
+Initializer:
+
+```bash
+vetios-federation-node init \
+  --tenant-id tenant-a \
+  --federation-key one_health_amr \
+  --node-ref clinic-a-node \
+  --partner-ref clinic-a \
+  --records exports/pims-cases.csv \
+  --out-dir .vetios-node
+```
+
+The initializer writes:
+
+- `clinic-a-node.config.json`: service-mode config with local record sources.
+- `clinic-a-node.state.json`: local X25519 key state. Keep this on the node.
+- `clinic-a-node.enrollment.json`: public enrollment packet for the VetIOS
+  federation coordinator.
+- `clinic-a-node.run-service.ps1`: Windows runner template.
+- `clinic-a-node.service`: systemd unit template.
+
+The initializer does not persist `VETIOS_MACHINE_TOKEN` or
+`VETIOS_NODE_SECRET`; inject those with the host secret manager or environment.
+
 Service mode:
 
 ```bash

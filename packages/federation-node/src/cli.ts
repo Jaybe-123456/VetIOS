@@ -13,6 +13,7 @@ import {
 } from './index.js';
 
 interface CliOptions {
+    init: boolean;
     service: boolean;
     configPath?: string;
     recordsPath?: string;
@@ -26,6 +27,7 @@ interface CliOptions {
     retryBaseMs?: number;
     once: boolean;
     maxIterations?: number;
+    outDir?: string;
     submit: boolean;
     baseUrl?: string;
     machineToken?: string;
@@ -93,6 +95,10 @@ interface NodeServiceState {
 
 async function main() {
     const options = parseArgs(process.argv.slice(2));
+    if (options.init) {
+        await runInitMode(options);
+        return;
+    }
     if (options.service) {
         await runServiceMode(options);
         return;
@@ -180,10 +186,19 @@ async function main() {
 }
 
 function parseArgs(args: string[]): CliOptions {
-    const options: CliOptions = { service: args[0] === 'service' || args.includes('--service'), submit: false, once: false };
-    const startIndex = args[0] === 'service' ? 1 : 0;
+    const options: CliOptions = {
+        init: args[0] === 'init' || args.includes('--init'),
+        service: args[0] === 'service' || args.includes('--service'),
+        submit: false,
+        once: false,
+    };
+    const startIndex = args[0] === 'service' || args[0] === 'init' ? 1 : 0;
     for (let index = startIndex; index < args.length; index += 1) {
         const arg = args[index];
+        if (arg === '--init') {
+            options.init = true;
+            continue;
+        }
         if (arg === '--service') {
             options.service = true;
             continue;
@@ -205,6 +220,7 @@ function parseArgs(args: string[]): CliOptions {
         if (arg === '--out') options.outputPath = value;
         if (arg === '--state') options.statePath = value;
         if (arg === '--log') options.logPath = value;
+        if (arg === '--out-dir') options.outDir = value;
         if (arg === '--poll-ms') options.pollMs = parsePositiveInteger(value);
         if (arg === '--retry-attempts') options.retryAttempts = parsePositiveInteger(value);
         if (arg === '--retry-base-ms') options.retryBaseMs = parsePositiveInteger(value);
@@ -220,6 +236,84 @@ function parseArgs(args: string[]): CliOptions {
         index += 1;
     }
     return options;
+}
+
+async function runInitMode(options: CliOptions): Promise<void> {
+    const tenantId = requiredOption(options.tenantId ?? process.env.VETIOS_TENANT_ID, 'tenant id');
+    const federationKey = requiredOption(options.federationKey ?? process.env.VETIOS_FEDERATION_KEY, 'federation key');
+    const nodeRef = requiredOption(options.nodeRef ?? process.env.VETIOS_NODE_REF, 'node ref');
+    const partnerRef = options.partnerRef ?? process.env.VETIOS_PARTNER_REF ?? nodeRef;
+    const baseUrl = options.baseUrl ?? process.env.VETIOS_BASE_URL ?? 'https://vetios.tech';
+    const outDir = options.outDir ?? '.vetios-node';
+    const configPath = options.configPath ?? `${outDir}/${nodeRef}.config.json`;
+    const statePath = options.statePath ?? `${outDir}/${nodeRef}.state.json`;
+    const logPath = options.logPath ?? `${outDir}/${nodeRef}.audit.jsonl`;
+    const recordsPath = options.recordsPath ?? 'exports/pims-cases.csv';
+    const sourceKind = inferSourceKind(recordsPath);
+    const state = await loadOrCreateNodeServiceState(statePath, nodeRef);
+    const config: ServiceConfig & { schema: string; requires_env: string[] } = {
+        schema: 'vetios_federation_node_service_config_v1',
+        record_sources: [{
+            kind: sourceKind,
+            path: recordsPath,
+            source_system: defaultSourceSystem(sourceKind),
+            defaults: {
+                consent_status: 'granted',
+                provenance_status: sourceKind === 'lab_csv' ? 'externally_verified' : 'source_attested',
+            },
+        }],
+        state_path: statePath,
+        log_path: logPath,
+        poll_ms: options.pollMs ?? 30_000,
+        retry_attempts: options.retryAttempts ?? 3,
+        retry_base_ms: options.retryBaseMs ?? 1_000,
+        base_url: baseUrl,
+        tenant_id: tenantId,
+        federation_key: federationKey,
+        node_ref: nodeRef,
+        partner_ref: partnerRef,
+        requires_env: ['VETIOS_MACHINE_TOKEN', 'VETIOS_NODE_SECRET'],
+    };
+    const configDigest = createHash('sha256').update(JSON.stringify(config)).digest('hex');
+    const enrollmentPacket = {
+        schema: 'vetios_federation_node_enrollment_packet_v1',
+        tenant_id: tenantId,
+        federation_key: federationKey,
+        node_ref: nodeRef,
+        partner_ref: partnerRef,
+        node_public_key_der_base64: state.node_public_key_der_base64,
+        node_public_key_fingerprint: state.node_public_key_fingerprint,
+        key_version: state.key_version,
+        service_config_digest: configDigest,
+        requested_scopes: ['federation:node'],
+        deployment_environment: 'production',
+        generated_at: new Date().toISOString(),
+        raw_records_shared: false,
+        raw_model_delta_shared: false,
+    };
+    const enrollmentPath = `${outDir}/${nodeRef}.enrollment.json`;
+    const windowsPath = `${outDir}/${nodeRef}.run-service.ps1`;
+    const systemdPath = `${outDir}/${nodeRef}.service`;
+    await ensureParentDirectory(configPath);
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+    await writeFile(enrollmentPath, `${JSON.stringify(enrollmentPacket, null, 2)}\n`, 'utf8');
+    await writeFile(windowsPath, buildWindowsServiceTemplate(configPath), 'utf8');
+    await writeFile(systemdPath, buildSystemdTemplate(configPath, nodeRef), 'utf8');
+    process.stdout.write(`${JSON.stringify({
+        schema: 'vetios_federation_node_init_result_v1',
+        config_path: configPath,
+        state_path: statePath,
+        enrollment_packet_path: enrollmentPath,
+        windows_runner_path: windowsPath,
+        systemd_unit_path: systemdPath,
+        node_public_key_fingerprint: state.node_public_key_fingerprint,
+        secrets_written_to_config: false,
+        next_steps: [
+            'store VETIOS_MACHINE_TOKEN and VETIOS_NODE_SECRET in the host secret manager or environment',
+            'send the enrollment packet to the VetIOS federation coordinator',
+            'run vetios-federation-node service --config <config_path> --once for a smoke test',
+        ],
+    }, null, 2)}\n`);
 }
 
 async function runServiceMode(options: CliOptions): Promise<void> {
@@ -556,6 +650,13 @@ function inferSourceKind(path: string): ServiceRecordSourceKind {
     return 'vetios_json';
 }
 
+function defaultSourceSystem(kind: ServiceRecordSourceKind): string {
+    if (kind === 'lab_csv') return 'reference-lab';
+    if (kind === 'pacs_json') return 'pacs';
+    if (kind === 'pims_csv') return 'clinic-pims';
+    return 'local-export';
+}
+
 function mapColumns(row: Record<string, string>, columns: Record<string, string> | undefined): Record<string, unknown> {
     if (!columns) return row;
     const mapped: Record<string, unknown> = { ...row };
@@ -563,6 +664,34 @@ function mapColumns(row: Record<string, string>, columns: Record<string, string>
         mapped[target] = row[source] ?? row[target];
     }
     return mapped;
+}
+
+function buildWindowsServiceTemplate(configPath: string): string {
+    return `# VetIOS federation node runner template.
+# Store VETIOS_MACHINE_TOKEN and VETIOS_NODE_SECRET in the host secret manager or session environment before running.
+$ErrorActionPreference = "Stop"
+vetios-federation-node service --config "${configPath}"
+`;
+}
+
+function buildSystemdTemplate(configPath: string, nodeRef: string): string {
+    return `[Unit]
+Description=VetIOS Federation Node (${nodeRef})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+Environment=VETIOS_MACHINE_TOKEN=
+Environment=VETIOS_NODE_SECRET=
+ExecStart=/usr/bin/env vetios-federation-node service --config ${configPath}
+Restart=always
+RestartSec=15
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+`;
 }
 
 async function loadOrCreateNodeServiceState(path: string, nodeRef: string): Promise<NodeServiceState> {
