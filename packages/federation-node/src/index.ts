@@ -216,6 +216,12 @@ export interface UnmaskShareCommitment {
 
 export interface EncryptedUnmaskShareEnvelope {
     schema: 'vetios_encrypted_unmask_share_envelope_v1';
+    federation_round_id: string;
+    round_node_task_id: string;
+    round_key: string;
+    sender_node_ref: string;
+    sender_public_key_der_base64: string;
+    sender_public_key_fingerprint: string;
     peer_node_ref: string;
     direction: 'add' | 'subtract';
     recipient: 'coordinator';
@@ -237,6 +243,7 @@ export interface LocalSecureAggregationMaterialization {
     contribution_role: FederatedUpdateRole;
     quantization: {
         scale: number;
+        mask_range: number;
         integer_precision: 'safe_integer';
     };
     dimension_count: number;
@@ -530,6 +537,7 @@ export function buildTrainedMaskedUpdateCommitment(input: {
                 masking_protocol: secureAggregationMaterialization.masking_protocol,
                 dimension_count: secureAggregationMaterialization.dimension_count,
                 quantization_scale: secureAggregationMaterialization.quantization.scale,
+                mask_range: secureAggregationMaterialization.quantization.mask_range,
                 dimension_order_digest: secureAggregationMaterialization.dimension_order_digest,
                 masked_integer_vector: secureAggregationMaterialization.masked_integer_vector,
                 pairwise_mask_count: secureAggregationMaterialization.pairwise_mask_commitments.length,
@@ -634,6 +642,7 @@ export function buildSecureAggregationMaterialization(input: {
                 direction,
                 maskSeed,
                 maskVectorDigest,
+                maskRange,
             })
             : null;
         if (encryptedShareEnvelope) {
@@ -740,6 +749,7 @@ export function buildSecureAggregationMaterialization(input: {
         contribution_role: input.delta.contribution_role,
         quantization: {
             scale,
+            mask_range: maskRange,
             integer_precision: 'safe_integer',
         },
         dimension_count: dimensions.length,
@@ -1334,9 +1344,13 @@ function buildEncryptedUnmaskShareEnvelope(input: {
     direction: 'add' | 'subtract';
     maskSeed: string;
     maskVectorDigest: string;
+    maskRange: number;
 }): EncryptedUnmaskShareEnvelope | null {
     if (!input.localPrivateKey || !input.coordinatorPublicKey) return null;
     try {
+        const senderPublicKey = createPublicKey(input.localPrivateKey);
+        const senderPublicKeyDer = senderPublicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+        const senderPublicKeyDerBase64 = senderPublicKeyDer.toString('base64');
         const aad = {
             schema: 'vetios_unmask_share_envelope_aad_v1',
             federation_round_id: input.task.federation_round_id,
@@ -1369,6 +1383,7 @@ function buildEncryptedUnmaskShareEnvelope(input: {
             key_agreement_protocol: 'x25519_hkdf_sha256_v1',
             reveal_policy: 'dropout_or_threshold_unmask_only',
             mask_seed: input.maskSeed,
+            mask_range: input.maskRange,
             seed_digest: stableHash(input.maskSeed),
             mask_vector_digest: input.maskVectorDigest,
         });
@@ -1381,6 +1396,12 @@ function buildEncryptedUnmaskShareEnvelope(input: {
         const authTag = cipher.getAuthTag();
         const envelopeWithoutHash = {
             schema: 'vetios_encrypted_unmask_share_envelope_v1' as const,
+            federation_round_id: input.task.federation_round_id,
+            round_node_task_id: input.task.id,
+            round_key: input.task.round_key,
+            sender_node_ref: input.task.node_ref,
+            sender_public_key_der_base64: senderPublicKeyDerBase64,
+            sender_public_key_fingerprint: createHash('sha256').update(senderPublicKeyDer).digest('hex').slice(0, 32),
             peer_node_ref: input.peer.node_ref,
             direction: input.direction,
             recipient: 'coordinator' as const,

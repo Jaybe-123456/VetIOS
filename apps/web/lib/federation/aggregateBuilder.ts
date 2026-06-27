@@ -1,4 +1,12 @@
-import { createHash } from 'crypto';
+import {
+    createDecipheriv,
+    createHash,
+    createHmac,
+    createPrivateKey,
+    createPublicKey,
+    diffieHellman,
+    type KeyObject,
+} from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
     FEDERATED_UPDATE_SUBMISSIONS,
@@ -61,6 +69,53 @@ export interface FederatedAggregateArtifactDraft {
     blockers: string[];
 }
 
+export interface CoordinatorRecoveryKeyMaterial {
+    privateKeyPem?: string | null;
+    privateKeyDerBase64?: string | null;
+}
+
+interface EncryptedUnmaskShareEnvelope {
+    schema: 'vetios_encrypted_unmask_share_envelope_v1';
+    federation_round_id: string;
+    round_node_task_id: string;
+    round_key: string;
+    sender_node_ref: string;
+    sender_public_key_der_base64: string;
+    sender_public_key_fingerprint: string;
+    peer_node_ref: string;
+    direction: 'add' | 'subtract';
+    recipient: 'coordinator';
+    encryption_protocol: 'x25519_aes_256_gcm_v1';
+    key_agreement_protocol: 'x25519_hkdf_sha256_v1';
+    aad_hash: string;
+    iv_base64: string;
+    ciphertext_base64: string;
+    auth_tag_base64: string;
+    envelope_hash: string;
+}
+
+interface ParsedSecureAggregateUpdate {
+    update: FederatedAggregateUpdateEvidence;
+    protocol: string | null;
+    quantizationScale: number | null;
+    dimensionOrderDigest: string | null;
+    maskedVectorDigest: string | null;
+    vector: Record<string, number> | null;
+    maskRange: number | null;
+    encryptedUnmaskShareEnvelopeHashes: string[];
+    encryptedUnmaskShareEnvelopes: EncryptedUnmaskShareEnvelope[];
+}
+
+interface DecryptedUnmaskShare {
+    sender_node_ref: string;
+    peer_node_ref: string;
+    direction: 'add' | 'subtract';
+    mask_seed: string;
+    mask_range: number;
+    seed_digest: string;
+    mask_vector_digest: string;
+}
+
 export interface BuildFederatedAggregateArtifactsResult {
     round: FederationRoundRow;
     accepted_submissions: FederatedAggregateUpdateEvidence[];
@@ -82,10 +137,14 @@ export function buildFederatedAggregateArtifactDraft(input: {
     taskType: FederatedAggregateTaskType;
     acceptedUpdates: FederatedAggregateUpdateEvidence[];
     minimumAcceptedUpdates: number;
+    coordinatorRecoveryKeyMaterial?: CoordinatorRecoveryKeyMaterial | null;
     builtAt?: string;
 }): FederatedAggregateArtifactDraft {
     const builtAt = input.builtAt ?? new Date().toISOString();
-    const secureAggregateMaterialization = buildSecureAggregateMaterialization(input.acceptedUpdates);
+    const secureAggregateMaterialization = buildSecureAggregateMaterialization(
+        input.acceptedUpdates,
+        input.coordinatorRecoveryKeyMaterial ?? null,
+    );
     const blockers = [
         ...validateAcceptedUpdates(input.acceptedUpdates, input.minimumAcceptedUpdates),
         ...secureAggregateMaterialization.blockers,
@@ -187,10 +246,14 @@ export async function buildFederatedAggregateArtifacts(
         minimumAcceptedUpdates?: number | null;
         markCompleted?: boolean;
         evidence?: Record<string, unknown>;
+        coordinatorPrivateKeyPem?: string | null;
+        coordinatorPrivateKeyDerBase64?: string | null;
     },
 ): Promise<BuildFederatedAggregateArtifactsResult> {
     const round = await loadFederationRound(client, input.federationRoundId);
     assertCoordinatorAccess(round, input.actorTenantId);
+    const coordinatorRecoveryKeyMaterial = resolveCoordinatorRecoveryKeyMaterial(input);
+    const aggregateEvidence = redactCoordinatorRecoveryKeyMaterial(input.evidence ?? {});
     const acceptedSubmissions = (await listAcceptedUpdateSubmissions(client, round.id))
         .filter((submission) => submission.federation_key === round.federation_key);
     const taskTypes = normalizeTaskTypes(input.taskTypes);
@@ -201,6 +264,7 @@ export async function buildFederatedAggregateArtifacts(
         taskType,
         acceptedUpdates: acceptedSubmissions.filter((submission) => submission.contribution_role === taskType),
         minimumAcceptedUpdates,
+        coordinatorRecoveryKeyMaterial,
         builtAt,
     }));
     const readyDrafts = drafts.filter((draft) => draft.blockers.length === 0);
@@ -223,7 +287,7 @@ export async function buildFederatedAggregateArtifacts(
         actor: input.actor,
         builtAt,
         markCompleted: input.markCompleted === true,
-        evidence: input.evidence ?? {},
+        evidence: aggregateEvidence,
     });
 
     return {
@@ -266,7 +330,10 @@ function validateAcceptedUpdates(updates: FederatedAggregateUpdateEvidence[], mi
     return Array.from(blockers).sort();
 }
 
-function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEvidence[]): {
+function buildSecureAggregateMaterialization(
+    updates: FederatedAggregateUpdateEvidence[],
+    coordinatorRecoveryKeyMaterial: CoordinatorRecoveryKeyMaterial | null,
+): {
     status: 'materialized' | 'blocked';
     protocol: string | null;
     quantization_scale: number | null;
@@ -279,10 +346,20 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
     source_masked_vector_digests: string[];
     encrypted_unmask_share_envelope_count: number;
     source_encrypted_unmask_share_envelope_hashes: string[];
-    dropout_recovery_evidence_status: 'encrypted_envelopes_available' | 'encrypted_envelopes_missing' | 'not_required';
+    decrypted_unmask_share_count: number;
+    applied_dropout_unmask_share_count: number;
+    dropout_recovered_peer_refs: string[];
+    dropout_recovery_adjustment_digest: string | null;
+    dropout_recovery_evidence_status:
+        | 'decrypted_and_applied'
+        | 'decrypted_no_dropout_correction_needed'
+        | 'encrypted_envelopes_available'
+        | 'encrypted_envelopes_missing'
+        | 'not_required';
     blockers: string[];
 } {
     const blockers = new Set<string>();
+    const coordinatorPrivateKey = readCoordinatorPrivateKey(coordinatorRecoveryKeyMaterial);
     const parsed = updates.map((update) => {
         const secureAggregation = asRecord(update.masked_update_summary.secure_aggregation);
         return {
@@ -292,7 +369,9 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
             dimensionOrderDigest: readText(secureAggregation.dimension_order_digest),
             maskedVectorDigest: readText(secureAggregation.masked_vector_digest),
             vector: readNumberRecord(secureAggregation.masked_integer_vector),
+            maskRange: readNumber(secureAggregation.mask_range),
             encryptedUnmaskShareEnvelopeHashes: readEnvelopeHashes(secureAggregation.encrypted_unmask_share_envelopes),
+            encryptedUnmaskShareEnvelopes: readEncryptedUnmaskShareEnvelopes(secureAggregation.encrypted_unmask_share_envelopes),
         };
     });
     const encryptedEnvelopeHashes = uniqueNonEmpty(parsed.flatMap((entry) => entry.encryptedUnmaskShareEnvelopeHashes));
@@ -311,6 +390,9 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
     }
     if (parsed.some((entry) => !entry.quantizationScale || entry.quantizationScale <= 0)) {
         blockers.add('accepted_update_missing_quantization_scale');
+    }
+    if (parsed.some((entry) => !entry.maskRange || entry.maskRange <= 0)) {
+        blockers.add('accepted_update_missing_mask_range');
     }
     const protocols = uniqueNonEmpty(parsed.map((entry) => entry.protocol));
     if (protocols.length > 1) {
@@ -333,6 +415,11 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
         && parsed.some((entry) => entry.encryptedUnmaskShareEnvelopeHashes.length === 0)) {
         blockers.add('encrypted_unmask_share_envelopes_missing');
     }
+    if (protocols[0] === 'x25519_hkdf_pairwise_masked_v1'
+        && encryptedEnvelopeHashes.length > 0
+        && !coordinatorPrivateKey) {
+        blockers.add('coordinator_private_key_missing_for_unmask_share_recovery');
+    }
 
     if (blockers.size > 0) {
         return {
@@ -348,6 +435,10 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
             source_masked_vector_digests: uniqueNonEmpty(parsed.map((entry) => entry.maskedVectorDigest)),
             encrypted_unmask_share_envelope_count: encryptedEnvelopeHashes.length,
             source_encrypted_unmask_share_envelope_hashes: encryptedEnvelopeHashes,
+            decrypted_unmask_share_count: 0,
+            applied_dropout_unmask_share_count: 0,
+            dropout_recovered_peer_refs: [],
+            dropout_recovery_adjustment_digest: null,
             dropout_recovery_evidence_status: encryptedEnvelopeHashes.length > 0
                 ? 'encrypted_envelopes_available'
                 : 'encrypted_envelopes_missing',
@@ -357,10 +448,44 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
 
     const vectors = parsed.map((entry) => entry.vector ?? {});
     const dimensions = Array.from(new Set(vectors.flatMap((vector) => Object.keys(vector)))).sort();
-    const aggregateIntegerVector = Object.fromEntries(dimensions.map((dimension) => [
+    const aggregateMaskedIntegerVector = Object.fromEntries(dimensions.map((dimension) => [
         dimension,
         vectors.reduce((sum, vector) => sum + (vector[dimension] ?? 0), 0),
     ]));
+    const dropoutRecovery = buildDropoutRecoveryMaterialization({
+        parsed,
+        coordinatorPrivateKey,
+        dimensions,
+        aggregateIntegerVector: aggregateMaskedIntegerVector,
+    });
+    for (const blocker of dropoutRecovery.blockers) {
+        blockers.add(blocker);
+    }
+
+    if (blockers.size > 0) {
+        return {
+            status: 'blocked',
+            protocol: protocols[0] ?? null,
+            quantization_scale: parsed[0]?.quantizationScale ?? null,
+            dimension_count: dimensions.length,
+            dimension_order_digest: dimensionOrderDigests[0] ?? null,
+            accepted_update_count: updates.length,
+            aggregate_masked_vector_digest: null,
+            aggregate_integer_vector: null,
+            aggregate_dequantized_vector_preview: null,
+            source_masked_vector_digests: uniqueNonEmpty(parsed.map((entry) => entry.maskedVectorDigest)),
+            encrypted_unmask_share_envelope_count: encryptedEnvelopeHashes.length,
+            source_encrypted_unmask_share_envelope_hashes: encryptedEnvelopeHashes,
+            decrypted_unmask_share_count: dropoutRecovery.decryptedShareCount,
+            applied_dropout_unmask_share_count: dropoutRecovery.appliedShareCount,
+            dropout_recovered_peer_refs: dropoutRecovery.recoveredPeerRefs,
+            dropout_recovery_adjustment_digest: dropoutRecovery.adjustmentDigest,
+            dropout_recovery_evidence_status: dropoutRecovery.status,
+            blockers: Array.from(blockers).sort(),
+        };
+    }
+
+    const aggregateIntegerVector = dropoutRecovery.recoveredAggregateIntegerVector;
     const scale = parsed[0]?.quantizationScale ?? 1;
     const aggregateDequantizedVectorPreview = Object.fromEntries(dimensions.slice(0, 200).map((dimension) => [
         dimension,
@@ -380,11 +505,193 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
         source_masked_vector_digests: uniqueNonEmpty(parsed.map((entry) => entry.maskedVectorDigest)),
         encrypted_unmask_share_envelope_count: encryptedEnvelopeHashes.length,
         source_encrypted_unmask_share_envelope_hashes: encryptedEnvelopeHashes,
-        dropout_recovery_evidence_status: encryptedEnvelopeHashes.length > 0
-            ? 'encrypted_envelopes_available'
-            : 'not_required',
+        decrypted_unmask_share_count: dropoutRecovery.decryptedShareCount,
+        applied_dropout_unmask_share_count: dropoutRecovery.appliedShareCount,
+        dropout_recovered_peer_refs: dropoutRecovery.recoveredPeerRefs,
+        dropout_recovery_adjustment_digest: dropoutRecovery.adjustmentDigest,
+        dropout_recovery_evidence_status: dropoutRecovery.status,
         blockers: [],
     };
+}
+
+function buildDropoutRecoveryMaterialization(input: {
+    parsed: ParsedSecureAggregateUpdate[];
+    coordinatorPrivateKey: KeyObject | null;
+    dimensions: string[];
+    aggregateIntegerVector: Record<string, number>;
+}): {
+    recoveredAggregateIntegerVector: Record<string, number>;
+    decryptedShareCount: number;
+    appliedShareCount: number;
+    recoveredPeerRefs: string[];
+    adjustmentDigest: string | null;
+    status:
+        | 'decrypted_and_applied'
+        | 'decrypted_no_dropout_correction_needed'
+        | 'encrypted_envelopes_available'
+        | 'encrypted_envelopes_missing'
+        | 'not_required';
+    blockers: string[];
+} {
+    const blockers = new Set<string>();
+    const acceptedNodeRefs = new Set(input.parsed.map((entry) => entry.update.node_ref).filter((value) => value.length > 0));
+    const adjustmentVector = Object.fromEntries(input.dimensions.map((dimension) => [dimension, 0]));
+    const recoveredPeerRefs = new Set<string>();
+    let decryptedShareCount = 0;
+    let appliedShareCount = 0;
+
+    for (const entry of input.parsed) {
+        for (const envelope of entry.encryptedUnmaskShareEnvelopes) {
+            if (!isEnvelopeHashValid(envelope)) {
+                blockers.add('invalid_encrypted_unmask_share_envelope_hash');
+                continue;
+            }
+            if (!input.coordinatorPrivateKey) {
+                blockers.add('coordinator_private_key_missing_for_unmask_share_recovery');
+                continue;
+            }
+            const share = decryptUnmaskShareEnvelope(envelope, input.coordinatorPrivateKey);
+            if (!share) {
+                blockers.add('encrypted_unmask_share_decryption_failed');
+                continue;
+            }
+            decryptedShareCount += 1;
+            if (share.sender_node_ref !== entry.update.node_ref || share.peer_node_ref !== envelope.peer_node_ref) {
+                blockers.add('encrypted_unmask_share_sender_or_peer_mismatch');
+                continue;
+            }
+            if (stableHash(share.mask_seed) !== share.seed_digest) {
+                blockers.add('encrypted_unmask_share_seed_digest_mismatch');
+                continue;
+            }
+            const maskVector = buildPairwiseMaskVector(share.mask_seed, input.dimensions, share.mask_range);
+            if (stableHash(maskVector) !== share.mask_vector_digest) {
+                blockers.add('encrypted_unmask_share_mask_vector_digest_mismatch');
+                continue;
+            }
+            if (acceptedNodeRefs.has(share.peer_node_ref)) {
+                continue;
+            }
+            const sign = share.direction === 'add' ? 1 : -1;
+            for (const dimension of input.dimensions) {
+                adjustmentVector[dimension] = (adjustmentVector[dimension] ?? 0) - sign * (maskVector[dimension] ?? 0);
+            }
+            recoveredPeerRefs.add(share.peer_node_ref);
+            appliedShareCount += 1;
+        }
+    }
+
+    const recoveredAggregateIntegerVector = Object.fromEntries(input.dimensions.map((dimension) => [
+        dimension,
+        (input.aggregateIntegerVector[dimension] ?? 0) + (adjustmentVector[dimension] ?? 0),
+    ]));
+    const envelopeCount = input.parsed.reduce((sum, entry) => sum + entry.encryptedUnmaskShareEnvelopes.length, 0);
+    const adjustmentDigest = appliedShareCount > 0 ? stableHash(adjustmentVector) : null;
+
+    return {
+        recoveredAggregateIntegerVector,
+        decryptedShareCount,
+        appliedShareCount,
+        recoveredPeerRefs: Array.from(recoveredPeerRefs).sort(),
+        adjustmentDigest,
+        status: appliedShareCount > 0
+            ? 'decrypted_and_applied'
+            : decryptedShareCount > 0
+                ? 'decrypted_no_dropout_correction_needed'
+                : envelopeCount > 0
+                    ? 'encrypted_envelopes_available'
+                    : 'not_required',
+        blockers: Array.from(blockers).sort(),
+    };
+}
+
+function decryptUnmaskShareEnvelope(
+    envelope: EncryptedUnmaskShareEnvelope,
+    coordinatorPrivateKey: KeyObject,
+): DecryptedUnmaskShare | null {
+    try {
+        const senderPublicKey = createPublicKey({
+            key: Buffer.from(envelope.sender_public_key_der_base64, 'base64'),
+            format: 'der',
+            type: 'spki',
+        });
+        const aad = {
+            schema: 'vetios_unmask_share_envelope_aad_v1',
+            federation_round_id: envelope.federation_round_id,
+            round_node_task_id: envelope.round_node_task_id,
+            round_key: envelope.round_key,
+            node_ref: envelope.sender_node_ref,
+            peer_node_ref: envelope.peer_node_ref,
+            direction: envelope.direction,
+            key_agreement_protocol: 'x25519_hkdf_sha256_v1',
+        };
+        if (stableHash(aad) !== envelope.aad_hash) return null;
+        const sharedSecret = diffieHellman({
+            privateKey: coordinatorPrivateKey,
+            publicKey: senderPublicKey,
+        });
+        const salt = Buffer.from(stableHash({
+            ...aad,
+            envelope_scope: 'coordinator_dropout_recovery_unmask_share',
+        }), 'hex');
+        const info = Buffer.from(`vetios-secagg-unmask-share:${envelope.round_key}:${envelope.round_node_task_id}:${envelope.peer_node_ref}`, 'utf8');
+        const decryptionKey = hkdfSha256(sharedSecret, salt, info, 32);
+        const decipher = createDecipheriv('aes-256-gcm', decryptionKey, Buffer.from(envelope.iv_base64, 'base64'));
+        decipher.setAAD(Buffer.from(stableStringify(aad), 'utf8'));
+        decipher.setAuthTag(Buffer.from(envelope.auth_tag_base64, 'base64'));
+        const plaintext = Buffer.concat([
+            decipher.update(Buffer.from(envelope.ciphertext_base64, 'base64')),
+            decipher.final(),
+        ]).toString('utf8');
+        const payload = asRecord(JSON.parse(plaintext));
+        const direction = payload.direction === 'add' || payload.direction === 'subtract' ? payload.direction : null;
+        const maskSeed = readText(payload.mask_seed);
+        const seedDigest = readText(payload.seed_digest);
+        const maskVectorDigest = readText(payload.mask_vector_digest);
+        const maskRange = readNumber(payload.mask_range);
+        if (
+            payload.schema !== 'vetios_unmask_share_seed_v1'
+            || payload.federation_round_id !== envelope.federation_round_id
+            || payload.round_node_task_id !== envelope.round_node_task_id
+            || payload.node_ref !== envelope.sender_node_ref
+            || payload.peer_node_ref !== envelope.peer_node_ref
+            || direction !== envelope.direction
+            || !maskSeed
+            || !isSha256(seedDigest)
+            || !isSha256(maskVectorDigest)
+            || !maskRange
+            || maskRange <= 0
+        ) {
+            return null;
+        }
+        return {
+            sender_node_ref: envelope.sender_node_ref,
+            peer_node_ref: envelope.peer_node_ref,
+            direction,
+            mask_seed: maskSeed,
+            mask_range: maskRange,
+            seed_digest: seedDigest,
+            mask_vector_digest: maskVectorDigest,
+        };
+    } catch {
+        return null;
+    }
+}
+
+function buildPairwiseMaskVector(seed: string, dimensions: string[], maskRange: number): Record<string, number> {
+    return Object.fromEntries(dimensions.map((dimension, index) => [
+        dimension,
+        pairwiseMaskValue(seed, dimension, index, maskRange),
+    ]));
+}
+
+function pairwiseMaskValue(seed: string, dimension: string, index: number, maskRange: number): number {
+    const digest = createHmac('sha256', seed)
+        .update(`${index}:${dimension}`)
+        .digest('hex');
+    const parsed = Number.parseInt(digest.slice(0, 12), 16);
+    const bounded = Number.isFinite(parsed) ? parsed % (maskRange * 2 + 1) : 0;
+    return bounded - maskRange;
 }
 
 async function insertOrLoadAggregateArtifact(
@@ -683,4 +990,130 @@ function readEnvelopeHashes(value: unknown): string[] {
         const envelope = asRecord(entry);
         return readText(envelope.envelope_hash);
     }).filter(isSha256);
+}
+
+function readEncryptedUnmaskShareEnvelopes(value: unknown): EncryptedUnmaskShareEnvelope[] {
+    if (!Array.isArray(value)) return [];
+    return value.map((entry) => {
+        const envelope = asRecord(entry);
+        const direction = envelope.direction === 'add' || envelope.direction === 'subtract'
+            ? envelope.direction
+            : null;
+        const parsed = {
+            schema: envelope.schema,
+            federation_round_id: readText(envelope.federation_round_id),
+            round_node_task_id: readText(envelope.round_node_task_id),
+            round_key: readText(envelope.round_key),
+            sender_node_ref: readText(envelope.sender_node_ref),
+            sender_public_key_der_base64: readText(envelope.sender_public_key_der_base64),
+            sender_public_key_fingerprint: readText(envelope.sender_public_key_fingerprint),
+            peer_node_ref: readText(envelope.peer_node_ref),
+            direction,
+            recipient: envelope.recipient,
+            encryption_protocol: envelope.encryption_protocol,
+            key_agreement_protocol: envelope.key_agreement_protocol,
+            aad_hash: readText(envelope.aad_hash),
+            iv_base64: readText(envelope.iv_base64),
+            ciphertext_base64: readText(envelope.ciphertext_base64),
+            auth_tag_base64: readText(envelope.auth_tag_base64),
+            envelope_hash: readText(envelope.envelope_hash),
+        };
+        if (
+            parsed.schema !== 'vetios_encrypted_unmask_share_envelope_v1'
+            || !parsed.federation_round_id
+            || !parsed.round_node_task_id
+            || !parsed.round_key
+            || !parsed.sender_node_ref
+            || !parsed.sender_public_key_der_base64
+            || !parsed.sender_public_key_fingerprint
+            || !parsed.peer_node_ref
+            || !parsed.direction
+            || parsed.recipient !== 'coordinator'
+            || parsed.encryption_protocol !== 'x25519_aes_256_gcm_v1'
+            || parsed.key_agreement_protocol !== 'x25519_hkdf_sha256_v1'
+            || !isSha256(parsed.aad_hash)
+            || !parsed.iv_base64
+            || !parsed.ciphertext_base64
+            || !parsed.auth_tag_base64
+            || !isSha256(parsed.envelope_hash)
+        ) {
+            return null;
+        }
+        return parsed as EncryptedUnmaskShareEnvelope;
+    }).filter((entry): entry is EncryptedUnmaskShareEnvelope => entry != null);
+}
+
+function isEnvelopeHashValid(envelope: EncryptedUnmaskShareEnvelope): boolean {
+    const { envelope_hash: _envelopeHash, ...withoutHash } = envelope;
+    return stableHash(withoutHash) === envelope.envelope_hash;
+}
+
+function resolveCoordinatorRecoveryKeyMaterial(input: {
+    evidence?: Record<string, unknown>;
+    coordinatorPrivateKeyPem?: string | null;
+    coordinatorPrivateKeyDerBase64?: string | null;
+}): CoordinatorRecoveryKeyMaterial {
+    const evidence = asRecord(input.evidence);
+    return {
+        privateKeyPem: readText(input.coordinatorPrivateKeyPem)
+            ?? readText(evidence.coordinator_private_key_pem)
+            ?? readText(evidence.coordinatorPrivateKeyPem)
+            ?? readText(process.env.VETIOS_FEDERATION_COORDINATOR_PRIVATE_KEY_PEM),
+        privateKeyDerBase64: readText(input.coordinatorPrivateKeyDerBase64)
+            ?? readText(evidence.coordinator_private_key_der_base64)
+            ?? readText(evidence.coordinatorPrivateKeyDerBase64)
+            ?? readText(process.env.VETIOS_FEDERATION_COORDINATOR_PRIVATE_KEY_DER_BASE64),
+    };
+}
+
+function redactCoordinatorRecoveryKeyMaterial(evidence: Record<string, unknown>): Record<string, unknown> {
+    const redacted = { ...evidence };
+    delete redacted.coordinator_private_key_pem;
+    delete redacted.coordinatorPrivateKeyPem;
+    delete redacted.coordinator_private_key_der_base64;
+    delete redacted.coordinatorPrivateKeyDerBase64;
+    if (Object.keys(redacted).length !== Object.keys(evidence).length) {
+        redacted.coordinator_recovery_key_material_supplied = true;
+        redacted.coordinator_recovery_key_material_persisted = false;
+    }
+    return redacted;
+}
+
+function readCoordinatorPrivateKey(material: CoordinatorRecoveryKeyMaterial | null): KeyObject | null {
+    const pem = readText(material?.privateKeyPem);
+    if (pem) {
+        try {
+            return createPrivateKey(pem);
+        } catch {
+            return null;
+        }
+    }
+    const derBase64 = readText(material?.privateKeyDerBase64);
+    if (derBase64) {
+        try {
+            return createPrivateKey({
+                key: Buffer.from(derBase64, 'base64'),
+                format: 'der',
+                type: 'pkcs8',
+            });
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
+function hkdfSha256(inputKeyMaterial: Buffer, salt: Buffer, info: Buffer, length: number): Buffer {
+    const pseudoRandomKey = createHmac('sha256', salt).update(inputKeyMaterial).digest();
+    const blocks: Buffer[] = [];
+    let previous = Buffer.alloc(0);
+    let counter = 1;
+    while (Buffer.concat(blocks).length < length) {
+        previous = createHmac('sha256', pseudoRandomKey)
+            .update(Buffer.concat([previous, info, Buffer.from([counter])]))
+            .digest();
+        blocks.push(previous);
+        counter += 1;
+    }
+    return Buffer.concat(blocks).subarray(0, length);
 }

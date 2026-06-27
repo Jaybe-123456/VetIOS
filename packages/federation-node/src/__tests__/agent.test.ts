@@ -125,6 +125,9 @@ assert.match(secureMaterialization.unmask_share_commitments[0]?.encrypted_share_
 assert.equal(secureMaterialization.encrypted_unmask_share_envelopes.length, 1);
 assert.equal(secureMaterialization.encrypted_unmask_share_envelopes[0]?.schema, 'vetios_encrypted_unmask_share_envelope_v1');
 assert.equal(secureMaterialization.encrypted_unmask_share_envelopes[0]?.encryption_protocol, 'x25519_aes_256_gcm_v1');
+assert.equal(secureMaterialization.encrypted_unmask_share_envelopes[0]?.sender_node_ref, 'clinic-a-node');
+assert.equal(secureMaterialization.encrypted_unmask_share_envelopes[0]?.sender_public_key_der_base64, localX25519Keys.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'));
+assert.equal(secureMaterialization.quantization.mask_range, 1000);
 assert.match(secureMaterialization.encrypted_unmask_share_envelopes[0]?.ciphertext_base64 ?? '', /^[A-Za-z0-9+/=]+$/);
 assert.equal('mask_seed' in (secureMaterialization.encrypted_unmask_share_envelopes[0] as Record<string, unknown>), false);
 assert.deepEqual(secureMaterialization.dropped_peer_refs, ['clinic-c-node']);
