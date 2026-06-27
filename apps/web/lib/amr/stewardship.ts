@@ -89,6 +89,12 @@ export interface AMRLabFeedSurveillancePacket {
         ast_panel_drug_count: number;
         mic_result_count: number;
         susceptibility_result_count: number;
+        interpretation_counts: {
+            susceptible: number;
+            intermediate: number;
+            resistant: number;
+            unknown: number;
+        };
         resistance_gene_count: number;
         resistance_class_count: number;
         ast_ready: boolean;
@@ -156,6 +162,115 @@ export interface AMRLabFeedSurveillanceEventDraft {
     evidence: Record<string, unknown>;
     observed_at: string;
 }
+
+export interface AMRLabFeedSurveillanceEventRow {
+    species: string | null;
+    pathogen_label?: string | null;
+    pathogen_key?: string | null;
+    infection_site?: string | null;
+    sample_source?: string | null;
+    drug_name?: string | null;
+    drug_class?: string | null;
+    lab_feed_status?: AMRLabFeedStatus | string | null;
+    surveillance_score?: number | null;
+    resistance_signal_score?: number | null;
+    ast_panel_drug_count?: number | null;
+    mic_result_count?: number | null;
+    susceptibility_result_count?: number | null;
+    resistance_gene_count?: number | null;
+    resistance_class_count?: number | null;
+    lab_partner_feed_ready?: boolean | null;
+    one_health_export_ready?: boolean | null;
+    trend_bucket_key?: string | null;
+    source_record_digest?: string | null;
+    packet_hash?: string | null;
+    surveillance_packet?: Record<string, unknown> | null;
+    blockers?: string[] | null;
+    warnings?: string[] | null;
+    observed_at?: string | null;
+}
+
+export interface AMROneHealthExportPacket {
+    schema_version: 'amr-one-health-export-v1';
+    generated_at: string;
+    period: {
+        start_at: string | null;
+        end_at: string | null;
+    };
+    export_status: 'blocked' | 'foundation' | 'export_ready';
+    summary: {
+        total_rows: number;
+        export_ready_rows: number;
+        lab_partner_feed_ready_rows: number;
+        resistance_signal_rows: number;
+        unique_trend_buckets: number;
+        average_surveillance_score: number;
+        average_resistance_signal_score: number;
+    };
+    trends: Array<{
+        trend_bucket_key: string;
+        species: string;
+        pathogen_key: string;
+        pathogen_label: string | null;
+        infection_site: string | null;
+        sample_source: string | null;
+        drug_class: string | null;
+        drug_name: string | null;
+        sample_count: number;
+        export_ready_count: number;
+        resistance_signal_count: number;
+        resistance_signal_rate: number;
+        interpretation_counts: {
+            susceptible: number;
+            intermediate: number;
+            resistant: number;
+            unknown: number;
+        };
+        average_surveillance_score: number;
+        average_resistance_signal_score: number;
+        latest_observed_at: string | null;
+        source_digest_bundle_hash: string;
+    }>;
+    provenance: {
+        source_table: 'amr_lab_feed_surveillance_events';
+        source_row_count: number;
+        source_digest_bundle_hash: string;
+        export_packet_hash: string;
+    };
+    privacy_contract: string[];
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
+}
+
+type AMRInterpretationCounts = {
+    susceptible: number;
+    intermediate: number;
+    resistant: number;
+    unknown: number;
+};
+
+type AMRLabFeedExportRow = {
+    species: string;
+    pathogen_label: string | null;
+    pathogen_key: string;
+    infection_site: string | null;
+    sample_source: string | null;
+    drug_name: string | null;
+    drug_class: string | null;
+    lab_feed_status: string;
+    surveillance_score: number;
+    resistance_signal_score: number;
+    lab_partner_feed_ready: boolean;
+    one_health_export_ready: boolean;
+    trend_bucket_key: string;
+    source_record_digest: string | null;
+    packet_hash: string | null;
+    interpretation_counts: AMRInterpretationCounts;
+    blockers: string[];
+    warnings: string[];
+    observed_at: string | null;
+};
 
 export const AMR_DECISION_STAGES = [
     'unknown',
@@ -251,6 +366,7 @@ export function buildAMRLabFeedSurveillancePacket(input: AMRLabFeedSurveillanceI
     const astPanelDrugCount = countRecordLeaves(astPanel);
     const micResultCount = countRecordLeaves(micResults);
     const susceptibilityResultCount = countSusceptibilityResults(astPanel);
+    const interpretationCounts = countASTInterpretations(astPanel);
     const astReady = Boolean(input.culture_collected && (astPanelDrugCount > 0 || micResultCount > 0 || susceptibilityResultCount > 0));
     const identifierPaths = findDirectIdentifierPaths({
         ast_panel: astPanel,
@@ -341,6 +457,7 @@ export function buildAMRLabFeedSurveillancePacket(input: AMRLabFeedSurveillanceI
             ast_panel_drug_count: astPanelDrugCount,
             mic_result_count: micResultCount,
             susceptibility_result_count: susceptibilityResultCount,
+            interpretation_counts: interpretationCounts,
             resistance_gene_count: resistanceGenes.length,
             resistance_class_count: resistanceClasses.length,
             ast_ready: astReady,
@@ -438,6 +555,79 @@ export function buildAMRLabFeedSurveillanceEventDraft(input: {
     };
 }
 
+export function buildAMROneHealthExportPacket(input: {
+    rows: AMRLabFeedSurveillanceEventRow[];
+    periodStart?: string | null;
+    periodEnd?: string | null;
+    generatedAt?: string | null;
+}): AMROneHealthExportPacket {
+    const generatedAt = input.generatedAt ?? new Date().toISOString();
+    const rows = input.rows.map(normalizeAMRLabFeedRowForExport);
+    const exportReadyRows = rows.filter((row) => row.one_health_export_ready);
+    const labPartnerRows = rows.filter((row) => row.lab_partner_feed_ready);
+    const resistanceRows = rows.filter((row) => isResistanceSignalRow(row));
+    const trends = buildAMRTrendGroups(rows);
+    const blockers = buildAMROneHealthExportBlockers(rows, exportReadyRows.length);
+    const warnings = buildAMROneHealthExportWarnings(rows, trends.length);
+    const sourceDigestBundleHash = hashJson(rows.map((row) => ({
+        source_record_digest: row.source_record_digest,
+        packet_hash: row.packet_hash,
+        trend_bucket_key: row.trend_bucket_key,
+        observed_at: row.observed_at,
+    })));
+    const packetWithoutHash = {
+        schema_version: 'amr-one-health-export-v1' as const,
+        generated_at: generatedAt,
+        period: {
+            start_at: input.periodStart ?? oldestObservedAt(rows),
+            end_at: input.periodEnd ?? latestObservedAt(rows),
+        },
+        export_status: resolveAMROneHealthExportStatus({
+            rowCount: rows.length,
+            exportReadyRows: exportReadyRows.length,
+            blockers,
+        }),
+        summary: {
+            total_rows: rows.length,
+            export_ready_rows: exportReadyRows.length,
+            lab_partner_feed_ready_rows: labPartnerRows.length,
+            resistance_signal_rows: resistanceRows.length,
+            unique_trend_buckets: trends.length,
+            average_surveillance_score: averageScore(rows.map((row) => row.surveillance_score)),
+            average_resistance_signal_score: averageScore(rows.map((row) => row.resistance_signal_score)),
+        },
+        trends,
+        provenance: {
+            source_table: 'amr_lab_feed_surveillance_events' as const,
+            source_row_count: rows.length,
+            source_digest_bundle_hash: sourceDigestBundleHash,
+            export_packet_hash: '',
+        },
+        privacy_contract: [
+            'Export rows are aggregated from de-identified AMR lab-feed surveillance events only.',
+            'Raw lab reports, owner identifiers, patient names, accessions, and source documents are excluded.',
+            'Trend groups use normalized species, pathogen, infection-site/sample-source, and drug-class keys.',
+            'One Health packets are surveillance evidence and do not make patient-specific prescribing recommendations.',
+        ],
+        blockers,
+        warnings,
+        next_actions: buildAMROneHealthExportNextActions({
+            rows,
+            exportReadyRows: exportReadyRows.length,
+            trends: trends.length,
+            blockers,
+        }),
+    };
+
+    return {
+        ...packetWithoutHash,
+        provenance: {
+            ...packetWithoutHash.provenance,
+            export_packet_hash: hashJson(packetWithoutHash),
+        },
+    };
+}
+
 function countTop(values: Array<string | null | undefined>, fallback: string): Array<[string, number]> {
     const counts = new Map<string, number>();
     for (const value of values) {
@@ -449,17 +639,212 @@ function countTop(values: Array<string | null | undefined>, fallback: string): A
         .slice(0, 10);
 }
 
+function normalizeAMRLabFeedRowForExport(row: AMRLabFeedSurveillanceEventRow): AMRLabFeedExportRow {
+    const packet = asRecord(row.surveillance_packet);
+    const normalization = asRecord(packet.normalization);
+    const ast = asRecord(packet.ast);
+    const species = normalizeOptionalAMRLabel(readText(row.species) ?? readText(normalization.species)) ?? 'unknown_species';
+    const pathogenLabel = normalizeOptionalAMRLabel(readText(row.pathogen_label) ?? readText(normalization.pathogen_label));
+    const pathogenKey = normalizeOptionalAMRLabel(readText(row.pathogen_key) ?? readText(normalization.pathogen_key))
+        ?? (pathogenLabel ? normalizePathogenKey(pathogenLabel) : 'unknown_pathogen');
+    const infectionSite = normalizeOptionalAMRLabel(readText(row.infection_site) ?? readText(normalization.infection_site));
+    const sampleSource = normalizeOptionalAMRLabel(readText(row.sample_source) ?? readText(normalization.sample_source));
+    const drugName = normalizeOptionalAMRLabel(readText(row.drug_name) ?? readText(normalization.drug_name));
+    const drugClass = normalizeOptionalAMRLabel(readText(row.drug_class) ?? readText(normalization.drug_class));
+    const trendBucketKey = normalizeTrendBucketKey(
+        readText(row.trend_bucket_key) ?? readText(normalization.trend_bucket_key),
+        {
+            species,
+            pathogenKey,
+            infectionSite,
+            sampleSource,
+            drugClass,
+            drugName,
+        },
+    );
+    const interpretationCounts = normalizeInterpretationCounts(ast.interpretation_counts);
+    const susceptibilityFallback = readNumber(row.susceptibility_result_count) ?? readNumber(ast.susceptibility_result_count) ?? 0;
+    if (
+        interpretationCounts.susceptible
+        + interpretationCounts.intermediate
+        + interpretationCounts.resistant
+        + interpretationCounts.unknown === 0
+        && susceptibilityFallback > 0
+    ) {
+        interpretationCounts.unknown = susceptibilityFallback;
+    }
+
+    return {
+        species,
+        pathogen_label: pathogenLabel,
+        pathogen_key: pathogenKey,
+        infection_site: infectionSite,
+        sample_source: sampleSource,
+        drug_name: drugName,
+        drug_class: drugClass,
+        lab_feed_status: readText(row.lab_feed_status) ?? 'blocked',
+        surveillance_score: clampScore(readNumber(row.surveillance_score) ?? 0),
+        resistance_signal_score: clampScore(readNumber(row.resistance_signal_score) ?? 0),
+        lab_partner_feed_ready: readBoolean(row.lab_partner_feed_ready),
+        one_health_export_ready: readBoolean(row.one_health_export_ready),
+        trend_bucket_key: trendBucketKey,
+        source_record_digest: readText(row.source_record_digest),
+        packet_hash: readText(row.packet_hash),
+        interpretation_counts: interpretationCounts,
+        blockers: asStringArray(row.blockers),
+        warnings: asStringArray(row.warnings),
+        observed_at: readText(row.observed_at),
+    };
+}
+
+function buildAMRTrendGroups(rows: AMRLabFeedExportRow[]): AMROneHealthExportPacket['trends'] {
+    const groups = new Map<string, {
+        trend_bucket_key: string;
+        species: string;
+        pathogen_key: string;
+        pathogen_label: string | null;
+        infection_site: string | null;
+        sample_source: string | null;
+        drug_class: string | null;
+        drug_name: string | null;
+        sample_count: number;
+        export_ready_count: number;
+        resistance_signal_count: number;
+        interpretation_counts: AMRInterpretationCounts;
+        surveillance_total: number;
+        resistance_total: number;
+        latest_observed_at: string | null;
+        source_digests: string[];
+    }>();
+
+    for (const row of rows) {
+        const group = groups.get(row.trend_bucket_key) ?? {
+            trend_bucket_key: row.trend_bucket_key,
+            species: row.species,
+            pathogen_key: row.pathogen_key,
+            pathogen_label: row.pathogen_label,
+            infection_site: row.infection_site,
+            sample_source: row.sample_source,
+            drug_class: row.drug_class,
+            drug_name: row.drug_name,
+            sample_count: 0,
+            export_ready_count: 0,
+            resistance_signal_count: 0,
+            interpretation_counts: emptyInterpretationCounts(),
+            surveillance_total: 0,
+            resistance_total: 0,
+            latest_observed_at: null,
+            source_digests: [],
+        };
+
+        group.sample_count += 1;
+        if (row.one_health_export_ready) group.export_ready_count += 1;
+        if (isResistanceSignalRow(row)) group.resistance_signal_count += 1;
+        group.interpretation_counts = addInterpretationCounts(group.interpretation_counts, row.interpretation_counts);
+        group.surveillance_total += row.surveillance_score;
+        group.resistance_total += row.resistance_signal_score;
+        if (row.source_record_digest) group.source_digests.push(row.source_record_digest);
+        if (!group.latest_observed_at || (row.observed_at && row.observed_at > group.latest_observed_at)) {
+            group.latest_observed_at = row.observed_at;
+        }
+        groups.set(row.trend_bucket_key, group);
+    }
+
+    return Array.from(groups.values())
+        .map((group) => ({
+            trend_bucket_key: group.trend_bucket_key,
+            species: group.species,
+            pathogen_key: group.pathogen_key,
+            pathogen_label: group.pathogen_label,
+            infection_site: group.infection_site,
+            sample_source: group.sample_source,
+            drug_class: group.drug_class,
+            drug_name: group.drug_name,
+            sample_count: group.sample_count,
+            export_ready_count: group.export_ready_count,
+            resistance_signal_count: group.resistance_signal_count,
+            resistance_signal_rate: ratio(group.resistance_signal_count, group.sample_count),
+            interpretation_counts: group.interpretation_counts,
+            average_surveillance_score: ratio(group.surveillance_total, group.sample_count),
+            average_resistance_signal_score: ratio(group.resistance_total, group.sample_count),
+            latest_observed_at: group.latest_observed_at,
+            source_digest_bundle_hash: hashJson(group.source_digests.sort()),
+        }))
+        .sort((left, right) => right.sample_count - left.sample_count || left.trend_bucket_key.localeCompare(right.trend_bucket_key));
+}
+
+function buildAMROneHealthExportBlockers(
+    rows: AMRLabFeedExportRow[],
+    exportReadyRows: number,
+): string[] {
+    return uniqueStrings([
+        ...(rows.length === 0 ? ['amr_lab_feed_rows_missing'] : []),
+        ...(rows.some((row) => row.blockers.includes('direct_identifier_risk_in_amr_lab_feed')) ? ['direct_identifier_risk_in_source_rows'] : []),
+        ...(rows.length > 0 && exportReadyRows === 0 ? ['one_health_export_ready_rows_missing'] : []),
+    ]);
+}
+
+function buildAMROneHealthExportWarnings(rows: AMRLabFeedExportRow[], trendCount: number): string[] {
+    return uniqueStrings([
+        ...(rows.length > 0 && rows.length < 10 ? ['low_sample_count_for_stable_trends'] : []),
+        ...(trendCount === 0 ? ['trend_groups_missing'] : []),
+        ...(rows.some((row) => row.pathogen_key === 'unknown_pathogen') ? ['pathogen_taxonomy_incomplete'] : []),
+        ...(rows.some((row) => !row.drug_class) ? ['drug_class_taxonomy_incomplete'] : []),
+        ...(rows.some((row) => !row.infection_site && !row.sample_source) ? ['infection_site_or_sample_source_incomplete'] : []),
+    ]);
+}
+
+function buildAMROneHealthExportNextActions(input: {
+    rows: AMRLabFeedExportRow[];
+    exportReadyRows: number;
+    trends: number;
+    blockers: string[];
+}): string[] {
+    return uniqueStrings([
+        ...(input.rows.length === 0 ? ['ingest_ast_culture_lab_feed_rows'] : []),
+        ...(input.exportReadyRows === 0 ? ['complete_pathogen_drug_site_taxonomy_for_export'] : []),
+        ...(input.trends === 0 ? ['materialize_species_pathogen_drug_trend_groups'] : []),
+        ...(input.blockers.includes('direct_identifier_risk_in_source_rows') ? ['remove_or_hash_identifier_bearing_lab_feed_fields'] : []),
+        ...(input.exportReadyRows > 0 && input.blockers.length === 0 ? ['publish_deidentified_one_health_export_packet'] : []),
+    ]);
+}
+
+function resolveAMROneHealthExportStatus(input: {
+    rowCount: number;
+    exportReadyRows: number;
+    blockers: string[];
+}): AMROneHealthExportPacket['export_status'] {
+    if (input.rowCount === 0 || input.blockers.includes('direct_identifier_risk_in_source_rows')) return 'blocked';
+    if (input.exportReadyRows > 0 && input.blockers.length === 0) return 'export_ready';
+    return 'foundation';
+}
+
+function isResistanceSignalRow(row: AMRLabFeedExportRow): boolean {
+    return row.lab_feed_status === 'resistance_signal'
+        || row.lab_feed_status === 'one_health_export_ready'
+        || row.resistance_signal_score >= 0.45
+        || row.interpretation_counts.resistant > 0;
+}
+
 function ratio(numerator: number, denominator: number): number {
     if (denominator <= 0) return 0;
     return Math.round((numerator / denominator) * 10_000) / 10_000;
 }
 
-function latestObservedAt(rows: AMRStewardshipEventRow[]): string | null {
+function latestObservedAt(rows: Array<{ observed_at?: string | null }>): string | null {
     return rows
         .map((row) => row.observed_at)
         .filter((value): value is string => Boolean(value))
         .sort()
         .at(-1) ?? null;
+}
+
+function oldestObservedAt(rows: Array<{ observed_at?: string | null }>): string | null {
+    return rows
+        .map((row) => row.observed_at)
+        .filter((value): value is string => Boolean(value))
+        .sort()
+        .at(0) ?? null;
 }
 
 function normalizePathogenKey(value: string): string {
@@ -560,6 +945,55 @@ function countSusceptibilityResults(value: unknown): number {
     return count;
 }
 
+function countASTInterpretations(value: unknown): AMRInterpretationCounts {
+    const counts = emptyInterpretationCounts();
+    visitRecord(value, (path, item) => {
+        if (typeof item !== 'string') return;
+        const normalized = item.trim().toLowerCase();
+        if (['s', 'susceptible'].includes(normalized)) {
+            counts.susceptible += 1;
+        } else if (['i', 'intermediate'].includes(normalized)) {
+            counts.intermediate += 1;
+        } else if (['r', 'resistant'].includes(normalized)) {
+            counts.resistant += 1;
+        } else if (/(interpretation|susceptibility|result)$/i.test(path)) {
+            counts.unknown += 1;
+        }
+    });
+    return counts;
+}
+
+function emptyInterpretationCounts(): AMRInterpretationCounts {
+    return {
+        susceptible: 0,
+        intermediate: 0,
+        resistant: 0,
+        unknown: 0,
+    };
+}
+
+function normalizeInterpretationCounts(value: unknown): AMRInterpretationCounts {
+    const record = asRecord(value);
+    return {
+        susceptible: Math.max(0, Math.round(readNumber(record.susceptible) ?? 0)),
+        intermediate: Math.max(0, Math.round(readNumber(record.intermediate) ?? 0)),
+        resistant: Math.max(0, Math.round(readNumber(record.resistant) ?? 0)),
+        unknown: Math.max(0, Math.round(readNumber(record.unknown) ?? 0)),
+    };
+}
+
+function addInterpretationCounts(
+    left: AMRInterpretationCounts,
+    right: AMRInterpretationCounts,
+): AMRInterpretationCounts {
+    return {
+        susceptible: left.susceptible + right.susceptible,
+        intermediate: left.intermediate + right.intermediate,
+        resistant: left.resistant + right.resistant,
+        unknown: left.unknown + right.unknown,
+    };
+}
+
 function findDirectIdentifierPaths(source: Record<string, unknown>): string[] {
     const paths = new Set<string>();
     visitRecord(source, (path, value) => {
@@ -568,6 +1002,73 @@ function findDirectIdentifierPaths(source: Record<string, unknown>): string[] {
         if (typeof value === 'string' && /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(value)) paths.add(path);
     });
     return Array.from(paths).sort();
+}
+
+function averageScore(values: Array<number | null | undefined>): number {
+    const scores = values.filter((value): value is number => typeof value === 'number' && Number.isFinite(value));
+    if (scores.length === 0) return 0;
+    return ratio(scores.reduce((sum, value) => sum + value, 0), scores.length);
+}
+
+function normalizeTrendBucketKey(
+    value: string | null,
+    fallback: {
+        species: string;
+        pathogenKey: string;
+        infectionSite: string | null;
+        sampleSource: string | null;
+        drugClass: string | null;
+        drugName: string | null;
+    },
+): string {
+    const normalized = value?.trim().toLowerCase().replace(/[^a-z0-9:]+/g, '_').replace(/^_+|_+$/g, '');
+    if (normalized) return normalized;
+    return [
+        fallback.species,
+        fallback.pathogenKey,
+        fallback.infectionSite ?? fallback.sampleSource ?? 'unknown_site',
+        fallback.drugClass ?? fallback.drugName ?? 'unknown_drug',
+    ].join(':');
+}
+
+function readText(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown): number | null {
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+    if (typeof value === 'string') {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+}
+
+function readBoolean(value: unknown): boolean {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        return normalized === 'true' || normalized === 'yes' || normalized === '1';
+    }
+    if (typeof value === 'number') return value === 1;
+    return false;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+}
+
+function asStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map((item) => typeof item === 'string' ? item.trim() : '')
+        .filter(Boolean);
+}
+
+function uniqueStrings(values: string[]): string[] {
+    return Array.from(new Set(values.filter((value) => value.trim().length > 0))).sort();
 }
 
 function visitRecord(value: unknown, visitor: (path: string, value: unknown) => void, path = '') {

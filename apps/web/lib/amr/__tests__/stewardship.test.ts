@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     aggregateAMRStewardship,
+    buildAMROneHealthExportPacket,
     buildAMRLabFeedSurveillanceEventDraft,
     buildAMRLabFeedSurveillancePacket,
     normalizeAMRLabel,
@@ -101,6 +102,10 @@ describe('AMR stewardship moat', () => {
         });
         expect(packet.ast.ast_ready).toBe(true);
         expect(packet.ast.susceptibility_result_count).toBe(2);
+        expect(packet.ast.interpretation_counts).toMatchObject({
+            susceptible: 1,
+            resistant: 1,
+        });
         expect(packet.surveillance.one_health_export_ready).toBe(true);
         expect(packet.resistance_signal_score).toBeGreaterThanOrEqual(0.45);
         expect(packet.provenance.source_record_digest).toMatch(/^[a-f0-9]{64}$/);
@@ -152,5 +157,70 @@ describe('AMR stewardship moat', () => {
             raw_owner_or_patient_identifiers_stored: false,
         });
         expect(JSON.stringify(draft.surveillance_packet)).not.toContain('owner');
+    });
+
+    it('rolls AMR lab-feed rows into a de-identified One Health export packet', () => {
+        const caninePacket = buildAMRLabFeedSurveillancePacket({
+            request_id: '11111111-1111-4111-8111-111111111111',
+            species: 'Canine',
+            pathogen_label: 'Escherichia coli',
+            infection_site: 'Urinary tract',
+            sample_source: 'Urine',
+            culture_collected: true,
+            ast_panel: {
+                amoxicillin_clavulanate: { interpretation: 'R' },
+                enrofloxacin: { interpretation: 'S' },
+            },
+            mic_results: {
+                amoxicillin_clavulanate: '>=32',
+                enrofloxacin: '0.5',
+            },
+            resistance_classes: ['beta lactam'],
+            drug_name: 'Amoxicillin clavulanate',
+            drug_class: 'Beta lactam',
+            resistance_suspected: true,
+            observed_at: '2026-06-19T10:00:00.000Z',
+        });
+        const felinePacket = buildAMRLabFeedSurveillancePacket({
+            request_id: '22222222-2222-4222-8222-222222222222',
+            species: 'Feline',
+            pathogen_label: 'Staphylococcus pseudintermedius',
+            infection_site: 'Skin',
+            sample_source: 'Swab',
+            culture_collected: true,
+            ast_panel: {
+                cephalexin: { interpretation: 'I' },
+            },
+            resistance_classes: ['beta lactam'],
+            drug_name: 'Cephalexin',
+            drug_class: 'Cephalosporin',
+            observed_at: '2026-06-19T12:00:00.000Z',
+        });
+        const canineDraft = buildAMRLabFeedSurveillanceEventDraft({
+            tenantId: '33333333-3333-4333-8333-333333333333',
+            requestId: '11111111-1111-4111-8111-111111111111',
+            packet: caninePacket,
+            observedAt: '2026-06-19T10:00:00.000Z',
+        });
+        const felineDraft = buildAMRLabFeedSurveillanceEventDraft({
+            tenantId: '33333333-3333-4333-8333-333333333333',
+            requestId: '22222222-2222-4222-8222-222222222222',
+            packet: felinePacket,
+            observedAt: '2026-06-19T12:00:00.000Z',
+        });
+
+        const exportPacket = buildAMROneHealthExportPacket({
+            rows: [canineDraft, felineDraft],
+            generatedAt: '2026-06-20T00:00:00.000Z',
+        });
+
+        expect(exportPacket.export_status).toBe('export_ready');
+        expect(exportPacket.summary.total_rows).toBe(2);
+        expect(exportPacket.summary.export_ready_rows).toBe(2);
+        expect(exportPacket.summary.unique_trend_buckets).toBe(2);
+        expect(exportPacket.trends[0].source_digest_bundle_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(exportPacket.provenance.export_packet_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(exportPacket.privacy_contract.join(' ')).toContain('Raw lab reports');
+        expect(JSON.stringify(exportPacket)).not.toContain('owner');
     });
 });
