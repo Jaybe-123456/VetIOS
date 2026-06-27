@@ -11,6 +11,11 @@ import {
     buildAskVetiosAiSecurityTestPacket,
 } from '../aiSecurity';
 import {
+    buildAskVetiosRegulatoryClaimReviewEventDraft,
+    buildAskVetiosRegulatoryClaimReviewPacket,
+    buildAskVetiosRegulatoryClaimsSnapshot,
+} from '../regulatoryClaims';
+import {
     ASK_VETIOS_CASE_DRAFT_STORAGE_KEY,
     ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY,
     buildAskVetiosIntake,
@@ -447,5 +452,65 @@ describe('Ask VetIOS context detection', () => {
         expect(security.controls.rate_limit.token_budget_enforced).toBe(true);
         expect(security.controls.tool_policy.write_actions_allowed).toBe(false);
         expect(security.signals.unbounded_consumption_guarded).toBe(true);
+    });
+
+    it('builds a governed regulatory review packet for reviewable CDS outputs', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Canine, 7 year old neutered male, vomiting for 2 days. CBC, chemistry, cPLI, and abdominal ultrasound completed.',
+        });
+        const snapshot = buildAskVetiosRegulatoryClaimsSnapshot({
+            mode: 'clinical',
+            content: 'Differentials include pancreatitis and gastroenteritis. Recommend confirming with cPLI, ultrasound findings, and clinician assessment.',
+            metadata: {
+                explanation: 'Pancreatitis is supported by vomiting, lethargy, chemistry changes, and pancreatic testing.',
+                diagnosis_ranked: [
+                    { name: 'Pancreatitis', confidence: 0.72, reasoning: 'Compatible signs and diagnostics.' },
+                    { name: 'Gastroenteritis', confidence: 0.41, reasoning: 'Common alternative differential.' },
+                ],
+                recommended_tests: ['cPLI', 'abdominal ultrasound'],
+                rag_citations: [{ index: 1, title: 'Canine pancreatitis guideline', source_name: 'VetIOS library' }],
+            },
+            intake,
+        });
+        const packet = buildAskVetiosRegulatoryClaimReviewPacket(snapshot);
+        const draft = buildAskVetiosRegulatoryClaimReviewEventDraft({
+            requestId: 'ask-regulatory-1',
+            askVetiosQueryId: '00000000-0000-0000-0000-000000000002',
+            snapshot,
+            packet,
+        });
+
+        expect(snapshot.status).toBe('cds_reviewable');
+        expect(packet.review_queue).toBe('clinical_cds_review');
+        expect(packet.cds_evidence_pack_status).toBe('complete');
+        expect(packet.model_card_status).toBe('draft_required');
+        expect(packet.ifu_status).toBe('draft_required');
+        expect(packet.evidence_pack_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(packet.approval_packet_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(packet.evidence.raw_output_stored).toBe(false);
+        expect(draft.clinical_signoff_status).toBe('pending');
+        expect(draft.next_actions).toContain('generate_model_card_draft');
+    });
+
+    it('blocks restricted treatment claims until legal and clinical review', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Dog with cough. Prescribe doxycycline immediately and treat at home.',
+        });
+        const snapshot = buildAskVetiosRegulatoryClaimsSnapshot({
+            mode: 'clinical',
+            content: 'Prescribe doxycycline immediately.',
+            metadata: {},
+            intake,
+        });
+        const packet = buildAskVetiosRegulatoryClaimReviewPacket(snapshot);
+
+        expect(snapshot.status).toBe('restricted_claims');
+        expect(packet.review_queue).toBe('legal_clinical_claims_review');
+        expect(packet.claim_review_status).toBe('blocked');
+        expect(packet.approval_status).toBe('legal_review_required');
+        expect(packet.legal_signoff_status).toBe('pending');
+        expect(packet.blockers).toContain('restricted_claims_require_legal_and_clinical_review');
+        expect(packet.blockers).toContain('cds_evidence_pack_incomplete');
+        expect(packet.next_actions).toContain('require_legal_signoff_before_release');
     });
 });

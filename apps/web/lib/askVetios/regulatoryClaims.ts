@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { AskVetiosIntakeSummary } from '@/lib/askVetios/intake';
 
 export type AskVetiosRegulatoryClaimsStatus =
@@ -35,6 +36,80 @@ export interface AskVetiosRegulatoryClaimsSnapshot {
     blocked_claims: string[];
     warnings: string[];
     next_actions: string[];
+}
+
+export type AskVetiosRegulatoryReviewQueue =
+    | 'none'
+    | 'clinical_cds_review'
+    | 'clinical_claims_review'
+    | 'legal_clinical_claims_review'
+    | 'external_attestation';
+
+export interface AskVetiosRegulatoryClaimReviewPacket {
+    schema_version: 'ask-vetios-regulatory-claim-review-v1';
+    review_queue: AskVetiosRegulatoryReviewQueue;
+    claim_review_status: 'not_required' | 'ready_for_review' | 'pending' | 'blocked' | 'approved' | 'rejected';
+    approval_status:
+        | 'not_reviewed'
+        | 'clinical_review_required'
+        | 'legal_review_required'
+        | 'external_attestation_required'
+        | 'approved'
+        | 'rejected';
+    cds_evidence_pack_status: 'not_required' | 'incomplete' | 'complete';
+    model_card_status: 'not_required' | 'draft_required' | 'drafted' | 'approved';
+    ifu_status: 'not_required' | 'draft_required' | 'drafted' | 'approved';
+    clinical_signoff_status: 'not_required' | 'pending' | 'approved' | 'rejected';
+    legal_signoff_status: 'not_required' | 'pending' | 'approved' | 'rejected';
+    regulatory_claims_status: AskVetiosRegulatoryClaimsStatus;
+    regulatory_risk_level: 'low' | 'medium' | 'high';
+    evidence_pack_hash: string;
+    model_card_hash: string | null;
+    ifu_hash: string | null;
+    approval_packet_hash: string;
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
+    evidence: {
+        raw_output_stored: false;
+        raw_prompt_stored: false;
+        legal_advice_stored: false;
+        evidence_pack_hash: string;
+    };
+}
+
+export interface AskVetiosRegulatoryClaimReviewEventDraft {
+    tenant_id: string | null;
+    request_id: string;
+    ask_vetios_query_id: string | null;
+    review_queue: AskVetiosRegulatoryReviewQueue;
+    claim_review_status: AskVetiosRegulatoryClaimReviewPacket['claim_review_status'];
+    approval_status: AskVetiosRegulatoryClaimReviewPacket['approval_status'];
+    cds_evidence_pack_status: AskVetiosRegulatoryClaimReviewPacket['cds_evidence_pack_status'];
+    model_card_status: AskVetiosRegulatoryClaimReviewPacket['model_card_status'];
+    ifu_status: AskVetiosRegulatoryClaimReviewPacket['ifu_status'];
+    clinical_signoff_status: AskVetiosRegulatoryClaimReviewPacket['clinical_signoff_status'];
+    legal_signoff_status: AskVetiosRegulatoryClaimReviewPacket['legal_signoff_status'];
+    regulatory_claims_status: AskVetiosRegulatoryClaimsStatus;
+    regulatory_risk_level: AskVetiosRegulatoryClaimReviewPacket['regulatory_risk_level'];
+    diagnosis_or_treatment_claim_present: boolean;
+    treatment_or_prescribing_claim_present: boolean;
+    professional_review_required: boolean;
+    independent_review_basis_available: boolean;
+    citations_present: boolean;
+    rationale_present: boolean;
+    diagnostic_alternatives_present: boolean;
+    outcome_confirmation_required: boolean;
+    evidence_pack_hash: string;
+    model_card_hash: string | null;
+    ifu_hash: string | null;
+    approval_packet_hash: string;
+    review_packet: AskVetiosRegulatoryClaimReviewPacket;
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
+    evidence: Record<string, unknown>;
+    observed_at: string;
 }
 
 interface BuildAskVetiosRegulatoryClaimsSnapshotInput {
@@ -136,6 +211,127 @@ export function buildAskVetiosRegulatoryClaimsSnapshot(
     };
 }
 
+export function buildAskVetiosRegulatoryClaimReviewPacket(
+    snapshot: AskVetiosRegulatoryClaimsSnapshot,
+): AskVetiosRegulatoryClaimReviewPacket {
+    const reviewQueue = determineReviewQueue(snapshot);
+    const regulatoryRiskLevel = snapshot.claims_policy.device_claim_risk;
+    const cdsEvidencePackStatus = determineCdsEvidencePackStatus(snapshot);
+    const artifactRequired = snapshot.status !== 'non_clinical';
+    const evidencePack = {
+        regulatory_boundary: snapshot.regulatory_boundary,
+        intended_user: snapshot.intended_user,
+        claims_policy: snapshot.claims_policy,
+        reviewability: snapshot.reviewability,
+        fda_cds_alignment: snapshot.fda_cds_alignment,
+        blocked_claims: snapshot.blocked_claims,
+    };
+    const evidencePackHash = hashJson(evidencePack);
+    const modelCardHash = artifactRequired ? hashJson({
+        artifact: 'model_card',
+        status: snapshot.status,
+        intended_user: snapshot.intended_user,
+        claims_policy: snapshot.claims_policy,
+        reviewability: snapshot.reviewability,
+    }) : null;
+    const ifuHash = artifactRequired ? hashJson({
+        artifact: 'instructions_for_use',
+        posture: snapshot.claims_policy.allowed_user_posture,
+        professional_review_required: snapshot.claims_policy.professional_review_required,
+        blocked_claims: snapshot.blocked_claims,
+        warnings: snapshot.warnings,
+    }) : null;
+    const blockers = buildReviewBlockers(snapshot, cdsEvidencePackStatus);
+    const warnings = unique([
+        ...snapshot.warnings,
+        ...(artifactRequired ? ['Model-card and IFU metadata must stay current with approved clinical claim posture.'] : []),
+    ]);
+    const nextActions = unique([
+        ...snapshot.next_actions,
+        ...(reviewQueue !== 'none' ? ['open_regulatory_claim_review_queue'] : []),
+        ...(artifactRequired ? ['generate_model_card_draft', 'generate_ifu_draft'] : []),
+        ...(snapshot.status === 'restricted_claims' ? ['require_legal_signoff_before_release'] : []),
+    ]);
+    const partialPacket = {
+        schema_version: 'ask-vetios-regulatory-claim-review-v1' as const,
+        review_queue: reviewQueue,
+        claim_review_status: determineClaimReviewStatus(snapshot, cdsEvidencePackStatus),
+        approval_status: determineApprovalStatus(snapshot),
+        cds_evidence_pack_status: cdsEvidencePackStatus,
+        model_card_status: artifactRequired ? 'draft_required' as const : 'not_required' as const,
+        ifu_status: artifactRequired ? 'draft_required' as const : 'not_required' as const,
+        clinical_signoff_status: snapshot.claims_policy.professional_review_required ? 'pending' as const : 'not_required' as const,
+        legal_signoff_status: snapshot.status === 'restricted_claims' ? 'pending' as const : 'not_required' as const,
+        regulatory_claims_status: snapshot.status,
+        regulatory_risk_level: regulatoryRiskLevel,
+        evidence_pack_hash: evidencePackHash,
+        model_card_hash: modelCardHash,
+        ifu_hash: ifuHash,
+        blockers,
+        warnings,
+        next_actions: nextActions,
+        evidence: {
+            raw_output_stored: false as const,
+            raw_prompt_stored: false as const,
+            legal_advice_stored: false as const,
+            evidence_pack_hash: evidencePackHash,
+        },
+    };
+
+    return {
+        ...partialPacket,
+        approval_packet_hash: hashJson(partialPacket),
+    };
+}
+
+export function buildAskVetiosRegulatoryClaimReviewEventDraft(input: {
+    tenantId?: string | null;
+    requestId: string;
+    askVetiosQueryId?: string | null;
+    snapshot: AskVetiosRegulatoryClaimsSnapshot;
+    packet?: AskVetiosRegulatoryClaimReviewPacket;
+    evidence?: Record<string, unknown>;
+    observedAt?: Date;
+}): AskVetiosRegulatoryClaimReviewEventDraft {
+    const packet = input.packet ?? buildAskVetiosRegulatoryClaimReviewPacket(input.snapshot);
+    return {
+        tenant_id: input.tenantId ?? null,
+        request_id: input.requestId,
+        ask_vetios_query_id: input.askVetiosQueryId ?? null,
+        review_queue: packet.review_queue,
+        claim_review_status: packet.claim_review_status,
+        approval_status: packet.approval_status,
+        cds_evidence_pack_status: packet.cds_evidence_pack_status,
+        model_card_status: packet.model_card_status,
+        ifu_status: packet.ifu_status,
+        clinical_signoff_status: packet.clinical_signoff_status,
+        legal_signoff_status: packet.legal_signoff_status,
+        regulatory_claims_status: packet.regulatory_claims_status,
+        regulatory_risk_level: packet.regulatory_risk_level,
+        diagnosis_or_treatment_claim_present: input.snapshot.claims_policy.diagnosis_or_treatment_claim_present,
+        treatment_or_prescribing_claim_present: input.snapshot.claims_policy.treatment_or_prescribing_claim_present,
+        professional_review_required: input.snapshot.claims_policy.professional_review_required,
+        independent_review_basis_available: input.snapshot.claims_policy.independent_review_basis_available,
+        citations_present: input.snapshot.reviewability.citations_present,
+        rationale_present: input.snapshot.reviewability.rationale_present,
+        diagnostic_alternatives_present: input.snapshot.reviewability.diagnostic_alternatives_present,
+        outcome_confirmation_required: input.snapshot.reviewability.outcome_confirmation_required,
+        evidence_pack_hash: packet.evidence_pack_hash,
+        model_card_hash: packet.model_card_hash,
+        ifu_hash: packet.ifu_hash,
+        approval_packet_hash: packet.approval_packet_hash,
+        review_packet: packet,
+        blockers: packet.blockers,
+        warnings: packet.warnings,
+        next_actions: packet.next_actions,
+        evidence: {
+            ...packet.evidence,
+            ...(input.evidence ?? {}),
+        },
+        observed_at: (input.observedAt ?? new Date()).toISOString(),
+    };
+}
+
 function determineStatus(input: {
     clinical: boolean;
     diagnosisOrTreatmentClaim: boolean;
@@ -164,6 +360,54 @@ function allowedPosture(status: AskVetiosRegulatoryClaimsStatus): 'informational
     if (status === 'non_clinical') return 'informational';
     if (status === 'cds_reviewable') return 'cds_draft';
     return 'restricted_draft';
+}
+
+function determineReviewQueue(snapshot: AskVetiosRegulatoryClaimsSnapshot): AskVetiosRegulatoryReviewQueue {
+    if (snapshot.status === 'non_clinical') return 'none';
+    if (snapshot.status === 'restricted_claims') return 'legal_clinical_claims_review';
+    if (snapshot.status === 'claims_review_required') return 'clinical_claims_review';
+    return 'clinical_cds_review';
+}
+
+function determineCdsEvidencePackStatus(
+    snapshot: AskVetiosRegulatoryClaimsSnapshot,
+): AskVetiosRegulatoryClaimReviewPacket['cds_evidence_pack_status'] {
+    if (snapshot.status === 'non_clinical') return 'not_required';
+    return snapshot.claims_policy.independent_review_basis_available ? 'complete' : 'incomplete';
+}
+
+function determineClaimReviewStatus(
+    snapshot: AskVetiosRegulatoryClaimsSnapshot,
+    cdsEvidencePackStatus: AskVetiosRegulatoryClaimReviewPacket['cds_evidence_pack_status'],
+): AskVetiosRegulatoryClaimReviewPacket['claim_review_status'] {
+    if (snapshot.status === 'non_clinical') return 'not_required';
+    if (snapshot.status === 'restricted_claims') return 'blocked';
+    if (snapshot.status === 'claims_review_required') return 'pending';
+    return cdsEvidencePackStatus === 'complete' ? 'ready_for_review' : 'pending';
+}
+
+function determineApprovalStatus(
+    snapshot: AskVetiosRegulatoryClaimsSnapshot,
+): AskVetiosRegulatoryClaimReviewPacket['approval_status'] {
+    if (snapshot.status === 'non_clinical') return 'not_reviewed';
+    if (snapshot.status === 'restricted_claims') return 'legal_review_required';
+    if (snapshot.status === 'claims_review_required') return 'clinical_review_required';
+    return snapshot.claims_policy.device_claim_risk === 'high'
+        ? 'external_attestation_required'
+        : 'clinical_review_required';
+}
+
+function buildReviewBlockers(
+    snapshot: AskVetiosRegulatoryClaimsSnapshot,
+    cdsEvidencePackStatus: AskVetiosRegulatoryClaimReviewPacket['cds_evidence_pack_status'],
+): string[] {
+    const blockers: string[] = [];
+    if (snapshot.status === 'restricted_claims') blockers.push('restricted_claims_require_legal_and_clinical_review');
+    if (snapshot.status === 'claims_review_required') blockers.push('clinical_claims_review_required');
+    if (cdsEvidencePackStatus === 'incomplete') blockers.push('cds_evidence_pack_incomplete');
+    if (!snapshot.reviewability.citations_present && snapshot.status !== 'non_clinical') blockers.push('citations_missing');
+    if (!snapshot.reviewability.diagnostic_alternatives_present && snapshot.status !== 'non_clinical') blockers.push('diagnostic_alternatives_missing');
+    return unique(blockers);
 }
 
 function buildBlockedClaims(input: {
@@ -243,6 +487,19 @@ function readString(value: unknown): string | null {
 
 function unique(values: string[]): string[] {
     return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 12);
+}
+
+function hashJson(value: unknown): string {
+    return createHash('sha256').update(stableStringify(value)).digest('hex');
+}
+
+function stableStringify(value: unknown): string {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+    return `{${Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+        .join(',')}}`;
 }
 
 const DIAGNOSIS_CLAIM_PATTERNS = [

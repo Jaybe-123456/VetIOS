@@ -33,7 +33,12 @@ import {
     type AskVetiosAiSecuritySnapshot,
     type AskVetiosAiSecurityTestEventDraft,
 } from '@/lib/askVetios/aiSecurity';
-import { buildAskVetiosRegulatoryClaimsSnapshot } from '@/lib/askVetios/regulatoryClaims';
+import {
+    buildAskVetiosRegulatoryClaimReviewEventDraft,
+    buildAskVetiosRegulatoryClaimsSnapshot,
+    type AskVetiosRegulatoryClaimReviewEventDraft,
+    type AskVetiosRegulatoryClaimsSnapshot,
+} from '@/lib/askVetios/regulatoryClaims';
 import {
     addAskVetiosBudgetHeaders,
     enforceAskVetiosTokenBudget,
@@ -641,6 +646,21 @@ async function logAskVetiosQuery(
                 },
             })).catch(() => null);
         }
+        if (regulatoryClaimsSnapshot) {
+            await persistAskVetiosRegulatoryClaimReviewEvent(client, buildAskVetiosRegulatoryClaimReviewEventDraft({
+                tenantId: null,
+                requestId,
+                askVetiosQueryId: String(data.id),
+                snapshot: regulatoryClaimsSnapshot as unknown as AskVetiosRegulatoryClaimsSnapshot,
+                evidence: {
+                    endpoint: '/api/ask-vetios',
+                    ask_vetios_query_id: String(data.id),
+                    raw_output_stored: false,
+                    raw_prompt_stored: false,
+                    legal_advice_stored: false,
+                },
+            })).catch(() => null);
+        }
         return String(data.id);
     } catch {
         return null;
@@ -658,6 +678,22 @@ async function persistAskVetiosAiSecurityTestEvent(
         .single();
     if (error) {
         if (isMissingAiSecurityTestStorage(error) || error.code === '23505') return null;
+        return null;
+    }
+    return data?.id ? String(data.id) : null;
+}
+
+async function persistAskVetiosRegulatoryClaimReviewEvent(
+    client: SupabaseClient,
+    draft: AskVetiosRegulatoryClaimReviewEventDraft,
+): Promise<string | null> {
+    const { data, error } = await client
+        .from('regulatory_claim_review_events')
+        .insert(draft)
+        .select('id')
+        .single();
+    if (error) {
+        if (isMissingRegulatoryClaimReviewStorage(error) || error.code === '23505') return null;
         return null;
     }
     return data?.id ? String(data.id) : null;
@@ -743,5 +779,15 @@ function isMissingAiSecurityTestStorage(error: { code?: string; message?: string
         || error.code === 'PGRST204'
         || message.includes('ai_security_test_events')
         || message.includes('security_packet')
+        || message.includes('schema cache');
+}
+
+function isMissingRegulatoryClaimReviewStorage(error: { code?: string; message?: string }): boolean {
+    const message = error.message?.toLowerCase() ?? '';
+    return error.code === '42P01'
+        || error.code === '42703'
+        || error.code === 'PGRST204'
+        || message.includes('regulatory_claim_review_events')
+        || message.includes('review_packet')
         || message.includes('schema cache');
 }
