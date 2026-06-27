@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { getSupabaseServer } from '@/lib/supabaseServer';
@@ -18,6 +19,11 @@ import {
     resolveSpecialistLearningEligibility,
     type SpecialistReviewEventRow,
 } from '@/lib/specialistReview/events';
+import {
+    buildSpecialistReviewOperationEventDraft,
+    buildSpecialistReviewOperationsPacket,
+    type SpecialistReviewOperationEventDraft,
+} from '@/lib/specialistReview/operations';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -117,7 +123,7 @@ export async function POST(req: Request) {
     if (error) {
         if (error.code === '23505') {
             const cached = await loadCachedSpecialistReviewEvent(supabase, auth.actor.tenantId, body.request_id);
-            if (cached) return NextResponse.json(buildSpecialistReviewResponse(cached.id, cached.learning_eligible, true));
+            if (cached) return NextResponse.json(buildSpecialistReviewResponse(cached.id, cached.learning_eligible, true, null));
         }
         return NextResponse.json(
             { error: 'specialist_review_event_store_failed', detail: error.message },
@@ -125,7 +131,58 @@ export async function POST(req: Request) {
         );
     }
 
-    return NextResponse.json(buildSpecialistReviewResponse(String(data.id), Boolean(data.learning_eligible), false));
+    const operationsInput = {
+        request_id: body.request_id,
+        reviewer_route: body.reviewer_route,
+        specialty: body.specialty ?? null,
+        urgency_level: body.urgency_level,
+        review_stage: body.review_stage,
+        review_status: body.review_status,
+        ai_disposition: body.ai_disposition,
+        clinician_action: body.clinician_action,
+        report_status: body.report_status,
+        pacs_status: body.pacs_status,
+        outcome_required: body.outcome_required,
+        outcome_captured: body.outcome_captured,
+        learning_eligible: learningEligible,
+        evidence_pack: body.evidence_pack,
+        corrections: body.corrections,
+        annotations: body.annotations,
+        deidentified_report: body.deidentified_report,
+        review_summary: body.review_summary ?? null,
+        observed_at: payload.observed_at,
+    };
+    const operationsPacket = buildSpecialistReviewOperationsPacket(operationsInput);
+    const operationDraft = buildSpecialistReviewOperationEventDraft({
+        tenantId: auth.actor.tenantId,
+        requestId: body.request_id,
+        specialistReviewEventId: String(data.id),
+        askVetiosQueryId: body.ask_vetios_query_id ?? null,
+        caseId: body.case_id ?? null,
+        inferenceEventId: body.inference_event_id ?? null,
+        clinicalOutcomeId: body.clinical_outcome_id ?? null,
+        operationsInput,
+        packet: operationsPacket,
+        evidence: {
+            endpoint: '/api/clinical/specialist-review',
+            specialist_review_event_id: String(data.id),
+            raw_report_stored_in_operation_ledger: false,
+        },
+    });
+    const operationEvent = await persistSpecialistReviewOperationEvent(supabase, operationDraft);
+
+    return NextResponse.json(buildSpecialistReviewResponse(
+        String(data.id),
+        Boolean(data.learning_eligible),
+        false,
+        {
+            id: operationEvent.id,
+            warning: operationEvent.warning,
+            queue_status: operationsPacket.queue_status,
+            operations_score: operationsPacket.operations_score,
+            next_actions: operationsPacket.next_actions,
+        },
+    ));
 }
 
 export async function GET(req: Request) {
@@ -187,15 +244,67 @@ async function loadCachedSpecialistReviewEvent(
     return data?.id ? { id: String(data.id), learning_eligible: Boolean(data.learning_eligible) } : null;
 }
 
-function buildSpecialistReviewResponse(specialistReviewEventId: string, learningEligible: boolean, cached: boolean) {
+function buildSpecialistReviewResponse(
+    specialistReviewEventId: string,
+    learningEligible: boolean,
+    cached: boolean,
+    operation: {
+        id: string | null;
+        warning: string | null;
+        queue_status: string;
+        operations_score: number;
+        next_actions: string[];
+    } | null,
+) {
     return {
         specialist_review_event_id: specialistReviewEventId,
+        specialist_review_operation_event_id: operation?.id ?? null,
         cached,
         learning_eligible: learningEligible,
+        operations: operation
+            ? {
+                queue_status: operation.queue_status,
+                operations_score: operation.operations_score,
+                next_actions: operation.next_actions,
+                warning: operation.warning,
+            }
+            : null,
         learning_signal: 'specialist_review_disposition',
         de_identified: true,
         error: null,
     };
+}
+
+async function persistSpecialistReviewOperationEvent(
+    client: SupabaseClient,
+    draft: SpecialistReviewOperationEventDraft,
+): Promise<{ id: string | null; warning: string | null }> {
+    const { data, error } = await client
+        .from('specialist_review_operation_events')
+        .insert(draft)
+        .select('id')
+        .single();
+
+    if (error || !data?.id) {
+        const message = error?.message ?? 'unknown persistence failure';
+        return {
+            id: null,
+            warning: isMissingSpecialistReviewOperationStorage(message)
+                ? 'Specialist review operation ledger is not installed; apply supabase/migrations/20260622030000_specialist_review_operation_events.sql to persist assignment, SLA, PACS/report, and closure queue evidence.'
+                : `Specialist review operation event was not persisted: ${message}`,
+        };
+    }
+
+    return { id: String(data.id), warning: null };
+}
+
+function isMissingSpecialistReviewOperationStorage(message: string): boolean {
+    return message.includes('specialist_review_operation_events')
+        && (
+            message.includes('does not exist')
+            || message.includes('Could not find the table')
+            || message.includes('schema cache')
+        );
 }
 
 function clampDays(value: number): number {

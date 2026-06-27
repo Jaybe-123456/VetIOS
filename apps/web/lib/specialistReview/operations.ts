@@ -125,6 +125,48 @@ export interface SpecialistReviewOperationsPacket {
     next_actions: string[];
 }
 
+export interface SpecialistReviewOperationEventDraft {
+    tenant_id: string;
+    request_id: string;
+    specialist_review_event_id: string | null;
+    ask_vetios_query_id: string | null;
+    case_id: string | null;
+    inference_event_id: string | null;
+    clinical_outcome_id: string | null;
+    reviewer_route: SpecialistReviewRoute;
+    specialty: string | null;
+    urgency_level: SpecialistReviewUrgencyLevel;
+    queue_status: SpecialistReviewQueueStatus;
+    operations_score: number;
+    assignment_status: SpecialistReviewOperationsPacket['assignment']['assignment_status'];
+    assigned_reviewer_ref: string | null;
+    candidate_reviewer_count: number;
+    sla_minutes: number;
+    due_at: string;
+    minutes_until_due: number;
+    overdue: boolean;
+    pacs_required: boolean;
+    pacs_status: SpecialistPacsStatus;
+    pacs_upload_required: boolean;
+    pacs_link_required: boolean;
+    report_status: SpecialistReportStatus;
+    final_report_ready: boolean;
+    closure_ready: boolean;
+    learning_eligible: boolean;
+    operation_digest: string;
+    packet_hash: string;
+    evidence_pack_hash: string;
+    corrections_hash: string;
+    annotations_hash: string;
+    deidentified_report_hash: string;
+    operations_packet: SpecialistReviewOperationsPacket;
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
+    evidence: Record<string, unknown>;
+    observed_at: string;
+}
+
 const SLA_MINUTES: Record<SpecialistReviewUrgencyLevel, number> = {
     routine: 72 * 60,
     priority: 24 * 60,
@@ -326,6 +368,71 @@ export function buildSpecialistReviewOperationsPacket(
             closureReady,
             learningEligible,
         }),
+    };
+}
+
+export function buildSpecialistReviewOperationEventDraft(input: {
+    tenantId: string;
+    requestId: string;
+    specialistReviewEventId?: string | null;
+    askVetiosQueryId?: string | null;
+    caseId?: string | null;
+    inferenceEventId?: string | null;
+    clinicalOutcomeId?: string | null;
+    operationsInput: SpecialistReviewOperationsInput;
+    packet?: SpecialistReviewOperationsPacket;
+    evidence?: Record<string, unknown>;
+}): SpecialistReviewOperationEventDraft {
+    const packet = input.packet ?? buildSpecialistReviewOperationsPacket(input.operationsInput);
+
+    return {
+        tenant_id: input.tenantId,
+        request_id: input.requestId,
+        specialist_review_event_id: input.specialistReviewEventId ?? null,
+        ask_vetios_query_id: input.askVetiosQueryId ?? null,
+        case_id: input.caseId ?? null,
+        inference_event_id: input.inferenceEventId ?? null,
+        clinical_outcome_id: input.clinicalOutcomeId ?? null,
+        reviewer_route: packet.assignment.reviewer_route,
+        specialty: packet.assignment.specialty,
+        urgency_level: packet.turnaround.urgency_level,
+        queue_status: packet.queue_status,
+        operations_score: packet.operations_score,
+        assignment_status: packet.assignment.assignment_status,
+        assigned_reviewer_ref: packet.assignment.assigned_reviewer_ref,
+        candidate_reviewer_count: packet.assignment.candidate_reviewer_count,
+        sla_minutes: packet.turnaround.sla_minutes,
+        due_at: packet.turnaround.due_at,
+        minutes_until_due: packet.turnaround.minutes_until_due,
+        overdue: packet.turnaround.overdue,
+        pacs_required: packet.pacs_workflow.required,
+        pacs_status: packet.pacs_workflow.pacs_status,
+        pacs_upload_required: packet.pacs_workflow.upload_required,
+        pacs_link_required: packet.pacs_workflow.link_required,
+        report_status: packet.report_workflow.report_status,
+        final_report_ready: packet.report_workflow.final_report_ready,
+        closure_ready: packet.closure.closure_ready,
+        learning_eligible: packet.closure.learning_eligible,
+        operation_digest: packet.provenance.operation_digest,
+        packet_hash: hashJson(packet),
+        evidence_pack_hash: packet.provenance.evidence_pack_hash,
+        corrections_hash: packet.provenance.corrections_hash,
+        annotations_hash: packet.provenance.annotations_hash,
+        deidentified_report_hash: packet.provenance.deidentified_report_hash,
+        operations_packet: packet,
+        blockers: packet.blockers,
+        warnings: packet.warnings,
+        next_actions: packet.next_actions,
+        evidence: {
+            ...input.evidence,
+            packet_schema_version: packet.schema_version,
+            raw_report_stored: false,
+            raw_imaging_stored: false,
+            raw_pacs_report_stored: false,
+            raw_owner_or_patient_identifiers_stored: false,
+            operation_digest: packet.provenance.operation_digest,
+        },
+        observed_at: packet.turnaround.requested_at,
     };
 }
 

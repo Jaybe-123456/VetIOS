@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildSpecialistReviewOperationEventDraft,
     buildSpecialistReviewOperationsPacket,
     type SpecialistReviewerProfile,
 } from '@/lib/specialistReview/operations';
@@ -154,6 +155,66 @@ describe('specialist review operations', () => {
             'evidence_pack.owner_name',
             'evidence_pack.patient_name',
         ]);
+    });
+
+    it('builds a de-identified specialist operation event draft for queue persistence', () => {
+        const operationsInput = {
+            request_id: '55555555-5555-4555-8555-555555555555',
+            reviewer_route: 'diagnostic_imaging' as const,
+            specialty: 'Diagnostic Imaging / PACS',
+            urgency_level: 'priority' as const,
+            review_stage: 'closed' as const,
+            review_status: 'completed' as const,
+            ai_disposition: 'corrected' as const,
+            clinician_action: 'additional_tests' as const,
+            report_status: 'final' as const,
+            pacs_status: 'linked' as const,
+            outcome_required: true,
+            outcome_captured: true,
+            evidence_pack: {
+                pacs: {
+                    study_instance_uid: '1.2.840.113619.2.55.3.604688435.781.171905',
+                },
+            },
+            deidentified_report: {
+                report_ref: 'report-123',
+                summary: 'Structured de-identified report summary.',
+            },
+            review_summary: 'Specialist corrected the AI impression after review.',
+            observed_at: '2026-06-22T10:00:00.000Z',
+            now: '2026-06-22T11:00:00.000Z',
+        };
+
+        const draft = buildSpecialistReviewOperationEventDraft({
+            tenantId: '33333333-3333-4333-8333-333333333333',
+            requestId: operationsInput.request_id,
+            specialistReviewEventId: '66666666-6666-4666-8666-666666666666',
+            caseId: '77777777-7777-4777-8777-777777777777',
+            operationsInput,
+            evidence: {
+                endpoint: '/api/clinical/specialist-review',
+            },
+        });
+
+        expect(draft.queue_status).toBe('learning_ready');
+        expect(draft.assignment_status).toBe('needs_assignment');
+        expect(draft.pacs_required).toBe(true);
+        expect(draft.pacs_link_required).toBe(false);
+        expect(draft.final_report_ready).toBe(true);
+        expect(draft.closure_ready).toBe(true);
+        expect(draft.learning_eligible).toBe(true);
+        expect(draft.operation_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.packet_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.evidence_pack_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.operations_packet.deidentification.raw_report_stored).toBe(false);
+        expect(draft.evidence).toMatchObject({
+            endpoint: '/api/clinical/specialist-review',
+            raw_report_stored: false,
+            raw_imaging_stored: false,
+            raw_pacs_report_stored: false,
+            raw_owner_or_patient_identifiers_stored: false,
+        });
+        expect(JSON.stringify(draft.operations_packet)).not.toContain('Specialist corrected the AI impression after review.');
     });
 });
 
