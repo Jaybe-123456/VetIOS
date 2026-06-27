@@ -32,8 +32,10 @@ const records: LocalClinicalLearningRecord[] = Array.from({ length: 20 }, (_, in
 
 const localX25519Keys = generateKeyPairSync('x25519');
 const peerX25519Keys = generateKeyPairSync('x25519');
+const coordinatorX25519Keys = generateKeyPairSync('x25519');
 const localPrivateKeyDer = localX25519Keys.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
 const peerPublicKeyDer = peerX25519Keys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+const coordinatorPublicKeyDer = coordinatorX25519Keys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
 const peerPublicKeyFingerprint = createHash('sha256').update(peerPublicKeyDer).digest('hex').slice(0, 32);
 
 const firstEligibility = assessLearningRecordEligibility(records[0]!);
@@ -66,6 +68,7 @@ const task: FederationRoundTask = {
         quantization_scale: 10000,
         mask_range: 1000,
         node_private_key_der_base64: localPrivateKeyDer.toString('base64'),
+        coordinator_public_key_der_base64: coordinatorPublicKeyDer.toString('base64'),
         peers: [
             {
                 node_ref: 'clinic-b-node',
@@ -117,7 +120,13 @@ assert.equal(secureMaterialization.dimension_count, trained.delta.feature_count)
 assert.equal(secureMaterialization.pairwise_mask_commitments.length, 1);
 assert.equal(secureMaterialization.pairwise_mask_commitments[0]?.key_agreement_protocol, 'x25519_hkdf_sha256_v1');
 assert.equal(secureMaterialization.unmask_share_commitments.length, 1);
-assert.equal(secureMaterialization.unmask_share_commitments[0]?.share_encryption_status, 'recipient_key_envelope_commitment');
+assert.equal(secureMaterialization.unmask_share_commitments[0]?.share_encryption_status, 'share_encrypted_for_coordinator');
+assert.match(secureMaterialization.unmask_share_commitments[0]?.encrypted_share_envelope_hash ?? '', /^[a-f0-9]{64}$/);
+assert.equal(secureMaterialization.encrypted_unmask_share_envelopes.length, 1);
+assert.equal(secureMaterialization.encrypted_unmask_share_envelopes[0]?.schema, 'vetios_encrypted_unmask_share_envelope_v1');
+assert.equal(secureMaterialization.encrypted_unmask_share_envelopes[0]?.encryption_protocol, 'x25519_aes_256_gcm_v1');
+assert.match(secureMaterialization.encrypted_unmask_share_envelopes[0]?.ciphertext_base64 ?? '', /^[A-Za-z0-9+/=]+$/);
+assert.equal('mask_seed' in (secureMaterialization.encrypted_unmask_share_envelopes[0] as Record<string, unknown>), false);
 assert.deepEqual(secureMaterialization.dropped_peer_refs, ['clinic-c-node']);
 assert.match(secureMaterialization.mask_commitment_hash, /^[a-f0-9]{64}$/);
 assert.ok(Object.keys(secureMaterialization.masked_integer_vector).length > 0);
@@ -143,6 +152,10 @@ assert.deepEqual(
     (trainedCommitment.masked_update_summary.secure_aggregation as Record<string, unknown>).masked_integer_vector,
     secureMaterialization.masked_integer_vector,
 );
+assert.equal(
+    (trainedCommitment.masked_update_summary.secure_aggregation as Record<string, unknown>).encrypted_unmask_share_envelope_count,
+    1,
+);
 assert.equal(trainedCommitment.evidence.model_delta_materialized, true);
 assert.equal(trainedCommitment.evidence.secure_aggregation_materialized, true);
 assert.equal(trainedCommitment.evidence.raw_model_delta_shared, false);
@@ -154,6 +167,14 @@ assert.equal(submissionPayload.masked_update_summary.raw_delta_included, false);
 assert.deepEqual(
     (submissionPayload.masked_update_summary.secure_aggregation as Record<string, unknown>).masked_integer_vector,
     secureMaterialization.masked_integer_vector,
+);
+assert.equal(
+    ((submissionPayload.masked_update_summary.secure_aggregation as Record<string, unknown>).encrypted_unmask_share_envelopes as unknown[]).length,
+    1,
+);
+assert.equal(
+    'mask_seed' in (((submissionPayload.masked_update_summary.secure_aggregation as Record<string, unknown>).encrypted_unmask_share_envelopes as Record<string, unknown>[])[0] ?? {}),
+    false,
 );
 
 const agent = new VetiosFederationNodeAgent({

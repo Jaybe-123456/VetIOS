@@ -277,6 +277,9 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
     aggregate_integer_vector: Record<string, number> | null;
     aggregate_dequantized_vector_preview: Record<string, number> | null;
     source_masked_vector_digests: string[];
+    encrypted_unmask_share_envelope_count: number;
+    source_encrypted_unmask_share_envelope_hashes: string[];
+    dropout_recovery_evidence_status: 'encrypted_envelopes_available' | 'encrypted_envelopes_missing' | 'not_required';
     blockers: string[];
 } {
     const blockers = new Set<string>();
@@ -289,8 +292,10 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
             dimensionOrderDigest: readText(secureAggregation.dimension_order_digest),
             maskedVectorDigest: readText(secureAggregation.masked_vector_digest),
             vector: readNumberRecord(secureAggregation.masked_integer_vector),
+            encryptedUnmaskShareEnvelopeHashes: readEnvelopeHashes(secureAggregation.encrypted_unmask_share_envelopes),
         };
     });
+    const encryptedEnvelopeHashes = uniqueNonEmpty(parsed.flatMap((entry) => entry.encryptedUnmaskShareEnvelopeHashes));
 
     if (parsed.length === 0) {
         blockers.add('accepted_updates_missing');
@@ -324,6 +329,10 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
     if (protocols[0] === 'pairwise_masked_commitment_v1') {
         blockers.add('legacy_commitment_protocol_not_materializable');
     }
+    if (protocols[0] === 'x25519_hkdf_pairwise_masked_v1'
+        && parsed.some((entry) => entry.encryptedUnmaskShareEnvelopeHashes.length === 0)) {
+        blockers.add('encrypted_unmask_share_envelopes_missing');
+    }
 
     if (blockers.size > 0) {
         return {
@@ -337,6 +346,11 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
             aggregate_integer_vector: null,
             aggregate_dequantized_vector_preview: null,
             source_masked_vector_digests: uniqueNonEmpty(parsed.map((entry) => entry.maskedVectorDigest)),
+            encrypted_unmask_share_envelope_count: encryptedEnvelopeHashes.length,
+            source_encrypted_unmask_share_envelope_hashes: encryptedEnvelopeHashes,
+            dropout_recovery_evidence_status: encryptedEnvelopeHashes.length > 0
+                ? 'encrypted_envelopes_available'
+                : 'encrypted_envelopes_missing',
             blockers: Array.from(blockers).sort(),
         };
     }
@@ -364,6 +378,11 @@ function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEv
         aggregate_integer_vector: aggregateIntegerVector,
         aggregate_dequantized_vector_preview: aggregateDequantizedVectorPreview,
         source_masked_vector_digests: uniqueNonEmpty(parsed.map((entry) => entry.maskedVectorDigest)),
+        encrypted_unmask_share_envelope_count: encryptedEnvelopeHashes.length,
+        source_encrypted_unmask_share_envelope_hashes: encryptedEnvelopeHashes,
+        dropout_recovery_evidence_status: encryptedEnvelopeHashes.length > 0
+            ? 'encrypted_envelopes_available'
+            : 'not_required',
         blockers: [],
     };
 }
@@ -656,4 +675,12 @@ function readNumberRecord(value: unknown): Record<string, number> | null {
         .map(([key, entry]) => [key, readNumber(entry)] as const)
         .filter((entry): entry is readonly [string, number] => entry[1] != null);
     return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+function readEnvelopeHashes(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.map((entry) => {
+        const envelope = asRecord(entry);
+        return readText(envelope.envelope_hash);
+    }).filter(isSha256);
 }
