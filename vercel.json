@@ -68,6 +68,10 @@
       "schedule": "40 2 * * *"
     },
     {
+      "path": "/api/cron/federated-candidate-evidence",
+      "schedule": "50 2 * * *"
+    },
+    {
       "path": "/api/cron/case-closure-digest",
       "schedule": "0 3 * * *"
     }

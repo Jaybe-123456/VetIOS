@@ -4,6 +4,8 @@ import {
     FEDERATED_OUTCOME_ELIGIBILITY_SNAPSHOTS,
     FEDERATED_UPDATE_SUBMISSIONS,
     FEDERATION_ROUNDS,
+    LEARNING_AUDIT_EVENTS,
+    MODEL_REGISTRY_ENTRIES,
 } from '@/lib/db/schemaContracts';
 import { createSupabaseLearningEngineStore } from '@/lib/learningEngine/supabaseStore';
 import type {
@@ -177,6 +179,52 @@ export interface GenerateFederatedCandidateEvidenceResult {
     regression_run: Record<string, unknown>;
 }
 
+export interface FederatedCandidateEvidenceSweepInput {
+    tenantId?: string | null;
+    federationKey?: string | null;
+    limit?: number | null;
+    force?: boolean | null;
+    actor?: string | null;
+}
+
+export interface FederatedCandidateEvidenceSweepCandidateResult {
+    candidate_model_version: string;
+    status: 'generated' | 'skipped_existing_evidence' | 'failed';
+    benchmark_report_count: number;
+    calibration_report_count: number;
+    regression_run_created: boolean;
+    promotion_gate_posture: string | null;
+    blockers: string[];
+    warnings: string[];
+    error: string | null;
+}
+
+export interface FederatedCandidateEvidenceSweepRoundResult {
+    federation_round_id: string;
+    federation_key: string;
+    round_key: string;
+    coordinator_tenant_id: string;
+    candidate_model_versions: string[];
+    status: 'processed' | 'skipped_no_candidates';
+    candidates: FederatedCandidateEvidenceSweepCandidateResult[];
+    blockers: string[];
+}
+
+export interface FederatedCandidateEvidenceSweepResult {
+    schema: 'vetios_federated_candidate_evidence_sweep_v1';
+    filters: {
+        tenant_id: string | null;
+        federation_key: string | null;
+        limit: number;
+        force: boolean;
+    };
+    scanned_rounds: number;
+    generated_candidates: number;
+    skipped_candidates: number;
+    failed_candidates: number;
+    rounds: FederatedCandidateEvidenceSweepRoundResult[];
+}
+
 type BenchmarkKind = 'task' | 'safety' | 'adversarial';
 
 export async function generateFederatedCandidateEvidence(
@@ -243,6 +291,7 @@ export async function generateFederatedCandidateEvidence(
         event_type: 'federated_candidate_evidence_generated',
         event_payload: {
             candidate_model_version: plan.candidate_model_version,
+            federation_round_id: input.federationRoundId ?? (runtimeEvidence ? readText(asRecord(runtimeEvidence).federation_round_id) : null),
             registry_entry_ids: plan.registry_entry_ids,
             benchmark_report_count: createdBenchmarkReports.length,
             calibration_report_count: createdCalibrationReports.length,
@@ -265,6 +314,127 @@ export async function generateFederatedCandidateEvidence(
     };
 }
 
+export async function runFederatedCandidateEvidenceSweep(
+    client: SupabaseClient,
+    input: FederatedCandidateEvidenceSweepInput = {},
+): Promise<FederatedCandidateEvidenceSweepResult> {
+    const limit = clampPositiveInteger(input.limit ?? 10, 1, 50);
+    const rounds = await listCompletedFederatedCandidateRounds(client, {
+        tenantId: input.tenantId,
+        federationKey: input.federationKey,
+        limit,
+    });
+    const roundResults: FederatedCandidateEvidenceSweepRoundResult[] = [];
+
+    for (const round of rounds) {
+        const candidateModelVersions = await listCandidateModelVersionsForRound(client, round);
+        if (candidateModelVersions.length === 0) {
+            roundResults.push({
+                federation_round_id: round.id,
+                federation_key: round.federation_key,
+                round_key: round.round_key,
+                coordinator_tenant_id: round.coordinator_tenant_id,
+                candidate_model_versions: [],
+                status: 'skipped_no_candidates',
+                candidates: [],
+                blockers: ['completed_round_has_no_candidate_model_versions'],
+            });
+            continue;
+        }
+
+        const candidates: FederatedCandidateEvidenceSweepCandidateResult[] = [];
+        for (const candidateModelVersion of candidateModelVersions) {
+            const alreadyGenerated = input.force === true
+                ? false
+                : await hasGeneratedCandidateEvidenceForRound(client, {
+                    tenantId: round.coordinator_tenant_id,
+                    federationRoundId: round.id,
+                    candidateModelVersion,
+                });
+
+            if (alreadyGenerated) {
+                candidates.push({
+                    candidate_model_version: candidateModelVersion,
+                    status: 'skipped_existing_evidence',
+                    benchmark_report_count: 0,
+                    calibration_report_count: 0,
+                    regression_run_created: false,
+                    promotion_gate_posture: null,
+                    blockers: [],
+                    warnings: [],
+                    error: null,
+                });
+                continue;
+            }
+
+            try {
+                const generated = await generateFederatedCandidateEvidence(client, {
+                    tenantId: round.coordinator_tenant_id,
+                    candidateModelVersion,
+                    federationRoundId: round.id,
+                    operatorEvidence: {
+                        evidence_generation_trigger: 'scheduled_federated_candidate_evidence_sweep',
+                        scheduler_actor: input.actor ?? 'cron:federated_candidate_evidence',
+                        raw_clinical_records_included: false,
+                        raw_model_deltas_included: false,
+                    },
+                    actor: input.actor ?? 'cron:federated_candidate_evidence',
+                });
+                candidates.push({
+                    candidate_model_version: candidateModelVersion,
+                    status: 'generated',
+                    benchmark_report_count: generated.created_benchmark_reports.length,
+                    calibration_report_count: generated.created_calibration_reports.length,
+                    regression_run_created: generated.regression_run != null,
+                    promotion_gate_posture: generated.plan.promotion_gate_posture,
+                    blockers: generated.plan.blockers,
+                    warnings: generated.plan.warnings,
+                    error: null,
+                });
+            } catch (error) {
+                candidates.push({
+                    candidate_model_version: candidateModelVersion,
+                    status: 'failed',
+                    benchmark_report_count: 0,
+                    calibration_report_count: 0,
+                    regression_run_created: false,
+                    promotion_gate_posture: null,
+                    blockers: ['scheduled_federated_candidate_evidence_generation_failed'],
+                    warnings: [],
+                    error: error instanceof Error ? error.message : 'Unknown scheduled federated candidate evidence generation error.',
+                });
+            }
+        }
+
+        roundResults.push({
+            federation_round_id: round.id,
+            federation_key: round.federation_key,
+            round_key: round.round_key,
+            coordinator_tenant_id: round.coordinator_tenant_id,
+            candidate_model_versions: candidateModelVersions,
+            status: 'processed',
+            candidates,
+            blockers: uniqueNonEmpty(candidates.flatMap((candidate) => candidate.blockers)),
+        });
+    }
+
+    const candidateResults = roundResults.flatMap((round) => round.candidates);
+    return {
+        schema: 'vetios_federated_candidate_evidence_sweep_v1',
+        filters: {
+            tenant_id: input.tenantId ?? null,
+            federation_key: input.federationKey ?? null,
+            limit,
+            force: input.force === true,
+        },
+        scanned_rounds: rounds.length,
+        generated_candidates: candidateResults.filter((candidate) => candidate.status === 'generated').length,
+        skipped_candidates: candidateResults.filter((candidate) => candidate.status === 'skipped_existing_evidence').length,
+        failed_candidates: candidateResults.filter((candidate) => candidate.status === 'failed').length,
+        rounds: roundResults,
+    };
+}
+
 export async function loadFederatedRuntimeEvidenceForRound(
     client: SupabaseClient,
     input: {
@@ -282,6 +452,86 @@ export async function loadFederatedRuntimeEvidenceForRound(
         round,
         updateSubmissions,
         outcomeEligibilitySnapshots: snapshots,
+    });
+}
+
+async function listCompletedFederatedCandidateRounds(
+    client: SupabaseClient,
+    input: {
+        tenantId?: string | null;
+        federationKey?: string | null;
+        limit: number;
+    },
+): Promise<FederatedRuntimeRoundEvidenceRow[]> {
+    const C = FEDERATION_ROUNDS.COLUMNS;
+    let query = client
+        .from(FEDERATION_ROUNDS.TABLE)
+        .select('*')
+        .eq(C.status, 'completed')
+        .order(C.updated_at, { ascending: false })
+        .limit(input.limit);
+
+    if (input.tenantId) {
+        query = query.eq(C.coordinator_tenant_id, input.tenantId);
+    }
+    if (input.federationKey) {
+        query = query.eq(C.federation_key, input.federationKey);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+        throw new Error(`Failed to list completed federated candidate rounds: ${error.message}`);
+    }
+    return (data ?? []).map((row) => mapRuntimeRound(asRecord(row)));
+}
+
+async function listCandidateModelVersionsForRound(
+    client: SupabaseClient,
+    round: FederatedRuntimeRoundEvidenceRow,
+): Promise<string[]> {
+    const C = MODEL_REGISTRY_ENTRIES.COLUMNS;
+    const { data, error } = await client
+        .from(MODEL_REGISTRY_ENTRIES.TABLE)
+        .select(`${C.model_version},${C.artifact_payload}`)
+        .eq(C.tenant_id, round.coordinator_tenant_id);
+
+    if (error) {
+        throw new Error(`Failed to list federated candidate registry entries: ${error.message}`);
+    }
+
+    const registryVersions = (data ?? [])
+        .map((row) => asRecord(row))
+        .filter((row) => readText(asRecord(row.artifact_payload).federation_round_id) === round.id)
+        .map((row) => readText(row.model_version));
+    const payloadVersions = readCandidateModelVersionsFromPayload(round.candidate_artifact_payload);
+    return uniqueNonEmpty([...registryVersions, ...payloadVersions]);
+}
+
+async function hasGeneratedCandidateEvidenceForRound(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        federationRoundId: string;
+        candidateModelVersion: string;
+    },
+): Promise<boolean> {
+    const C = LEARNING_AUDIT_EVENTS.COLUMNS;
+    const { data, error } = await client
+        .from(LEARNING_AUDIT_EVENTS.TABLE)
+        .select(`${C.id},${C.event_payload}`)
+        .eq(C.tenant_id, input.tenantId)
+        .eq(C.event_type, 'federated_candidate_evidence_generated')
+        .order(C.created_at, { ascending: false })
+        .limit(500);
+
+    if (error) {
+        throw new Error(`Failed to inspect federated candidate evidence audit history: ${error.message}`);
+    }
+
+    return (data ?? []).some((row) => {
+        const payload = asRecord(asRecord(row).event_payload);
+        return readText(payload.candidate_model_version) === input.candidateModelVersion
+            && readText(payload.federation_round_id) === input.federationRoundId;
     });
 }
 
@@ -1551,6 +1801,30 @@ function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
         .filter((value) => value.length > 0)));
 }
 
+function readCandidateModelVersionsFromPayload(payload: Record<string, unknown>): string[] {
+    const versions: string[] = [];
+    collectCandidateModelVersions(payload, versions);
+    return uniqueNonEmpty(versions);
+}
+
+function collectCandidateModelVersions(value: unknown, versions: string[]): void {
+    if (Array.isArray(value)) {
+        for (const item of value) collectCandidateModelVersions(item, versions);
+        return;
+    }
+    const record = asRecord(value);
+    if (Object.keys(record).length === 0) return;
+
+    const directVersion = readText(record.model_version) ?? readText(record.candidate_model_version);
+    if (directVersion) versions.push(directVersion);
+
+    for (const child of Object.values(record)) {
+        if (Array.isArray(child) || Object.keys(asRecord(child)).length > 0) {
+            collectCandidateModelVersions(child, versions);
+        }
+    }
+}
+
 function roundMetric(value: number): number {
     return Math.round(value * 10_000) / 10_000;
 }
@@ -1645,6 +1919,11 @@ function readRecordArray(value: unknown): Record<string, unknown>[] {
 function clamp01(value: number | null): number {
     if (value == null || !Number.isFinite(value)) return 0;
     return Math.max(0, Math.min(1, value));
+}
+
+function clampPositiveInteger(value: number | null | undefined, min: number, max: number): number {
+    const parsed = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : min;
+    return Math.min(max, Math.max(min, parsed));
 }
 
 function mergeRecords(...records: Array<Record<string, unknown>>): Record<string, unknown> {
