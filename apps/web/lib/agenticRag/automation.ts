@@ -10,7 +10,11 @@ import type {
     RagSourceRecord,
     RagVeterinaryCorpusReadiness,
 } from './types';
-import { buildVeterinaryCorpusManifest, summarizeVeterinaryCorpusManifest } from './veterinaryCorpus';
+import {
+    buildVeterinaryCorpusAuditEventDraft,
+    buildVeterinaryCorpusManifest,
+    summarizeVeterinaryCorpusManifest,
+} from './veterinaryCorpus';
 
 const MAX_CORPUS_READINESS_ROWS = 5_000;
 
@@ -27,6 +31,7 @@ export interface RagCatalogRunResult {
     sources_indexed: number;
     documents_indexed: number;
     chunks_indexed: number;
+    corpus_audit_event_id: string | null;
     readiness: RagReadinessSummary;
     warnings: string[];
     errors: Array<{ source: string; message: string }>;
@@ -254,6 +259,25 @@ async function runCuratedCatalogJob(input: {
         readiness,
         errors,
     });
+    const corpusAudit = await persistVeterinaryCorpusAuditEvent(input.client, {
+        tenantId: input.tenantId,
+        refreshRunId: runId,
+        auditType: input.runMode,
+        evidence: {
+            catalog_total: catalog.length,
+            batch_size: batchSelection.batchSize,
+            cursor: input.cursor ?? null,
+            next_cursor: batchSelection.nextCursor,
+            has_more: batchSelection.hasMore,
+            remote_mode: remoteMode,
+            sources_attempted: batchSelection.batch.length,
+            sources_indexed: sourcesIndexed,
+            documents_indexed: documentsIndexed,
+            chunks_indexed: chunksIndexed,
+            error_count: errors.length,
+        },
+    });
+    if (corpusAudit.warning) warnings.push(corpusAudit.warning);
 
     return {
         run_id: runId,
@@ -268,6 +292,7 @@ async function runCuratedCatalogJob(input: {
         sources_indexed: sourcesIndexed,
         documents_indexed: documentsIndexed,
         chunks_indexed: chunksIndexed,
+        corpus_audit_event_id: corpusAudit.id,
         readiness,
         warnings,
         errors,
@@ -411,6 +436,70 @@ async function completeRefreshRun(client: SupabaseClient, input: {
             completed_at: new Date().toISOString(),
         })
         .eq('id', input.runId);
+}
+
+async function persistVeterinaryCorpusAuditEvent(client: SupabaseClient, input: {
+    tenantId: string;
+    refreshRunId: string | null;
+    auditType: 'catalog_seed' | 'catalog_refresh';
+    evidence: Record<string, unknown>;
+}): Promise<{ id: string | null; warning: string | null }> {
+    const [sources, documents, chunks] = await Promise.all([
+        loadCorpusRows<RagSourceRecord>(client, 'rag_sources', input.tenantId),
+        loadCorpusRows<RagDocumentRecord>(client, 'rag_documents', input.tenantId),
+        loadCorpusRows<RagChunkRecord>(client, 'rag_chunks', input.tenantId),
+    ]);
+    const loadError = sources.error ?? documents.error ?? chunks.error;
+    if (loadError) {
+        return {
+            id: null,
+            warning: `Veterinary corpus audit event was not persisted because corpus rows could not be loaded: ${loadError}`,
+        };
+    }
+
+    const manifest = buildVeterinaryCorpusManifest({
+        sources: sources.rows,
+        documents: documents.rows,
+        chunks: chunks.rows,
+    });
+    const draft = buildVeterinaryCorpusAuditEventDraft({
+        tenantId: input.tenantId,
+        refreshRunId: input.refreshRunId,
+        auditType: input.auditType,
+        manifest,
+        evidence: {
+            ...input.evidence,
+            capped_source_rows: sources.capped,
+            capped_document_rows: documents.capped,
+            capped_chunk_rows: chunks.capped,
+        },
+    });
+    const { data, error } = await client
+        .from('veterinary_retrieval_corpus_audit_events')
+        .insert(draft)
+        .select('id')
+        .single();
+
+    if (error || !data?.id) {
+        const message = error?.message ?? 'unknown persistence failure';
+        return {
+            id: null,
+            warning: isMissingCorpusAuditStorage(message)
+                ? 'Veterinary corpus audit ledger is not installed; apply supabase/migrations/20260622010000_veterinary_retrieval_corpus_audit_events.sql to persist corpus audit evidence.'
+                : `Veterinary corpus audit event was not persisted: ${message}`,
+        };
+    }
+
+    return { id: String(data.id), warning: null };
+}
+
+function isMissingCorpusAuditStorage(message: string): boolean {
+    return message.includes('veterinary_retrieval_corpus_audit_events')
+        && (
+            message.includes('does not exist')
+            || message.includes('Could not find the table')
+            || message.includes('schema cache')
+        );
 }
 
 async function countRows(

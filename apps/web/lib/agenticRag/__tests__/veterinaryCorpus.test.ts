@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildVeterinaryCorpusAuditEventDraft,
     buildVeterinaryCorpusManifest,
     evaluateVeterinaryCitationQuality,
     summarizeVeterinaryCorpusManifest,
@@ -48,6 +49,68 @@ describe('veterinary retrieval corpus governance', () => {
         expect(readiness.corpus_version_hash).toBe(manifest.corpus_version_hash);
         expect(readiness.red_team_case_count).toBe(manifest.red_team_suite.case_count);
         expect(readiness.domain_index.find((entry) => entry.domain === 'toxicology')?.status).toBe('covered');
+    });
+
+    it('builds a sanitized append-only corpus audit event draft from the manifest', () => {
+        const sources = [
+            source('guideline-1', 'AAHA diagnostic guideline', 'guideline', 'specialist_guideline', ['clinical_guideline', 'diagnostics']),
+            source('lab-1', 'University diagnostic lab reference intervals', 'lab_reference', 'institutional', ['lab_reference', 'diagnostics']),
+            source('tox-1', 'Veterinary toxicology reference', 'clinical_protocol', 'institutional', ['toxicology', 'drug_safety']),
+            source('amr-1', 'One Health AMR stewardship guidance', 'guideline', 'regulatory', ['antimicrobial_stewardship', 'drug_safety']),
+        ];
+        const documents = sources.map((item) => document(item, `${item.name} v2026.06`));
+        const chunks = documents.flatMap((item) => [
+            chunk(item, 0, `${item.title} canine feline diagnostic guideline lab reference interval toxicology antimicrobial stewardship source.`),
+            chunk(item, 1, `${item.title} includes species-specific dosing boundaries, CBC chemistry, xylitol rodenticide, and susceptibility context.`),
+            chunk(item, 2, `${item.title} requires licensed veterinary review, citation grounding, and current source version proof.`),
+        ]);
+        const manifest = buildVeterinaryCorpusManifest({
+            sources,
+            documents,
+            chunks,
+            now: '2026-06-22T12:00:00.000Z',
+        });
+        const citationQuality = evaluateVeterinaryCitationQuality({
+            question: 'How should canine xylitol toxicosis be triaged?',
+            species: 'canine',
+            citations: [
+                citation({
+                    source_name: 'Veterinary toxicology reference',
+                    authority_tier: 'institutional',
+                    source_type: 'clinical_protocol',
+                    title: 'Canine xylitol toxicosis triage',
+                    quote: 'Canine xylitol toxicosis triage requires urgent veterinary assessment, glucose monitoring, supportive care, and species-specific toxicology evidence before treatment decisions.',
+                    similarity: 0.82,
+                    provenance: {
+                        source_version: '2026.06',
+                        source_version_hash: 'b'.repeat(64),
+                    },
+                }),
+            ],
+        });
+
+        const draft = buildVeterinaryCorpusAuditEventDraft({
+            tenantId: 'tenant-1',
+            refreshRunId: '11111111-1111-4111-8111-111111111111',
+            auditType: 'catalog_refresh',
+            manifest,
+            citationQuality,
+            evidence: { remote_mode: 'summaries_only' },
+            now: '2026-06-22T12:05:00.000Z',
+        });
+
+        expect(draft.corpus_version_hash).toBe(manifest.corpus_version_hash);
+        expect(draft.moat_status).toBe('operating');
+        expect(draft.toxicology_index_status).toBe('covered');
+        expect(draft.lab_reference_index_status).toBe('covered');
+        expect(draft.citation_quality_status).toBe('accepted');
+        expect(draft.source_version_proofs).toHaveLength(sources.length);
+        expect(draft.evidence).toMatchObject({
+            raw_source_text_included: false,
+            proprietary_full_text_included: false,
+            red_team_suite_hash: manifest.red_team_suite.suite_version_hash,
+        });
+        expect(JSON.stringify(draft)).not.toContain('requires urgent veterinary assessment');
     });
 
     it('keeps corpus manifest at foundation when source versioning or license evidence is missing', () => {

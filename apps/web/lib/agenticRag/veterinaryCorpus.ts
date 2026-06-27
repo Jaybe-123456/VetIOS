@@ -107,6 +107,36 @@ export interface VeterinaryRetrievalRedTeamSuite {
     cases: VeterinaryRetrievalRedTeamCase[];
 }
 
+export interface VeterinaryCorpusAuditEventDraft {
+    tenant_id: string;
+    refresh_run_id: string | null;
+    audit_type: 'catalog_seed' | 'catalog_refresh' | 'readiness_check' | 'red_team_evaluation' | 'citation_quality_evaluation';
+    corpus_version_hash: string;
+    moat_status: VeterinaryCorpusMoatStatus;
+    source_count: number;
+    document_count: number;
+    chunk_count: number;
+    high_authority_source_count: number;
+    authorized_source_count: number;
+    versioned_source_count: number;
+    source_version_coverage: number;
+    authorized_source_coverage: number;
+    high_authority_coverage: number;
+    toxicology_index_status: VeterinaryCorpusDomainIndex['status'];
+    lab_reference_index_status: VeterinaryCorpusDomainIndex['status'];
+    red_team_case_count: number;
+    red_team_coverage: Record<string, number>;
+    citation_quality_status: VeterinaryCitationQualityAssessment['status'] | null;
+    citation_quality_score: number | null;
+    manifest: VeterinaryCorpusManifest;
+    readiness_summary: RagVeterinaryCorpusReadiness;
+    source_version_proofs: VeterinaryCorpusSourceVersionProof[];
+    blockers: string[];
+    warnings: string[];
+    evidence: Record<string, unknown>;
+    observed_at: string;
+}
+
 const REQUIRED_DOMAINS = [
     'clinical_guideline',
     'diagnostics',
@@ -227,6 +257,61 @@ export function summarizeVeterinaryCorpusManifest(
         blockers: manifest.blockers,
         warnings: manifest.warnings.slice(0, 25),
         research_basis: manifest.research_basis,
+    };
+}
+
+export function buildVeterinaryCorpusAuditEventDraft(input: {
+    tenantId: string;
+    refreshRunId?: string | null;
+    auditType?: VeterinaryCorpusAuditEventDraft['audit_type'];
+    manifest: VeterinaryCorpusManifest;
+    citationQuality?: VeterinaryCitationQualityAssessment | null;
+    evidence?: Record<string, unknown>;
+    now?: string;
+}): VeterinaryCorpusAuditEventDraft {
+    const now = input.now ?? new Date().toISOString();
+    const readiness = summarizeVeterinaryCorpusManifest(input.manifest);
+    const toxicology = input.manifest.domain_index.find((entry) => entry.domain === 'toxicology');
+    const labReference = input.manifest.domain_index.find((entry) => entry.domain === 'lab_reference');
+
+    return {
+        tenant_id: input.tenantId,
+        refresh_run_id: input.refreshRunId ?? null,
+        audit_type: input.auditType ?? 'readiness_check',
+        corpus_version_hash: input.manifest.corpus_version_hash,
+        moat_status: input.manifest.moat_status,
+        source_count: input.manifest.sources,
+        document_count: input.manifest.documents,
+        chunk_count: input.manifest.chunks,
+        high_authority_source_count: input.manifest.high_authority_sources,
+        authorized_source_count: input.manifest.authorized_sources,
+        versioned_source_count: input.manifest.versioned_sources,
+        source_version_coverage: input.manifest.source_version_coverage,
+        authorized_source_coverage: input.manifest.authorized_source_coverage,
+        high_authority_coverage: input.manifest.high_authority_coverage,
+        toxicology_index_status: toxicology?.status ?? 'missing',
+        lab_reference_index_status: labReference?.status ?? 'missing',
+        red_team_case_count: input.manifest.red_team_suite.case_count,
+        red_team_coverage: input.manifest.red_team_suite.coverage,
+        citation_quality_status: input.citationQuality?.status ?? null,
+        citation_quality_score: input.citationQuality?.quality_score ?? null,
+        manifest: input.manifest,
+        readiness_summary: readiness,
+        source_version_proofs: input.manifest.source_versions,
+        blockers: input.manifest.blockers,
+        warnings: [
+            ...input.manifest.warnings,
+            ...(input.citationQuality?.warnings ?? []),
+        ].slice(0, 100),
+        evidence: {
+            ...(input.evidence ?? {}),
+            raw_source_text_included: false,
+            raw_clinical_records_included: false,
+            proprietary_full_text_included: false,
+            corpus_manifest_schema: input.manifest.schema_version,
+            red_team_suite_hash: input.manifest.red_team_suite.suite_version_hash,
+        },
+        observed_at: now,
     };
 }
 
