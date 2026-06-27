@@ -16,11 +16,14 @@ interface CliOptions {
     service: boolean;
     configPath?: string;
     recordsPath?: string;
+    recordSourcesPath?: string;
     taskPath?: string;
     outputPath?: string;
     statePath?: string;
     logPath?: string;
     pollMs?: number;
+    retryAttempts?: number;
+    retryBaseMs?: number;
     once: boolean;
     maxIterations?: number;
     submit: boolean;
@@ -36,9 +39,13 @@ interface CliOptions {
 
 interface ServiceConfig {
     records_path?: string;
+    record_sources_path?: string;
+    record_sources?: ServiceRecordSource[];
     state_path?: string;
     log_path?: string;
     poll_ms?: number;
+    retry_attempts?: number;
+    retry_base_ms?: number;
     base_url?: string;
     machine_token?: string;
     tenant_id?: string;
@@ -47,6 +54,30 @@ interface ServiceConfig {
     partner_ref?: string;
     secret?: string;
     outcome_eligibility_snapshot_id?: string;
+}
+
+type ServiceRecordSourceKind = 'vetios_json' | 'vetios_jsonl' | 'pims_csv' | 'lab_csv' | 'pacs_json';
+
+interface ServiceRecordSource {
+    kind?: ServiceRecordSourceKind;
+    path: string;
+    source_system?: string;
+    defaults?: Partial<LocalClinicalLearningRecord>;
+    columns?: Record<string, string>;
+}
+
+interface LoadedRecordSourceSummary {
+    path: string;
+    kind: ServiceRecordSourceKind;
+    source_system: string | null;
+    records_loaded: number;
+    digest: string;
+}
+
+interface LoadedRecordSet {
+    records: LocalClinicalLearningRecord[];
+    source_summaries: LoadedRecordSourceSummary[];
+    source_digest: string;
 }
 
 interface NodeServiceState {
@@ -169,11 +200,14 @@ function parseArgs(args: string[]): CliOptions {
         if (!value) continue;
         if (arg === '--config') options.configPath = value;
         if (arg === '--records') options.recordsPath = value;
+        if (arg === '--record-sources') options.recordSourcesPath = value;
         if (arg === '--task') options.taskPath = value;
         if (arg === '--out') options.outputPath = value;
         if (arg === '--state') options.statePath = value;
         if (arg === '--log') options.logPath = value;
         if (arg === '--poll-ms') options.pollMs = parsePositiveInteger(value);
+        if (arg === '--retry-attempts') options.retryAttempts = parsePositiveInteger(value);
+        if (arg === '--retry-base-ms') options.retryBaseMs = parsePositiveInteger(value);
         if (arg === '--max-iterations') options.maxIterations = parsePositiveInteger(value);
         if (arg === '--base-url') options.baseUrl = value;
         if (arg === '--machine-token') options.machineToken = value;
@@ -190,7 +224,7 @@ function parseArgs(args: string[]): CliOptions {
 
 async function runServiceMode(options: CliOptions): Promise<void> {
     const config = options.configPath ? await readJson<ServiceConfig>(options.configPath) : {};
-    const recordsPath = requiredOption(options.recordsPath ?? config.records_path, 'records path');
+    const recordSources = await resolveRecordSources(options, config);
     const baseUrl = requiredOption(options.baseUrl ?? config.base_url ?? process.env.VETIOS_BASE_URL, 'base URL');
     const machineToken = requiredOption(options.machineToken ?? config.machine_token ?? process.env.VETIOS_MACHINE_TOKEN, 'machine token');
     const tenantId = requiredOption(options.tenantId ?? config.tenant_id ?? process.env.VETIOS_TENANT_ID, 'tenant id');
@@ -201,6 +235,8 @@ async function runServiceMode(options: CliOptions): Promise<void> {
     const statePath = options.statePath ?? config.state_path ?? `.vetios-node/${nodeRef}.state.json`;
     const logPath = options.logPath ?? config.log_path ?? `.vetios-node/${nodeRef}.audit.jsonl`;
     const pollMs = Math.max(1_000, options.pollMs ?? config.poll_ms ?? 30_000);
+    const retryAttempts = Math.max(1, options.retryAttempts ?? config.retry_attempts ?? 3);
+    const retryBaseMs = Math.max(100, options.retryBaseMs ?? config.retry_base_ms ?? 1_000);
     const maxIterations = options.once ? 1 : options.maxIterations;
     const state = await loadOrCreateNodeServiceState(statePath, nodeRef);
     const client = new VetiosFederationNodeClient({
@@ -216,7 +252,7 @@ async function runServiceMode(options: CliOptions): Promise<void> {
         iteration += 1;
         const audit = await runServiceIteration({
             client,
-            recordsPath,
+            recordSources,
             tenantId,
             federationKey,
             nodeRef,
@@ -225,6 +261,8 @@ async function runServiceMode(options: CliOptions): Promise<void> {
             outcomeEligibilitySnapshotId: options.outcomeEligibilitySnapshotId ?? config.outcome_eligibility_snapshot_id,
             state,
             iteration,
+            retryAttempts,
+            retryBaseMs,
         }).catch((error: unknown) => ({
             schema: 'vetios_federation_node_service_audit_v1',
             status: 'error',
@@ -241,7 +279,7 @@ async function runServiceMode(options: CliOptions): Promise<void> {
 
 async function runServiceIteration(input: {
     client: VetiosFederationNodeClient;
-    recordsPath: string;
+    recordSources: ServiceRecordSource[];
     tenantId: string;
     federationKey: string;
     nodeRef: string;
@@ -250,9 +288,15 @@ async function runServiceIteration(input: {
     outcomeEligibilitySnapshotId?: string | null;
     state: NodeServiceState;
     iteration: number;
+    retryAttempts: number;
+    retryBaseMs: number;
 }): Promise<Record<string, unknown>> {
-    const records = await readJson<LocalClinicalLearningRecord[]>(input.recordsPath);
-    const current = asRecord(await input.client.getCurrentRound());
+    const loaded = await loadLocalClinicalRecords(input.recordSources);
+    const records = loaded.records;
+    const current = asRecord(await withRetry(
+        () => input.client.getCurrentRound(),
+        { attempts: input.retryAttempts, baseMs: input.retryBaseMs },
+    ));
     const tasks = readTasks(current.tasks);
     const task = tasks.find((entry) => entry.task_status === 'issued' || entry.task_status === 'pulled' || entry.task_status === 'planned') ?? null;
     const trainedDataset = trainLocalFederatedTask({
@@ -263,7 +307,7 @@ async function runServiceIteration(input: {
         partnerRef: input.partnerRef,
     }).dataset;
 
-    await input.client.heartbeat({
+    await withRetry(() => input.client.heartbeat({
         local_runner: 'vetios-federation-node-service',
         service_mode: true,
         node_public_key_der_base64: input.state.node_public_key_der_base64,
@@ -272,8 +316,10 @@ async function runServiceIteration(input: {
         outcome_eligibility_status: trainedDataset.snapshot_draft.eligibility_status,
         record_digest: trainedDataset.record_digest,
         record_count: records.length,
+        record_source_digest: loaded.source_digest,
+        record_source_summaries: loaded.source_summaries,
         raw_records_shared: false,
-    });
+    }), { attempts: input.retryAttempts, baseMs: input.retryBaseMs });
 
     if (!task) {
         return {
@@ -284,6 +330,8 @@ async function runServiceIteration(input: {
             task_available: false,
             record_digest: trainedDataset.record_digest,
             eligible_record_count: trainedDataset.eligible_records.length,
+            record_source_digest: loaded.source_digest,
+            record_source_summaries: loaded.source_summaries,
             raw_records_shared: false,
         };
     }
@@ -298,7 +346,10 @@ async function runServiceIteration(input: {
         partnerRef: input.partnerRef,
         outcomeEligibilitySnapshotId: input.outcomeEligibilitySnapshotId ?? task.outcome_eligibility_snapshot_id ?? null,
     });
-    const result = await agent.runTask(hydratedTask);
+    const result = await withRetry(
+        () => agent.runTask(hydratedTask),
+        { attempts: input.retryAttempts, baseMs: input.retryBaseMs },
+    );
 
     return {
         schema: 'vetios_federation_node_service_audit_v1',
@@ -315,6 +366,8 @@ async function runServiceIteration(input: {
         encrypted_unmask_share_envelope_count: result.commitment.secure_aggregation_materialization.encrypted_unmask_share_envelopes.length,
         eligible_record_count: result.delta.eligible_record_count,
         record_digest: result.dataset.record_digest,
+        record_source_digest: loaded.source_digest,
+        record_source_summaries: loaded.source_summaries,
         submission_received: result.submission != null,
         raw_records_shared: false,
         raw_model_delta_shared: false,
@@ -323,6 +376,193 @@ async function runServiceIteration(input: {
 
 async function readJson<T>(path: string): Promise<T> {
     return JSON.parse(await readFile(path, 'utf8')) as T;
+}
+
+async function resolveRecordSources(options: CliOptions, config: ServiceConfig): Promise<ServiceRecordSource[]> {
+    const sourcesPath = options.recordSourcesPath ?? config.record_sources_path;
+    if (sourcesPath) {
+        const sources = await readJson<ServiceRecordSource[]>(sourcesPath);
+        if (Array.isArray(sources) && sources.length > 0) return sources;
+    }
+    if (Array.isArray(config.record_sources) && config.record_sources.length > 0) {
+        return config.record_sources;
+    }
+    const recordsPath = options.recordsPath ?? config.records_path;
+    if (recordsPath) {
+        return [{ kind: 'vetios_json', path: recordsPath, source_system: 'local-json' }];
+    }
+    throw new Error('Missing records path or record_sources. Provide --records, --record-sources, or config.record_sources.');
+}
+
+async function loadLocalClinicalRecords(sources: ServiceRecordSource[]): Promise<LoadedRecordSet> {
+    const sourceSummaries: LoadedRecordSourceSummary[] = [];
+    const recordsById = new Map<string, LocalClinicalLearningRecord>();
+    for (const source of sources) {
+        const kind = source.kind ?? inferSourceKind(source.path);
+        const records = await loadRecordsFromSource({ ...source, kind });
+        for (const record of records) {
+            recordsById.set(record.local_record_id, record);
+        }
+        sourceSummaries.push({
+            path: source.path,
+            kind,
+            source_system: source.source_system ?? null,
+            records_loaded: records.length,
+            digest: createHash('sha256').update(JSON.stringify(records.map((record) => record.local_record_id).sort())).digest('hex'),
+        });
+    }
+    const records = Array.from(recordsById.values()).sort((left, right) => left.local_record_id.localeCompare(right.local_record_id));
+    return {
+        records,
+        source_summaries: sourceSummaries,
+        source_digest: createHash('sha256').update(JSON.stringify(sourceSummaries.map((summary) => summary.digest).sort())).digest('hex'),
+    };
+}
+
+async function loadRecordsFromSource(source: ServiceRecordSource & { kind: ServiceRecordSourceKind }): Promise<LocalClinicalLearningRecord[]> {
+    if (source.kind === 'vetios_json') {
+        const rows = await readJson<unknown>(source.path);
+        const records = Array.isArray(rows) ? rows : [rows];
+        return records.map((entry, index) => normalizeSourceRecord(asRecord(entry), source, index));
+    }
+    if (source.kind === 'vetios_jsonl') {
+        const text = await readFile(source.path, 'utf8');
+        return text.split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0)
+            .map((line, index) => normalizeSourceRecord(asRecord(JSON.parse(line)), source, index));
+    }
+    if (source.kind === 'pims_csv' || source.kind === 'lab_csv') {
+        const rows = parseCsv(await readFile(source.path, 'utf8'));
+        return rows.map((row, index) => normalizeCsvRecord(row, source, index));
+    }
+    const report = await readJson<unknown>(source.path);
+    const entries = Array.isArray(report) ? report : [report];
+    return entries.map((entry, index) => normalizePacsRecord(asRecord(entry), source, index));
+}
+
+function normalizeSourceRecord(
+    row: Record<string, unknown>,
+    source: ServiceRecordSource,
+    index: number,
+): LocalClinicalLearningRecord {
+    return {
+        ...source.defaults,
+        local_record_id: readFirstText(row, ['local_record_id', 'id', 'case_id', 'patient_id']) ?? `${source.path}:${index}`,
+        species: readFirstText(row, ['species']),
+        breed: readFirstText(row, ['breed']),
+        age_years: readFirstNumber(row, ['age_years', 'age']),
+        sex: readFirstText(row, ['sex']),
+        signs: readDelimitedList(row.signs ?? row.presenting_complaint ?? row.reason_for_visit),
+        duration_days: readFirstNumber(row, ['duration_days', 'duration']),
+        labs: asRecord(row.labs),
+        imaging: asRecord(row.imaging),
+        treatment: asRecord(row.treatment),
+        diagnosis: readFirstText(row, ['diagnosis', 'assessment']),
+        outcome: readFirstText(row, ['outcome']),
+        outcome_confirmed: readBoolean(row.outcome_confirmed),
+        lab_confirmed: readBoolean(row.lab_confirmed),
+        expert_reviewed: readBoolean(row.expert_reviewed),
+        clinician_confirmed: readBoolean(row.clinician_confirmed),
+        amr_related: readBoolean(row.amr_related),
+        culture_collected: readBoolean(row.culture_collected),
+        consent_status: readConsentStatus(row.consent_status) ?? source.defaults?.consent_status,
+        provenance_status: readProvenanceStatus(row.provenance_status) ?? source.defaults?.provenance_status,
+        source_system: source.source_system ?? readFirstText(row, ['source_system']) ?? source.kind,
+        observed_at: readFirstText(row, ['observed_at', 'visit_date', 'resulted_at']),
+    };
+}
+
+function normalizeCsvRecord(row: Record<string, string>, source: ServiceRecordSource, index: number): LocalClinicalLearningRecord {
+    const mapped = mapColumns(row, source.columns);
+    const labs = source.kind === 'lab_csv'
+        ? {
+            test_name: readFirstText(mapped, ['test_name', 'lab_test']),
+            result: readFirstText(mapped, ['result', 'lab_result']),
+            organism: readFirstText(mapped, ['organism', 'pathogen']),
+            antimicrobial: readFirstText(mapped, ['antimicrobial', 'drug']),
+            interpretation: readFirstText(mapped, ['interpretation', 'susceptibility']),
+        }
+        : {};
+    return {
+        ...normalizeSourceRecord(mapped, source, index),
+        labs,
+        lab_confirmed: source.kind === 'lab_csv' || readBoolean(mapped.lab_confirmed),
+        culture_collected: source.kind === 'lab_csv' || readBoolean(mapped.culture_collected),
+        amr_related: source.kind === 'lab_csv' || readBoolean(mapped.amr_related),
+        source_system: source.source_system ?? source.kind,
+    };
+}
+
+function normalizePacsRecord(row: Record<string, unknown>, source: ServiceRecordSource, index: number): LocalClinicalLearningRecord {
+    return {
+        ...normalizeSourceRecord(row, source, index),
+        imaging: {
+            modality: readFirstText(row, ['modality']),
+            body_region: readFirstText(row, ['body_region', 'study_region']),
+            report_digest: readFirstText(row, ['report_digest', 'report_hash']),
+            finding_summary: readFirstText(row, ['finding_summary', 'impression']),
+        },
+        expert_reviewed: readBoolean(row.expert_reviewed) ?? true,
+        source_system: source.source_system ?? 'pacs',
+    };
+}
+
+function parseCsv(text: string): Record<string, string>[] {
+    const rows: string[][] = [];
+    let current = '';
+    let row: string[] = [];
+    let quoted = false;
+    for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+        const next = text[index + 1];
+        if (char === '"' && quoted && next === '"') {
+            current += '"';
+            index += 1;
+            continue;
+        }
+        if (char === '"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (char === ',' && !quoted) {
+            row.push(current);
+            current = '';
+            continue;
+        }
+        if ((char === '\n' || char === '\r') && !quoted) {
+            if (char === '\r' && next === '\n') index += 1;
+            row.push(current);
+            if (row.some((cell) => cell.trim().length > 0)) rows.push(row);
+            row = [];
+            current = '';
+            continue;
+        }
+        current += char;
+    }
+    row.push(current);
+    if (row.some((cell) => cell.trim().length > 0)) rows.push(row);
+    const [header = [], ...body] = rows;
+    const keys = header.map((cell) => cell.trim());
+    return body.map((cells) => Object.fromEntries(keys.map((key, index) => [key, cells[index]?.trim() ?? ''])));
+}
+
+function inferSourceKind(path: string): ServiceRecordSourceKind {
+    const lower = path.toLowerCase();
+    if (lower.endsWith('.jsonl')) return 'vetios_jsonl';
+    if (lower.includes('lab') && lower.endsWith('.csv')) return 'lab_csv';
+    if (lower.endsWith('.csv')) return 'pims_csv';
+    if (lower.includes('pacs') || lower.includes('imaging')) return 'pacs_json';
+    return 'vetios_json';
+}
+
+function mapColumns(row: Record<string, string>, columns: Record<string, string> | undefined): Record<string, unknown> {
+    if (!columns) return row;
+    const mapped: Record<string, unknown> = { ...row };
+    for (const [target, source] of Object.entries(columns)) {
+        mapped[target] = row[source] ?? row[target];
+    }
+    return mapped;
 }
 
 async function loadOrCreateNodeServiceState(path: string, nodeRef: string): Promise<NodeServiceState> {
@@ -437,9 +677,88 @@ function asRecord(value: unknown): Record<string, unknown> {
         : {};
 }
 
+function readFirstText(row: Record<string, unknown>, keys: string[]): string | null {
+    for (const key of keys) {
+        const value = row[key];
+        if (typeof value === 'string' && value.trim().length > 0) return value.trim();
+        if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    }
+    return null;
+}
+
+function readFirstNumber(row: Record<string, unknown>, keys: string[]): number | null {
+    for (const key of keys) {
+        const value = row[key];
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string' && value.trim().length > 0) {
+            const parsed = Number(value);
+            if (Number.isFinite(parsed)) return parsed;
+        }
+    }
+    return null;
+}
+
+function readDelimitedList(value: unknown): string[] {
+    if (Array.isArray(value)) {
+        return value.map((entry) => String(entry).trim()).filter((entry) => entry.length > 0);
+    }
+    if (typeof value === 'string') {
+        return value.split(/[;|,]/).map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+    }
+    return [];
+}
+
+function readBoolean(value: unknown): boolean | null {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1 ? true : value === 0 ? false : null;
+    if (typeof value === 'string') {
+        const normalized = value.trim().toLowerCase();
+        if (['true', 'yes', 'y', '1'].includes(normalized)) return true;
+        if (['false', 'no', 'n', '0'].includes(normalized)) return false;
+    }
+    return null;
+}
+
+function readConsentStatus(value: unknown): LocalClinicalLearningRecord['consent_status'] | null {
+    return value === 'unknown'
+        || value === 'granted'
+        || value === 'denied'
+        || value === 'revoked'
+        || value === 'not_required'
+        ? value
+        : null;
+}
+
+function readProvenanceStatus(value: unknown): LocalClinicalLearningRecord['provenance_status'] | null {
+    return value === 'not_verified'
+        || value === 'source_attested'
+        || value === 'hash_verified'
+        || value === 'reviewer_verified'
+        || value === 'externally_verified'
+        ? value
+        : null;
+}
+
 function parsePositiveInteger(value: string): number | undefined {
     const parsed = Number.parseInt(value, 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+async function withRetry<T>(
+    operation: () => Promise<T>,
+    options: { attempts: number; baseMs: number },
+): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
+        try {
+            return await operation();
+        } catch (error) {
+            lastError = error;
+            if (attempt === options.attempts) break;
+            await sleep(options.baseMs * 2 ** (attempt - 1));
+        }
+    }
+    throw lastError instanceof Error ? lastError : new Error('Retry operation failed.');
 }
 
 function sleep(ms: number): Promise<void> {

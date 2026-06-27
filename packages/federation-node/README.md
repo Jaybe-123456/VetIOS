@@ -128,10 +128,44 @@ Config-file equivalent:
 
 ```json
 {
-  "records_path": "records.json",
+  "record_sources": [
+    {
+      "kind": "pims_csv",
+      "path": "exports/pims-cases.csv",
+      "source_system": "clinic-pims",
+      "defaults": {
+        "consent_status": "granted",
+        "provenance_status": "source_attested"
+      }
+    },
+    {
+      "kind": "lab_csv",
+      "path": "exports/lab-results.csv",
+      "source_system": "reference-lab",
+      "columns": {
+        "local_record_id": "case_id",
+        "test_name": "panel",
+        "result": "result_value",
+        "organism": "organism_name",
+        "antimicrobial": "drug_name",
+        "interpretation": "sir"
+      },
+      "defaults": {
+        "consent_status": "granted",
+        "provenance_status": "externally_verified"
+      }
+    },
+    {
+      "kind": "pacs_json",
+      "path": "exports/imaging-reports.json",
+      "source_system": "pacs"
+    }
+  ],
   "state_path": ".vetios-node/clinic-a-node.state.json",
   "log_path": ".vetios-node/clinic-a-node.audit.jsonl",
   "poll_ms": 30000,
+  "retry_attempts": 3,
+  "retry_base_ms": 1000,
   "base_url": "https://vetios.tech",
   "tenant_id": "tenant-a",
   "federation_key": "one_health_amr",
@@ -139,6 +173,16 @@ Config-file equivalent:
   "partner_ref": "clinic-a"
 }
 ```
+
+Supported service `record_sources`:
+
+- `vetios_json`: array of `LocalClinicalLearningRecord`-shaped objects.
+- `vetios_jsonl`: newline-delimited local record objects.
+- `pims_csv`: appointment/history/case export rows.
+- `lab_csv`: lab/culture/AST export rows, automatically marked lab/culture
+  contextual.
+- `pacs_json`: de-identified imaging/report metadata. Store report hashes and
+  summaries, not raw image files or full reports.
 
 The service state file contains local private key material and must stay on the
 clinic or lab machine. The audit log intentionally stores only operational
