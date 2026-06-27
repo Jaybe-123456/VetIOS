@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import {
     assessLearningRecordEligibility,
     buildMaskedUpdateCommitment,
@@ -29,6 +30,12 @@ const records: LocalClinicalLearningRecord[] = Array.from({ length: 20 }, (_, in
     source_system: 'clinic-pims',
 }));
 
+const localX25519Keys = generateKeyPairSync('x25519');
+const peerX25519Keys = generateKeyPairSync('x25519');
+const localPrivateKeyDer = localX25519Keys.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+const peerPublicKeyDer = peerX25519Keys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+const peerPublicKeyFingerprint = createHash('sha256').update(peerPublicKeyDer).digest('hex').slice(0, 32);
+
 const firstEligibility = assessLearningRecordEligibility(records[0]!);
 assert.equal(firstEligibility.eligible_for_federation, true);
 assert.match(firstEligibility.record_hash, /^[a-f0-9]{64}$/);
@@ -58,8 +65,14 @@ const task: FederationRoundTask = {
     secure_aggregation_config: {
         quantization_scale: 10000,
         mask_range: 1000,
+        node_private_key_der_base64: localPrivateKeyDer.toString('base64'),
         peers: [
-            { node_ref: 'clinic-b-node', public_key_fingerprint: 'b'.repeat(32), status: 'active' },
+            {
+                node_ref: 'clinic-b-node',
+                public_key_fingerprint: peerPublicKeyFingerprint,
+                public_key_der_base64: peerPublicKeyDer.toString('base64'),
+                status: 'active',
+            },
             { node_ref: 'clinic-c-node', public_key_fingerprint: 'c'.repeat(32), status: 'dropped' },
         ],
     },
@@ -99,12 +112,15 @@ const secureMaterialization = buildSecureAggregationMaterialization({
     secret: 'local-node-secret',
 });
 assert.equal(secureMaterialization.schema, 'vetios_secure_aggregation_materialization_v1');
-assert.equal(secureMaterialization.masking_protocol, 'pairwise_masked_commitment_v1');
+assert.equal(secureMaterialization.masking_protocol, 'x25519_hkdf_pairwise_masked_v1');
 assert.equal(secureMaterialization.dimension_count, trained.delta.feature_count);
 assert.equal(secureMaterialization.pairwise_mask_commitments.length, 1);
+assert.equal(secureMaterialization.pairwise_mask_commitments[0]?.key_agreement_protocol, 'x25519_hkdf_sha256_v1');
 assert.equal(secureMaterialization.unmask_share_commitments.length, 1);
+assert.equal(secureMaterialization.unmask_share_commitments[0]?.share_encryption_status, 'recipient_key_envelope_commitment');
 assert.deepEqual(secureMaterialization.dropped_peer_refs, ['clinic-c-node']);
 assert.match(secureMaterialization.mask_commitment_hash, /^[a-f0-9]{64}$/);
+assert.ok(Object.keys(secureMaterialization.masked_integer_vector).length > 0);
 assert.equal(secureMaterialization.evidence.raw_delta_shared, false);
 
 const trainedCommitment = buildTrainedMaskedUpdateCommitment({
@@ -116,12 +132,17 @@ const trainedCommitment = buildTrainedMaskedUpdateCommitment({
     requestId: '22222222-2222-4222-8222-222222222222',
 });
 assert.equal(trainedCommitment.contribution_role, 'diagnosis');
+assert.equal(trainedCommitment.signature_algorithm, 'hmac-sha256-local-node-key-v1');
 assert.match(trainedCommitment.payload_commitment_hash, /^[a-f0-9]{64}$/);
 assert.equal(trainedCommitment.masked_update_summary.raw_delta_included, false);
 assert.equal(trainedCommitment.masked_update_summary.raw_records_included, false);
 assert.equal(trainedCommitment.masked_update_summary.delta_digest, trained.delta.delta_digest);
 assert.equal(trainedCommitment.mask_commitment_hash, trainedCommitment.secure_aggregation_materialization.mask_commitment_hash);
 assert.equal(trainedCommitment.secure_aggregation_materialization.masked_vector_digest, secureMaterialization.masked_vector_digest);
+assert.deepEqual(
+    (trainedCommitment.masked_update_summary.secure_aggregation as Record<string, unknown>).masked_integer_vector,
+    secureMaterialization.masked_integer_vector,
+);
 assert.equal(trainedCommitment.evidence.model_delta_materialized, true);
 assert.equal(trainedCommitment.evidence.secure_aggregation_materialized, true);
 assert.equal(trainedCommitment.evidence.raw_model_delta_shared, false);
@@ -130,6 +151,10 @@ const submissionPayload = toFederatedUpdateSubmissionPayload(trainedCommitment);
 assert.equal('local_delta' in submissionPayload, false);
 assert.equal('secure_aggregation_materialization' in submissionPayload, false);
 assert.equal(submissionPayload.masked_update_summary.raw_delta_included, false);
+assert.deepEqual(
+    (submissionPayload.masked_update_summary.secure_aggregation as Record<string, unknown>).masked_integer_vector,
+    secureMaterialization.masked_integer_vector,
+);
 
 const agent = new VetiosFederationNodeAgent({
     client: {

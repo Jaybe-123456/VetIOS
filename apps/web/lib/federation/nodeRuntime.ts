@@ -78,6 +78,7 @@ export interface FederatedUpdateSubmissionInput {
     roundNodeTaskId?: string | null;
     outcomeEligibilitySnapshotId?: string | null;
     contributionRole?: FederatedUpdateRole | null;
+    maskingProtocol?: string | null;
     payloadCommitmentHash: string;
     maskCommitmentHash?: string | null;
     signedPayloadHash?: string | null;
@@ -454,6 +455,10 @@ export async function submitFederatedUpdate(
         ? await loadNodeTaskById(client, identity, round.id, input.body.roundNodeTaskId)
         : null;
     const contributionRole = input.body.contributionRole ?? contributionRoleForTaskType(task?.task_type);
+    const maskingProtocol = normalizeOptionalText(
+        input.body.maskingProtocol ?? inferMaskingProtocol(input.body.maskedUpdateSummary),
+        120,
+    ) ?? 'pairwise_masked_commitment_v1';
     const attestationGate = await requireContributionReadyNodeAttestation(
         client,
         identity,
@@ -476,6 +481,7 @@ export async function submitFederatedUpdate(
             [C.participant_ref]: createParticipantRef(identity.federationKey, round.round_key, identity.tenantId, identity.nodeRef),
             [C.contribution_role]: contributionRole,
             [C.submission_status]: 'submitted',
+            [C.masking_protocol]: maskingProtocol,
             [C.payload_commitment_hash]: input.body.payloadCommitmentHash,
             [C.mask_commitment_hash]: input.body.maskCommitmentHash ?? null,
             [C.signed_payload_hash]: input.body.signedPayloadHash ?? null,
@@ -995,6 +1001,11 @@ function normalizeOptionalText(value: unknown, max: number): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.trim();
     return normalized.length > 0 ? normalized.slice(0, max) : null;
+}
+
+function inferMaskingProtocol(maskedUpdateSummary: Record<string, unknown> | null | undefined): string | null {
+    const secureAggregation = asRecord(asRecord(maskedUpdateSummary).secure_aggregation);
+    return readText(secureAggregation.masking_protocol);
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

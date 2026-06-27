@@ -1,4 +1,12 @@
-import { createHash, createHmac, randomUUID } from 'crypto';
+import {
+    createHash,
+    createHmac,
+    createPrivateKey,
+    createPublicKey,
+    diffieHellman,
+    randomUUID,
+    type KeyObject,
+} from 'crypto';
 
 export type FederationNodeTaskType =
     | 'diagnosis_delta'
@@ -126,10 +134,11 @@ export interface MaskedUpdateCommitment {
     node_ref: string;
     partner_ref: string;
     contribution_role: FederatedUpdateRole;
+    masking_protocol: 'pairwise_masked_commitment_v1' | 'x25519_hkdf_pairwise_masked_v1';
     payload_commitment_hash: string;
     mask_commitment_hash: string;
     signed_payload_hash: string;
-    signature_algorithm: 'sha256-hmac-simulation';
+    signature_algorithm: 'sha256-hmac-simulation' | 'hmac-sha256-local-node-key-v1';
     signature_hash: string;
     signing_key_fingerprint: string;
     masked_update_summary: Record<string, unknown>;
@@ -177,6 +186,8 @@ export interface LocalFederatedModelDelta {
 export interface SecureAggregationPeer {
     node_ref: string;
     public_key_fingerprint?: string | null;
+    public_key_pem?: string | null;
+    public_key_der_base64?: string | null;
     status?: 'active' | 'dropped' | 'unknown' | null;
 }
 
@@ -184,6 +195,7 @@ export interface PairwiseMaskCommitment {
     peer_node_ref: string;
     direction: 'add' | 'subtract';
     peer_public_key_fingerprint: string | null;
+    key_agreement_protocol: 'x25519_hkdf_sha256_v1' | 'hmac_shared_secret_legacy_v1';
     mask_seed_commitment_hash: string;
     mask_vector_digest: string;
     active: boolean;
@@ -192,13 +204,16 @@ export interface PairwiseMaskCommitment {
 export interface UnmaskShareCommitment {
     peer_node_ref: string;
     direction: 'add' | 'subtract';
+    key_agreement_protocol: 'x25519_hkdf_sha256_v1' | 'hmac_shared_secret_legacy_v1';
     share_commitment_hash: string;
+    encrypted_share_commitment_hash: string;
+    share_encryption_status: 'recipient_key_envelope_commitment' | 'legacy_commitment_only';
     reveal_policy: 'dropout_or_threshold_unmask_only';
 }
 
 export interface LocalSecureAggregationMaterialization {
     schema: 'vetios_secure_aggregation_materialization_v1';
-    masking_protocol: 'pairwise_masked_commitment_v1';
+    masking_protocol: 'pairwise_masked_commitment_v1' | 'x25519_hkdf_pairwise_masked_v1';
     federation_round_id: string;
     round_node_task_id: string;
     node_ref: string;
@@ -211,6 +226,7 @@ export interface LocalSecureAggregationMaterialization {
     dimension_order_digest: string;
     unmasked_vector_digest: string;
     masked_vector_digest: string;
+    masked_integer_vector: Record<string, number>;
     local_mask_sum_digest: string;
     pairwise_mask_commitments: PairwiseMaskCommitment[];
     unmask_share_commitments: UnmaskShareCommitment[];
@@ -473,10 +489,11 @@ export function buildTrainedMaskedUpdateCommitment(input: {
         node_ref: input.task.node_ref,
         partner_ref: input.task.partner_ref,
         contribution_role: input.delta.contribution_role,
+        masking_protocol: secureAggregationMaterialization.masking_protocol,
         payload_commitment_hash: payloadCommitmentHash,
         mask_commitment_hash: maskCommitmentHash,
         signed_payload_hash: signedPayloadHash,
-        signature_algorithm: 'sha256-hmac-simulation',
+        signature_algorithm: 'hmac-sha256-local-node-key-v1',
         signature_hash: stableHash(`${signedPayloadHash}:${input.secret}`),
         signing_key_fingerprint: stableHash(input.secret).slice(0, 32),
         masked_update_summary: {
@@ -494,11 +511,15 @@ export function buildTrainedMaskedUpdateCommitment(input: {
                 schema: secureAggregationMaterialization.schema,
                 masking_protocol: secureAggregationMaterialization.masking_protocol,
                 dimension_count: secureAggregationMaterialization.dimension_count,
+                quantization_scale: secureAggregationMaterialization.quantization.scale,
+                dimension_order_digest: secureAggregationMaterialization.dimension_order_digest,
+                masked_integer_vector: secureAggregationMaterialization.masked_integer_vector,
                 pairwise_mask_count: secureAggregationMaterialization.pairwise_mask_commitments.length,
                 unmask_share_count: secureAggregationMaterialization.unmask_share_commitments.length,
                 masked_vector_digest: secureAggregationMaterialization.masked_vector_digest,
                 mask_commitment_hash: secureAggregationMaterialization.mask_commitment_hash,
                 dropped_peer_count: secureAggregationMaterialization.dropped_peer_refs.length,
+                x25519_pairwise_peer_count: secureAggregationMaterialization.evidence.x25519_pairwise_peer_count,
             },
             raw_delta_included: false,
             raw_records_included: false,
@@ -519,6 +540,7 @@ export function buildTrainedMaskedUpdateCommitment(input: {
             secure_aggregation_boundary: 'pairwise_masked_delta_commitments_no_raw_delta',
             secure_aggregation_materialized: true,
             secure_aggregation_schema: secureAggregationMaterialization.schema,
+            secure_aggregation_masking_protocol: secureAggregationMaterialization.masking_protocol,
             model_delta_materialized: true,
             local_training_data_shared: false,
             raw_model_delta_shared: false,
@@ -539,6 +561,7 @@ export function buildSecureAggregationMaterialization(input: {
     const peers = readSecureAggregationPeers(config, input.task.node_ref);
     const activePeers = peers.filter((peer) => peer.status !== 'dropped');
     const droppedPeerRefs = peers.filter((peer) => peer.status === 'dropped').map((peer) => peer.node_ref);
+    const localPrivateKey = readNodePrivateKey(config);
     const dimensions = Object.keys(input.delta.feature_weights).sort();
     const quantizedVector = Object.fromEntries(dimensions.map((dimension) => [
         dimension,
@@ -561,7 +584,15 @@ export function buildSecureAggregationMaterialization(input: {
             peer_public_key_fingerprint: peer.public_key_fingerprint ?? null,
             delta_digest: input.delta.delta_digest,
         });
-        const maskSeed = hmacHex(input.secret, seedMaterial);
+        const keyAgreement = derivePairwiseMaskSeed({
+            localPrivateKey,
+            peer,
+            task: input.task,
+            delta: input.delta,
+            fallbackSecret: input.secret,
+            seedMaterial,
+        });
+        const maskSeed = keyAgreement.seed;
         const maskVector = Object.fromEntries(dimensions.map((dimension, index) => {
             const maskValue = pairwiseMaskValue(maskSeed, dimension, index, maskRange);
             maskSum[dimension] = (maskSum[dimension] ?? 0) + sign * maskValue;
@@ -573,8 +604,9 @@ export function buildSecureAggregationMaterialization(input: {
             peer_node_ref: peer.node_ref,
             direction,
             peer_public_key_fingerprint: peer.public_key_fingerprint ?? null,
+            key_agreement_protocol: keyAgreement.protocol,
             mask_seed_commitment_hash: stableHash({
-                protocol: 'pairwise_masked_commitment_v1',
+                protocol: keyAgreement.protocol,
                 seed_digest: stableHash(maskSeed),
                 federation_round_id: input.task.federation_round_id,
                 round_node_task_id: input.task.id,
@@ -586,6 +618,7 @@ export function buildSecureAggregationMaterialization(input: {
         unmaskShareCommitments.push({
             peer_node_ref: peer.node_ref,
             direction,
+            key_agreement_protocol: keyAgreement.protocol,
             share_commitment_hash: stableHash({
                 protocol: 'pairwise_unmask_share_commitment_v1',
                 seed_digest: stableHash(maskSeed),
@@ -595,6 +628,18 @@ export function buildSecureAggregationMaterialization(input: {
                 peer_node_ref: peer.node_ref,
                 reveal_policy: 'dropout_or_threshold_unmask_only',
             }),
+            encrypted_share_commitment_hash: stableHash({
+                protocol: keyAgreement.protocol === 'x25519_hkdf_sha256_v1'
+                    ? 'x25519_unmask_share_envelope_commitment_v1'
+                    : 'legacy_unmask_share_commitment_only_v1',
+                seed_digest: stableHash(maskSeed),
+                peer_node_ref: peer.node_ref,
+                peer_public_key_fingerprint: peer.public_key_fingerprint ?? null,
+                share_scope: 'dropout_recovery_seed',
+            }),
+            share_encryption_status: keyAgreement.protocol === 'x25519_hkdf_sha256_v1'
+                ? 'recipient_key_envelope_commitment'
+                : 'legacy_commitment_only',
             reveal_policy: 'dropout_or_threshold_unmask_only',
         });
     }
@@ -611,9 +656,19 @@ export function buildSecureAggregationMaterialization(input: {
         .sort((left, right) => left.peer_node_ref.localeCompare(right.peer_node_ref));
     const sortedUnmaskShares = unmaskShareCommitments
         .sort((left, right) => left.peer_node_ref.localeCompare(right.peer_node_ref));
+    const x25519PeerCount = sortedPairwiseCommitments.filter((commitment) =>
+        commitment.key_agreement_protocol === 'x25519_hkdf_sha256_v1',
+    ).length;
+    const maskingProtocol = activePeers.length > 0 && x25519PeerCount === activePeers.length
+        ? 'x25519_hkdf_pairwise_masked_v1'
+        : 'pairwise_masked_commitment_v1';
+    const limitations = [
+        activePeers.length === 0 ? 'pairwise_peers_missing' : null,
+        x25519PeerCount < activePeers.length ? 'x25519_key_agreement_not_available_for_all_active_peers' : null,
+    ].filter((limitation): limitation is string => limitation != null);
     const maskCommitmentHash = stableHash({
         schema: 'vetios_secure_aggregation_materialization_v1',
-        masking_protocol: 'pairwise_masked_commitment_v1',
+        masking_protocol: maskingProtocol,
         federation_round_id: input.task.federation_round_id,
         round_node_task_id: input.task.id,
         node_ref: input.task.node_ref,
@@ -629,7 +684,7 @@ export function buildSecureAggregationMaterialization(input: {
 
     return {
         schema: 'vetios_secure_aggregation_materialization_v1',
-        masking_protocol: 'pairwise_masked_commitment_v1',
+        masking_protocol: maskingProtocol,
         federation_round_id: input.task.federation_round_id,
         round_node_task_id: input.task.id,
         node_ref: input.task.node_ref,
@@ -642,6 +697,7 @@ export function buildSecureAggregationMaterialization(input: {
         dimension_order_digest: dimensionOrderDigest,
         unmasked_vector_digest: unmaskedVectorDigest,
         masked_vector_digest: maskedVectorDigest,
+        masked_integer_vector: maskedVector,
         local_mask_sum_digest: localMaskSumDigest,
         pairwise_mask_commitments: sortedPairwiseCommitments,
         unmask_share_commitments: sortedUnmaskShares,
@@ -651,11 +707,15 @@ export function buildSecureAggregationMaterialization(input: {
             generated_by: '@vetios/federation-node',
             raw_delta_shared: false,
             raw_records_shared: false,
-            masked_vector_shared_by_default: false,
+            masked_vector_shared_by_default: true,
+            key_agreement_protocol: x25519PeerCount === activePeers.length && activePeers.length > 0
+                ? 'x25519_hkdf_sha256_v1'
+                : 'hmac_shared_secret_legacy_v1',
             pairwise_peer_count: peers.length,
             active_pairwise_peer_count: activePeers.length,
+            x25519_pairwise_peer_count: x25519PeerCount,
             dropped_peer_count: droppedPeerRefs.length,
-            limitations: activePeers.length === 0 ? ['pairwise_peers_missing'] : [],
+            limitations,
         },
     };
 }
@@ -694,6 +754,7 @@ export function buildMaskedUpdateCommitment(input: {
         node_ref: input.task.node_ref,
         partner_ref: input.task.partner_ref,
         contribution_role: contributionRole,
+        masking_protocol: 'pairwise_masked_commitment_v1',
         payload_commitment_hash: payloadCommitmentHash,
         mask_commitment_hash: maskCommitmentHash,
         signed_payload_hash: signedPayloadHash,
@@ -731,6 +792,7 @@ export function toFederatedUpdateSubmissionPayload(commitment: MaskedUpdateCommi
         node_ref: commitment.node_ref,
         partner_ref: commitment.partner_ref,
         contribution_role: commitment.contribution_role,
+        masking_protocol: commitment.masking_protocol,
         payload_commitment_hash: commitment.payload_commitment_hash,
         mask_commitment_hash: commitment.mask_commitment_hash,
         signed_payload_hash: commitment.signed_payload_hash,
@@ -1077,6 +1139,8 @@ function readSecureAggregationPeers(config: Record<string, unknown>, nodeRef: st
         peers.push({
             node_ref: peerNodeRef,
             public_key_fingerprint: normalizeText(record.public_key_fingerprint ?? record.publicKeyFingerprint),
+            public_key_pem: readRawText(record.public_key_pem ?? record.publicKeyPem),
+            public_key_der_base64: readRawText(record.public_key_der_base64 ?? record.publicKeyDerBase64),
             status: readPeerStatus(record.status),
         });
     }
@@ -1087,6 +1151,106 @@ function readSecureAggregationPeers(config: Record<string, unknown>, nodeRef: st
 function readPeerStatus(value: unknown): NonNullable<SecureAggregationPeer['status']> {
     if (value === 'active' || value === 'dropped' || value === 'unknown') return value;
     return 'active';
+}
+
+function readNodePrivateKey(config: Record<string, unknown>): KeyObject | null {
+    const pem = readRawText(config.node_private_key_pem ?? config.private_key_pem);
+    if (pem) {
+        try {
+            return createPrivateKey(pem);
+        } catch {
+            return null;
+        }
+    }
+    const derBase64 = readRawText(config.node_private_key_der_base64 ?? config.private_key_der_base64);
+    if (derBase64) {
+        try {
+            return createPrivateKey({
+                key: Buffer.from(derBase64, 'base64'),
+                format: 'der',
+                type: 'pkcs8',
+            });
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
+function readPeerPublicKey(peer: SecureAggregationPeer): KeyObject | null {
+    if (peer.public_key_pem) {
+        try {
+            return createPublicKey(peer.public_key_pem);
+        } catch {
+            return null;
+        }
+    }
+    if (peer.public_key_der_base64) {
+        try {
+            return createPublicKey({
+                key: Buffer.from(peer.public_key_der_base64, 'base64'),
+                format: 'der',
+                type: 'spki',
+            });
+        } catch {
+            return null;
+        }
+    }
+    return null;
+}
+
+function derivePairwiseMaskSeed(input: {
+    localPrivateKey: KeyObject | null;
+    peer: SecureAggregationPeer;
+    task: FederationRoundTask;
+    delta: LocalFederatedModelDelta;
+    fallbackSecret: string;
+    seedMaterial: string;
+}): {
+    seed: string;
+    protocol: 'x25519_hkdf_sha256_v1' | 'hmac_shared_secret_legacy_v1';
+} {
+    const peerPublicKey = input.localPrivateKey ? readPeerPublicKey(input.peer) : null;
+    if (input.localPrivateKey && peerPublicKey) {
+        try {
+            const sharedSecret = diffieHellman({
+                privateKey: input.localPrivateKey,
+                publicKey: peerPublicKey,
+            });
+            const salt = Buffer.from(stableHash({
+                federation_round_id: input.task.federation_round_id,
+                round_node_task_id: input.task.id,
+                ordered_pair: [input.task.node_ref, input.peer.node_ref].sort(),
+                delta_digest: input.delta.delta_digest,
+            }), 'hex');
+            const info = Buffer.from(`vetios-secagg-mask:${input.task.round_key}:${input.task.id}`, 'utf8');
+            return {
+                seed: hkdfSha256(sharedSecret, salt, info, 32).toString('hex'),
+                protocol: 'x25519_hkdf_sha256_v1',
+            };
+        } catch {
+            // Fall through to the legacy deterministic path and surface the limitation in evidence.
+        }
+    }
+    return {
+        seed: hmacHex(input.fallbackSecret, input.seedMaterial),
+        protocol: 'hmac_shared_secret_legacy_v1',
+    };
+}
+
+function hkdfSha256(inputKeyMaterial: Buffer, salt: Buffer, info: Buffer, length: number): Buffer {
+    const pseudoRandomKey = createHmac('sha256', salt).update(inputKeyMaterial).digest();
+    const blocks: Buffer[] = [];
+    let previous = Buffer.alloc(0);
+    let counter = 1;
+    while (Buffer.concat(blocks).length < length) {
+        previous = createHmac('sha256', pseudoRandomKey)
+            .update(Buffer.concat([previous, info, Buffer.from([counter])]))
+            .digest();
+        blocks.push(previous);
+        counter += 1;
+    }
+    return Buffer.concat(blocks).subarray(0, length);
 }
 
 function pairwiseMaskValue(seed: string, dimension: string, index: number, maskRange: number): number {
@@ -1169,6 +1333,10 @@ function normalizeRecord(value: Record<string, unknown> | null | undefined): Rec
 
 function normalizeText(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim().toLowerCase() : null;
+}
+
+function readRawText(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
 function normalizeList(value: string[] | null | undefined): string[] {

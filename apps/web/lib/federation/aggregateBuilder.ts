@@ -30,6 +30,7 @@ export interface FederatedAggregateUpdateEvidence {
     signature_algorithm: string | null;
     signature_hash: string | null;
     signing_key_fingerprint: string | null;
+    masked_update_summary: Record<string, unknown>;
     public_summary: Record<string, unknown>;
     evidence: Record<string, unknown>;
     observed_at: string | null;
@@ -84,7 +85,11 @@ export function buildFederatedAggregateArtifactDraft(input: {
     builtAt?: string;
 }): FederatedAggregateArtifactDraft {
     const builtAt = input.builtAt ?? new Date().toISOString();
-    const blockers = validateAcceptedUpdates(input.acceptedUpdates, input.minimumAcceptedUpdates);
+    const secureAggregateMaterialization = buildSecureAggregateMaterialization(input.acceptedUpdates);
+    const blockers = [
+        ...validateAcceptedUpdates(input.acceptedUpdates, input.minimumAcceptedUpdates),
+        ...secureAggregateMaterialization.blockers,
+    ].sort();
     const sourceUpdateDigest = stableHash(input.acceptedUpdates.map((update) => ({
         id: update.id,
         participant_ref: update.participant_ref,
@@ -113,8 +118,12 @@ export function buildFederatedAggregateArtifactDraft(input: {
     }));
 
     const artifactPayload = {
-        artifact_type: 'federated_masked_update_manifest_v1',
-        aggregation_mode: 'secure_aggregation_commitment_manifest',
+        artifact_type: secureAggregateMaterialization.status === 'materialized'
+            ? 'federated_secure_aggregate_materialization_v1'
+            : 'federated_masked_update_manifest_v1',
+        aggregation_mode: secureAggregateMaterialization.status === 'materialized'
+            ? 'secure_aggregation_masked_vector_sum'
+            : 'secure_aggregation_commitment_manifest',
         task_type: input.taskType,
         federation_round_id: input.round.id,
         federation_key: input.round.federation_key,
@@ -135,6 +144,7 @@ export function buildFederatedAggregateArtifactDraft(input: {
         signing_key_fingerprints: uniqueNonEmpty(input.acceptedUpdates.map((update) => update.signing_key_fingerprint)),
         masking_protocols: uniqueNonEmpty(input.acceptedUpdates.map((update) => update.masking_protocol)),
         public_update_summaries: publicSummaries,
+        secure_aggregate_materialization: secureAggregateMaterialization,
         source_update_digest: sourceUpdateDigest,
         raw_site_delta_artifacts_stored: false,
         raw_clinical_rows_shared: false,
@@ -254,6 +264,108 @@ function validateAcceptedUpdates(updates: FederatedAggregateUpdateEvidence[], mi
         blockers.add('accepted_node_refs_below_minimum');
     }
     return Array.from(blockers).sort();
+}
+
+function buildSecureAggregateMaterialization(updates: FederatedAggregateUpdateEvidence[]): {
+    status: 'materialized' | 'blocked';
+    protocol: string | null;
+    quantization_scale: number | null;
+    dimension_count: number;
+    dimension_order_digest: string | null;
+    accepted_update_count: number;
+    aggregate_masked_vector_digest: string | null;
+    aggregate_integer_vector: Record<string, number> | null;
+    aggregate_dequantized_vector_preview: Record<string, number> | null;
+    source_masked_vector_digests: string[];
+    blockers: string[];
+} {
+    const blockers = new Set<string>();
+    const parsed = updates.map((update) => {
+        const secureAggregation = asRecord(update.masked_update_summary.secure_aggregation);
+        return {
+            update,
+            protocol: readText(secureAggregation.masking_protocol),
+            quantizationScale: readNumber(secureAggregation.quantization_scale),
+            dimensionOrderDigest: readText(secureAggregation.dimension_order_digest),
+            maskedVectorDigest: readText(secureAggregation.masked_vector_digest),
+            vector: readNumberRecord(secureAggregation.masked_integer_vector),
+        };
+    });
+
+    if (parsed.length === 0) {
+        blockers.add('accepted_updates_missing');
+    }
+    if (parsed.some((entry) => !entry.vector || Object.keys(entry.vector).length === 0)) {
+        blockers.add('accepted_update_missing_masked_integer_vector');
+    }
+    if (parsed.some((entry) => !entry.dimensionOrderDigest || !isSha256(entry.dimensionOrderDigest))) {
+        blockers.add('accepted_update_missing_dimension_order_digest');
+    }
+    if (parsed.some((entry) => !entry.maskedVectorDigest || !isSha256(entry.maskedVectorDigest))) {
+        blockers.add('accepted_update_missing_masked_vector_digest');
+    }
+    if (parsed.some((entry) => !entry.quantizationScale || entry.quantizationScale <= 0)) {
+        blockers.add('accepted_update_missing_quantization_scale');
+    }
+    const protocols = uniqueNonEmpty(parsed.map((entry) => entry.protocol));
+    if (protocols.length > 1) {
+        blockers.add('mixed_secure_aggregation_protocols');
+    }
+    const dimensionOrderDigests = uniqueNonEmpty(parsed.map((entry) => entry.dimensionOrderDigest));
+    if (dimensionOrderDigests.length > 1) {
+        blockers.add('mixed_dimension_orders');
+    }
+    const quantizationScales = uniqueNonEmpty(parsed.map((entry) =>
+        entry.quantizationScale == null ? null : String(entry.quantizationScale),
+    ));
+    if (quantizationScales.length > 1) {
+        blockers.add('mixed_quantization_scales');
+    }
+    if (protocols[0] === 'pairwise_masked_commitment_v1') {
+        blockers.add('legacy_commitment_protocol_not_materializable');
+    }
+
+    if (blockers.size > 0) {
+        return {
+            status: 'blocked',
+            protocol: protocols[0] ?? null,
+            quantization_scale: parsed[0]?.quantizationScale ?? null,
+            dimension_count: 0,
+            dimension_order_digest: dimensionOrderDigests[0] ?? null,
+            accepted_update_count: updates.length,
+            aggregate_masked_vector_digest: null,
+            aggregate_integer_vector: null,
+            aggregate_dequantized_vector_preview: null,
+            source_masked_vector_digests: uniqueNonEmpty(parsed.map((entry) => entry.maskedVectorDigest)),
+            blockers: Array.from(blockers).sort(),
+        };
+    }
+
+    const vectors = parsed.map((entry) => entry.vector ?? {});
+    const dimensions = Array.from(new Set(vectors.flatMap((vector) => Object.keys(vector)))).sort();
+    const aggregateIntegerVector = Object.fromEntries(dimensions.map((dimension) => [
+        dimension,
+        vectors.reduce((sum, vector) => sum + (vector[dimension] ?? 0), 0),
+    ]));
+    const scale = parsed[0]?.quantizationScale ?? 1;
+    const aggregateDequantizedVectorPreview = Object.fromEntries(dimensions.slice(0, 200).map((dimension) => [
+        dimension,
+        Math.round(((aggregateIntegerVector[dimension] ?? 0) / scale) * 10_000) / 10_000,
+    ]));
+
+    return {
+        status: 'materialized',
+        protocol: protocols[0] ?? null,
+        quantization_scale: scale,
+        dimension_count: dimensions.length,
+        dimension_order_digest: dimensionOrderDigests[0] ?? null,
+        accepted_update_count: updates.length,
+        aggregate_masked_vector_digest: stableHash(aggregateIntegerVector),
+        aggregate_integer_vector: aggregateIntegerVector,
+        aggregate_dequantized_vector_preview: aggregateDequantizedVectorPreview,
+        source_masked_vector_digests: uniqueNonEmpty(parsed.map((entry) => entry.maskedVectorDigest)),
+        blockers: [],
+    };
 }
 
 async function insertOrLoadAggregateArtifact(
@@ -456,6 +568,7 @@ function mapUpdateSubmission(row: Record<string, unknown>): FederatedAggregateUp
         signature_hash: readText(row.signature_hash),
         signing_key_fingerprint: readText(row.signing_key_fingerprint),
         public_summary: asRecord(row.public_summary),
+        masked_update_summary: asRecord(row.masked_update_summary),
         evidence: asRecord(row.evidence),
         observed_at: readText(row.observed_at),
         created_at: readText(row.created_at),
@@ -535,4 +648,12 @@ function readNumber(value: unknown): number | null {
         return Number.isFinite(parsed) ? parsed : null;
     }
     return null;
+}
+
+function readNumberRecord(value: unknown): Record<string, number> | null {
+    const record = asRecord(value);
+    const entries = Object.entries(record)
+        .map(([key, entry]) => [key, readNumber(entry)] as const)
+        .filter((entry): entry is readonly [string, number] => entry[1] != null);
+    return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
