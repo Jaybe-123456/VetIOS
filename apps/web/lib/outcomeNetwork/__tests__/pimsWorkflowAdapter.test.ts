@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { PassiveConnectorIngestRequestSchema } from '@/lib/http/schemas';
+import {
+    PassiveConnectorBatchIngestRequestSchema,
+    PassiveConnectorIngestRequestSchema,
+} from '@/lib/http/schemas';
 import { resolvePassiveConnectorWorkflow } from '../pimsWorkflowAdapter';
 
 describe('PIMS workflow adapter', () => {
@@ -78,5 +81,42 @@ describe('PIMS workflow adapter', () => {
 
         expect(parsed.success).toBe(true);
         expect(parsed.success && parsed.data.connector.connector_type).toBeUndefined();
+    });
+
+    it('accepts mixed workflow batches for adapter runtime submissions', () => {
+        const parsed = PassiveConnectorBatchIngestRequestSchema.safeParse({
+            connector_batch: {
+                batch_id: 'adapter-run-20260627-001',
+                vendor_name: 'ezyVet',
+                vendor_account_ref: 'clinic-fleet-7',
+                clinic_id: 'clinic-7',
+                auto_reconcile: false,
+                events: [
+                    {
+                        workflow_event_type: 'appointment.completed',
+                        patient_id: '11111111-1111-4111-8111-111111111111',
+                        payload: {
+                            appointment_status: 'completed',
+                            completed: true,
+                            resolved: true,
+                        },
+                    },
+                    {
+                        connector_type: 'lab_result',
+                        vendor_name: 'IDEXX',
+                        patient_id: '22222222-2222-4222-8222-222222222222',
+                        payload: {
+                            source_format: 'hl7_v2_oru',
+                            test_name: 'Urine culture',
+                            abnormal_flag: 'H',
+                        },
+                    },
+                ],
+            },
+        });
+
+        expect(parsed.success).toBe(true);
+        expect(parsed.success && parsed.data.connector_batch.events).toHaveLength(2);
+        expect(parsed.success && parsed.data.connector_batch.events[0].auto_reconcile).toBeUndefined();
     });
 });

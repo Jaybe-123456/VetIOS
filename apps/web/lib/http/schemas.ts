@@ -147,28 +147,33 @@ export const PassiveSignalIngestRequestSchema = z.object({
 
 export type PassiveSignalIngestRequest = z.infer<typeof PassiveSignalIngestRequestSchema>;
 
+const PassiveConnectorEventBaseSchema = z.object({
+    tenant_id: z.string().min(1).optional(),
+    connector_type: z.enum([
+        'lab_result',
+        'prescription_refill',
+        'recheck',
+        'referral',
+        'imaging_report',
+    ]).optional(),
+    workflow_event_type: z.string().min(1).optional(),
+    clinic_id: z.string().optional(),
+    patient_id: z.uuid().optional(),
+    encounter_id: z.uuid().optional(),
+    case_id: z.uuid().optional(),
+    episode_id: z.uuid().optional(),
+    vendor_name: z.string().min(1).optional(),
+    vendor_account_ref: z.string().min(1).optional(),
+    observed_at: z.string().min(1).optional(),
+    payload: z.record(z.string(), z.unknown()).optional().default({}),
+    auto_reconcile: z.boolean().optional(),
+});
+const PassiveConnectorEventSchema = PassiveConnectorEventBaseSchema.extend({
+    auto_reconcile: z.boolean().optional().default(true),
+});
+
 export const PassiveConnectorIngestRequestSchema = z.object({
-    connector: z.object({
-        tenant_id: z.string().min(1).optional(),
-        connector_type: z.enum([
-            'lab_result',
-            'prescription_refill',
-            'recheck',
-            'referral',
-            'imaging_report',
-        ]).optional(),
-        workflow_event_type: z.string().min(1).optional(),
-        clinic_id: z.string().optional(),
-        patient_id: z.uuid().optional(),
-        encounter_id: z.uuid().optional(),
-        case_id: z.uuid().optional(),
-        episode_id: z.uuid().optional(),
-        vendor_name: z.string().min(1).optional(),
-        vendor_account_ref: z.string().min(1).optional(),
-        observed_at: z.string().min(1).optional(),
-        payload: z.record(z.string(), z.unknown()).optional().default({}),
-        auto_reconcile: z.boolean().optional().default(true),
-    }),
+    connector: PassiveConnectorEventSchema,
 }).refine(
     (value) =>
         value.connector.connector_type != null ||
@@ -181,6 +186,33 @@ export const PassiveConnectorIngestRequestSchema = z.object({
 );
 
 export type PassiveConnectorIngestRequest = z.infer<typeof PassiveConnectorIngestRequestSchema>;
+export type PassiveConnectorEvent = z.infer<typeof PassiveConnectorEventSchema>;
+
+export const PassiveConnectorBatchIngestRequestSchema = z.object({
+    connector_batch: z.object({
+        tenant_id: z.string().min(1).optional(),
+        batch_id: z.string().min(1).optional(),
+        vendor_name: z.string().min(1).optional(),
+        vendor_account_ref: z.string().min(1).optional(),
+        clinic_id: z.string().optional(),
+        auto_reconcile: z.boolean().optional().default(true),
+        events: z.array(PassiveConnectorEventBaseSchema)
+            .min(1)
+            .max(100),
+    }),
+}).refine(
+    (value) => value.connector_batch.events.every((event) =>
+        event.connector_type != null ||
+        event.workflow_event_type != null ||
+        Object.keys(event.payload).length > 0,
+    ),
+    {
+        path: ['connector_batch', 'events'],
+        message: 'Each event requires connector_type, workflow_event_type, or a vendor payload.',
+    },
+);
+
+export type PassiveConnectorBatchIngestRequest = z.infer<typeof PassiveConnectorBatchIngestRequestSchema>;
 
 export const EpisodeReconcileRequestSchema = z.object({
     episode_id: z.uuid().optional(),
