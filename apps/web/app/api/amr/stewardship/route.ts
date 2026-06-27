@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import {
@@ -7,10 +8,13 @@ import {
     AMR_OUTCOME_STATUSES,
     AMR_STEWARDSHIP_STATUSES,
     aggregateAMRStewardship,
+    buildAMRLabFeedSurveillanceEventDraft,
+    buildAMRLabFeedSurveillancePacket,
     normalizeAMRLabel,
     normalizeAMRString,
     normalizeAMRStringList,
     normalizeOptionalAMRLabel,
+    type AMRLabFeedSurveillanceEventDraft,
     type AMRStewardshipEventRow,
 } from '@/lib/amr/stewardship';
 import { getSupabaseServer } from '@/lib/supabaseServer';
@@ -153,7 +157,7 @@ export async function POST(req: Request) {
     if (error) {
         if (error.code === '23505') {
             const cached = await loadCachedStewardshipEvent(supabase, auth.actor.tenantId, body.request_id);
-            if (cached) return NextResponse.json(buildStewardshipResponse(cached.id, true));
+            if (cached) return NextResponse.json(buildStewardshipResponse(cached.id, true, null));
         }
         return NextResponse.json(
             { error: 'amr_stewardship_event_store_failed', detail: error.message },
@@ -161,7 +165,60 @@ export async function POST(req: Request) {
         );
     }
 
-    return NextResponse.json(buildStewardshipResponse(String(data.id), false));
+    const labFeedPacket = buildAMRLabFeedSurveillancePacket({
+        request_id: body.request_id,
+        species: payload.species,
+        pathogen_label: payload.pathogen_label,
+        syndrome: payload.syndrome,
+        infection_site: payload.infection_site,
+        sample_source: payload.sample_source,
+        culture_collected: payload.culture_collected,
+        culture_result: payload.culture_result,
+        ast_method: payload.ast_method,
+        ast_panel: payload.ast_panel,
+        mic_results: payload.mic_results,
+        resistance_genes: payload.resistance_genes,
+        resistance_classes: payload.resistance_classes,
+        drug_name: payload.drug_name,
+        drug_class: payload.drug_class,
+        decision_stage: payload.decision_stage,
+        stewardship_status: payload.stewardship_status,
+        outcome_status: payload.outcome_status,
+        resistance_suspected: payload.resistance_suspected,
+        de_escalation_recommended: payload.de_escalation_recommended,
+        evidence: payload.evidence,
+        observed_at: payload.observed_at,
+    });
+    const labFeedDraft = buildAMRLabFeedSurveillanceEventDraft({
+        tenantId: auth.actor.tenantId,
+        requestId: body.request_id,
+        amrStewardshipEventId: String(data.id),
+        caseId: body.case_id ?? null,
+        inferenceEventId: body.inference_event_id ?? null,
+        clinicalOutcomeId: body.clinical_outcome_id ?? null,
+        packet: labFeedPacket,
+        evidence: {
+            endpoint: '/api/amr/stewardship',
+            amr_stewardship_event_id: String(data.id),
+            raw_lab_report_stored_in_surveillance_ledger: false,
+        },
+        observedAt: payload.observed_at,
+    });
+    const labFeedEvent = await persistAMRLabFeedSurveillanceEvent(supabase, labFeedDraft);
+
+    return NextResponse.json(buildStewardshipResponse(
+        String(data.id),
+        false,
+        {
+            id: labFeedEvent.id,
+            warning: labFeedEvent.warning,
+            lab_feed_status: labFeedPacket.lab_feed_status,
+            surveillance_score: labFeedPacket.surveillance_score,
+            resistance_signal_score: labFeedPacket.resistance_signal_score,
+            one_health_export_ready: labFeedPacket.surveillance.one_health_export_ready,
+            next_actions: labFeedPacket.next_actions,
+        },
+    ));
 }
 
 export async function GET(req: Request) {
@@ -223,14 +280,69 @@ async function loadCachedStewardshipEvent(
     return data?.id ? { id: String(data.id) } : null;
 }
 
-function buildStewardshipResponse(amrStewardshipEventId: string, cached: boolean) {
+function buildStewardshipResponse(
+    amrStewardshipEventId: string,
+    cached: boolean,
+    labFeed: {
+        id: string | null;
+        warning: string | null;
+        lab_feed_status: string;
+        surveillance_score: number;
+        resistance_signal_score: number;
+        one_health_export_ready: boolean;
+        next_actions: string[];
+    } | null,
+) {
     return {
         amr_stewardship_event_id: amrStewardshipEventId,
+        amr_lab_feed_surveillance_event_id: labFeed?.id ?? null,
         cached,
+        surveillance: labFeed
+            ? {
+                lab_feed_status: labFeed.lab_feed_status,
+                surveillance_score: labFeed.surveillance_score,
+                resistance_signal_score: labFeed.resistance_signal_score,
+                one_health_export_ready: labFeed.one_health_export_ready,
+                next_actions: labFeed.next_actions,
+                warning: labFeed.warning,
+            }
+            : null,
         learning_signal: 'clinical_antimicrobial_decision',
         de_identified: true,
         error: null,
     };
+}
+
+async function persistAMRLabFeedSurveillanceEvent(
+    client: SupabaseClient,
+    draft: AMRLabFeedSurveillanceEventDraft,
+): Promise<{ id: string | null; warning: string | null }> {
+    const { data, error } = await client
+        .from('amr_lab_feed_surveillance_events')
+        .insert(draft)
+        .select('id')
+        .single();
+
+    if (error || !data?.id) {
+        const message = error?.message ?? 'unknown persistence failure';
+        return {
+            id: null,
+            warning: isMissingAMRLabFeedSurveillanceStorage(message)
+                ? 'AMR lab-feed surveillance ledger is not installed; apply supabase/migrations/20260622040000_amr_lab_feed_surveillance_events.sql to persist AST/culture, taxonomy, trend, and One Health export evidence.'
+                : `AMR lab-feed surveillance event was not persisted: ${message}`,
+        };
+    }
+
+    return { id: String(data.id), warning: null };
+}
+
+function isMissingAMRLabFeedSurveillanceStorage(message: string): boolean {
+    return message.includes('amr_lab_feed_surveillance_events')
+        && (
+            message.includes('does not exist')
+            || message.includes('Could not find the table')
+            || message.includes('schema cache')
+        );
 }
 
 function clampDays(value: number): number {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
     aggregateAMRStewardship,
+    buildAMRLabFeedSurveillanceEventDraft,
+    buildAMRLabFeedSurveillancePacket,
     normalizeAMRLabel,
     normalizeAMRStringList,
 } from '@/lib/amr/stewardship';
@@ -57,5 +59,98 @@ describe('AMR stewardship moat', () => {
         expect(aggregate.review_required_rate).toBe(1);
         expect(aggregate.top_pathogens[0]).toEqual({ pathogen_label: 'escherichia_coli', count: 2 });
         expect(aggregate.latest_observed_at).toBe('2026-06-19T11:00:00.000Z');
+    });
+
+    it('builds AST-backed AMR lab feed surveillance packets for One Health export', () => {
+        const packet = buildAMRLabFeedSurveillancePacket({
+            request_id: '11111111-1111-4111-8111-111111111111',
+            species: 'Canine',
+            pathogen_label: 'Escherichia coli',
+            infection_site: 'Urinary tract',
+            sample_source: 'Urine',
+            culture_collected: true,
+            culture_result: 'positive',
+            ast_method: 'broth_microdilution',
+            ast_panel: {
+                amoxicillin_clavulanate: { interpretation: 'R' },
+                enrofloxacin: { interpretation: 'S' },
+            },
+            mic_results: {
+                amoxicillin_clavulanate: '>=32',
+                enrofloxacin: '0.5',
+            },
+            resistance_genes: ['blaCTX-M-15'],
+            resistance_classes: ['beta lactam'],
+            drug_name: 'Amoxicillin clavulanate',
+            drug_class: 'Beta lactam',
+            decision_stage: 'culture_guided',
+            stewardship_status: 'culture_guided',
+            outcome_status: 'improved',
+            resistance_suspected: true,
+            de_escalation_recommended: true,
+            observed_at: '2026-06-19T10:00:00.000Z',
+        });
+
+        expect(packet.lab_feed_status).toBe('one_health_export_ready');
+        expect(packet.normalization).toMatchObject({
+            species: 'canine',
+            pathogen_key: 'escherichia_coli',
+            infection_site: 'urinary_tract',
+            drug_class: 'beta_lactam',
+            trend_bucket_key: 'canine:escherichia_coli:urinary_tract:beta_lactam',
+        });
+        expect(packet.ast.ast_ready).toBe(true);
+        expect(packet.ast.susceptibility_result_count).toBe(2);
+        expect(packet.surveillance.one_health_export_ready).toBe(true);
+        expect(packet.resistance_signal_score).toBeGreaterThanOrEqual(0.45);
+        expect(packet.provenance.source_record_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(packet.privacy.raw_lab_report_stored).toBe(false);
+        expect(packet.next_actions).toContain('queue_one_health_amr_export');
+    });
+
+    it('builds append-only lab feed event drafts without raw lab reports', () => {
+        const packet = buildAMRLabFeedSurveillancePacket({
+            request_id: '11111111-1111-4111-8111-111111111111',
+            species: 'Feline',
+            pathogen_label: 'Staphylococcus pseudintermedius',
+            infection_site: 'Skin',
+            sample_source: 'swab',
+            culture_collected: true,
+            ast_panel: {
+                cephalexin: { interpretation: 'R' },
+            },
+            mic_results: {
+                cephalexin: '16',
+            },
+            resistance_classes: ['beta lactam'],
+            drug_name: 'Cephalexin',
+            drug_class: 'Cephalosporin',
+            resistance_suspected: true,
+            observed_at: '2026-06-19T12:00:00.000Z',
+        });
+
+        const draft = buildAMRLabFeedSurveillanceEventDraft({
+            tenantId: '22222222-2222-4222-8222-222222222222',
+            requestId: '11111111-1111-4111-8111-111111111111',
+            amrStewardshipEventId: '33333333-3333-4333-8333-333333333333',
+            caseId: '44444444-4444-4444-8444-444444444444',
+            packet,
+            evidence: {
+                endpoint: '/api/amr/stewardship',
+            },
+            observedAt: '2026-06-19T12:00:00.000Z',
+        });
+
+        expect(draft.lab_feed_status).toBe('one_health_export_ready');
+        expect(draft.trend_bucket_key).toBe('feline:staphylococcus_pseudintermedius:skin:cephalosporin');
+        expect(draft.source_record_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.packet_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.ast_panel_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(draft.evidence).toMatchObject({
+            endpoint: '/api/amr/stewardship',
+            raw_lab_report_stored: false,
+            raw_owner_or_patient_identifiers_stored: false,
+        });
+        expect(JSON.stringify(draft.surveillance_packet)).not.toContain('owner');
     });
 });
