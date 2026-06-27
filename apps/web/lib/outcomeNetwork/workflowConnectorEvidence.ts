@@ -31,6 +31,18 @@ export type WorkflowConnectorSourceStandard =
     | 'dicomweb'
     | 'manual_file_drop';
 
+export type WorkflowIntegrationMoatStatus = 'blocked' | 'foundation' | 'operating';
+
+export type WorkflowIntegrationCapability =
+    | 'pims_workflow_sync'
+    | 'lab_result_import'
+    | 'pacs_report_import'
+    | 'follow_up_automation'
+    | 'treatment_refill_signal'
+    | 'specialist_referral_signal';
+
+export type WorkflowIntegrationCapabilityStatus = 'ready' | 'thin' | 'missing' | 'blocked';
+
 export interface WorkflowConnectorEvidenceInput {
     connectorType?: PassiveConnectorType | null;
     vendorName?: string | null;
@@ -103,6 +115,38 @@ export interface WorkflowConnectorEvidencePacket {
     warnings: string[];
 }
 
+export interface WorkflowIntegrationCapabilityCoverage {
+    capability: WorkflowIntegrationCapability;
+    required: boolean;
+    status: WorkflowIntegrationCapabilityStatus;
+    evidence_packets: number;
+    ready_packets: number;
+    latest_observed_at: string | null;
+    source_standards: WorkflowConnectorSourceStandard[];
+    connector_types: PassiveConnectorType[];
+    blockers: string[];
+    warnings: string[];
+}
+
+export interface WorkflowIntegrationReadinessSnapshot {
+    schema_version: 'workflow-integration-readiness-v1';
+    generated_at: string;
+    moat_status: WorkflowIntegrationMoatStatus;
+    readiness_score: number;
+    packets_evaluated: number;
+    ready_packets: number;
+    blocked_packets: number;
+    outcome_linked_packets: number;
+    diagnostic_packets: number;
+    required_capabilities: number;
+    required_capabilities_ready: number;
+    capability_coverage: WorkflowIntegrationCapabilityCoverage[];
+    source_standard_counts: Record<WorkflowConnectorSourceStandard, number>;
+    blockers: string[];
+    warnings: string[];
+    privacy_contract: string[];
+}
+
 const SAFE_FACT_KEYS = [
     'connector_type',
     'vendor_name',
@@ -169,6 +213,58 @@ const DIRECT_PHI_KEY_PATTERNS = [
 
 const EMAIL_VALUE_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 const PHONE_VALUE_PATTERN = /\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b/;
+
+const SOURCE_STANDARDS: WorkflowConnectorSourceStandard[] = [
+    'vendor_webhook',
+    'hl7_v2_oru',
+    'fhir_r4',
+    'dicomweb',
+    'manual_file_drop',
+];
+
+const CAPABILITY_DEFINITIONS: Array<{
+    capability: WorkflowIntegrationCapability;
+    required: boolean;
+    matches: (packet: WorkflowConnectorEvidencePacket) => boolean;
+    ready: (packet: WorkflowConnectorEvidencePacket) => boolean;
+}> = [
+    {
+        capability: 'pims_workflow_sync',
+        required: true,
+        matches: (packet) => packet.connector.normalized_by === 'pims_workflow_adapter',
+        ready: (packet) => isPacketReady(packet) && packet.coverage.workflow_status,
+    },
+    {
+        capability: 'lab_result_import',
+        required: true,
+        matches: (packet) => packet.connector.ingestion_profile === 'lab_result_import',
+        ready: (packet) => isPacketReady(packet) && packet.coverage.diagnostic_observation,
+    },
+    {
+        capability: 'pacs_report_import',
+        required: true,
+        matches: (packet) => packet.connector.ingestion_profile === 'pacs_report_import',
+        ready: (packet) => isPacketReady(packet) && packet.coverage.diagnostic_observation,
+    },
+    {
+        capability: 'follow_up_automation',
+        required: true,
+        matches: (packet) => packet.connector.ingestion_profile === 'appointment_follow_up_sync',
+        ready: (packet) => isPacketReady(packet) && (packet.coverage.outcome_signal || packet.coverage.workflow_status),
+    },
+    {
+        capability: 'treatment_refill_signal',
+        required: false,
+        matches: (packet) => packet.connector.ingestion_profile === 'prescription_sync',
+        ready: (packet) => isPacketReady(packet) && packet.coverage.workflow_status,
+    },
+    {
+        capability: 'specialist_referral_signal',
+        required: false,
+        matches: (packet) => packet.connector.ingestion_profile === 'referral_sync',
+        ready: (packet) => isPacketReady(packet) && packet.coverage.workflow_status,
+    },
+];
 
 export function buildWorkflowConnectorEvidence(
     input: WorkflowConnectorEvidenceInput,
@@ -272,6 +368,226 @@ export function buildWorkflowConnectorEvidence(
         blockers: Array.from(blockers).sort(),
         warnings: Array.from(warnings).sort(),
     };
+}
+
+export function buildWorkflowIntegrationReadiness(input: {
+    packets: WorkflowConnectorEvidencePacket[];
+    now?: string;
+}): WorkflowIntegrationReadinessSnapshot {
+    const now = input.now ?? new Date().toISOString();
+    const packets = input.packets;
+    const requiredCapabilities = CAPABILITY_DEFINITIONS.filter((definition) => definition.required);
+    const capabilityCoverage = CAPABILITY_DEFINITIONS.map((definition) =>
+        buildCapabilityCoverage(definition, packets),
+    );
+    const requiredReady = capabilityCoverage.filter((coverage) => coverage.required && coverage.status === 'ready').length;
+    const readyPackets = packets.filter(isPacketReady).length;
+    const blockedPackets = packets.filter((packet) => packet.evidence_status === 'blocked').length;
+    const outcomeLinkedPackets = packets.filter((packet) => packet.evidence_status === 'outcome_signal_ready').length;
+    const diagnosticPackets = packets.filter((packet) => packet.evidence_status === 'diagnostic_signal_ready').length;
+    const blockers = buildWorkflowIntegrationBlockers({
+        packets,
+        capabilityCoverage,
+        blockedPackets,
+    });
+    const warnings = buildWorkflowIntegrationWarnings(capabilityCoverage);
+    const readinessScore = scoreWorkflowIntegrationReadiness({
+        requiredReady,
+        requiredCapabilities: requiredCapabilities.length,
+        packets,
+        outcomeLinkedPackets,
+        blockedPackets,
+    });
+
+    return {
+        schema_version: 'workflow-integration-readiness-v1',
+        generated_at: now,
+        moat_status: resolveWorkflowIntegrationMoatStatus({
+            packets,
+            blockers,
+            requiredReady,
+            requiredCapabilities: requiredCapabilities.length,
+            readinessScore,
+        }),
+        readiness_score: readinessScore,
+        packets_evaluated: packets.length,
+        ready_packets: readyPackets,
+        blocked_packets: blockedPackets,
+        outcome_linked_packets: outcomeLinkedPackets,
+        diagnostic_packets: diagnosticPackets,
+        required_capabilities: requiredCapabilities.length,
+        required_capabilities_ready: requiredReady,
+        capability_coverage: capabilityCoverage,
+        source_standard_counts: countSourceStandards(packets),
+        blockers,
+        warnings,
+        privacy_contract: [
+            'Workflow integration readiness is derived from normalized evidence packets, not raw vendor payload retention.',
+            'PIMS, lab, PACS, and follow-up evidence must carry source identity, patient reference hashes, clinical time, provenance hashes, and de-identification coverage.',
+            'Owner contact details, patient names, microchips, and raw report text block readiness until transformed into hashes or safe facts.',
+            'Operating status requires actual workflow/lab/PACS/follow-up packets, not marketplace connector configuration alone.',
+        ],
+    };
+}
+
+function buildCapabilityCoverage(
+    definition: (typeof CAPABILITY_DEFINITIONS)[number],
+    packets: WorkflowConnectorEvidencePacket[],
+): WorkflowIntegrationCapabilityCoverage {
+    const matchingPackets = packets.filter(definition.matches);
+    const readyPackets = matchingPackets.filter(definition.ready);
+    const blockedPackets = matchingPackets.filter((packet) => packet.evidence_status === 'blocked');
+    const status = resolveCapabilityStatus(matchingPackets.length, readyPackets.length, blockedPackets.length);
+    const blockers = [
+        ...(definition.required && matchingPackets.length === 0 ? ['capability_evidence_missing'] : []),
+        ...(blockedPackets.length > 0 ? ['capability_payloads_blocked'] : []),
+        ...(matchingPackets.length > 0 && readyPackets.length === 0 ? ['capability_evidence_not_ready'] : []),
+    ];
+    const sourceStandards = uniqueValues(matchingPackets.map((packet) => packet.connector.source_standard));
+
+    return {
+        capability: definition.capability,
+        required: definition.required,
+        status,
+        evidence_packets: matchingPackets.length,
+        ready_packets: readyPackets.length,
+        latest_observed_at: newestTimestamp(matchingPackets.map((packet) => packet.signal.observedAt)),
+        source_standards: sourceStandards,
+        connector_types: uniqueValues(matchingPackets.map((packet) => packet.connector.connector_type)),
+        blockers: uniqueNonEmpty(blockers).sort(),
+        warnings: buildCapabilityWarnings(definition, matchingPackets, sourceStandards),
+    };
+}
+
+function resolveCapabilityStatus(
+    packetCount: number,
+    readyPacketCount: number,
+    blockedPacketCount: number,
+): WorkflowIntegrationCapabilityStatus {
+    if (packetCount === 0) return 'missing';
+    if (readyPacketCount > 0) return 'ready';
+    if (blockedPacketCount > 0) return 'blocked';
+    return 'thin';
+}
+
+function buildCapabilityWarnings(
+    definition: (typeof CAPABILITY_DEFINITIONS)[number],
+    packets: WorkflowConnectorEvidencePacket[],
+    sourceStandards: WorkflowConnectorSourceStandard[],
+): string[] {
+    return uniqueNonEmpty([
+        ...(!definition.required && packets.length === 0 ? ['optional_capability_not_observed'] : []),
+        ...(packets.length > 0 && sourceStandards.every((standard) => standard === 'vendor_webhook') ? ['standard_specific_payload_not_detected'] : []),
+        ...(packets.some((packet) => !packet.coverage.patient_reference) ? ['patient_reference_hash_missing'] : []),
+        ...(packets.some((packet) => !packet.coverage.provenance_hash) ? ['provenance_hash_missing'] : []),
+    ]).sort();
+}
+
+function buildWorkflowIntegrationBlockers(input: {
+    packets: WorkflowConnectorEvidencePacket[];
+    capabilityCoverage: WorkflowIntegrationCapabilityCoverage[];
+    blockedPackets: number;
+}): string[] {
+    return uniqueNonEmpty([
+        ...(input.packets.length === 0 ? ['workflow_connector_evidence_missing'] : []),
+        ...(input.blockedPackets > 0 ? ['blocked_connector_payloads_present'] : []),
+        ...input.capabilityCoverage
+            .filter((coverage) => coverage.required && coverage.status !== 'ready')
+            .map((coverage) => `required_capability_${coverage.status}:${coverage.capability}`),
+    ]).sort();
+}
+
+function buildWorkflowIntegrationWarnings(
+    capabilityCoverage: WorkflowIntegrationCapabilityCoverage[],
+): string[] {
+    return uniqueNonEmpty([
+        ...capabilityCoverage
+            .filter((coverage) => !coverage.required && coverage.status !== 'ready')
+            .map((coverage) => `optional_capability_${coverage.status}:${coverage.capability}`),
+        ...capabilityCoverage.flatMap((coverage) => coverage.warnings.map((warning) => `${coverage.capability}:${warning}`)),
+    ]).sort();
+}
+
+function scoreWorkflowIntegrationReadiness(input: {
+    requiredReady: number;
+    requiredCapabilities: number;
+    packets: WorkflowConnectorEvidencePacket[];
+    outcomeLinkedPackets: number;
+    blockedPackets: number;
+}): number {
+    if (input.packets.length === 0 || input.requiredCapabilities === 0) return 0;
+    const requiredCoverage = input.requiredReady / input.requiredCapabilities;
+    const readyPacketCoverage = input.packets.filter(isPacketReady).length / input.packets.length;
+    const averagePacketReadiness = average(input.packets.map((packet) => packet.readiness_score));
+    const outcomeCoverage = input.outcomeLinkedPackets > 0 ? 1 : 0;
+    const blockedPenalty = input.blockedPackets * 0.12;
+
+    return clampScore(
+        requiredCoverage * 0.62
+        + readyPacketCoverage * 0.16
+        + averagePacketReadiness * 0.12
+        + outcomeCoverage * 0.1
+        - blockedPenalty,
+    );
+}
+
+function resolveWorkflowIntegrationMoatStatus(input: {
+    packets: WorkflowConnectorEvidencePacket[];
+    blockers: string[];
+    requiredReady: number;
+    requiredCapabilities: number;
+    readinessScore: number;
+}): WorkflowIntegrationMoatStatus {
+    if (input.packets.length === 0 || input.readinessScore < 0.35) return 'blocked';
+    if (input.blockers.length === 0 && input.requiredReady === input.requiredCapabilities && input.readinessScore >= 0.78) {
+        return 'operating';
+    }
+    return 'foundation';
+}
+
+function countSourceStandards(
+    packets: WorkflowConnectorEvidencePacket[],
+): Record<WorkflowConnectorSourceStandard, number> {
+    const counts = Object.fromEntries(SOURCE_STANDARDS.map((standard) => [standard, 0])) as Record<WorkflowConnectorSourceStandard, number>;
+    for (const packet of packets) {
+        counts[packet.connector.source_standard] += 1;
+    }
+    return counts;
+}
+
+function isPacketReady(packet: WorkflowConnectorEvidencePacket): boolean {
+    return packet.evidence_status !== 'blocked'
+        && packet.readiness_score >= 0.68
+        && packet.coverage.source_identity
+        && packet.coverage.patient_reference
+        && packet.coverage.clinical_time
+        && packet.coverage.provenance_hash
+        && packet.coverage.deidentified;
+}
+
+function newestTimestamp(values: Array<string | null | undefined>): string | null {
+    let newest: string | null = null;
+    for (const value of values) {
+        if (!value) continue;
+        if (!newest || Date.parse(value) > Date.parse(newest)) newest = value;
+    }
+    return newest;
+}
+
+function average(values: number[]): number {
+    const valid = values.filter((value) => Number.isFinite(value));
+    if (valid.length === 0) return 0;
+    return valid.reduce((sum, value) => sum + value, 0) / valid.length;
+}
+
+function uniqueValues<T extends string>(values: T[]): T[] {
+    return Array.from(new Set(values)).sort();
+}
+
+function uniqueNonEmpty(values: Array<string | null | undefined>): string[] {
+    return Array.from(new Set(values
+        .map((value) => typeof value === 'string' ? value.trim() : '')
+        .filter(Boolean)));
 }
 
 function buildCoverage(input: {

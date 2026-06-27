@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildWorkflowConnectorEvidence } from '../workflowConnectorEvidence';
+import { buildWorkflowConnectorEvidence, buildWorkflowIntegrationReadiness } from '../workflowConnectorEvidence';
 
 const PATIENT_ID = '11111111-1111-4111-8111-111111111111';
 const CASE_ID = '22222222-2222-4222-8222-222222222222';
@@ -127,5 +127,119 @@ describe('workflow connector evidence', () => {
             outcomeState: 'resolved',
         });
         expect(packet.coverage.outcome_signal).toBe(true);
+    });
+
+    it('rolls live workflow packets into operating integration readiness', () => {
+        const lab = buildWorkflowConnectorEvidence({
+            connectorType: 'lab_result',
+            vendorName: 'IDEXX',
+            vendorAccountRef: 'clinic-account-7',
+            patientId: PATIENT_ID,
+            observedAt: '2026-06-22T13:00:00.000Z',
+            payload: {
+                event_id: 'idexx-lab-123',
+                source_format: 'hl7_v2_oru',
+                test_name: 'Urine culture antimicrobial susceptibility',
+                result_value: 'E. coli detected',
+                abnormal_flag: 'H',
+                primary_condition_class: 'urinary',
+                resulted_at: '2026-06-22T13:00:00.000Z',
+            },
+        });
+        const pacs = buildWorkflowConnectorEvidence({
+            connectorType: 'imaging_report',
+            vendorName: 'VetPACS',
+            patientId: PATIENT_ID,
+            observedAt: '2026-06-22T14:00:00.000Z',
+            payload: {
+                report_id: 'pacs-report-77',
+                source_format: 'dicomweb',
+                modality: 'radiograph',
+                study_instance_uid: '1.2.840.113619.2.55.3.604688435.781.171905',
+                abnormal: true,
+                primary_condition_class: 'respiratory',
+            },
+        });
+        const followUp = buildWorkflowConnectorEvidence({
+            vendorName: 'ezyVet',
+            vendorEventType: 'appointment.completed',
+            patientId: PATIENT_ID,
+            observedAt: '2026-06-23T16:00:00.000Z',
+            payload: {
+                appointment_id: 'apt-2',
+                appointment_status: 'completed',
+                completed: true,
+                resolved: true,
+                primary_condition_class: 'urinary',
+            },
+        });
+
+        const readiness = buildWorkflowIntegrationReadiness({
+            packets: [lab, pacs, followUp],
+            now: '2026-06-23T17:00:00.000Z',
+        });
+
+        expect(readiness.moat_status).toBe('operating');
+        expect(readiness.blockers).toEqual([]);
+        expect(readiness.required_capabilities_ready).toBe(readiness.required_capabilities);
+        expect(readiness.readiness_score).toBeGreaterThanOrEqual(0.9);
+        expect(readiness.source_standard_counts.hl7_v2_oru).toBe(1);
+        expect(readiness.source_standard_counts.dicomweb).toBe(1);
+        expect(readiness.capability_coverage.find((entry) => entry.capability === 'pims_workflow_sync')?.status).toBe('ready');
+        expect(readiness.capability_coverage.find((entry) => entry.capability === 'follow_up_automation')?.latest_observed_at).toBe('2026-06-23T16:00:00.000Z');
+    });
+
+    it('keeps workflow integrations at foundation when PACS evidence is missing', () => {
+        const lab = buildWorkflowConnectorEvidence({
+            connectorType: 'lab_result',
+            vendorName: 'IDEXX',
+            patientId: PATIENT_ID,
+            observedAt: '2026-06-22T13:00:00.000Z',
+            payload: {
+                source_format: 'hl7_v2_oru',
+                test_name: 'Creatinine',
+                abnormal_flag: 'H',
+                primary_condition_class: 'renal',
+            },
+        });
+        const followUp = buildWorkflowConnectorEvidence({
+            vendorName: 'ezyVet',
+            vendorEventType: 'appointment.completed',
+            patientId: PATIENT_ID,
+            observedAt: '2026-06-23T16:00:00.000Z',
+            payload: {
+                appointment_status: 'completed',
+                completed: true,
+                resolved: true,
+                primary_condition_class: 'renal',
+            },
+        });
+
+        const readiness = buildWorkflowIntegrationReadiness({ packets: [lab, followUp] });
+
+        expect(readiness.moat_status).toBe('foundation');
+        expect(readiness.blockers).toContain('required_capability_missing:pacs_report_import');
+        expect(readiness.capability_coverage.find((entry) => entry.capability === 'pacs_report_import')?.status).toBe('missing');
+    });
+
+    it('blocks workflow integration readiness when only PHI-bearing payloads are present', () => {
+        const blocked = buildWorkflowConnectorEvidence({
+            vendorName: 'ezyVet',
+            vendorEventType: 'appointment.completed',
+            patientId: PATIENT_ID,
+            payload: {
+                appointment_status: 'completed',
+                owner_email: 'jane@example.com',
+                patient_name: 'Milo',
+                resolved: true,
+                primary_condition_class: 'dermatologic',
+            },
+        });
+
+        const readiness = buildWorkflowIntegrationReadiness({ packets: [blocked] });
+
+        expect(readiness.moat_status).toBe('blocked');
+        expect(readiness.blockers).toContain('blocked_connector_payloads_present');
+        expect(readiness.capability_coverage.find((entry) => entry.capability === 'pims_workflow_sync')?.status).toBe('blocked');
     });
 });
