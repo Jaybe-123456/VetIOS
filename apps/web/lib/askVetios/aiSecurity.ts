@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { AskVetiosCaseGraphSnapshot } from '@/lib/askVetios/caseGraph';
 import type { AskVetiosIntakeSummary } from '@/lib/askVetios/intake';
 
@@ -57,6 +58,88 @@ export interface AskVetiosAiSecuritySnapshot {
         deidentification_required: boolean;
     };
     next_actions: string[];
+}
+
+export type AskVetiosAiSecurityTestCaseType =
+    | 'prompt_injection'
+    | 'rag_boundary'
+    | 'tool_abuse'
+    | 'data_exfiltration'
+    | 'sensitive_identifier'
+    | 'misinformation'
+    | 'rate_limit'
+    | 'incident_response'
+    | 'external_attestation';
+
+export interface AskVetiosAiSecurityTestPacket {
+    schema_version: 'ask-vetios-ai-security-test-v1';
+    test_suite: 'ask_vetios_runtime_security';
+    test_case_type: AskVetiosAiSecurityTestCaseType;
+    security_status: AskVetiosAiSecurityStatus;
+    risk_level: 'low' | 'medium' | 'high';
+    attack_detected: boolean;
+    blocked_by_policy: boolean;
+    incident_required: boolean;
+    external_attestation_required: boolean;
+    finding_count: number;
+    mitigation_count: number;
+    control_count: number;
+    security_score: number;
+    snapshot_hash: string;
+    test_packet_hash: string;
+    signals: AskVetiosAiSecuritySnapshot['signals'];
+    controls: {
+        admin_tools_blocked: boolean;
+        write_actions_blocked: boolean;
+        autonomous_actions_blocked: boolean;
+        external_network_tools_blocked: boolean;
+        rate_limit_enforced: boolean;
+        token_budget_enforced: boolean;
+        raw_case_note_persistence_blocked: boolean;
+    };
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
+    evidence: {
+        raw_prompt_stored: false;
+        raw_case_note_stored: false;
+        raw_retrieval_text_stored: false;
+        secrets_stored: false;
+        snapshot_hash: string;
+    };
+}
+
+export interface AskVetiosAiSecurityTestEventDraft {
+    tenant_id: string | null;
+    request_id: string;
+    ask_vetios_query_id: string | null;
+    test_suite: AskVetiosAiSecurityTestPacket['test_suite'];
+    test_case_type: AskVetiosAiSecurityTestCaseType;
+    security_status: AskVetiosAiSecurityStatus;
+    risk_level: 'low' | 'medium' | 'high';
+    attack_detected: boolean;
+    blocked_by_policy: boolean;
+    incident_required: boolean;
+    external_attestation_required: boolean;
+    prompt_injection_detected: boolean;
+    admin_tool_request_detected: boolean;
+    data_exfiltration_request_detected: boolean;
+    vector_boundary_required: boolean;
+    misinformation_review_required: boolean;
+    sensitive_info_detected: boolean;
+    excessive_agency_request_detected: boolean;
+    finding_count: number;
+    mitigation_count: number;
+    control_count: number;
+    security_score: number;
+    snapshot_hash: string;
+    test_packet_hash: string;
+    security_packet: AskVetiosAiSecurityTestPacket;
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
+    evidence: Record<string, unknown>;
+    observed_at: string;
 }
 
 interface BuildAskVetiosAiSecuritySnapshotInput {
@@ -182,6 +265,132 @@ export function buildAskVetiosAiSecuritySnapshot(
     };
 }
 
+export function buildAskVetiosAiSecurityTestPacket(
+    snapshot: AskVetiosAiSecuritySnapshot,
+): AskVetiosAiSecurityTestPacket {
+    const snapshotHash = hashJson(snapshot);
+    const testCaseType = determineTestCaseType(snapshot);
+    const controls = {
+        admin_tools_blocked: snapshot.controls.tool_policy.admin_tools_allowed === false,
+        write_actions_blocked: snapshot.controls.tool_policy.write_actions_allowed === false,
+        autonomous_actions_blocked: snapshot.controls.tool_policy.autonomous_actions_allowed === false,
+        external_network_tools_blocked: snapshot.controls.tool_policy.external_network_tools_allowed === false,
+        rate_limit_enforced: snapshot.controls.rate_limit.requests_per_minute > 0,
+        token_budget_enforced: snapshot.controls.rate_limit.token_budget_enforced === true,
+        raw_case_note_persistence_blocked: snapshot.data_handling.raw_case_note_persistence_allowed === false,
+    };
+    const controlCount = Object.values(controls).filter(Boolean).length;
+    const attackDetected = Object.entries(snapshot.signals)
+        .filter(([key]) => key !== 'unbounded_consumption_guarded')
+        .some(([, value]) => value === true);
+    const blockedByPolicy = controls.admin_tools_blocked
+        && controls.write_actions_blocked
+        && controls.autonomous_actions_blocked
+        && controls.external_network_tools_blocked
+        && controls.raw_case_note_persistence_blocked;
+    const incidentRequired = snapshot.status === 'security_review_required' || snapshot.risk.level === 'high';
+    const externalAttestationRequired = incidentRequired || snapshot.status === 'restricted';
+    const blockers = buildSecurityTestBlockers({
+        snapshot,
+        attackDetected,
+        blockedByPolicy,
+        incidentRequired,
+    });
+    const warnings = buildSecurityTestWarnings(snapshot);
+    const nextActions = unique([
+        ...snapshot.next_actions,
+        'record_ai_security_test_event',
+        ...(incidentRequired ? ['open_ai_security_incident'] : []),
+        ...(externalAttestationRequired ? ['queue_external_security_attestation'] : []),
+    ]);
+    const partialPacket = {
+        schema_version: 'ask-vetios-ai-security-test-v1' as const,
+        test_suite: 'ask_vetios_runtime_security' as const,
+        test_case_type: testCaseType,
+        security_status: snapshot.status,
+        risk_level: snapshot.risk.level,
+        attack_detected: attackDetected,
+        blocked_by_policy: blockedByPolicy,
+        incident_required: incidentRequired,
+        external_attestation_required: externalAttestationRequired,
+        finding_count: snapshot.risk.finding_count,
+        mitigation_count: snapshot.risk.mitigations.length,
+        control_count: controlCount,
+        security_score: scoreSecurityPacket({
+            snapshot,
+            controlCount,
+            attackDetected,
+            blockedByPolicy,
+            incidentRequired,
+        }),
+        snapshot_hash: snapshotHash,
+        signals: snapshot.signals,
+        controls,
+        blockers,
+        warnings,
+        next_actions: nextActions,
+        evidence: {
+            raw_prompt_stored: false as const,
+            raw_case_note_stored: false as const,
+            raw_retrieval_text_stored: false as const,
+            secrets_stored: false as const,
+            snapshot_hash: snapshotHash,
+        },
+    };
+
+    return {
+        ...partialPacket,
+        test_packet_hash: hashJson(partialPacket),
+    };
+}
+
+export function buildAskVetiosAiSecurityTestEventDraft(input: {
+    tenantId?: string | null;
+    requestId: string;
+    askVetiosQueryId?: string | null;
+    snapshot: AskVetiosAiSecuritySnapshot;
+    packet?: AskVetiosAiSecurityTestPacket;
+    evidence?: Record<string, unknown>;
+    observedAt?: Date;
+}): AskVetiosAiSecurityTestEventDraft {
+    const packet = input.packet ?? buildAskVetiosAiSecurityTestPacket(input.snapshot);
+    return {
+        tenant_id: input.tenantId ?? null,
+        request_id: input.requestId,
+        ask_vetios_query_id: input.askVetiosQueryId ?? null,
+        test_suite: packet.test_suite,
+        test_case_type: packet.test_case_type,
+        security_status: packet.security_status,
+        risk_level: packet.risk_level,
+        attack_detected: packet.attack_detected,
+        blocked_by_policy: packet.blocked_by_policy,
+        incident_required: packet.incident_required,
+        external_attestation_required: packet.external_attestation_required,
+        prompt_injection_detected: packet.signals.prompt_injection_detected,
+        admin_tool_request_detected: packet.signals.admin_tool_request_detected,
+        data_exfiltration_request_detected: packet.signals.data_exfiltration_request_detected,
+        vector_boundary_required: packet.signals.vector_boundary_required,
+        misinformation_review_required: packet.signals.misinformation_review_required,
+        sensitive_info_detected: packet.signals.sensitive_info_detected,
+        excessive_agency_request_detected: packet.signals.excessive_agency_request_detected,
+        finding_count: packet.finding_count,
+        mitigation_count: packet.mitigation_count,
+        control_count: packet.control_count,
+        security_score: packet.security_score,
+        snapshot_hash: packet.snapshot_hash,
+        test_packet_hash: packet.test_packet_hash,
+        security_packet: packet,
+        blockers: packet.blockers,
+        warnings: packet.warnings,
+        next_actions: packet.next_actions,
+        evidence: {
+            ...packet.evidence,
+            ...(input.evidence ?? {}),
+        },
+        observed_at: (input.observedAt ?? new Date()).toISOString(),
+    };
+}
+
 function determineStatus(input: {
     clinical: boolean;
     riskLevel: 'low' | 'medium' | 'high';
@@ -214,6 +423,57 @@ function determineRiskLevel(input: {
         return 'medium';
     }
     return 'low';
+}
+
+function determineTestCaseType(snapshot: AskVetiosAiSecuritySnapshot): AskVetiosAiSecurityTestCaseType {
+    if (snapshot.signals.prompt_injection_detected) return 'prompt_injection';
+    if (snapshot.signals.admin_tool_request_detected || snapshot.signals.excessive_agency_request_detected) return 'tool_abuse';
+    if (snapshot.signals.data_exfiltration_request_detected) return 'data_exfiltration';
+    if (snapshot.signals.vector_boundary_required) return 'rag_boundary';
+    if (snapshot.signals.sensitive_info_detected) return 'sensitive_identifier';
+    if (snapshot.signals.misinformation_review_required) return 'misinformation';
+    return 'rate_limit';
+}
+
+function buildSecurityTestBlockers(input: {
+    snapshot: AskVetiosAiSecuritySnapshot;
+    attackDetected: boolean;
+    blockedByPolicy: boolean;
+    incidentRequired: boolean;
+}): string[] {
+    const blockers: string[] = [];
+    if (input.attackDetected && !input.blockedByPolicy) blockers.push('attack_detected_without_complete_policy_block');
+    if (input.incidentRequired) blockers.push('security_incident_review_required');
+    if (input.snapshot.signals.data_exfiltration_request_detected) blockers.push('data_exfiltration_attempt_detected');
+    if (input.snapshot.signals.admin_tool_request_detected) blockers.push('admin_tool_request_detected');
+    return unique(blockers);
+}
+
+function buildSecurityTestWarnings(snapshot: AskVetiosAiSecuritySnapshot): string[] {
+    const warnings: string[] = [];
+    if (snapshot.signals.prompt_injection_detected) warnings.push('prompt_injection_pattern_detected');
+    if (snapshot.signals.vector_boundary_required) warnings.push('rag_boundary_requires_curated_veterinary_sources');
+    if (snapshot.signals.misinformation_review_required) warnings.push('clinical_misinformation_review_required');
+    if (snapshot.signals.sensitive_info_detected) warnings.push('sensitive_identifier_review_required');
+    if (snapshot.risk.finding_count > snapshot.risk.mitigations.length) warnings.push('security_findings_exceed_mitigations');
+    return unique(warnings);
+}
+
+function scoreSecurityPacket(input: {
+    snapshot: AskVetiosAiSecuritySnapshot;
+    controlCount: number;
+    attackDetected: boolean;
+    blockedByPolicy: boolean;
+    incidentRequired: boolean;
+}): number {
+    const controlCoverage = input.controlCount / 7;
+    const findingPenalty = Math.min(0.4, input.snapshot.risk.finding_count * 0.08);
+    const riskPenalty = input.snapshot.risk.level === 'high' ? 0.25 : input.snapshot.risk.level === 'medium' ? 0.12 : 0;
+    const attackPenalty = input.attackDetected ? 0.08 : 0;
+    const mitigationCredit = Math.min(0.2, input.snapshot.risk.mitigations.length * 0.025);
+    const policyCredit = input.blockedByPolicy ? 0.16 : 0;
+    const incidentCredit = input.incidentRequired ? 0.05 : 0;
+    return round4(clamp01(0.55 + controlCoverage * 0.22 + mitigationCredit + policyCredit + incidentCredit - findingPenalty - riskPenalty - attackPenalty));
 }
 
 function buildFindings(input: {
@@ -280,6 +540,27 @@ function readString(value: unknown): string | null {
 
 function unique(values: string[]): string[] {
     return [...new Set(values.map((value) => value.trim()).filter(Boolean))].slice(0, 12);
+}
+
+function hashJson(value: unknown): string {
+    return createHash('sha256').update(stableStringify(value)).digest('hex');
+}
+
+function stableStringify(value: unknown): string {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+    if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+    return `{${Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`)
+        .join(',')}}`;
+}
+
+function clamp01(value: number): number {
+    return Math.max(0, Math.min(1, value));
+}
+
+function round4(value: number): number {
+    return Math.round(value * 10_000) / 10_000;
 }
 
 const PROMPT_INJECTION_PATTERNS = [

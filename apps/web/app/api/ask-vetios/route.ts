@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { AiProviderUnavailableError, runInference } from '@/lib/ai/provider';
 import { embedQuery } from '@/lib/embeddings/vetEmbeddingEngine';
 import { getVectorStore } from '@/lib/vectorStore/vetVectorStore';
@@ -26,7 +27,12 @@ import { buildAskVetiosModelTrustSnapshot } from '@/lib/askVetios/modelTrust';
 import { buildAskVetiosVeterinaryRetrievalSnapshot } from '@/lib/askVetios/veterinaryRetrieval';
 import { buildAskVetiosWorkflowIntegrationSnapshot } from '@/lib/askVetios/workflowIntegration';
 import { buildAskVetiosHumanReviewSnapshot } from '@/lib/askVetios/humanReview';
-import { buildAskVetiosAiSecuritySnapshot } from '@/lib/askVetios/aiSecurity';
+import {
+    buildAskVetiosAiSecuritySnapshot,
+    buildAskVetiosAiSecurityTestEventDraft,
+    type AskVetiosAiSecuritySnapshot,
+    type AskVetiosAiSecurityTestEventDraft,
+} from '@/lib/askVetios/aiSecurity';
 import { buildAskVetiosRegulatoryClaimsSnapshot } from '@/lib/askVetios/regulatoryClaims';
 import {
     addAskVetiosBudgetHeaders,
@@ -128,7 +134,7 @@ export async function POST(req: Request) {
             ),
             intake,
         );
-        const queryHistoryId = await logAskVetiosQuery(message, heuristicBody as unknown as Record<string, unknown>, startTime).catch(() => null);
+        const queryHistoryId = await logAskVetiosQuery(message, heuristicBody as unknown as Record<string, unknown>, startTime, requestId).catch(() => null);
         const fp = generateFingerprint({ tenantId: 'vetios-platform', requestId, endpoint: auditCtx.endpoint, issuedAt: startTime });
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, fingerprint: fp, mode: heuristicBody.mode, metadata: { heuristic: true }, timestamp: new Date().toISOString() });
         const res = NextResponse.json(attachResponseFingerprint({ ...heuristicBody, query_history_id: queryHistoryId } as Record<string, unknown>, fp), { status: 200 });
@@ -191,7 +197,7 @@ export async function POST(req: Request) {
             buildEnsembleResponse(output, inferenceResult.ensemble_metadata, agenticRagResult),
             intake,
         );
-        const queryHistoryId = await logAskVetiosQuery(message, response, startTime).catch(() => null);
+        const queryHistoryId = await logAskVetiosQuery(message, response, startTime, requestId).catch(() => null);
         const responseWithHistory = queryHistoryId ? { ...response, query_history_id: queryHistoryId } : response;
         const res = NextResponse.json(responseWithHistory, { status: 200 });
         addAskVetiosBudgetHeaders(res.headers, tokenBudget);
@@ -234,7 +240,7 @@ export async function POST(req: Request) {
 
         // Surface fallback on AI failure — still better than a 500
         const fallback = withAskVetiosIntake(buildAskVetiosHeuristicResponse(message), intake);
-        const queryHistoryId = await logAskVetiosQuery(message, fallback as unknown as Record<string, unknown>, startTime).catch(() => null);
+        const queryHistoryId = await logAskVetiosQuery(message, fallback as unknown as Record<string, unknown>, startTime, requestId).catch(() => null);
         writeAuditLog({ ...auditCtx, request_id: requestId, status_code: 200, latency_ms: Date.now() - startTime, metadata: { fallback: true, error: error instanceof Error ? error.message : 'Unknown' }, timestamp: new Date().toISOString() });
         const res = NextResponse.json({ ...fallback, query_history_id: queryHistoryId, _fallback: true }, { status: 200 });
         addAskVetiosBudgetHeaders(res.headers, tokenBudget);
@@ -536,6 +542,7 @@ async function logAskVetiosQuery(
     message: string,
     response: Record<string, unknown>,
     startTime: number,
+    requestId: string,
 ): Promise<string | null> {
     if (process.env.VETIOS_ASK_QUERY_HISTORY_ENABLED === 'false') return null;
     try {
@@ -619,10 +626,41 @@ async function logAskVetiosQuery(
             error = retry.error;
         }
         if (error || !data?.id) return null;
+        if (aiSecuritySnapshot) {
+            await persistAskVetiosAiSecurityTestEvent(client, buildAskVetiosAiSecurityTestEventDraft({
+                tenantId: null,
+                requestId,
+                askVetiosQueryId: String(data.id),
+                snapshot: aiSecuritySnapshot as unknown as AskVetiosAiSecuritySnapshot,
+                evidence: {
+                    endpoint: '/api/ask-vetios',
+                    ask_vetios_query_id: String(data.id),
+                    raw_prompt_stored: false,
+                    raw_case_note_stored: false,
+                    raw_retrieval_text_stored: false,
+                },
+            })).catch(() => null);
+        }
         return String(data.id);
     } catch {
         return null;
     }
+}
+
+async function persistAskVetiosAiSecurityTestEvent(
+    client: SupabaseClient,
+    draft: AskVetiosAiSecurityTestEventDraft,
+): Promise<string | null> {
+    const { data, error } = await client
+        .from('ai_security_test_events')
+        .insert(draft)
+        .select('id')
+        .single();
+    if (error) {
+        if (isMissingAiSecurityTestStorage(error) || error.code === '23505') return null;
+        return null;
+    }
+    return data?.id ? String(data.id) : null;
 }
 
 function inferResponseSections(response: Record<string, unknown>, queryType: string) {
@@ -695,5 +733,15 @@ function isMissingAskVetiosMoatColumns(error: { code?: string; message?: string 
         || message.includes('ai_security_status')
         || message.includes('regulatory_claims_snapshot')
         || message.includes('regulatory_claims_status')
+        || message.includes('schema cache');
+}
+
+function isMissingAiSecurityTestStorage(error: { code?: string; message?: string }): boolean {
+    const message = error.message?.toLowerCase() ?? '';
+    return error.code === '42P01'
+        || error.code === '42703'
+        || error.code === 'PGRST204'
+        || message.includes('ai_security_test_events')
+        || message.includes('security_packet')
         || message.includes('schema cache');
 }
