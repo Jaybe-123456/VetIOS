@@ -184,7 +184,7 @@ export interface AMRLabFeedSurveillanceEventRow {
     trend_bucket_key?: string | null;
     source_record_digest?: string | null;
     packet_hash?: string | null;
-    surveillance_packet?: Record<string, unknown> | null;
+    surveillance_packet?: AMRLabFeedSurveillancePacket | Record<string, unknown> | null;
     blockers?: string[] | null;
     warnings?: string[] | null;
     observed_at?: string | null;
@@ -236,6 +236,56 @@ export interface AMROneHealthExportPacket {
         source_row_count: number;
         source_digest_bundle_hash: string;
         export_packet_hash: string;
+    };
+    privacy_contract: string[];
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
+}
+
+export interface AMRLabFeedIngestionRowInput extends AMRLabFeedSurveillanceInput {
+    request_id: string;
+    amr_stewardship_event_id?: string | null;
+    case_id?: string | null;
+    inference_event_id?: string | null;
+    clinical_outcome_id?: string | null;
+}
+
+export interface AMRLabFeedIngestionBatchInput {
+    tenant_id: string;
+    lab_partner_ref?: string | null;
+    feed_source?: string | null;
+    rows: AMRLabFeedIngestionRowInput[];
+    generated_at?: string | null;
+}
+
+export interface AMRLabFeedIngestionBatchPacket {
+    schema_version: 'amr-lab-feed-ingestion-batch-v1';
+    generated_at: string;
+    tenant_id: string;
+    lab_partner_ref_hash: string | null;
+    feed_source: string;
+    ingestion_status: 'blocked' | 'partial' | 'ready';
+    summary: {
+        submitted_rows: number;
+        event_draft_count: number;
+        blocked_rows: number;
+        duplicate_source_digest_count: number;
+        lab_partner_feed_ready_rows: number;
+        one_health_export_ready_rows: number;
+        resistance_signal_rows: number;
+        unique_trend_buckets: number;
+        taxonomy_completion_score: number;
+        average_surveillance_score: number;
+        average_resistance_signal_score: number;
+    };
+    event_drafts: AMRLabFeedSurveillanceEventDraft[];
+    one_health_export_packet: AMROneHealthExportPacket;
+    provenance: {
+        source_table: 'amr_lab_feed_surveillance_events';
+        source_digest_bundle_hash: string;
+        event_packet_hash_bundle: string;
+        ingestion_packet_hash: string;
     };
     privacy_contract: string[];
     blockers: string[];
@@ -305,6 +355,36 @@ export const AMR_OUTCOME_STATUSES = [
     'unknown',
 ] as const;
 
+const PATHOGEN_TAXONOMY_ALIASES: Record<string, string> = {
+    e_coli: 'escherichia_coli',
+    ecoli: 'escherichia_coli',
+    escherichia_coli: 'escherichia_coli',
+    staph_pseudintermedius: 'staphylococcus_pseudintermedius',
+    s_pseudintermedius: 'staphylococcus_pseudintermedius',
+    staphylococcus_pseudintermedius: 'staphylococcus_pseudintermedius',
+    staphylococcus_intermedius_group: 'staphylococcus_pseudintermedius',
+    pseudomonas_aeruginosa: 'pseudomonas_aeruginosa',
+    klebsiella_pneumoniae: 'klebsiella_pneumoniae',
+    enterococcus_faecalis: 'enterococcus_faecalis',
+    proteus_mirabilis: 'proteus_mirabilis',
+};
+
+const DRUG_CLASS_TAXONOMY_ALIASES: Record<string, string> = {
+    beta_lactams: 'beta_lactam',
+    beta_lactam: 'beta_lactam',
+    betalactam: 'beta_lactam',
+    cephalosporins: 'cephalosporin',
+    cephalosporin: 'cephalosporin',
+    fluoroquinolones: 'fluoroquinolone',
+    fluoroquinolone: 'fluoroquinolone',
+    tetracyclines: 'tetracycline',
+    tetracycline: 'tetracycline',
+    aminoglycosides: 'aminoglycoside',
+    aminoglycoside: 'aminoglycoside',
+    sulfonamides: 'sulfonamide',
+    sulfonamide: 'sulfonamide',
+};
+
 export function normalizeAMRLabel(value: string): string {
     return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
@@ -323,6 +403,25 @@ export function normalizeAMRString(value: string | null | undefined): string | n
 export function normalizeAMRStringList(value: string[] | null | undefined): string[] {
     if (!Array.isArray(value)) return [];
     return Array.from(new Set(value.map(normalizeOptionalAMRLabel).filter((item): item is string => Boolean(item))));
+}
+
+export function normalizeAMRPathogenTaxonomy(value: string | null | undefined): {
+    pathogen_label: string | null;
+    pathogen_key: string | null;
+} {
+    const normalized = normalizeOptionalAMRLabel(value);
+    if (!normalized) return { pathogen_label: null, pathogen_key: null };
+    const key = PATHOGEN_TAXONOMY_ALIASES[normalizePathogenKey(normalized)] ?? normalizePathogenKey(normalized);
+    return {
+        pathogen_label: key,
+        pathogen_key: key,
+    };
+}
+
+export function normalizeAMRDrugClassTaxonomy(value: string | null | undefined): string | null {
+    const normalized = normalizeOptionalAMRLabel(value);
+    if (!normalized) return null;
+    return DRUG_CLASS_TAXONOMY_ALIASES[normalized] ?? normalized;
 }
 
 export function aggregateAMRStewardship(rows: AMRStewardshipEventRow[]): AMRStewardshipAggregate {
@@ -352,13 +451,14 @@ export function aggregateAMRStewardship(rows: AMRStewardshipEventRow[]): AMRStew
 
 export function buildAMRLabFeedSurveillancePacket(input: AMRLabFeedSurveillanceInput): AMRLabFeedSurveillancePacket {
     const species = normalizeAMRLabel(input.species);
-    const pathogenLabel = normalizeOptionalAMRLabel(input.pathogen_label);
-    const pathogenKey = pathogenLabel ? normalizePathogenKey(pathogenLabel) : null;
+    const pathogenTaxonomy = normalizeAMRPathogenTaxonomy(input.pathogen_label);
+    const pathogenLabel = pathogenTaxonomy.pathogen_label;
+    const pathogenKey = pathogenTaxonomy.pathogen_key;
     const syndrome = normalizeOptionalAMRLabel(input.syndrome);
     const infectionSite = normalizeOptionalAMRLabel(input.infection_site);
     const sampleSource = normalizeOptionalAMRLabel(input.sample_source);
     const drugName = normalizeAMRLabel(input.drug_name);
-    const drugClass = normalizeOptionalAMRLabel(input.drug_class);
+    const drugClass = normalizeAMRDrugClassTaxonomy(input.drug_class);
     const astPanel = input.ast_panel ?? {};
     const micResults = input.mic_results ?? {};
     const resistanceGenes = normalizeAMRStringList(input.resistance_genes ?? []);
@@ -628,6 +728,117 @@ export function buildAMROneHealthExportPacket(input: {
     };
 }
 
+export function buildAMRLabFeedIngestionBatchPacket(input: AMRLabFeedIngestionBatchInput): AMRLabFeedIngestionBatchPacket {
+    const generatedAt = input.generated_at ?? new Date().toISOString();
+    const feedSource = normalizeOptionalAMRLabel(input.feed_source) ?? 'unknown_lab_feed';
+    const labPartnerRef = normalizeAMRString(input.lab_partner_ref);
+    const eventDrafts = input.rows.map((row) => {
+        const packet = buildAMRLabFeedSurveillancePacket(row);
+        return buildAMRLabFeedSurveillanceEventDraft({
+            tenantId: input.tenant_id,
+            requestId: row.request_id,
+            amrStewardshipEventId: row.amr_stewardship_event_id,
+            caseId: row.case_id,
+            inferenceEventId: row.inference_event_id,
+            clinicalOutcomeId: row.clinical_outcome_id,
+            packet,
+            evidence: {
+                feed_source: feedSource,
+                lab_partner_ref_hash: labPartnerRef ? hashValue(labPartnerRef) : null,
+                raw_lab_report_stored: false,
+            },
+            observedAt: row.observed_at ?? generatedAt,
+        });
+    });
+    const oneHealthExportPacket = buildAMROneHealthExportPacket({
+        rows: eventDrafts,
+        generatedAt,
+    });
+    const sourceDigests = eventDrafts.map((draft) => draft.source_record_digest).sort();
+    const duplicateSourceDigestCount = countDuplicates(sourceDigests);
+    const blockedRows = eventDrafts.filter((draft) => draft.blockers.length > 0).length;
+    const labPartnerReadyRows = eventDrafts.filter((draft) => draft.lab_partner_feed_ready).length;
+    const exportReadyRows = eventDrafts.filter((draft) => draft.one_health_export_ready).length;
+    const resistanceSignalRows = eventDrafts.filter((draft) => draft.lab_feed_status === 'resistance_signal'
+        || draft.lab_feed_status === 'one_health_export_ready'
+        || draft.resistance_signal_score >= 0.45).length;
+    const uniqueTrendBuckets = new Set(eventDrafts.map((draft) => draft.trend_bucket_key)).size;
+    const taxonomyCompleteRows = eventDrafts.filter((draft) => Boolean(
+        draft.pathogen_key
+        && draft.drug_class
+        && (draft.infection_site || draft.sample_source),
+    )).length;
+    const blockers = uniqueStrings([
+        ...(eventDrafts.length === 0 ? ['amr_lab_feed_rows_missing'] : []),
+        ...(eventDrafts.some((draft) => draft.blockers.includes('direct_identifier_risk_in_amr_lab_feed')) ? ['direct_identifier_risk_in_source_rows'] : []),
+    ]);
+    const warnings = uniqueStrings([
+        ...(!labPartnerRef ? ['lab_partner_ref_missing'] : []),
+        ...(duplicateSourceDigestCount > 0 ? ['duplicate_source_record_digests_detected'] : []),
+        ...(taxonomyCompleteRows < eventDrafts.length ? ['pathogen_drug_or_site_taxonomy_incomplete'] : []),
+        ...(eventDrafts.length > 0 && exportReadyRows === 0 ? ['one_health_export_ready_rows_missing'] : []),
+        ...oneHealthExportPacket.warnings,
+    ]);
+    const packetWithoutHash = {
+        schema_version: 'amr-lab-feed-ingestion-batch-v1' as const,
+        generated_at: generatedAt,
+        tenant_id: input.tenant_id,
+        lab_partner_ref_hash: labPartnerRef ? hashValue(labPartnerRef) : null,
+        feed_source: feedSource,
+        ingestion_status: resolveAMRLabFeedIngestionStatus({
+            rowCount: eventDrafts.length,
+            blockedRows,
+            exportReadyRows,
+            blockers,
+        }),
+        summary: {
+            submitted_rows: input.rows.length,
+            event_draft_count: eventDrafts.length,
+            blocked_rows: blockedRows,
+            duplicate_source_digest_count: duplicateSourceDigestCount,
+            lab_partner_feed_ready_rows: labPartnerReadyRows,
+            one_health_export_ready_rows: exportReadyRows,
+            resistance_signal_rows: resistanceSignalRows,
+            unique_trend_buckets: uniqueTrendBuckets,
+            taxonomy_completion_score: ratio(taxonomyCompleteRows, eventDrafts.length),
+            average_surveillance_score: averageScore(eventDrafts.map((draft) => draft.surveillance_score)),
+            average_resistance_signal_score: averageScore(eventDrafts.map((draft) => draft.resistance_signal_score)),
+        },
+        event_drafts: eventDrafts,
+        one_health_export_packet: oneHealthExportPacket,
+        provenance: {
+            source_table: 'amr_lab_feed_surveillance_events' as const,
+            source_digest_bundle_hash: hashJson(sourceDigests),
+            event_packet_hash_bundle: hashJson(eventDrafts.map((draft) => draft.packet_hash).sort()),
+            ingestion_packet_hash: '',
+        },
+        privacy_contract: [
+            'Batch ingestion emits append-only de-identified surveillance drafts only.',
+            'Raw lab reports, accessions, owner identifiers, patient names, and credential material are excluded.',
+            'Lab partner references are hashed before inclusion in ingestion evidence.',
+            'AST and MIC source payloads are represented by stable hashes and normalized derived facts.',
+        ],
+        blockers,
+        warnings,
+        next_actions: buildAMRLabFeedIngestionNextActions({
+            rowCount: eventDrafts.length,
+            blockedRows,
+            exportReadyRows,
+            duplicateSourceDigestCount,
+            labPartnerRefPresent: Boolean(labPartnerRef),
+            blockers,
+        }),
+    };
+
+    return {
+        ...packetWithoutHash,
+        provenance: {
+            ...packetWithoutHash.provenance,
+            ingestion_packet_hash: hashJson(packetWithoutHash),
+        },
+    };
+}
+
 function countTop(values: Array<string | null | undefined>, fallback: string): Array<[string, number]> {
     const counts = new Map<string, number>();
     for (const value of values) {
@@ -817,6 +1028,45 @@ function resolveAMROneHealthExportStatus(input: {
     if (input.rowCount === 0 || input.blockers.includes('direct_identifier_risk_in_source_rows')) return 'blocked';
     if (input.exportReadyRows > 0 && input.blockers.length === 0) return 'export_ready';
     return 'foundation';
+}
+
+function resolveAMRLabFeedIngestionStatus(input: {
+    rowCount: number;
+    blockedRows: number;
+    exportReadyRows: number;
+    blockers: string[];
+}): AMRLabFeedIngestionBatchPacket['ingestion_status'] {
+    if (input.rowCount === 0 || input.blockers.length > 0) return 'blocked';
+    if (input.blockedRows > 0 || input.exportReadyRows < input.rowCount) return 'partial';
+    return 'ready';
+}
+
+function buildAMRLabFeedIngestionNextActions(input: {
+    rowCount: number;
+    blockedRows: number;
+    exportReadyRows: number;
+    duplicateSourceDigestCount: number;
+    labPartnerRefPresent: boolean;
+    blockers: string[];
+}): string[] {
+    return uniqueStrings([
+        ...(input.rowCount === 0 ? ['attach_ast_culture_lab_feed_batch'] : []),
+        ...(input.blockedRows > 0 ? ['review_blocked_amr_lab_feed_rows'] : []),
+        ...(input.exportReadyRows === 0 ? ['complete_taxonomy_and_ast_fields_for_one_health_export'] : []),
+        ...(input.duplicateSourceDigestCount > 0 ? ['deduplicate_lab_feed_source_records'] : []),
+        ...(!input.labPartnerRefPresent ? ['attach_lab_partner_reference'] : []),
+        ...(input.blockers.includes('direct_identifier_risk_in_source_rows') ? ['remove_identifier_bearing_lab_feed_fields'] : []),
+        ...(input.exportReadyRows > 0 && input.blockers.length === 0 ? ['persist_amr_lab_feed_surveillance_events'] : []),
+        ...(input.exportReadyRows > 0 && input.blockers.length === 0 ? ['publish_deidentified_one_health_export_packet'] : []),
+    ]);
+}
+
+function countDuplicates(values: string[]): number {
+    const counts = new Map<string, number>();
+    for (const value of values) {
+        counts.set(value, (counts.get(value) ?? 0) + 1);
+    }
+    return Array.from(counts.values()).reduce((sum, count) => sum + Math.max(0, count - 1), 0);
 }
 
 function isResistanceSignalRow(row: AMRLabFeedExportRow): boolean {

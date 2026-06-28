@@ -1,16 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import {
     aggregateAMRStewardship,
+    buildAMRLabFeedIngestionBatchPacket,
     buildAMROneHealthExportPacket,
     buildAMRLabFeedSurveillanceEventDraft,
     buildAMRLabFeedSurveillancePacket,
+    normalizeAMRDrugClassTaxonomy,
     normalizeAMRLabel,
+    normalizeAMRPathogenTaxonomy,
     normalizeAMRStringList,
 } from '@/lib/amr/stewardship';
 
 describe('AMR stewardship moat', () => {
     it('normalizes clinical AMR labels for surveillance joins', () => {
         expect(normalizeAMRLabel('Escherichia coli / UTI')).toBe('escherichia_coli_uti');
+        expect(normalizeAMRPathogenTaxonomy('E. coli')).toEqual({
+            pathogen_label: 'escherichia_coli',
+            pathogen_key: 'escherichia_coli',
+        });
+        expect(normalizeAMRDrugClassTaxonomy('Beta-Lactams')).toBe('beta_lactam');
         expect(normalizeAMRStringList(['Beta Lactam', 'beta-lactam', 'Fluoroquinolone'])).toEqual([
             'beta_lactam',
             'fluoroquinolone',
@@ -222,5 +230,95 @@ describe('AMR stewardship moat', () => {
         expect(exportPacket.provenance.export_packet_hash).toMatch(/^[a-f0-9]{64}$/);
         expect(exportPacket.privacy_contract.join(' ')).toContain('Raw lab reports');
         expect(JSON.stringify(exportPacket)).not.toContain('owner');
+    });
+
+    it('materializes de-identified AMR lab-feed ingestion batches for partner feeds', () => {
+        const batch = buildAMRLabFeedIngestionBatchPacket({
+            tenant_id: '33333333-3333-4333-8333-333333333333',
+            lab_partner_ref: 'reference-lab-account-9',
+            feed_source: 'IDEXX VetConnect PLUS',
+            generated_at: '2026-06-20T00:00:00.000Z',
+            rows: [
+                {
+                    request_id: '11111111-1111-4111-8111-111111111111',
+                    species: 'Canine',
+                    pathogen_label: 'E. coli',
+                    infection_site: 'Urinary tract',
+                    sample_source: 'Urine',
+                    culture_collected: true,
+                    culture_result: 'positive',
+                    ast_panel: {
+                        amoxicillin_clavulanate: { interpretation: 'R' },
+                        enrofloxacin: { interpretation: 'S' },
+                    },
+                    mic_results: {
+                        amoxicillin_clavulanate: '>=32',
+                    },
+                    resistance_classes: ['Beta-Lactams'],
+                    drug_name: 'Amoxicillin clavulanate',
+                    drug_class: 'Beta-Lactams',
+                    resistance_suspected: true,
+                    observed_at: '2026-06-19T10:00:00.000Z',
+                },
+                {
+                    request_id: '22222222-2222-4222-8222-222222222222',
+                    species: 'Canine',
+                    pathogen_label: 'Staph pseudintermedius',
+                    infection_site: 'Skin',
+                    sample_source: 'Swab',
+                    culture_collected: true,
+                    ast_panel: {
+                        cephalexin: { interpretation: 'I' },
+                    },
+                    drug_name: 'Cephalexin',
+                    drug_class: 'Cephalosporins',
+                    observed_at: '2026-06-19T12:00:00.000Z',
+                },
+            ],
+        });
+
+        expect(batch.ingestion_status).toBe('ready');
+        expect(batch.summary.submitted_rows).toBe(2);
+        expect(batch.summary.one_health_export_ready_rows).toBe(2);
+        expect(batch.summary.taxonomy_completion_score).toBe(1);
+        expect(batch.summary.duplicate_source_digest_count).toBe(0);
+        expect(batch.event_drafts[0].pathogen_key).toBe('escherichia_coli');
+        expect(batch.event_drafts[0].drug_class).toBe('beta_lactam');
+        expect(batch.one_health_export_packet.export_status).toBe('export_ready');
+        expect(batch.provenance.ingestion_packet_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(batch.next_actions).toContain('persist_amr_lab_feed_surveillance_events');
+        expect(JSON.stringify(batch)).not.toContain('reference-lab-account-9');
+        expect(JSON.stringify(batch)).not.toContain('owner');
+    });
+
+    it('flags duplicate and identifier-bearing AMR lab-feed rows before export', () => {
+        const row = {
+            request_id: '11111111-1111-4111-8111-111111111111',
+            species: 'Canine',
+            pathogen_label: 'E. coli',
+            infection_site: 'Urinary tract',
+            sample_source: 'Urine',
+            culture_collected: true,
+            ast_panel: {
+                amoxicillin_clavulanate: { interpretation: 'R' },
+            },
+            drug_name: 'Amoxicillin clavulanate',
+            drug_class: 'Beta lactam',
+            evidence: {
+                owner_email: 'client@example.com',
+            },
+            observed_at: '2026-06-19T10:00:00.000Z',
+        };
+        const batch = buildAMRLabFeedIngestionBatchPacket({
+            tenant_id: '33333333-3333-4333-8333-333333333333',
+            rows: [row, { ...row, request_id: '22222222-2222-4222-8222-222222222222' }],
+            generated_at: '2026-06-20T00:00:00.000Z',
+        });
+
+        expect(batch.ingestion_status).toBe('blocked');
+        expect(batch.blockers).toContain('direct_identifier_risk_in_source_rows');
+        expect(batch.warnings).toContain('duplicate_source_record_digests_detected');
+        expect(batch.summary.duplicate_source_digest_count).toBe(1);
+        expect(batch.next_actions).toContain('remove_identifier_bearing_lab_feed_fields');
     });
 });
