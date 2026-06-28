@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, createPublicKey, randomUUID, verify } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ClinicalApiActor } from '@/lib/auth/machineAuth';
 import {
@@ -89,6 +89,14 @@ export interface FederatedUpdateSubmissionInput {
     publicSummary?: Record<string, unknown> | null;
     evidence?: Record<string, unknown> | null;
     observedAt?: string | null;
+}
+
+export interface FederatedUpdateSignatureVerification {
+    status: 'verified' | 'legacy_unverified' | 'missing' | 'failed';
+    accepted: boolean;
+    blockers: string[];
+    warnings: string[];
+    evidence: Record<string, unknown>;
 }
 
 export interface FederationMembershipRow {
@@ -470,6 +478,10 @@ export async function submitFederatedUpdate(
         identity,
         task?.task_type ?? taskTypeForContributionRole(contributionRole),
     );
+    const signatureVerification = verifyFederatedUpdateSignature({
+        body: input.body,
+        attestation: attestationGate.attestation,
+    });
     const requestId = input.body.requestId ?? randomUUID();
     const C = FEDERATED_UPDATE_SUBMISSIONS.COLUMNS;
     const { data, error } = await client
@@ -486,7 +498,7 @@ export async function submitFederatedUpdate(
             [C.partner_ref]: identity.partnerRef,
             [C.participant_ref]: createParticipantRef(identity.federationKey, round.round_key, identity.tenantId, identity.nodeRef),
             [C.contribution_role]: contributionRole,
-            [C.submission_status]: 'submitted',
+            [C.submission_status]: signatureVerification.accepted ? 'submitted' : 'quarantined',
             [C.masking_protocol]: maskingProtocol,
             [C.payload_commitment_hash]: input.body.payloadCommitmentHash,
             [C.mask_commitment_hash]: input.body.maskCommitmentHash ?? null,
@@ -501,6 +513,10 @@ export async function submitFederatedUpdate(
                 node_attestation_id: attestationGate.attestation.id,
                 node_attestation_score: attestationGate.assessment.attestation_score,
                 node_attestation_verification_status: attestationGate.attestation.verification_status,
+                update_signature_verification: signatureVerification.evidence,
+                update_signature_verification_status: signatureVerification.status,
+                update_signature_verification_blockers: signatureVerification.blockers,
+                update_signature_verification_warnings: signatureVerification.warnings,
             },
             [C.observed_at]: input.body.observedAt ?? new Date().toISOString(),
         })
@@ -524,7 +540,7 @@ export async function submitFederatedUpdate(
         submission = mapUpdateSubmission(asRecord(data));
     }
 
-    const updatedTask = task && !cached
+    const updatedTask = task && !cached && submission.submission_status !== 'quarantined'
         ? await markTaskStatus(client, task, 'submitted')
         : task;
     const runtimeEvent = await recordFederationNodeRuntimeEvent(client, actor, {
@@ -534,7 +550,7 @@ export async function submitFederatedUpdate(
         federationRoundId: round.id,
         outcomeEligibilitySnapshotId: submission.outcome_eligibility_snapshot_id,
         runtimeEvent: contributionRole === 'unmask_share' ? 'unmask_share_submitted' : 'masked_update_submitted',
-        nodeStatus: 'online',
+        nodeStatus: submission.submission_status === 'quarantined' ? 'degraded' : 'online',
         secureAggregationStatus: 'ready',
         outcomeEligibilityStatus: submission.outcome_eligibility_snapshot_id ? 'eligible' : 'insufficient_evidence',
         evidence: {
@@ -542,6 +558,9 @@ export async function submitFederatedUpdate(
             task_id: updatedTask?.id ?? null,
             contribution_role: contributionRole,
             payload_commitment_hash: submission.payload_commitment_hash,
+            submission_status: submission.submission_status,
+            update_signature_verification_status: signatureVerification.status,
+            update_signature_verification_blockers: signatureVerification.blockers,
         },
     });
 
@@ -551,6 +570,105 @@ export async function submitFederatedUpdate(
         task: updatedTask,
         runtime_event: runtimeEvent,
         cached,
+    };
+}
+
+export function verifyFederatedUpdateSignature(input: {
+    body: FederatedUpdateSubmissionInput;
+    attestation: Pick<FederationNodeAttestationRow, 'signing_key_fingerprint' | 'verification_status'>;
+}): FederatedUpdateSignatureVerification {
+    const algorithm = normalizeOptionalText(input.body.signatureAlgorithm, 80);
+    const signedPayloadHash = normalizeHash(input.body.signedPayloadHash);
+    const signatureHash = normalizeHash(input.body.signatureHash);
+    const signingKeyFingerprint = normalizeOptionalText(input.body.signingKeyFingerprint, 160);
+    const attestedSigningKeyFingerprint = normalizeOptionalText(input.attestation.signing_key_fingerprint, 160);
+    const blockers = new Set<string>();
+    const warnings = new Set<string>();
+
+    if (!algorithm || !signedPayloadHash || !signatureHash || !signingKeyFingerprint) {
+        return {
+            status: 'missing',
+            accepted: false,
+            blockers: ['signature_material_missing_or_incomplete'],
+            warnings: ['signature_material_missing_or_incomplete'],
+            evidence: {
+                signature_material_complete: false,
+                public_signature_verifiable: false,
+                accepted_with_warning: false,
+            },
+        };
+    }
+
+    if (algorithm !== 'ed25519-node-signing-key-v1') {
+        blockers.add('legacy_or_external_signature_algorithm_not_locally_verified');
+        return {
+            status: 'legacy_unverified',
+            accepted: false,
+            blockers: Array.from(blockers).sort(),
+            warnings: Array.from(warnings).sort(),
+            evidence: {
+                signature_algorithm: algorithm,
+                signature_payload_hash: signedPayloadHash,
+                signature_hash: signatureHash,
+                signing_key_fingerprint: signingKeyFingerprint,
+                attested_signing_key_fingerprint: attestedSigningKeyFingerprint,
+                public_signature_verifiable: false,
+                accepted_with_warning: false,
+            },
+        };
+    }
+
+    const signatureEvidence = asRecord(asRecord(input.body.evidence).update_signature);
+    const signatureValueBase64 = readText(signatureEvidence.signature_value_base64);
+    const publicKeyDerBase64 = readText(signatureEvidence.signing_public_key_der_base64);
+    const evidencePayloadHash = normalizeHash(signatureEvidence.signature_payload_hash);
+    const evidenceSignatureHash = normalizeHash(signatureEvidence.signature_hash);
+    const evidenceSigningKeyFingerprint = normalizeOptionalText(signatureEvidence.signing_key_fingerprint, 160);
+
+    if (!signatureValueBase64) blockers.add('signature_value_missing');
+    if (!publicKeyDerBase64) blockers.add('signing_public_key_missing');
+    if (evidencePayloadHash !== signedPayloadHash) blockers.add('signature_payload_hash_mismatch');
+    if (evidenceSignatureHash !== signatureHash) blockers.add('signature_hash_mismatch');
+    if (evidenceSigningKeyFingerprint !== signingKeyFingerprint) blockers.add('signing_key_fingerprint_mismatch');
+    if (attestedSigningKeyFingerprint && attestedSigningKeyFingerprint !== signingKeyFingerprint) {
+        blockers.add('attested_signing_key_fingerprint_mismatch');
+    }
+
+    let computedSignatureHash: string | null = null;
+    let computedPublicKeyFingerprint: string | null = null;
+    let signatureValid = false;
+    try {
+        const signature = Buffer.from(signatureValueBase64 ?? '', 'base64');
+        const publicDer = Buffer.from(publicKeyDerBase64 ?? '', 'base64');
+        computedSignatureHash = createHash('sha256').update(signature).digest('hex');
+        computedPublicKeyFingerprint = createHash('sha256').update(publicDer).digest('hex').slice(0, 32);
+        if (computedSignatureHash !== signatureHash) blockers.add('computed_signature_hash_mismatch');
+        if (computedPublicKeyFingerprint !== signingKeyFingerprint) blockers.add('computed_signing_key_fingerprint_mismatch');
+        const publicKey = createPublicKey({ key: publicDer, format: 'der', type: 'spki' });
+        signatureValid = verify(null, Buffer.from(signedPayloadHash, 'utf8'), publicKey, signature);
+        if (!signatureValid) blockers.add('signature_verification_failed');
+    } catch {
+        blockers.add('signature_verification_exception');
+    }
+
+    const sortedBlockers = Array.from(blockers).sort();
+    return {
+        status: sortedBlockers.length === 0 ? 'verified' : 'failed',
+        accepted: sortedBlockers.length === 0,
+        blockers: sortedBlockers,
+        warnings: Array.from(warnings).sort(),
+        evidence: {
+            signature_algorithm: algorithm,
+            signature_payload_hash: signedPayloadHash,
+            signature_hash: signatureHash,
+            computed_signature_hash: computedSignatureHash,
+            signing_key_fingerprint: signingKeyFingerprint,
+            computed_signing_key_fingerprint: computedPublicKeyFingerprint,
+            attested_signing_key_fingerprint: attestedSigningKeyFingerprint,
+            public_signature_verifiable: true,
+            signature_valid: signatureValid,
+            raw_private_key_exported: false,
+        },
     };
 }
 
@@ -1013,6 +1131,12 @@ function normalizeOptionalText(value: unknown, max: number): string | null {
     if (typeof value !== 'string') return null;
     const normalized = value.trim();
     return normalized.length > 0 ? normalized.slice(0, max) : null;
+}
+
+function normalizeHash(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase();
+    return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
 }
 
 function inferMaskingProtocol(maskedUpdateSummary: Record<string, unknown> | null | undefined): string | null {
