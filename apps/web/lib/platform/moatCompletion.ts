@@ -167,6 +167,14 @@ export interface MoatCompletionEvidence {
         regulatory_reviewable: number;
         regulatory_review_events: number;
         regulatory_blocked_reviews: number;
+        regulatory_approved_reviews: number;
+        regulatory_cds_complete_reviews: number;
+        regulatory_model_card_approved_reviews: number;
+        regulatory_ifu_approved_reviews: number;
+        regulatory_clinical_signoff_approved_reviews: number;
+        regulatory_legal_signoff_approved_reviews: number;
+        regulatory_approval_events: number;
+        regulatory_external_attestation_events: number;
         last_signal_at: string | null;
     };
     retrieval_corpus: {
@@ -522,6 +530,15 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
         evidence.ask_vetios.security_external_attestation_tests,
     ]);
     const fullSecurityAttackCoverage = securityAttackFamilyCoverage >= 6;
+    const regulatoryArtifactCoverage = countPositiveValues([
+        evidence.ask_vetios.regulatory_cds_complete_reviews,
+        evidence.ask_vetios.regulatory_model_card_approved_reviews,
+        evidence.ask_vetios.regulatory_ifu_approved_reviews,
+        evidence.ask_vetios.regulatory_clinical_signoff_approved_reviews,
+        evidence.ask_vetios.regulatory_legal_signoff_approved_reviews,
+        evidence.ask_vetios.regulatory_external_attestation_events,
+    ]);
+    const fullRegulatoryApprovalCoverage = regulatoryArtifactCoverage >= 6;
     const federationLiveEvidence = evidence.federation.activation_events
         + evidence.federation.outcome_eligibility_snapshots
         + evidence.federation.runtime_events
@@ -951,17 +968,24 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             ],
             requires_outcome_loop: false,
             counts: {
-                live_event_count: evidence.ask_vetios.query_events + evidence.ask_vetios.regulatory_review_events,
+                live_event_count: evidence.ask_vetios.query_events
+                    + evidence.ask_vetios.regulatory_review_events
+                    + evidence.ask_vetios.regulatory_approval_events,
                 outcome_confirmed_count: 0,
-                provenance_verified_count: evidence.ask_vetios.regulatory_reviewable + evidence.ask_vetios.regulatory_review_events,
-                trust_scored_count: evidence.ask_vetios.grounded_drafts,
-                external_validation_count: externalValidationCount,
+                provenance_verified_count: evidence.ask_vetios.regulatory_reviewable
+                    + evidence.ask_vetios.regulatory_review_events
+                    + evidence.ask_vetios.regulatory_approval_events
+                    + regulatoryArtifactCoverage,
+                trust_scored_count: fullRegulatoryApprovalCoverage
+                    ? evidence.ask_vetios.grounded_drafts + regulatoryArtifactCoverage
+                    : 0,
+                external_validation_count: externalValidationCount + evidence.ask_vetios.regulatory_external_attestation_events,
                 last_signal_at: latestIso([lastAskSignal, evidence.trust_ops.last_signal_at]),
             },
             defensible_minimums: {
                 live_event_count: 100,
                 provenance_verified_count: 30,
-                trust_scored_count: 30,
+                trust_scored_count: 6,
                 external_validation_count: 1,
             },
             requires_external_validation: true,
@@ -970,7 +994,17 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 regulatory_reviewable: evidence.ask_vetios.regulatory_reviewable,
                 regulatory_review_events: evidence.ask_vetios.regulatory_review_events,
                 regulatory_blocked_reviews: evidence.ask_vetios.regulatory_blocked_reviews,
-                external_validation_count: externalValidationCount,
+                regulatory_approved_reviews: evidence.ask_vetios.regulatory_approved_reviews,
+                regulatory_cds_complete_reviews: evidence.ask_vetios.regulatory_cds_complete_reviews,
+                regulatory_model_card_approved_reviews: evidence.ask_vetios.regulatory_model_card_approved_reviews,
+                regulatory_ifu_approved_reviews: evidence.ask_vetios.regulatory_ifu_approved_reviews,
+                regulatory_clinical_signoff_approved_reviews: evidence.ask_vetios.regulatory_clinical_signoff_approved_reviews,
+                regulatory_legal_signoff_approved_reviews: evidence.ask_vetios.regulatory_legal_signoff_approved_reviews,
+                regulatory_approval_events: evidence.ask_vetios.regulatory_approval_events,
+                regulatory_external_attestation_events: evidence.ask_vetios.regulatory_external_attestation_events,
+                regulatory_artifact_coverage: regulatoryArtifactCoverage,
+                full_regulatory_approval_coverage: fullRegulatoryApprovalCoverage,
+                external_validation_count: externalValidationCount + evidence.ask_vetios.regulatory_external_attestation_events,
             },
             owner_label: 'Trust Ops',
         }),
@@ -1156,6 +1190,14 @@ async function loadAskVetiosEvidence(
         regulatoryReviewable,
         regulatoryReviewEvents,
         regulatoryBlockedReviews,
+        regulatoryApprovedReviews,
+        regulatoryCdsCompleteReviews,
+        regulatoryModelCardApprovedReviews,
+        regulatoryIfuApprovedReviews,
+        regulatoryClinicalSignoffApprovedReviews,
+        regulatoryLegalSignoffApprovedReviews,
+        regulatoryApprovalEvents,
+        regulatoryExternalAttestationEvents,
         lastSignalAt,
         lastSecurityAt,
         lastRegulatoryAt,
@@ -1184,6 +1226,14 @@ async function loadAskVetiosEvidence(
         countRows(client, table, (query) => askScope(query).eq('regulatory_claims_status', 'cds_reviewable'), warnings, 'Ask VetIOS regulatory reviewable'),
         countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS regulatory review events'),
         countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).in('claim_review_status', ['blocked', 'pending']), warnings, 'Ask VetIOS blocked regulatory reviews'),
+        countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).eq('claim_review_status', 'approved'), warnings, 'Ask VetIOS approved regulatory reviews'),
+        countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).eq('cds_evidence_pack_status', 'complete'), warnings, 'Ask VetIOS complete CDS evidence packs'),
+        countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).eq('model_card_status', 'approved'), warnings, 'Ask VetIOS approved model cards'),
+        countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).eq('ifu_status', 'approved'), warnings, 'Ask VetIOS approved IFUs'),
+        countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).eq('clinical_signoff_status', 'approved'), warnings, 'Ask VetIOS clinical regulatory signoffs'),
+        countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).eq('legal_signoff_status', 'approved'), warnings, 'Ask VetIOS legal regulatory signoffs'),
+        countRows(client, 'regulatory_claim_approval_events', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS regulatory approval events'),
+        countRows(client, 'regulatory_claim_approval_events', (query) => applyNullableTenantScope(query, tenantId).eq('action_type', 'external_attestation').eq('action_status', 'attested'), warnings, 'Ask VetIOS regulatory external attestations'),
         latestTimestamp(client, table, 'created_at', askScope, warnings, 'Ask VetIOS latest signal'),
         latestTimestamp(client, 'ai_security_test_events', 'observed_at', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS security latest signal'),
         latestTimestamp(client, 'regulatory_claim_review_events', 'observed_at', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS regulatory latest signal'),
@@ -1210,6 +1260,14 @@ async function loadAskVetiosEvidence(
         regulatory_reviewable: regulatoryReviewable,
         regulatory_review_events: regulatoryReviewEvents,
         regulatory_blocked_reviews: regulatoryBlockedReviews,
+        regulatory_approved_reviews: regulatoryApprovedReviews,
+        regulatory_cds_complete_reviews: regulatoryCdsCompleteReviews,
+        regulatory_model_card_approved_reviews: regulatoryModelCardApprovedReviews,
+        regulatory_ifu_approved_reviews: regulatoryIfuApprovedReviews,
+        regulatory_clinical_signoff_approved_reviews: regulatoryClinicalSignoffApprovedReviews,
+        regulatory_legal_signoff_approved_reviews: regulatoryLegalSignoffApprovedReviews,
+        regulatory_approval_events: regulatoryApprovalEvents,
+        regulatory_external_attestation_events: regulatoryExternalAttestationEvents,
         last_signal_at: latestIso([lastSignalAt, lastSecurityAt, lastRegulatoryAt]),
     };
 }

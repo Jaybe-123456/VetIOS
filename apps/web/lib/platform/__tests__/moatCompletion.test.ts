@@ -292,6 +292,57 @@ describe('moat completion scoring', () => {
         expect(security?.evidence.full_security_attack_coverage).toBe(true);
     });
 
+    it('requires governed CDS, model-card, IFU, signoff, and attestation coverage before regulatory trust credit', () => {
+        const partialSnapshot = buildMoatCompletionSnapshot(evidence({
+            ask_vetios: {
+                query_events: 20,
+                grounded_drafts: 12,
+                regulatory_reviewable: 8,
+                regulatory_review_events: 8,
+                regulatory_approval_events: 2,
+                regulatory_cds_complete_reviews: 8,
+                regulatory_model_card_approved_reviews: 0,
+                regulatory_ifu_approved_reviews: 0,
+                regulatory_clinical_signoff_approved_reviews: 0,
+                regulatory_legal_signoff_approved_reviews: 0,
+                regulatory_external_attestation_events: 0,
+            },
+            trust_ops: {
+                external_validations: 1,
+            },
+        }));
+        const completeSnapshot = buildMoatCompletionSnapshot(evidence({
+            ask_vetios: {
+                query_events: 20,
+                grounded_drafts: 12,
+                regulatory_reviewable: 8,
+                regulatory_review_events: 8,
+                regulatory_approval_events: 6,
+                regulatory_cds_complete_reviews: 8,
+                regulatory_model_card_approved_reviews: 2,
+                regulatory_ifu_approved_reviews: 2,
+                regulatory_clinical_signoff_approved_reviews: 2,
+                regulatory_legal_signoff_approved_reviews: 2,
+                regulatory_external_attestation_events: 1,
+            },
+        }));
+
+        const partial = partialSnapshot.moats.find((moat) => moat.moat_key === 'regulatory_claims_discipline');
+        const complete = completeSnapshot.moats.find((moat) => moat.moat_key === 'regulatory_claims_discipline');
+
+        expect(partial?.completion_level).toBe('foundation');
+        expect(partial?.trust_scored_count).toBe(0);
+        expect(partial?.evidence.regulatory_artifact_coverage).toBe(1);
+        expect(partial?.evidence.full_regulatory_approval_coverage).toBe(false);
+        expect(complete?.completion_level).toBe('operating');
+        expect(complete?.live_event_count).toBe(34);
+        expect(complete?.provenance_verified_count).toBe(28);
+        expect(complete?.trust_scored_count).toBe(18);
+        expect(complete?.external_validation_count).toBe(1);
+        expect(complete?.evidence.regulatory_artifact_coverage).toBe(6);
+        expect(complete?.evidence.full_regulatory_approval_coverage).toBe(true);
+    });
+
     it('graduates veterinary retrieval from corpus audit evidence, not only query grounding', () => {
         const snapshot = buildMoatCompletionSnapshot(evidence({
             dataset: {
@@ -454,6 +505,14 @@ function evidence(overrides: {
             regulatory_reviewable: 0,
             regulatory_review_events: 0,
             regulatory_blocked_reviews: 0,
+            regulatory_approved_reviews: 0,
+            regulatory_cds_complete_reviews: 0,
+            regulatory_model_card_approved_reviews: 0,
+            regulatory_ifu_approved_reviews: 0,
+            regulatory_clinical_signoff_approved_reviews: 0,
+            regulatory_legal_signoff_approved_reviews: 0,
+            regulatory_approval_events: 0,
+            regulatory_external_attestation_events: 0,
             last_signal_at: null,
             ...overrides.ask_vetios,
         },
