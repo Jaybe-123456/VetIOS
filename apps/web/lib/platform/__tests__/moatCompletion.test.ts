@@ -231,6 +231,67 @@ describe('moat completion scoring', () => {
         expect(workflow?.evidence.full_operating_workflow_surface).toBe(false);
     });
 
+    it('requires broad attack-family coverage before AI security gets trust-score credit', () => {
+        const snapshot = buildMoatCompletionSnapshot(evidence({
+            ask_vetios: {
+                query_events: 20,
+                security_review_required: 2,
+                security_test_events: 12,
+                security_incident_events: 1,
+                security_prompt_injection_tests: 12,
+                security_rag_boundary_tests: 0,
+                security_tool_abuse_tests: 0,
+                security_data_exfiltration_tests: 0,
+                security_incident_response_tests: 0,
+                security_external_attestation_tests: 0,
+                security_attack_detected_tests: 12,
+                security_policy_blocked_tests: 12,
+            },
+            trust_ops: {
+                external_validations: 1,
+            },
+        }));
+
+        const security = snapshot.moats.find((moat) => moat.moat_key === 'ai_security_layer');
+
+        expect(security?.completion_level).toBe('foundation');
+        expect(security?.provenance_verified_count).toBe(15);
+        expect(security?.trust_scored_count).toBe(0);
+        expect(security?.missing_evidence).toContain('trust_scored_records');
+        expect(security?.evidence.security_attack_family_coverage).toBe(1);
+        expect(security?.evidence.full_security_attack_coverage).toBe(false);
+    });
+
+    it('credits AI security trust evidence only after prompt, RAG, tool, exfiltration, incident, and attestation tests exist', () => {
+        const snapshot = buildMoatCompletionSnapshot(evidence({
+            ask_vetios: {
+                query_events: 20,
+                security_review_required: 2,
+                security_test_events: 12,
+                security_incident_events: 2,
+                security_prompt_injection_tests: 2,
+                security_rag_boundary_tests: 2,
+                security_tool_abuse_tests: 2,
+                security_data_exfiltration_tests: 2,
+                security_incident_response_tests: 2,
+                security_external_attestation_tests: 2,
+                security_attack_detected_tests: 10,
+                security_policy_blocked_tests: 12,
+            },
+            trust_ops: {
+                external_validations: 1,
+            },
+        }));
+
+        const security = snapshot.moats.find((moat) => moat.moat_key === 'ai_security_layer');
+
+        expect(security?.completion_level).toBe('operating');
+        expect(security?.provenance_verified_count).toBe(20);
+        expect(security?.trust_scored_count).toBe(18);
+        expect(security?.evidence.security_attack_family_coverage).toBe(6);
+        expect(security?.evidence.full_security_attack_coverage).toBe(true);
+    });
+
     it('graduates veterinary retrieval from corpus audit evidence, not only query grounding', () => {
         const snapshot = buildMoatCompletionSnapshot(evidence({
             dataset: {
@@ -382,6 +443,14 @@ function evidence(overrides: {
             security_review_required: 0,
             security_test_events: 0,
             security_incident_events: 0,
+            security_prompt_injection_tests: 0,
+            security_rag_boundary_tests: 0,
+            security_tool_abuse_tests: 0,
+            security_data_exfiltration_tests: 0,
+            security_incident_response_tests: 0,
+            security_external_attestation_tests: 0,
+            security_attack_detected_tests: 0,
+            security_policy_blocked_tests: 0,
             regulatory_reviewable: 0,
             regulatory_review_events: 0,
             regulatory_blocked_reviews: 0,

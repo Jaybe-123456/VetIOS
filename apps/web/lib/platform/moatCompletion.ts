@@ -156,6 +156,14 @@ export interface MoatCompletionEvidence {
         security_review_required: number;
         security_test_events: number;
         security_incident_events: number;
+        security_prompt_injection_tests: number;
+        security_rag_boundary_tests: number;
+        security_tool_abuse_tests: number;
+        security_data_exfiltration_tests: number;
+        security_incident_response_tests: number;
+        security_external_attestation_tests: number;
+        security_attack_detected_tests: number;
+        security_policy_blocked_tests: number;
         regulatory_reviewable: number;
         regulatory_review_events: number;
         regulatory_blocked_reviews: number;
@@ -505,6 +513,15 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
         evidence.workflow.operating_follow_up_runs,
     ]);
     const fullOperatingWorkflowSurface = operatingWorkflowCapabilityCoverage >= 4;
+    const securityAttackFamilyCoverage = countPositiveValues([
+        evidence.ask_vetios.security_prompt_injection_tests,
+        evidence.ask_vetios.security_rag_boundary_tests,
+        evidence.ask_vetios.security_tool_abuse_tests,
+        evidence.ask_vetios.security_data_exfiltration_tests,
+        evidence.ask_vetios.security_incident_response_tests,
+        evidence.ask_vetios.security_external_attestation_tests,
+    ]);
+    const fullSecurityAttackCoverage = securityAttackFamilyCoverage >= 6;
     const federationLiveEvidence = evidence.federation.activation_events
         + evidence.federation.outcome_eligibility_snapshots
         + evidence.federation.runtime_events
@@ -882,18 +899,22 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 'security_review_queue',
             ],
             requires_outcome_loop: false,
-            requires_trust_score: false,
             counts: {
                 live_event_count: evidence.ask_vetios.query_events + evidence.ask_vetios.security_test_events,
                 outcome_confirmed_count: 0,
-                provenance_verified_count: evidence.ask_vetios.security_review_required + evidence.ask_vetios.security_test_events,
-                trust_scored_count: 0,
+                provenance_verified_count: evidence.ask_vetios.security_review_required
+                    + evidence.ask_vetios.security_test_events
+                    + securityAttackFamilyCoverage,
+                trust_scored_count: fullSecurityAttackCoverage
+                    ? securityAttackFamilyCoverage + evidence.ask_vetios.security_policy_blocked_tests
+                    : 0,
                 external_validation_count: externalValidationCount,
                 last_signal_at: latestIso([lastAskSignal, evidence.trust_ops.last_signal_at]),
             },
             defensible_minimums: {
                 live_event_count: 100,
                 provenance_verified_count: 10,
+                trust_scored_count: 6,
                 external_validation_count: 1,
             },
             requires_external_validation: true,
@@ -902,6 +923,16 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 security_review_required: evidence.ask_vetios.security_review_required,
                 security_test_events: evidence.ask_vetios.security_test_events,
                 security_incident_events: evidence.ask_vetios.security_incident_events,
+                security_prompt_injection_tests: evidence.ask_vetios.security_prompt_injection_tests,
+                security_rag_boundary_tests: evidence.ask_vetios.security_rag_boundary_tests,
+                security_tool_abuse_tests: evidence.ask_vetios.security_tool_abuse_tests,
+                security_data_exfiltration_tests: evidence.ask_vetios.security_data_exfiltration_tests,
+                security_incident_response_tests: evidence.ask_vetios.security_incident_response_tests,
+                security_external_attestation_tests: evidence.ask_vetios.security_external_attestation_tests,
+                security_attack_detected_tests: evidence.ask_vetios.security_attack_detected_tests,
+                security_policy_blocked_tests: evidence.ask_vetios.security_policy_blocked_tests,
+                security_attack_family_coverage: securityAttackFamilyCoverage,
+                full_security_attack_coverage: fullSecurityAttackCoverage,
                 external_validation_count: externalValidationCount,
             },
             owner_label: 'Security Ops',
@@ -1114,6 +1145,14 @@ async function loadAskVetiosEvidence(
         securityReviewRequired,
         securityTestEvents,
         securityIncidentEvents,
+        securityPromptInjectionTests,
+        securityRagBoundaryTests,
+        securityToolAbuseTests,
+        securityDataExfiltrationTests,
+        securityIncidentResponseTests,
+        securityExternalAttestationTests,
+        securityAttackDetectedTests,
+        securityPolicyBlockedTests,
         regulatoryReviewable,
         regulatoryReviewEvents,
         regulatoryBlockedReviews,
@@ -1134,6 +1173,14 @@ async function loadAskVetiosEvidence(
         countRows(client, table, (query) => askScope(query).eq('ai_security_status', 'security_review_required'), warnings, 'Ask VetIOS security review required'),
         countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS AI security test events'),
         countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('incident_required', true), warnings, 'Ask VetIOS AI security incident events'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('test_case_type', 'prompt_injection'), warnings, 'Ask VetIOS prompt-injection security tests'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('test_case_type', 'rag_boundary'), warnings, 'Ask VetIOS RAG-boundary security tests'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('test_case_type', 'tool_abuse'), warnings, 'Ask VetIOS tool-abuse security tests'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('test_case_type', 'data_exfiltration'), warnings, 'Ask VetIOS data-exfiltration security tests'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('test_case_type', 'incident_response'), warnings, 'Ask VetIOS incident-response security tests'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('test_case_type', 'external_attestation'), warnings, 'Ask VetIOS external-attestation security tests'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('attack_detected', true), warnings, 'Ask VetIOS detected attack security tests'),
+        countRows(client, 'ai_security_test_events', (query) => applyNullableTenantScope(query, tenantId).eq('blocked_by_policy', true), warnings, 'Ask VetIOS policy-blocked security tests'),
         countRows(client, table, (query) => askScope(query).eq('regulatory_claims_status', 'cds_reviewable'), warnings, 'Ask VetIOS regulatory reviewable'),
         countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId), warnings, 'Ask VetIOS regulatory review events'),
         countRows(client, 'regulatory_claim_review_events', (query) => applyNullableTenantScope(query, tenantId).in('claim_review_status', ['blocked', 'pending']), warnings, 'Ask VetIOS blocked regulatory reviews'),
@@ -1152,6 +1199,14 @@ async function loadAskVetiosEvidence(
         security_review_required: securityReviewRequired,
         security_test_events: securityTestEvents,
         security_incident_events: securityIncidentEvents,
+        security_prompt_injection_tests: securityPromptInjectionTests,
+        security_rag_boundary_tests: securityRagBoundaryTests,
+        security_tool_abuse_tests: securityToolAbuseTests,
+        security_data_exfiltration_tests: securityDataExfiltrationTests,
+        security_incident_response_tests: securityIncidentResponseTests,
+        security_external_attestation_tests: securityExternalAttestationTests,
+        security_attack_detected_tests: securityAttackDetectedTests,
+        security_policy_blocked_tests: securityPolicyBlockedTests,
         regulatory_reviewable: regulatoryReviewable,
         regulatory_review_events: regulatoryReviewEvents,
         regulatory_blocked_reviews: regulatoryBlockedReviews,
