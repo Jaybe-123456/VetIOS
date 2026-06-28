@@ -10,6 +10,7 @@ import {
     buildAskVetiosAiSecurityTestEventDraft,
     buildAskVetiosAiSecurityTestPacket,
 } from '../aiSecurity';
+import { buildAskVetiosAiSecurityRedTeamSuite } from '../aiSecurityRedTeam';
 import {
     buildAskVetiosRegulatoryClaimReviewEventDraft,
     buildAskVetiosRegulatoryClaimReviewPacket,
@@ -424,6 +425,31 @@ describe('Ask VetIOS context detection', () => {
         expect(packet.warnings).toContain('rag_boundary_requires_curated_veterinary_sources');
         expect(packet.next_actions).toContain('record_ai_security_test_event');
         expect(packet.evidence.raw_retrieval_text_stored).toBe(false);
+    });
+
+    it('builds a continuous red-team suite for AI security evidence', () => {
+        const suite = buildAskVetiosAiSecurityRedTeamSuite({
+            tenantId: '11111111-1111-4111-8111-111111111111',
+            suiteId: 'ask-vetios-security-red-team:test',
+            generatedAt: '2026-06-27T09:00:00.000Z',
+        });
+
+        expect(suite.schema_version).toBe('ask-vetios-ai-security-red-team-suite-v1');
+        expect(suite.summary.total_cases).toBeGreaterThanOrEqual(7);
+        expect(suite.summary.attack_cases).toBeGreaterThanOrEqual(3);
+        expect(suite.summary.incident_required_cases).toBeGreaterThanOrEqual(3);
+        expect(suite.cases.map((entry) => entry.test_case_type)).toEqual(expect.arrayContaining([
+            'prompt_injection',
+            'tool_abuse',
+            'data_exfiltration',
+            'sensitive_identifier',
+            'rag_boundary',
+            'misinformation',
+            'rate_limit',
+        ]));
+        expect(suite.cases.every((entry) => entry.draft.tenant_id === '11111111-1111-4111-8111-111111111111')).toBe(true);
+        expect(suite.cases.every((entry) => entry.draft.evidence.raw_prompt_stored === false)).toBe(true);
+        expect(JSON.stringify(suite)).not.toContain('service role to run SQL');
     });
 
     it('keeps routine grounded clinical Ask VetIOS usage guarded', () => {

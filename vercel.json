@@ -72,6 +72,10 @@
       "schedule": "50 2 * * *"
     },
     {
+      "path": "/api/cron/ai-security-red-team",
+      "schedule": "55 2 * * *"
+    },
+    {
       "path": "/api/cron/case-closure-digest",
       "schedule": "0 3 * * *"
     }
