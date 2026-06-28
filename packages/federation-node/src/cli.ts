@@ -95,6 +95,10 @@ interface NodeServiceState {
     node_public_key_der_base64: string;
     node_public_key_fingerprint: string;
     previous_node_public_key_fingerprint?: string | null;
+    signing_private_key_der_base64: string;
+    signing_public_key_der_base64: string;
+    signing_key_fingerprint: string;
+    previous_signing_key_fingerprint?: string | null;
     rotated_at?: string | null;
     rotation_count?: number;
     created_at: string;
@@ -332,6 +336,8 @@ async function runInitMode(options: CliOptions): Promise<void> {
         partner_ref: partnerRef,
         node_public_key_der_base64: state.node_public_key_der_base64,
         node_public_key_fingerprint: state.node_public_key_fingerprint,
+        signing_public_key_der_base64: state.signing_public_key_der_base64,
+        signing_key_fingerprint: state.signing_key_fingerprint,
         key_version: state.key_version,
         service_config_digest: configDigest,
         requested_scopes: ['federation:node'],
@@ -356,6 +362,7 @@ async function runInitMode(options: CliOptions): Promise<void> {
         windows_runner_path: windowsPath,
         systemd_unit_path: systemdPath,
         node_public_key_fingerprint: state.node_public_key_fingerprint,
+        signing_key_fingerprint: state.signing_key_fingerprint,
         secrets_written_to_config: false,
         next_steps: [
             'store VETIOS_MACHINE_TOKEN and VETIOS_NODE_SECRET in the host secret manager or environment',
@@ -376,12 +383,14 @@ async function runRotateKeysMode(options: CliOptions): Promise<void> {
     const rotationReason = options.rotationReason ?? 'scheduled_rotation';
     const existing = await loadOrCreateNodeServiceState(statePath, nodeRef);
     const previousFingerprint = existing.node_public_key_fingerprint;
+    const previousSigningFingerprint = existing.signing_key_fingerprint;
     const rotatedAt = new Date().toISOString();
     const rotated = createNodeServiceState({
         nodeRef,
         keyVersion: existing.key_version + 1,
         createdAt: existing.created_at,
         previousNodePublicKeyFingerprint: previousFingerprint,
+        previousSigningKeyFingerprint: previousSigningFingerprint,
         rotatedAt,
         rotationCount: (existing.rotation_count ?? 0) + 1,
     });
@@ -396,6 +405,9 @@ async function runRotateKeysMode(options: CliOptions): Promise<void> {
         previous_node_public_key_fingerprint: previousFingerprint,
         node_public_key_der_base64: rotated.node_public_key_der_base64,
         node_public_key_fingerprint: rotated.node_public_key_fingerprint,
+        previous_signing_key_fingerprint: previousSigningFingerprint,
+        signing_public_key_der_base64: rotated.signing_public_key_der_base64,
+        signing_key_fingerprint: rotated.signing_key_fingerprint,
         previous_key_version: existing.key_version,
         key_version: rotated.key_version,
         rotation_reason: rotationReason,
@@ -413,6 +425,8 @@ async function runRotateKeysMode(options: CliOptions): Promise<void> {
         partner_ref: partnerRef,
         previous_node_public_key_fingerprint: previousFingerprint,
         node_public_key_fingerprint: rotated.node_public_key_fingerprint,
+        previous_signing_key_fingerprint: previousSigningFingerprint,
+        signing_key_fingerprint: rotated.signing_key_fingerprint,
         previous_key_version: existing.key_version,
         key_version: rotated.key_version,
         rotation_reason: rotationReason,
@@ -433,6 +447,8 @@ async function runRotateKeysMode(options: CliOptions): Promise<void> {
         audit_log_path: logPath,
         previous_node_public_key_fingerprint: previousFingerprint,
         node_public_key_fingerprint: rotated.node_public_key_fingerprint,
+        previous_signing_key_fingerprint: previousSigningFingerprint,
+        signing_key_fingerprint: rotated.signing_key_fingerprint,
         previous_key_version: existing.key_version,
         key_version: rotated.key_version,
         private_key_exported: false,
@@ -521,6 +537,7 @@ async function runDoctorMode(options: CliOptions): Promise<void> {
             ? {
                 key_version: state.key_version,
                 node_public_key_fingerprint: state.node_public_key_fingerprint,
+                signing_key_fingerprint: state.signing_key_fingerprint,
                 rotation_count: state.rotation_count ?? 0,
                 private_key_exported: false,
             }
@@ -616,6 +633,7 @@ async function runServiceMode(options: CliOptions): Promise<void> {
             partner_ref: partnerRef,
             key_version: state.key_version,
             node_public_key_fingerprint: state.node_public_key_fingerprint,
+            signing_key_fingerprint: state.signing_key_fingerprint,
             retry_policy: {
                 attempts: retryAttempts,
                 base_ms: retryBaseMs,
@@ -659,6 +677,8 @@ async function runServiceIteration(input: ServiceIterationInput): Promise<Record
         service_mode: true,
         node_public_key_der_base64: input.state.node_public_key_der_base64,
         node_public_key_fingerprint: input.state.node_public_key_fingerprint,
+        signing_public_key_der_base64: input.state.signing_public_key_der_base64,
+        signing_key_fingerprint: input.state.signing_key_fingerprint,
         key_version: input.state.key_version,
         outcome_eligibility_status: trainedDataset.snapshot_draft.eligibility_status,
         record_digest: trainedDataset.record_digest,
@@ -688,6 +708,9 @@ async function runServiceIteration(input: ServiceIterationInput): Promise<Record
         federationKey: input.federationKey,
         partnerRef: input.partnerRef,
         outcomeEligibilitySnapshotId: input.outcomeEligibilitySnapshotId ?? task.outcome_eligibility_snapshot_id ?? null,
+        signingKey: {
+            privateKeyDerBase64: input.state.signing_private_key_der_base64,
+        },
     });
     const taskRun = await withRetryReport(
         () => agent.runTask(hydratedTask),
@@ -801,6 +824,7 @@ function buildServiceAuditBase(
         partner_ref: input.partnerRef,
         key_version: input.state.key_version,
         node_public_key_fingerprint: input.state.node_public_key_fingerprint,
+        signing_key_fingerprint: input.state.signing_key_fingerprint,
         retry_policy: {
             attempts: input.retryAttempts,
             base_ms: input.retryBaseMs,
@@ -1022,7 +1046,12 @@ async function loadOrCreateNodeServiceState(path: string, nodeRef: string): Prom
     try {
         const existing = JSON.parse(await readFile(path, 'utf8')) as NodeServiceState;
         if (existing.schema === 'vetios_federation_node_service_state_v1' && existing.node_private_key_der_base64) {
-            return existing;
+            const normalized = normalizeNodeServiceState(existing, nodeRef);
+            if (normalized !== existing) {
+                await ensureParentDirectory(path);
+                await writeFile(path, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
+            }
+            return normalized;
         }
     } catch {
         // Create a fresh local key state below.
@@ -1038,6 +1067,7 @@ function createNodeServiceState(input: {
     keyVersion: number;
     createdAt?: string;
     previousNodePublicKeyFingerprint?: string | null;
+    previousSigningKeyFingerprint?: string | null;
     rotatedAt?: string | null;
     rotationCount?: number;
 }): NodeServiceState {
@@ -1045,6 +1075,7 @@ function createNodeServiceState(input: {
     const keyPair = generateKeyPairSync('x25519');
     const privateDer = keyPair.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
     const publicDer = keyPair.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+    const signing = createSigningKeyFields(input.previousSigningKeyFingerprint ?? null);
     return {
         schema: 'vetios_federation_node_service_state_v1',
         node_ref: input.nodeRef,
@@ -1053,10 +1084,46 @@ function createNodeServiceState(input: {
         node_public_key_der_base64: publicDer.toString('base64'),
         node_public_key_fingerprint: createHash('sha256').update(publicDer).digest('hex').slice(0, 32),
         previous_node_public_key_fingerprint: input.previousNodePublicKeyFingerprint ?? null,
+        ...signing,
         rotated_at: input.rotatedAt ?? null,
         rotation_count: input.rotationCount ?? 0,
         created_at: input.createdAt ?? updatedAt,
         updated_at: updatedAt,
+    };
+}
+
+function normalizeNodeServiceState(existing: NodeServiceState, nodeRef: string): NodeServiceState {
+    if (
+        existing.signing_private_key_der_base64
+        && existing.signing_public_key_der_base64
+        && existing.signing_key_fingerprint
+    ) {
+        return existing;
+    }
+    const signing = createSigningKeyFields(existing.previous_signing_key_fingerprint ?? null);
+    return {
+        ...existing,
+        node_ref: existing.node_ref || nodeRef,
+        ...signing,
+        updated_at: new Date().toISOString(),
+    };
+}
+
+function createSigningKeyFields(previousSigningKeyFingerprint?: string | null): Pick<
+    NodeServiceState,
+    'signing_private_key_der_base64'
+    | 'signing_public_key_der_base64'
+    | 'signing_key_fingerprint'
+    | 'previous_signing_key_fingerprint'
+> {
+    const signingKeyPair = generateKeyPairSync('ed25519');
+    const privateDer = signingKeyPair.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+    const publicDer = signingKeyPair.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+    return {
+        signing_private_key_der_base64: privateDer.toString('base64'),
+        signing_public_key_der_base64: publicDer.toString('base64'),
+        signing_key_fingerprint: createHash('sha256').update(publicDer).digest('hex').slice(0, 32),
+        previous_signing_key_fingerprint: previousSigningKeyFingerprint ?? null,
     };
 }
 

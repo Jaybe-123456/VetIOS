@@ -7,6 +7,7 @@ import {
     diffieHellman,
     randomBytes,
     randomUUID,
+    sign,
     type KeyObject,
 } from 'crypto';
 
@@ -18,6 +19,11 @@ export type FederationNodeTaskType =
     | 'unmask_share';
 
 export type FederatedUpdateRole = 'diagnosis' | 'severity' | 'support' | 'unmask_share';
+
+export type UpdateSignatureAlgorithm =
+    | 'sha256-hmac-simulation'
+    | 'hmac-sha256-local-node-key-v1'
+    | 'ed25519-node-signing-key-v1';
 
 export type OutcomeConfirmationStatus =
     | 'unconfirmed'
@@ -140,12 +146,17 @@ export interface MaskedUpdateCommitment {
     payload_commitment_hash: string;
     mask_commitment_hash: string;
     signed_payload_hash: string;
-    signature_algorithm: 'sha256-hmac-simulation' | 'hmac-sha256-local-node-key-v1';
+    signature_algorithm: UpdateSignatureAlgorithm;
     signature_hash: string;
     signing_key_fingerprint: string;
     masked_update_summary: Record<string, unknown>;
     public_summary: Record<string, unknown>;
     evidence: Record<string, unknown>;
+}
+
+export interface NodeSigningKeyMaterial {
+    privateKeyDerBase64?: string | null;
+    privateKeyPem?: string | null;
 }
 
 export interface LocalOutcomeDataset {
@@ -286,6 +297,7 @@ export interface FederationNodeAgentOptions {
     minimumProvenanceRows?: number;
     minimumTrustScoredRows?: number;
     outcomeEligibilitySnapshotId?: string | null;
+    signingKey?: NodeSigningKeyMaterial | null;
 }
 
 const DEFAULT_POLICY: EligibilityPolicy = {
@@ -482,6 +494,7 @@ export function buildTrainedMaskedUpdateCommitment(input: {
     delta: LocalFederatedModelDelta;
     outcomeEligibilitySnapshotId?: string | null;
     secret: string;
+    signingKey?: NodeSigningKeyMaterial | null;
     requestId?: string;
 }): TrainedMaskedUpdateCommitment {
     const secureAggregationMaterialization = buildSecureAggregationMaterialization({
@@ -506,6 +519,12 @@ export function buildTrainedMaskedUpdateCommitment(input: {
         mask_commitment_hash: maskCommitmentHash,
         evaluation_digest: stableHash(input.delta.metric_summary),
     });
+    const signatureAttestation = signUpdatePayload({
+        signedPayloadHash,
+        secret: input.secret,
+        signingKey: input.signingKey,
+        fallbackAlgorithm: 'hmac-sha256-local-node-key-v1',
+    });
 
     return {
         request_id: input.requestId ?? randomUUID(),
@@ -518,9 +537,9 @@ export function buildTrainedMaskedUpdateCommitment(input: {
         payload_commitment_hash: payloadCommitmentHash,
         mask_commitment_hash: maskCommitmentHash,
         signed_payload_hash: signedPayloadHash,
-        signature_algorithm: 'hmac-sha256-local-node-key-v1',
-        signature_hash: stableHash(`${signedPayloadHash}:${input.secret}`),
-        signing_key_fingerprint: stableHash(input.secret).slice(0, 32),
+        signature_algorithm: signatureAttestation.signature_algorithm,
+        signature_hash: signatureAttestation.signature_hash,
+        signing_key_fingerprint: signatureAttestation.signing_key_fingerprint,
         masked_update_summary: {
             schema: 'vetios_masked_model_delta_commitment_v1',
             local_delta_schema: input.delta.schema,
@@ -573,6 +592,9 @@ export function buildTrainedMaskedUpdateCommitment(input: {
             secure_aggregation_schema: secureAggregationMaterialization.schema,
             secure_aggregation_masking_protocol: secureAggregationMaterialization.masking_protocol,
             encrypted_unmask_share_envelopes_submitted: secureAggregationMaterialization.encrypted_unmask_share_envelopes.length > 0,
+            update_signature: signatureAttestation.evidence,
+            public_signature_verifiable: signatureAttestation.public_signature_verifiable,
+            node_private_signing_key_exported: false,
             model_delta_materialized: true,
             local_training_data_shared: false,
             raw_model_delta_shared: false,
@@ -788,6 +810,7 @@ export function buildMaskedUpdateCommitment(input: {
     eligibleRecords: LearningRecordEligibility[];
     outcomeEligibilitySnapshotId?: string | null;
     secret: string;
+    signingKey?: NodeSigningKeyMaterial | null;
     requestId?: string;
 }): MaskedUpdateCommitment {
     const eligibleRecords = input.eligibleRecords.filter((record) => record.eligible_for_federation);
@@ -809,6 +832,12 @@ export function buildMaskedUpdateCommitment(input: {
         payload_commitment_hash: payloadCommitmentHash,
         mask_commitment_hash: maskCommitmentHash,
     });
+    const signatureAttestation = signUpdatePayload({
+        signedPayloadHash,
+        secret: input.secret,
+        signingKey: input.signingKey,
+        fallbackAlgorithm: 'sha256-hmac-simulation',
+    });
 
     return {
         request_id: input.requestId ?? randomUUID(),
@@ -821,9 +850,9 @@ export function buildMaskedUpdateCommitment(input: {
         payload_commitment_hash: payloadCommitmentHash,
         mask_commitment_hash: maskCommitmentHash,
         signed_payload_hash: signedPayloadHash,
-        signature_algorithm: 'sha256-hmac-simulation',
-        signature_hash: stableHash(`${signedPayloadHash}:${input.secret}`),
-        signing_key_fingerprint: stableHash(input.secret).slice(0, 32),
+        signature_algorithm: signatureAttestation.signature_algorithm,
+        signature_hash: signatureAttestation.signature_hash,
+        signing_key_fingerprint: signatureAttestation.signing_key_fingerprint,
         masked_update_summary: {
             schema: 'vetios_masked_update_summary_v1',
             contribution_role: contributionRole,
@@ -842,6 +871,8 @@ export function buildMaskedUpdateCommitment(input: {
             generated_by: '@vetios/federation-node',
             task_plan_hash: input.task.plan_hash,
             secure_aggregation_boundary: 'commitments_only_no_raw_delta',
+            update_signature: signatureAttestation.evidence,
+            public_signature_verifiable: signatureAttestation.public_signature_verifiable,
             local_training_data_shared: false,
         },
     };
@@ -910,6 +941,7 @@ export class VetiosFederationNodeAgent {
             delta,
             outcomeEligibilitySnapshotId: this.options.outcomeEligibilitySnapshotId,
             secret: this.options.secret,
+            signingKey: this.options.signingKey,
         });
         return { dataset, delta, commitment };
     }
@@ -1494,6 +1526,83 @@ function roundScore(value: number): number {
 
 function stableHash(value: unknown): string {
     return createHash('sha256').update(stableStringify(value)).digest('hex');
+}
+
+interface UpdateSignatureAttestation {
+    signature_algorithm: UpdateSignatureAlgorithm;
+    signature_hash: string;
+    signing_key_fingerprint: string;
+    public_signature_verifiable: boolean;
+    evidence: Record<string, unknown>;
+}
+
+function signUpdatePayload(input: {
+    signedPayloadHash: string;
+    secret: string;
+    signingKey?: NodeSigningKeyMaterial | null;
+    fallbackAlgorithm: 'sha256-hmac-simulation' | 'hmac-sha256-local-node-key-v1';
+}): UpdateSignatureAttestation {
+    const privateKey = readEd25519PrivateKey(input.signingKey);
+    if (privateKey) {
+        const signature = sign(null, Buffer.from(input.signedPayloadHash, 'utf8'), privateKey);
+        const publicDer = createPublicKey(privateKey).export({ format: 'der', type: 'spki' }) as Buffer;
+        const signatureHash = createHash('sha256').update(signature).digest('hex');
+        const publicKeyFingerprint = createHash('sha256').update(publicDer).digest('hex').slice(0, 32);
+        return {
+            signature_algorithm: 'ed25519-node-signing-key-v1',
+            signature_hash: signatureHash,
+            signing_key_fingerprint: publicKeyFingerprint,
+            public_signature_verifiable: true,
+            evidence: {
+                signature_schema: 'vetios_node_update_signature_v1',
+                signature_algorithm: 'ed25519-node-signing-key-v1',
+                signature_payload_hash: input.signedPayloadHash,
+                signature_value_base64: signature.toString('base64'),
+                signature_hash: signatureHash,
+                signing_public_key_der_base64: publicDer.toString('base64'),
+                signing_key_fingerprint: publicKeyFingerprint,
+                public_signature_verifiable: true,
+                node_private_signing_key_exported: false,
+            },
+        };
+    }
+
+    const signatureHash = stableHash(`${input.signedPayloadHash}:${input.secret}`);
+    return {
+        signature_algorithm: input.fallbackAlgorithm,
+        signature_hash: signatureHash,
+        signing_key_fingerprint: stableHash(input.secret).slice(0, 32),
+        public_signature_verifiable: false,
+        evidence: {
+            signature_schema: 'vetios_node_update_signature_v1',
+            signature_algorithm: input.fallbackAlgorithm,
+            signature_payload_hash: input.signedPayloadHash,
+            signature_hash: signatureHash,
+            public_signature_verifiable: false,
+            hmac_fallback_requires_shared_node_secret: true,
+            node_private_signing_key_exported: false,
+        },
+    };
+}
+
+function readEd25519PrivateKey(signingKey?: NodeSigningKeyMaterial | null): KeyObject | null {
+    try {
+        if (signingKey?.privateKeyDerBase64) {
+            const key = createPrivateKey({
+                key: Buffer.from(signingKey.privateKeyDerBase64, 'base64'),
+                format: 'der',
+                type: 'pkcs8',
+            });
+            return key.asymmetricKeyType === 'ed25519' ? key : null;
+        }
+        if (signingKey?.privateKeyPem) {
+            const key = createPrivateKey(signingKey.privateKeyPem);
+            return key.asymmetricKeyType === 'ed25519' ? key : null;
+        }
+    } catch {
+        return null;
+    }
+    return null;
 }
 
 function hmacHex(secret: string, value: string): string {

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync, verify } from 'node:crypto';
 import {
     assessLearningRecordEligibility,
     buildMaskedUpdateCommitment,
@@ -34,10 +34,14 @@ const records: LocalClinicalLearningRecord[] = Array.from({ length: 20 }, (_, in
 const localX25519Keys = generateKeyPairSync('x25519');
 const peerX25519Keys = generateKeyPairSync('x25519');
 const coordinatorX25519Keys = generateKeyPairSync('x25519');
+const localSigningKeys = generateKeyPairSync('ed25519');
 const localPrivateKeyDer = localX25519Keys.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+const localSigningPrivateKeyDer = localSigningKeys.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+const localSigningPublicKeyDer = localSigningKeys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
 const peerPublicKeyDer = peerX25519Keys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
 const coordinatorPublicKeyDer = coordinatorX25519Keys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
 const peerPublicKeyFingerprint = createHash('sha256').update(peerPublicKeyDer).digest('hex').slice(0, 32);
+const localSigningKeyFingerprint = createHash('sha256').update(localSigningPublicKeyDer).digest('hex').slice(0, 32);
 
 const firstEligibility = assessLearningRecordEligibility(records[0]!);
 assert.equal(firstEligibility.eligible_for_federation, true);
@@ -142,10 +146,14 @@ const trainedCommitment = buildTrainedMaskedUpdateCommitment({
     delta: trained.delta,
     outcomeEligibilitySnapshotId: 'eligibility-001',
     secret: 'local-node-secret',
+    signingKey: {
+        privateKeyDerBase64: localSigningPrivateKeyDer.toString('base64'),
+    },
     requestId: '22222222-2222-4222-8222-222222222222',
 });
 assert.equal(trainedCommitment.contribution_role, 'diagnosis');
-assert.equal(trainedCommitment.signature_algorithm, 'hmac-sha256-local-node-key-v1');
+assert.equal(trainedCommitment.signature_algorithm, 'ed25519-node-signing-key-v1');
+assert.equal(trainedCommitment.signing_key_fingerprint, localSigningKeyFingerprint);
 assert.match(trainedCommitment.payload_commitment_hash, /^[a-f0-9]{64}$/);
 assert.equal(trainedCommitment.masked_update_summary.raw_delta_included, false);
 assert.equal(trainedCommitment.masked_update_summary.raw_records_included, false);
@@ -163,6 +171,19 @@ assert.equal(
 assert.equal(trainedCommitment.evidence.model_delta_materialized, true);
 assert.equal(trainedCommitment.evidence.secure_aggregation_materialized, true);
 assert.equal(trainedCommitment.evidence.raw_model_delta_shared, false);
+assert.equal(trainedCommitment.evidence.public_signature_verifiable, true);
+const trainedSignatureEvidence = trainedCommitment.evidence.update_signature as Record<string, unknown>;
+assert.equal(trainedSignatureEvidence.signing_public_key_der_base64, localSigningPublicKeyDer.toString('base64'));
+assert.equal(trainedSignatureEvidence.signing_key_fingerprint, localSigningKeyFingerprint);
+assert.equal(
+    verify(
+        null,
+        Buffer.from(trainedCommitment.signed_payload_hash, 'utf8'),
+        localSigningKeys.publicKey,
+        Buffer.from(String(trainedSignatureEvidence.signature_value_base64), 'base64'),
+    ),
+    true,
+);
 
 const submissionPayload = toFederatedUpdateSubmissionPayload(trainedCommitment);
 assert.equal('local_delta' in submissionPayload, false);
@@ -188,6 +209,9 @@ const agent = new VetiosFederationNodeAgent({
     } as never,
     records,
     secret: 'local-node-secret',
+    signingKey: {
+        privateKeyDerBase64: localSigningPrivateKeyDer.toString('base64'),
+    },
     tenantId: 'tenant-a',
     federationKey: 'one_health_amr',
     partnerRef: 'clinic-a',
@@ -196,6 +220,7 @@ const agent = new VetiosFederationNodeAgent({
 const agentPrepared = agent.trainTask(task);
 assert.equal(agentPrepared.delta.delta_digest, trained.delta.delta_digest);
 assert.equal(agentPrepared.commitment.evidence.local_training_data_shared, false);
+assert.equal(agentPrepared.commitment.signature_algorithm, 'ed25519-node-signing-key-v1');
 
 const pullRequests: Array<{ url: string; init: RequestInit | undefined }> = [];
 const pullClient = new VetiosFederationNodeClient({

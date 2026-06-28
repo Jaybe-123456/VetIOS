@@ -110,7 +110,8 @@ vetios-federation-node init \
 The initializer writes:
 
 - `clinic-a-node.config.json`: service-mode config with local record sources.
-- `clinic-a-node.state.json`: local X25519 key state. Keep this on the node.
+- `clinic-a-node.state.json`: local X25519 aggregation key state plus Ed25519
+  update-signing key state. Keep this on the node.
 - `clinic-a-node.enrollment.json`: public enrollment packet for the VetIOS
   federation coordinator.
 - `clinic-a-node.run-service.ps1`: Windows runner template.
@@ -138,12 +139,16 @@ vetios-federation-node service \
 Service mode continuously:
 
 - Loads local outcome-confirmed records from the configured JSON file.
-- Creates or reuses a local X25519 node keypair in the state file.
-- Heartbeats with node public-key metadata and record eligibility evidence.
+- Creates or reuses local X25519 aggregation and Ed25519 update-signing
+  keypairs in the state file.
+- Heartbeats with node public-key, signing-key fingerprint, and record
+  eligibility evidence.
 - Pulls the current issued task for the node.
 - Injects the local private key into the task runtime config without sending it
   to VetIOS.
 - Trains locally, submits the masked update, and appends an audit JSONL event.
+- Signs each trained masked update with the local Ed25519 signing key so the
+  coordinator can verify update provenance without receiving private keys.
 - Captures per-iteration retry observations for current-round lookup,
   heartbeat, and task execution.
 - Writes sanitized source manifests: kind, source system, counts, source
@@ -166,7 +171,8 @@ joins a live round. It loads the same record sources as service mode, creates or
 reuses the node key state, computes outcome-eligibility evidence, checks whether
 required secret-manager environment variables are present, and emits a
 ready/blocked packet with source digests, duplicate-record counts, key
-fingerprints, privacy boundaries, blockers, and warnings. It does not print
+fingerprints, signing-key fingerprints, privacy boundaries, blockers, and
+warnings. It does not print
 tokens, node secrets, private keys, raw records, raw model deltas, or local
 source paths.
 
@@ -180,10 +186,11 @@ vetios-federation-node rotate-keys \
 
 Rotation mode:
 
-- Replaces the local X25519 node keypair in the state file.
+- Replaces the local X25519 aggregation keypair and Ed25519 update-signing
+  keypair in the state file.
 - Writes a public `*.key-rotation-v<n>.json` packet for the VetIOS coordinator.
-- Appends an audit JSONL event with old/new key fingerprints and version
-  numbers.
+- Appends an audit JSONL event with old/new aggregation and signing key
+  fingerprints and version numbers.
 - Does not export the private key, raw clinical records, or raw model deltas.
 
 Send the key rotation packet to the coordinator, then restart the node service
@@ -249,7 +256,8 @@ Supported service `record_sources`:
 - `pacs_json`: de-identified imaging/report metadata. Store report hashes and
   summaries, not raw image files or full reports.
 
-The service state file contains local private key material and must stay on the
-clinic or lab machine. The audit log intentionally stores only operational
-digests, task identifiers, key fingerprints, retry observations, commitment
-hashes, source manifests, and submission status.
+The service state file contains local aggregation and update-signing private key
+material and must stay on the clinic or lab machine. The audit log intentionally
+stores only operational digests, task identifiers, key fingerprints,
+signing-key fingerprints, retry observations, commitment hashes, source
+manifests, and submission status.
