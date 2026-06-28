@@ -84,6 +84,12 @@ export interface CoordinatorReviewUpdateResult {
     task: FederationRoundNodeTaskRow | null;
 }
 
+export interface CoordinatorUpdateAcceptanceReadiness {
+    ready: boolean;
+    blockers: string[];
+    signals: Record<string, boolean>;
+}
+
 export interface CoordinatorFinalizeRoundResult {
     round: FederationRoundRow;
     accepted_submissions: FederatedUpdateSubmissionRow[];
@@ -470,6 +476,15 @@ export async function reviewFederatedUpdateSubmission(
     if (submission.submission_status !== 'submitted') {
         throw new FederationCoordinatorRuntimeError(409, 'Only submitted masked updates can be reviewed.');
     }
+    if (input.reviewStatus === 'accepted') {
+        const readiness = assessCoordinatorUpdateAcceptanceReadiness(submission);
+        if (!readiness.ready) {
+            throw new FederationCoordinatorRuntimeError(
+                409,
+                `Federated update is not ready for acceptance: ${readiness.blockers.join(', ')}.`,
+            );
+        }
+    }
 
     const reviewSubmission = await appendUpdateReviewRecord(client, {
         round,
@@ -487,6 +502,68 @@ export async function reviewFederatedUpdateSubmission(
         reviewed_submission: submission,
         review_submission: reviewSubmission,
         task,
+    };
+}
+
+export function assessCoordinatorUpdateAcceptanceReadiness(
+    submission: Pick<
+        FederatedUpdateSubmissionRow,
+        | 'submission_status'
+        | 'masking_protocol'
+        | 'payload_commitment_hash'
+        | 'mask_commitment_hash'
+        | 'signed_payload_hash'
+        | 'signature_algorithm'
+        | 'signature_hash'
+        | 'signing_key_fingerprint'
+        | 'outcome_eligibility_snapshot_id'
+        | 'masked_update_summary'
+        | 'evidence'
+    >,
+): CoordinatorUpdateAcceptanceReadiness {
+    const evidence = asRecord(submission.evidence);
+    const verificationEvidence = asRecord(evidence.update_signature_verification);
+    const secureAggregation = asRecord(asRecord(submission.masked_update_summary).secure_aggregation);
+    const signals = {
+        submitted: submission.submission_status === 'submitted',
+        ed25519Signature: submission.signature_algorithm === 'ed25519-node-signing-key-v1',
+        signatureVerified: readText(evidence.update_signature_verification_status) === 'verified'
+            || readText(verificationEvidence.status) === 'verified',
+        signatureValid: verificationEvidence.signature_valid === true,
+        payloadHashPresent: isSha256(submission.payload_commitment_hash),
+        maskHashPresent: isSha256(submission.mask_commitment_hash),
+        signedPayloadHashPresent: isSha256(submission.signed_payload_hash),
+        signatureHashPresent: isSha256(submission.signature_hash),
+        signingKeyPresent: Boolean(readText(submission.signing_key_fingerprint)),
+        outcomeLinked: Boolean(readText(submission.outcome_eligibility_snapshot_id)),
+        secureAggregationMaterialized: Boolean(
+            readText(secureAggregation.masked_vector_digest)
+            && readText(secureAggregation.dimension_order_digest)
+            && Object.keys(asRecord(secureAggregation.masked_integer_vector)).length > 0,
+        ),
+        noRawPrivateKey: verificationEvidence.raw_private_key_exported === false,
+        noRawDelta: submission.masked_update_summary.raw_delta_included === false,
+        noRawRecords: submission.masked_update_summary.raw_records_included === false,
+    };
+    const blockers = new Set<string>();
+    if (!signals.submitted) blockers.add('submission_not_in_submitted_state');
+    if (!signals.ed25519Signature) blockers.add('ed25519_update_signature_required');
+    if (!signals.signatureVerified) blockers.add('update_signature_not_verified');
+    if (!signals.signatureValid) blockers.add('update_signature_invalid');
+    if (!signals.payloadHashPresent) blockers.add('payload_commitment_hash_missing');
+    if (!signals.maskHashPresent) blockers.add('mask_commitment_hash_missing');
+    if (!signals.signedPayloadHashPresent) blockers.add('signed_payload_hash_missing');
+    if (!signals.signatureHashPresent) blockers.add('signature_hash_missing');
+    if (!signals.signingKeyPresent) blockers.add('signing_key_fingerprint_missing');
+    if (!signals.outcomeLinked) blockers.add('outcome_eligibility_snapshot_missing');
+    if (!signals.secureAggregationMaterialized) blockers.add('secure_aggregation_materialization_missing');
+    if (!signals.noRawPrivateKey) blockers.add('private_key_export_evidence_missing');
+    if (!signals.noRawDelta) blockers.add('raw_delta_redaction_evidence_missing');
+    if (!signals.noRawRecords) blockers.add('raw_record_redaction_evidence_missing');
+    return {
+        ready: blockers.size === 0,
+        blockers: Array.from(blockers).sort(),
+        signals,
     };
 }
 
@@ -1277,6 +1354,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function readText(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function isSha256(value: unknown): boolean {
+    return typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value.trim());
 }
 
 function readNumber(value: unknown): number | null {

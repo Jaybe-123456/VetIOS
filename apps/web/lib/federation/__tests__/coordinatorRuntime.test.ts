@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    assessCoordinatorUpdateAcceptanceReadiness,
     buildCoordinatorSecureAggregateMaterialization,
     buildCoordinatorSecureAggregationConfig,
     buildCoordinatorTaskPlan,
@@ -86,6 +87,44 @@ describe('federation coordinator runtime', () => {
 
         expect(first).toMatch(/^[a-f0-9]{64}$/);
         expect(second).toBe(first);
+    });
+
+    it('allows coordinator acceptance only after Ed25519 update signature verification', () => {
+        const readiness = assessCoordinatorUpdateAcceptanceReadiness(submission({
+            submission_status: 'submitted',
+            signature_algorithm: 'ed25519-node-signing-key-v1',
+            signing_key_fingerprint: 'node-signing-key',
+            evidence: {
+                update_signature_verification_status: 'verified',
+                update_signature_verification: {
+                    signature_valid: true,
+                    raw_private_key_exported: false,
+                },
+            },
+        }));
+
+        expect(readiness.ready).toBe(true);
+        expect(readiness.blockers).toEqual([]);
+        expect(readiness.signals.secureAggregationMaterialized).toBe(true);
+    });
+
+    it('blocks coordinator acceptance for legacy or unverified update signatures', () => {
+        const readiness = assessCoordinatorUpdateAcceptanceReadiness(submission({
+            submission_status: 'submitted',
+            signature_algorithm: 'hmac-sha256-local-node-key-v1',
+            evidence: {
+                update_signature_verification_status: 'legacy_unverified',
+                update_signature_verification: {
+                    signature_valid: false,
+                    raw_private_key_exported: false,
+                },
+            },
+        }));
+
+        expect(readiness.ready).toBe(false);
+        expect(readiness.blockers).toContain('ed25519_update_signature_required');
+        expect(readiness.blockers).toContain('update_signature_not_verified');
+        expect(readiness.blockers).toContain('update_signature_invalid');
     });
 
     it('resolves node refs from membership metadata before falling back to tenant id', () => {
