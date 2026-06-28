@@ -22,7 +22,9 @@ import {
 import {
     buildSpecialistReviewOperationEventDraft,
     buildSpecialistReviewOperationsPacket,
+    buildSpecialistReviewOperationsQueueSnapshot,
     type SpecialistReviewOperationEventDraft,
+    type SpecialistReviewOperationEventRow,
 } from '@/lib/specialistReview/operations';
 
 export const runtime = 'nodejs';
@@ -55,6 +57,44 @@ const SpecialistReviewEventSchema = z.object({
     review_summary: z.string().max(2000).optional(),
     observed_at: z.string().datetime().optional(),
 });
+
+const SPECIALIST_REVIEW_OPERATION_SELECT = [
+    'id',
+    'tenant_id',
+    'request_id',
+    'specialist_review_event_id',
+    'ask_vetios_query_id',
+    'case_id',
+    'inference_event_id',
+    'clinical_outcome_id',
+    'reviewer_route',
+    'specialty',
+    'urgency_level',
+    'queue_status',
+    'operations_score',
+    'assignment_status',
+    'assigned_reviewer_ref',
+    'candidate_reviewer_count',
+    'sla_minutes',
+    'due_at',
+    'minutes_until_due',
+    'overdue',
+    'pacs_required',
+    'pacs_status',
+    'pacs_upload_required',
+    'pacs_link_required',
+    'report_status',
+    'final_report_ready',
+    'closure_ready',
+    'learning_eligible',
+    'operation_digest',
+    'packet_hash',
+    'blockers',
+    'warnings',
+    'next_actions',
+    'observed_at',
+    'created_at',
+].join(', ');
 
 export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
@@ -202,8 +242,46 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const sinceDays = clampDays(Number(searchParams.get('days') ?? 90));
     const since = new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString();
+    const view = searchParams.get('view')?.trim().toLowerCase();
     const reviewerRoute = normalizeOptionalSpecialistReviewLabel(searchParams.get('reviewer_route'));
     const reviewStatus = normalizeOptionalSpecialistReviewLabel(searchParams.get('review_status'));
+    const queueStatus = normalizeOptionalSpecialistReviewLabel(searchParams.get('queue_status'));
+
+    if (view === 'operations_queue' || view === 'queue') {
+        let operationQuery = supabase
+            .from('specialist_review_operation_events')
+            .select(SPECIALIST_REVIEW_OPERATION_SELECT)
+            .eq('tenant_id', auth.actor.tenantId)
+            .gte('observed_at', since)
+            .order('observed_at', { ascending: false })
+            .limit(10_000);
+
+        if (reviewerRoute) operationQuery = operationQuery.eq('reviewer_route', reviewerRoute);
+        if (queueStatus) operationQuery = operationQuery.eq('queue_status', queueStatus);
+
+        const { data, error } = await operationQuery;
+        if (error) {
+            const message = error.message ?? 'specialist_review_operation_queue_unavailable';
+            return NextResponse.json({
+                error: 'specialist_review_operation_queue_unavailable',
+                detail: isMissingSpecialistReviewOperationStorage(message)
+                    ? 'Apply supabase/migrations/20260622030000_specialist_review_operation_events.sql to enable the operations queue.'
+                    : message,
+            }, { status: 503 });
+        }
+
+        const rows = (Array.isArray(data) ? data : []) as unknown as SpecialistReviewOperationEventRow[];
+        return NextResponse.json({
+            period: `last_${sinceDays}_days`,
+            snapshot: buildSpecialistReviewOperationsQueueSnapshot({
+                tenantId: auth.actor.tenantId,
+                rows,
+                windowDays: sinceDays,
+            }),
+            de_identified: true,
+            error: null,
+        });
+    }
 
     let query = supabase
         .from('specialist_review_events')

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
     buildSpecialistReviewOperationEventDraft,
     buildSpecialistReviewOperationsPacket,
+    buildSpecialistReviewOperationsQueueSnapshot,
+    type SpecialistReviewOperationEventRow,
     type SpecialistReviewerProfile,
 } from '@/lib/specialistReview/operations';
 
@@ -215,6 +217,81 @@ describe('specialist review operations', () => {
             raw_owner_or_patient_identifiers_stored: false,
         });
         expect(JSON.stringify(draft.operations_packet)).not.toContain('Specialist corrected the AI impression after review.');
+    });
+
+    it('builds a dashboard-ready operations queue from latest operation events', () => {
+        const overdue = buildSpecialistReviewOperationEventDraft({
+            tenantId: '33333333-3333-4333-8333-333333333333',
+            requestId: '11111111-1111-4111-8111-111111111111',
+            specialistReviewEventId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            caseId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            operationsInput: {
+                request_id: '11111111-1111-4111-8111-111111111111',
+                reviewer_route: 'emergency_veterinarian',
+                urgency_level: 'emergency',
+                review_stage: 'in_review',
+                review_status: 'pending',
+                ai_disposition: 'not_reviewed',
+                clinician_action: 'none',
+                report_status: 'draft',
+                pacs_status: 'not_applicable',
+                outcome_required: true,
+                outcome_captured: false,
+                observed_at: '2026-06-22T10:00:00.000Z',
+                now: '2026-06-22T12:30:00.000Z',
+                reviewer_pool: [reviewer({
+                    reviewer_ref: 'er-1',
+                    reviewer_route: 'emergency_veterinarian',
+                    accepts_emergency: true,
+                })],
+            },
+        }) as SpecialistReviewOperationEventRow;
+        const imaging = buildSpecialistReviewOperationEventDraft({
+            tenantId: '33333333-3333-4333-8333-333333333333',
+            requestId: '22222222-2222-4222-8222-222222222222',
+            specialistReviewEventId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            caseId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            operationsInput: {
+                request_id: '22222222-2222-4222-8222-222222222222',
+                reviewer_route: 'diagnostic_imaging',
+                urgency_level: 'urgent',
+                review_stage: 'requested',
+                review_status: 'pending',
+                ai_disposition: 'not_reviewed',
+                clinician_action: 'none',
+                report_status: 'not_started',
+                pacs_status: 'pending',
+                outcome_required: true,
+                outcome_captured: false,
+                evidence_pack: {
+                    pacs: {
+                        study_instance_uid: '1.2.840.113619.2.55.3.604688435.781.171905',
+                    },
+                },
+                observed_at: '2026-06-22T11:00:00.000Z',
+                now: '2026-06-22T11:30:00.000Z',
+            },
+        }) as SpecialistReviewOperationEventRow;
+        const snapshot = buildSpecialistReviewOperationsQueueSnapshot({
+            tenantId: '33333333-3333-4333-8333-333333333333',
+            rows: [
+                { ...imaging, id: 'operation-imaging' },
+                { ...overdue, id: 'operation-overdue' },
+            ],
+            generatedAt: new Date('2026-06-22T12:45:00.000Z'),
+        });
+
+        expect(snapshot.schema_version).toBe('specialist-review-operations-queue-v1');
+        expect(snapshot.totals.operation_events).toBe(2);
+        expect(snapshot.totals.overdue).toBe(1);
+        expect(snapshot.totals.awaiting_pacs).toBe(1);
+        expect(snapshot.totals.needs_assignment).toBe(1);
+        expect(snapshot.items[0].queue_status).toBe('overdue');
+        expect(snapshot.items[1].pacs_link_required).toBe(true);
+        expect(snapshot.next_actions).toContain('escalate_overdue_specialist_reviews');
+        expect(snapshot.next_actions).toContain('link_pacs_or_report_references');
+        expect(snapshot.evidence.source_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(snapshot.evidence.raw_imaging_stored).toBe(false);
     });
 });
 

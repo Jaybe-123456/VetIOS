@@ -167,6 +167,112 @@ export interface SpecialistReviewOperationEventDraft {
     observed_at: string;
 }
 
+export interface SpecialistReviewOperationEventRow {
+    id?: string | null;
+    tenant_id?: string | null;
+    request_id: string;
+    specialist_review_event_id?: string | null;
+    ask_vetios_query_id?: string | null;
+    case_id?: string | null;
+    inference_event_id?: string | null;
+    clinical_outcome_id?: string | null;
+    reviewer_route: SpecialistReviewRoute;
+    specialty?: string | null;
+    urgency_level: SpecialistReviewUrgencyLevel;
+    queue_status: SpecialistReviewQueueStatus;
+    operations_score: number;
+    assignment_status: SpecialistReviewOperationsPacket['assignment']['assignment_status'];
+    assigned_reviewer_ref?: string | null;
+    candidate_reviewer_count: number;
+    sla_minutes: number;
+    due_at: string;
+    minutes_until_due: number;
+    overdue: boolean;
+    pacs_required: boolean;
+    pacs_status: SpecialistPacsStatus;
+    pacs_upload_required: boolean;
+    pacs_link_required: boolean;
+    report_status: SpecialistReportStatus;
+    final_report_ready: boolean;
+    closure_ready: boolean;
+    learning_eligible: boolean;
+    operation_digest: string;
+    packet_hash: string;
+    blockers?: string[] | null;
+    warnings?: string[] | null;
+    next_actions?: string[] | null;
+    observed_at?: string | null;
+    created_at?: string | null;
+}
+
+export interface SpecialistReviewOperationsQueueSnapshot {
+    schema_version: 'specialist-review-operations-queue-v1';
+    tenant_id: string | null;
+    generated_at: string;
+    window_days: number;
+    totals: {
+        operation_events: number;
+        active_queue_items: number;
+        blocked: number;
+        overdue: number;
+        awaiting_pacs: number;
+        needs_assignment: number;
+        in_review: number;
+        report_ready: number;
+        closure_ready: number;
+        learning_ready: number;
+        pacs_link_required: number;
+        final_report_ready: number;
+    };
+    queue_status_counts: Record<string, number>;
+    urgency_counts: Record<string, number>;
+    reviewer_route_counts: Record<string, number>;
+    blocker_counts: Record<string, number>;
+    next_actions: string[];
+    items: SpecialistReviewOperationsQueueItem[];
+    evidence: {
+        raw_report_stored: false;
+        raw_imaging_stored: false;
+        raw_pacs_report_stored: false;
+        source_event_count: number;
+        source_digest: string;
+    };
+}
+
+export interface SpecialistReviewOperationsQueueItem {
+    specialist_review_operation_event_id: string | null;
+    specialist_review_event_id: string | null;
+    request_id: string;
+    case_id: string | null;
+    reviewer_route: SpecialistReviewRoute;
+    specialty: string | null;
+    urgency_level: SpecialistReviewUrgencyLevel;
+    queue_status: SpecialistReviewQueueStatus;
+    operations_score: number;
+    assignment_status: SpecialistReviewOperationsPacket['assignment']['assignment_status'];
+    assigned_reviewer_ref: string | null;
+    candidate_reviewer_count: number;
+    due_at: string;
+    minutes_until_due: number;
+    overdue: boolean;
+    pacs_required: boolean;
+    pacs_status: SpecialistPacsStatus;
+    pacs_upload_required: boolean;
+    pacs_link_required: boolean;
+    report_status: SpecialistReportStatus;
+    final_report_ready: boolean;
+    closure_ready: boolean;
+    learning_eligible: boolean;
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
+    hashes: {
+        operation_digest: string;
+        packet_hash: string;
+    };
+    observed_at: string | null;
+}
+
 const SLA_MINUTES: Record<SpecialistReviewUrgencyLevel, number> = {
     routine: 72 * 60,
     priority: 24 * 60,
@@ -436,6 +542,135 @@ export function buildSpecialistReviewOperationEventDraft(input: {
     };
 }
 
+export function buildSpecialistReviewOperationsQueueSnapshot(input: {
+    tenantId?: string | null;
+    rows: SpecialistReviewOperationEventRow[];
+    windowDays?: number;
+    generatedAt?: Date;
+    limit?: number;
+}): SpecialistReviewOperationsQueueSnapshot {
+    const latestRows = latestOperationRows(input.rows)
+        .sort((left, right) => {
+            if (left.overdue !== right.overdue) return left.overdue ? -1 : 1;
+            const urgencyDelta = urgencyRank(right.urgency_level) - urgencyRank(left.urgency_level);
+            if (urgencyDelta !== 0) return urgencyDelta;
+            return timestamp(right.observed_at ?? right.created_at) - timestamp(left.observed_at ?? left.created_at);
+        });
+    const items = latestRows
+        .slice(0, input.limit ?? 250)
+        .map(toQueueItem);
+
+    const totals = {
+        operation_events: input.rows.length,
+        active_queue_items: items.filter((item) => !item.learning_eligible).length,
+        blocked: items.filter((item) => item.queue_status === 'blocked').length,
+        overdue: items.filter((item) => item.overdue || item.queue_status === 'overdue').length,
+        awaiting_pacs: items.filter((item) => item.queue_status === 'awaiting_pacs').length,
+        needs_assignment: items.filter((item) => item.assignment_status === 'needs_assignment').length,
+        in_review: items.filter((item) => item.queue_status === 'in_review').length,
+        report_ready: items.filter((item) => item.queue_status === 'report_ready').length,
+        closure_ready: items.filter((item) => item.queue_status === 'closure_ready').length,
+        learning_ready: items.filter((item) => item.queue_status === 'learning_ready' || item.learning_eligible).length,
+        pacs_link_required: items.filter((item) => item.pacs_link_required).length,
+        final_report_ready: items.filter((item) => item.final_report_ready).length,
+    };
+
+    return {
+        schema_version: 'specialist-review-operations-queue-v1',
+        tenant_id: input.tenantId ?? null,
+        generated_at: (input.generatedAt ?? new Date()).toISOString(),
+        window_days: input.windowDays ?? 90,
+        totals,
+        queue_status_counts: countBy(items, (item) => item.queue_status),
+        urgency_counts: countBy(items, (item) => item.urgency_level),
+        reviewer_route_counts: countBy(items, (item) => item.reviewer_route),
+        blocker_counts: countStrings(items.flatMap((item) => item.blockers)),
+        next_actions: buildQueueNextActions(items, totals),
+        items,
+        evidence: {
+            raw_report_stored: false,
+            raw_imaging_stored: false,
+            raw_pacs_report_stored: false,
+            source_event_count: input.rows.length,
+            source_digest: hashJson({
+                rows: latestRows.map((row) => [
+                    row.id ?? null,
+                    row.request_id,
+                    row.specialist_review_event_id ?? null,
+                    row.operation_digest,
+                    row.packet_hash,
+                    row.observed_at ?? row.created_at ?? null,
+                ]),
+            }),
+        },
+    };
+}
+
+function latestOperationRows(rows: SpecialistReviewOperationEventRow[]): SpecialistReviewOperationEventRow[] {
+    const latest = new Map<string, SpecialistReviewOperationEventRow>();
+    for (const row of rows) {
+        const key = row.specialist_review_event_id ?? row.request_id;
+        const previous = latest.get(key);
+        if (!previous || timestamp(row.observed_at ?? row.created_at) > timestamp(previous.observed_at ?? previous.created_at)) {
+            latest.set(key, row);
+        }
+    }
+    return Array.from(latest.values());
+}
+
+function toQueueItem(row: SpecialistReviewOperationEventRow): SpecialistReviewOperationsQueueItem {
+    return {
+        specialist_review_operation_event_id: row.id ?? null,
+        specialist_review_event_id: row.specialist_review_event_id ?? null,
+        request_id: row.request_id,
+        case_id: row.case_id ?? null,
+        reviewer_route: row.reviewer_route,
+        specialty: normalizeOptionalSpecialistReviewLabel(row.specialty),
+        urgency_level: row.urgency_level,
+        queue_status: row.queue_status,
+        operations_score: clampScore(Number(row.operations_score)),
+        assignment_status: row.assignment_status,
+        assigned_reviewer_ref: row.assigned_reviewer_ref ?? null,
+        candidate_reviewer_count: Math.max(0, Math.trunc(row.candidate_reviewer_count ?? 0)),
+        due_at: row.due_at,
+        minutes_until_due: Math.trunc(row.minutes_until_due ?? 0),
+        overdue: Boolean(row.overdue),
+        pacs_required: Boolean(row.pacs_required),
+        pacs_status: row.pacs_status,
+        pacs_upload_required: Boolean(row.pacs_upload_required),
+        pacs_link_required: Boolean(row.pacs_link_required),
+        report_status: row.report_status,
+        final_report_ready: Boolean(row.final_report_ready),
+        closure_ready: Boolean(row.closure_ready),
+        learning_eligible: Boolean(row.learning_eligible),
+        blockers: unique(row.blockers ?? []),
+        warnings: unique(row.warnings ?? []),
+        next_actions: unique(row.next_actions ?? []),
+        hashes: {
+            operation_digest: row.operation_digest,
+            packet_hash: row.packet_hash,
+        },
+        observed_at: row.observed_at ?? row.created_at ?? null,
+    };
+}
+
+function buildQueueNextActions(
+    items: SpecialistReviewOperationsQueueItem[],
+    totals: SpecialistReviewOperationsQueueSnapshot['totals'],
+): string[] {
+    return unique([
+        ...(totals.overdue > 0 ? ['escalate_overdue_specialist_reviews'] : []),
+        ...(totals.needs_assignment > 0 ? ['assign_specialist_reviewers'] : []),
+        ...(totals.awaiting_pacs > 0 || totals.pacs_link_required > 0 ? ['link_pacs_or_report_references'] : []),
+        ...(totals.report_ready > 0 ? ['return_reports_to_clinicians'] : []),
+        ...(totals.closure_ready > 0 ? ['close_review_and_capture_outcome'] : []),
+        ...(totals.learning_ready > 0 ? ['promote_specialist_review_learning_signals'] : []),
+        ...(items.some((item) => item.blockers.includes('direct_identifier_risk_in_review_packet'))
+            ? ['remove_direct_identifiers_from_review_packets']
+            : []),
+    ]);
+}
+
 function resolveQueueStatus(input: {
     input: SpecialistReviewOperationsInput;
     blockerCount: number;
@@ -614,6 +849,48 @@ function parseDate(value: string | null | undefined): Date | null {
     if (!value) return null;
     const parsed = new Date(value);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function timestamp(value: string | null | undefined): number {
+    if (!value) return 0;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function urgencyRank(value: SpecialistReviewUrgencyLevel): number {
+    switch (value) {
+        case 'emergency':
+            return 4;
+        case 'urgent':
+            return 3;
+        case 'priority':
+            return 2;
+        case 'routine':
+        default:
+            return 1;
+    }
+}
+
+function clampScore(value: number): number {
+    if (!Number.isFinite(value)) return 0;
+    return Math.max(0, Math.min(1, Number(value.toFixed(4))));
+}
+
+function countBy<T>(items: T[], readKey: (item: T) => string): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const item of items) {
+        const key = readKey(item);
+        counts[key] = (counts[key] ?? 0) + 1;
+    }
+    return counts;
+}
+
+function countStrings(values: string[]): Record<string, number> {
+    const counts: Record<string, number> = {};
+    for (const value of values) {
+        counts[value] = (counts[value] ?? 0) + 1;
+    }
+    return counts;
 }
 
 function hashOptional(value: string | null | undefined): string | null {
