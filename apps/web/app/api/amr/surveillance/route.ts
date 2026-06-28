@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
 import { aggregateAMRPatterns, type AMRSurveillanceRow } from '@/lib/amr/screener';
+import {
+    buildAMROneHealthExportPacket,
+    normalizeOptionalAMRLabel,
+    type AMRLabFeedSurveillanceEventRow,
+} from '@/lib/amr/stewardship';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
@@ -13,7 +18,11 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const species = normalizeFilter(searchParams.get('species'));
     const region = normalizeRegion(searchParams.get('region'));
-    const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const pathogenKey = normalizeOptionalAMRLabel(searchParams.get('pathogen_key'));
+    const drugClass = normalizeOptionalAMRLabel(searchParams.get('drug_class'));
+    const days = clampDays(Number(searchParams.get('days') ?? 90));
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const now = new Date().toISOString();
     const supabase = getSupabaseServer();
 
     let query = supabase
@@ -41,14 +50,86 @@ export async function GET(req: Request) {
     if (region) rnaQuery = rnaQuery.eq('region', region);
 
     const { data: rnaData } = await rnaQuery;
+    let labFeedQuery = supabase
+        .from('amr_lab_feed_surveillance_events')
+        .select([
+            'species',
+            'pathogen_label',
+            'pathogen_key',
+            'infection_site',
+            'sample_source',
+            'drug_name',
+            'drug_class',
+            'lab_feed_status',
+            'surveillance_score',
+            'resistance_signal_score',
+            'ast_panel_drug_count',
+            'mic_result_count',
+            'susceptibility_result_count',
+            'resistance_gene_count',
+            'resistance_class_count',
+            'lab_partner_feed_ready',
+            'one_health_export_ready',
+            'trend_bucket_key',
+            'source_record_digest',
+            'packet_hash',
+            'surveillance_packet',
+            'blockers',
+            'warnings',
+            'observed_at',
+        ].join(','))
+        .gte('observed_at', since)
+        .order('observed_at', { ascending: false })
+        .limit(10_000);
+
+    if (species) labFeedQuery = labFeedQuery.eq('species', species);
+    if (pathogenKey) labFeedQuery = labFeedQuery.eq('pathogen_key', pathogenKey);
+    if (drugClass) labFeedQuery = labFeedQuery.eq('drug_class', drugClass);
+
+    const { data: labFeedData, error: labFeedError } = await labFeedQuery;
+    const labFeedRows = (Array.isArray(labFeedData) ? labFeedData : []) as unknown as AMRLabFeedSurveillanceEventRow[];
+    const labFeedPacket = labFeedError
+        ? null
+        : buildAMROneHealthExportPacket({
+            rows: labFeedRows,
+            periodStart: since,
+            periodEnd: now,
+            generatedAt: now,
+        });
     const rows = (Array.isArray(data) ? data : []) as AMRSurveillanceRow[];
     const rnaRows = Array.isArray(rnaData) ? rnaData : [];
     return NextResponse.json({
-        period: 'last_90_days',
+        period: `last_${days}_days`,
+        filters: {
+            species,
+            region,
+            pathogen_key: pathogenKey,
+            drug_class: drugClass,
+        },
+        genomic_surveillance: {
+            total_samples: rows.length,
+            patterns: aggregateAMRPatterns(rows),
+        },
+        novel_rna_structures: aggregateRNAPredictions(rnaRows),
+        lab_feed_surveillance: labFeedPacket
+            ? {
+                export_status: labFeedPacket.export_status,
+                summary: labFeedPacket.summary,
+                trends: labFeedPacket.trends.slice(0, 25),
+                provenance: labFeedPacket.provenance,
+                blockers: labFeedPacket.blockers,
+                warnings: labFeedPacket.warnings,
+                next_actions: labFeedPacket.next_actions,
+                privacy_contract: labFeedPacket.privacy_contract,
+            }
+            : null,
+        lab_feed_warning: labFeedError
+            ? `AMR lab-feed surveillance unavailable: ${labFeedError.message}`
+            : null,
         total_samples: rows.length,
         patterns: aggregateAMRPatterns(rows),
-        novel_rna_structures: aggregateRNAPredictions(rnaRows),
-        last_updated: new Date().toISOString(),
+        de_identified: true,
+        last_updated: now,
         error: null,
     });
 }
@@ -61,6 +142,11 @@ function normalizeFilter(value: string | null): string | null {
 function normalizeRegion(value: string | null): string | null {
     const normalized = value?.trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '');
     return normalized || null;
+}
+
+function clampDays(value: number): number {
+    if (!Number.isFinite(value)) return 90;
+    return Math.min(365, Math.max(1, Math.round(value)));
 }
 
 function aggregateRNAPredictions(rows: unknown[]) {
