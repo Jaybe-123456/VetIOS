@@ -17,6 +17,10 @@ import {
     buildAskVetiosRegulatoryClaimsSnapshot,
 } from '../regulatoryClaims';
 import {
+    buildRegulatoryClaimApprovalEventDraft,
+    buildRegulatoryClaimOperationsSnapshot,
+} from '../regulatoryClaimsWorkflow';
+import {
     ASK_VETIOS_CASE_DRAFT_STORAGE_KEY,
     ASK_VETIOS_CLINICAL_CASE_DRAFT_STORAGE_KEY,
     buildAskVetiosIntake,
@@ -516,6 +520,73 @@ describe('Ask VetIOS context detection', () => {
         expect(packet.evidence.raw_output_stored).toBe(false);
         expect(draft.clinical_signoff_status).toBe('pending');
         expect(draft.next_actions).toContain('generate_model_card_draft');
+    });
+
+    it('builds a regulatory operations queue from approval and signoff events', () => {
+        const intake = buildAskVetiosIntake({
+            message: 'Canine, vomiting for 2 days. CBC, chemistry, cPLI, and ultrasound completed.',
+        });
+        const snapshot = buildAskVetiosRegulatoryClaimsSnapshot({
+            mode: 'clinical',
+            content: 'Differentials include pancreatitis and gastroenteritis. Recommend clinician confirmation.',
+            metadata: {
+                explanation: 'The draft cites compatible signs, testing, and imaging.',
+                diagnosis_ranked: [
+                    { name: 'Pancreatitis', confidence: 0.72, reasoning: 'Compatible signs and diagnostics.' },
+                    { name: 'Gastroenteritis', confidence: 0.41, reasoning: 'Alternative differential.' },
+                ],
+                recommended_tests: ['cPLI', 'abdominal ultrasound'],
+                rag_citations: [{ index: 1, title: 'Canine pancreatitis guideline', source_name: 'VetIOS library' }],
+            },
+            intake,
+        });
+        const packet = buildAskVetiosRegulatoryClaimReviewPacket(snapshot);
+        const review = {
+            id: '11111111-1111-4111-8111-111111111111',
+            ...buildAskVetiosRegulatoryClaimReviewEventDraft({
+                tenantId: '22222222-2222-4222-8222-222222222222',
+                requestId: 'ask-regulatory-queue-1',
+                askVetiosQueryId: '33333333-3333-4333-8333-333333333333',
+                snapshot,
+                packet,
+                observedAt: new Date('2026-06-27T08:00:00.000Z'),
+            }),
+            created_at: '2026-06-27T08:00:00.000Z',
+        };
+        const approval = {
+            id: '44444444-4444-4444-8444-444444444444',
+            ...buildRegulatoryClaimApprovalEventDraft({
+                tenantId: '22222222-2222-4222-8222-222222222222',
+                eventRequestId: 'approval-regulatory-1',
+                claimRequestId: review.request_id,
+                claimReviewEventId: review.id,
+                askVetiosQueryId: review.ask_vetios_query_id,
+                actionType: 'clinical_signoff',
+                actionStatus: 'approved',
+                reviewerRole: 'clinician',
+                reviewerRef: 'dr@example.test',
+                reviewNote: 'Approved clinical note that must not be stored raw.',
+                observedAt: new Date('2026-06-27T08:05:00.000Z'),
+            }),
+            created_at: '2026-06-27T08:05:00.000Z',
+        };
+        const operations = buildRegulatoryClaimOperationsSnapshot({
+            tenantId: '22222222-2222-4222-8222-222222222222',
+            reviews: [review],
+            approvals: [approval],
+            generatedAt: new Date('2026-06-27T08:10:00.000Z'),
+        });
+
+        expect(approval.review_note_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(operations.schema_version).toBe('ask-vetios-regulatory-operations-v1');
+        expect(operations.totals.active_queue_items).toBe(1);
+        expect(operations.totals.approval_events).toBe(1);
+        expect(operations.items[0].latest_approvals.clinical_signoff?.action_status).toBe('approved');
+        expect(operations.items[0].required_actions).toContain('draft_or_approve_model_card');
+        expect(operations.items[0].required_actions).toContain('draft_or_approve_ifu');
+        expect(operations.evidence.raw_prompt_stored).toBe(false);
+        expect(operations.evidence.source_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(JSON.stringify(operations)).not.toContain('Approved clinical note');
     });
 
     it('blocks restricted treatment claims until legal and clinical review', () => {
