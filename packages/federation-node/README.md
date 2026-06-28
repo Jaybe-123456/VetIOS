@@ -144,6 +144,12 @@ Service mode continuously:
 - Injects the local private key into the task runtime config without sending it
   to VetIOS.
 - Trains locally, submits the masked update, and appends an audit JSONL event.
+- Captures per-iteration retry observations for current-round lookup,
+  heartbeat, and task execution.
+- Writes sanitized source manifests: kind, source system, counts, source
+  digests, duplicate-record counts, and hashed source refs only.
+- Records a privacy boundary proving raw records, raw model deltas, raw unmask
+  seeds, local source paths, and private keys were not exported.
 
 Use `--once` for a single service iteration, or `--max-iterations <n>` for a
 bounded smoke test.
@@ -229,4 +235,5 @@ Supported service `record_sources`:
 
 The service state file contains local private key material and must stay on the
 clinic or lab machine. The audit log intentionally stores only operational
-digests, task identifiers, commitment hashes, and submission status.
+digests, task identifiers, key fingerprints, retry observations, commitment
+hashes, source manifests, and submission status.

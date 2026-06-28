@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import {
     buildTrainedMaskedUpdateCommitment,
@@ -72,17 +72,18 @@ interface ServiceRecordSource {
 }
 
 interface LoadedRecordSourceSummary {
-    path: string;
     kind: ServiceRecordSourceKind;
     source_system: string | null;
     records_loaded: number;
     digest: string;
+    source_ref_hash: string;
 }
 
 interface LoadedRecordSet {
     records: LocalClinicalLearningRecord[];
     source_summaries: LoadedRecordSourceSummary[];
     source_digest: string;
+    duplicate_record_count: number;
 }
 
 interface NodeServiceState {
@@ -97,6 +98,27 @@ interface NodeServiceState {
     rotation_count?: number;
     created_at: string;
     updated_at: string;
+}
+
+interface RetryObservation<T> {
+    value: T;
+    attempts: number;
+    transient_errors: string[];
+}
+
+interface ServiceIterationInput {
+    client: VetiosFederationNodeClient;
+    recordSources: ServiceRecordSource[];
+    tenantId: string;
+    federationKey: string;
+    nodeRef: string;
+    partnerRef: string | null;
+    secret: string;
+    outcomeEligibilitySnapshotId?: string | null;
+    state: NodeServiceState;
+    iteration: number;
+    retryAttempts: number;
+    retryBaseMs: number;
 }
 
 async function main() {
@@ -457,6 +479,16 @@ async function runServiceMode(options: CliOptions): Promise<void> {
             status: 'error',
             iteration,
             observed_at: new Date().toISOString(),
+            federation_key: federationKey,
+            node_ref: nodeRef,
+            partner_ref: partnerRef,
+            key_version: state.key_version,
+            node_public_key_fingerprint: state.node_public_key_fingerprint,
+            retry_policy: {
+                attempts: retryAttempts,
+                base_ms: retryBaseMs,
+            },
+            privacy_boundary: buildServicePrivacyBoundary(),
             error: error instanceof Error ? error.message : 'unknown service iteration failure',
         }));
         await appendAuditLog(logPath, audit);
@@ -466,26 +498,14 @@ async function runServiceMode(options: CliOptions): Promise<void> {
     }
 }
 
-async function runServiceIteration(input: {
-    client: VetiosFederationNodeClient;
-    recordSources: ServiceRecordSource[];
-    tenantId: string;
-    federationKey: string;
-    nodeRef: string;
-    partnerRef: string | null;
-    secret: string;
-    outcomeEligibilitySnapshotId?: string | null;
-    state: NodeServiceState;
-    iteration: number;
-    retryAttempts: number;
-    retryBaseMs: number;
-}): Promise<Record<string, unknown>> {
+async function runServiceIteration(input: ServiceIterationInput): Promise<Record<string, unknown>> {
     const loaded = await loadLocalClinicalRecords(input.recordSources);
     const records = loaded.records;
-    const current = asRecord(await withRetry(
+    const currentRound = await withRetryReport(
         () => input.client.getCurrentRound(),
         { attempts: input.retryAttempts, baseMs: input.retryBaseMs },
-    ));
+    );
+    const current = asRecord(currentRound.value);
     const tasks = readTasks(current.tasks);
     const task = tasks.find((entry) => entry.task_status === 'issued' || entry.task_status === 'pulled' || entry.task_status === 'planned') ?? null;
     const trainedDataset = trainLocalFederatedTask({
@@ -495,8 +515,14 @@ async function runServiceIteration(input: {
         federationKey: input.federationKey,
         partnerRef: input.partnerRef,
     }).dataset;
+    const baseAudit = buildServiceAuditBase(input, loaded, trainedDataset, {
+        current_round_attempts: currentRound.attempts,
+        current_round_transient_errors: currentRound.transient_errors,
+        task_available: task != null,
+        available_task_count: tasks.length,
+    });
 
-    await withRetry(() => input.client.heartbeat({
+    const heartbeat = await withRetryReport(() => input.client.heartbeat({
         local_runner: 'vetios-federation-node-service',
         service_mode: true,
         node_public_key_der_base64: input.state.node_public_key_der_base64,
@@ -508,20 +534,16 @@ async function runServiceIteration(input: {
         record_source_digest: loaded.source_digest,
         record_source_summaries: loaded.source_summaries,
         raw_records_shared: false,
+        privacy_boundary: buildServicePrivacyBoundary(),
     }), { attempts: input.retryAttempts, baseMs: input.retryBaseMs });
 
     if (!task) {
         return {
-            schema: 'vetios_federation_node_service_audit_v1',
+            ...baseAudit,
             status: 'heartbeat_only',
-            iteration: input.iteration,
-            observed_at: new Date().toISOString(),
             task_available: false,
-            record_digest: trainedDataset.record_digest,
-            eligible_record_count: trainedDataset.eligible_records.length,
-            record_source_digest: loaded.source_digest,
-            record_source_summaries: loaded.source_summaries,
-            raw_records_shared: false,
+            heartbeat_attempts: heartbeat.attempts,
+            heartbeat_transient_errors: heartbeat.transient_errors,
         };
     }
 
@@ -535,16 +557,15 @@ async function runServiceIteration(input: {
         partnerRef: input.partnerRef,
         outcomeEligibilitySnapshotId: input.outcomeEligibilitySnapshotId ?? task.outcome_eligibility_snapshot_id ?? null,
     });
-    const result = await withRetry(
+    const taskRun = await withRetryReport(
         () => agent.runTask(hydratedTask),
         { attempts: input.retryAttempts, baseMs: input.retryBaseMs },
     );
+    const result = taskRun.value;
 
     return {
-        schema: 'vetios_federation_node_service_audit_v1',
+        ...baseAudit,
         status: 'submitted_update',
-        iteration: input.iteration,
-        observed_at: new Date().toISOString(),
         federation_round_id: hydratedTask.federation_round_id,
         round_node_task_id: hydratedTask.id,
         task_type: hydratedTask.task_type,
@@ -555,11 +576,22 @@ async function runServiceIteration(input: {
         encrypted_unmask_share_envelope_count: result.commitment.secure_aggregation_materialization.encrypted_unmask_share_envelopes.length,
         eligible_record_count: result.delta.eligible_record_count,
         record_digest: result.dataset.record_digest,
-        record_source_digest: loaded.source_digest,
-        record_source_summaries: loaded.source_summaries,
         submission_received: result.submission != null,
-        raw_records_shared: false,
-        raw_model_delta_shared: false,
+        heartbeat_attempts: heartbeat.attempts,
+        heartbeat_transient_errors: heartbeat.transient_errors,
+        task_run_attempts: taskRun.attempts,
+        task_run_transient_errors: taskRun.transient_errors,
+        secure_aggregation: {
+            schema: result.commitment.secure_aggregation_materialization.schema,
+            masking_protocol: result.commitment.secure_aggregation_materialization.masking_protocol,
+            dimension_count: result.commitment.secure_aggregation_materialization.dimension_count,
+            pairwise_mask_count: result.commitment.secure_aggregation_materialization.pairwise_mask_commitments.length,
+            encrypted_unmask_share_envelope_count: result.commitment.secure_aggregation_materialization.encrypted_unmask_share_envelopes.length,
+            dropped_peer_count: result.commitment.secure_aggregation_materialization.dropped_peer_refs.length,
+            masked_vector_digest: result.commitment.secure_aggregation_materialization.masked_vector_digest,
+            local_mask_sum_digest: result.commitment.secure_aggregation_materialization.local_mask_sum_digest,
+            raw_unmask_share_seed_shared: false,
+        },
     };
 }
 
@@ -586,18 +618,22 @@ async function resolveRecordSources(options: CliOptions, config: ServiceConfig):
 async function loadLocalClinicalRecords(sources: ServiceRecordSource[]): Promise<LoadedRecordSet> {
     const sourceSummaries: LoadedRecordSourceSummary[] = [];
     const recordsById = new Map<string, LocalClinicalLearningRecord>();
+    let duplicateRecordCount = 0;
     for (const source of sources) {
         const kind = source.kind ?? inferSourceKind(source.path);
         const records = await loadRecordsFromSource({ ...source, kind });
         for (const record of records) {
+            if (recordsById.has(record.local_record_id)) {
+                duplicateRecordCount += 1;
+            }
             recordsById.set(record.local_record_id, record);
         }
         sourceSummaries.push({
-            path: source.path,
             kind,
             source_system: source.source_system ?? null,
             records_loaded: records.length,
             digest: createHash('sha256').update(JSON.stringify(records.map((record) => record.local_record_id).sort())).digest('hex'),
+            source_ref_hash: createHash('sha256').update(`${kind}:${source.source_system ?? ''}:${basename(source.path)}`).digest('hex'),
         });
     }
     const records = Array.from(recordsById.values()).sort((left, right) => left.local_record_id.localeCompare(right.local_record_id));
@@ -605,6 +641,58 @@ async function loadLocalClinicalRecords(sources: ServiceRecordSource[]): Promise
         records,
         source_summaries: sourceSummaries,
         source_digest: createHash('sha256').update(JSON.stringify(sourceSummaries.map((summary) => summary.digest).sort())).digest('hex'),
+        duplicate_record_count: duplicateRecordCount,
+    };
+}
+
+function buildServiceAuditBase(
+    input: ServiceIterationInput,
+    loaded: LoadedRecordSet,
+    dataset: ReturnType<typeof trainLocalFederatedTask>['dataset'],
+    runtime: Record<string, unknown>,
+): Record<string, unknown> {
+    return {
+        schema: 'vetios_federation_node_service_audit_v1',
+        iteration: input.iteration,
+        observed_at: new Date().toISOString(),
+        federation_key: input.federationKey,
+        node_ref: input.nodeRef,
+        partner_ref: input.partnerRef,
+        key_version: input.state.key_version,
+        node_public_key_fingerprint: input.state.node_public_key_fingerprint,
+        retry_policy: {
+            attempts: input.retryAttempts,
+            base_ms: input.retryBaseMs,
+        },
+        record_count: loaded.records.length,
+        duplicate_record_count: loaded.duplicate_record_count,
+        eligible_record_count: dataset.eligible_records.length,
+        outcome_eligibility_status: dataset.snapshot_draft.eligibility_status,
+        average_trust_score: dataset.snapshot_draft.average_trust_score,
+        record_digest: dataset.record_digest,
+        record_source_digest: loaded.source_digest,
+        record_source_summaries: loaded.source_summaries,
+        privacy_boundary: buildServicePrivacyBoundary(),
+        local_execution_boundary: {
+            runner: 'vetios-federation-node-service',
+            raw_records_loaded_from_local_sources: true,
+            raw_records_shared_with_vetios: false,
+            raw_model_delta_shared_with_vetios: false,
+            local_private_key_exported: false,
+            local_source_paths_shared: false,
+        },
+        runtime,
+    };
+}
+
+function buildServicePrivacyBoundary(): Record<string, false> {
+    return {
+        raw_records_shared: false,
+        raw_model_delta_shared: false,
+        unmasked_delta_shared: false,
+        raw_unmask_share_seed_shared: false,
+        private_key_exported: false,
+        local_source_paths_shared: false,
     };
 }
 
@@ -982,17 +1070,23 @@ function parsePositiveInteger(value: string): number | undefined {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-async function withRetry<T>(
+async function withRetryReport<T>(
     operation: () => Promise<T>,
     options: { attempts: number; baseMs: number },
-): Promise<T> {
+): Promise<RetryObservation<T>> {
     let lastError: unknown;
+    const transientErrors: string[] = [];
     for (let attempt = 1; attempt <= options.attempts; attempt += 1) {
         try {
-            return await operation();
+            return {
+                value: await operation(),
+                attempts: attempt,
+                transient_errors: transientErrors,
+            };
         } catch (error) {
             lastError = error;
             if (attempt === options.attempts) break;
+            transientErrors.push(error instanceof Error ? error.message : 'unknown retryable failure');
             await sleep(options.baseMs * 2 ** (attempt - 1));
         }
     }
