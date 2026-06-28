@@ -439,9 +439,11 @@ describe('Ask VetIOS context detection', () => {
         });
 
         expect(suite.schema_version).toBe('ask-vetios-ai-security-red-team-suite-v1');
-        expect(suite.summary.total_cases).toBeGreaterThanOrEqual(7);
+        expect(suite.summary.total_cases).toBeGreaterThanOrEqual(9);
         expect(suite.summary.attack_cases).toBeGreaterThanOrEqual(3);
         expect(suite.summary.incident_required_cases).toBeGreaterThanOrEqual(3);
+        expect(suite.summary.policy_blocked_cases).toBe(suite.summary.total_cases);
+        expect(suite.summary.missing_required_test_case_types).toEqual([]);
         expect(suite.cases.map((entry) => entry.test_case_type)).toEqual(expect.arrayContaining([
             'prompt_injection',
             'tool_abuse',
@@ -450,6 +452,8 @@ describe('Ask VetIOS context detection', () => {
             'rag_boundary',
             'misinformation',
             'rate_limit',
+            'incident_response',
+            'external_attestation',
         ]));
         expect(suite.cases.every((entry) => entry.draft.tenant_id === '11111111-1111-4111-8111-111111111111')).toBe(true);
         expect(suite.cases.every((entry) => entry.draft.evidence.raw_prompt_stored === false)).toBe(true);

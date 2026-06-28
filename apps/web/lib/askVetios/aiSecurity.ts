@@ -267,9 +267,10 @@ export function buildAskVetiosAiSecuritySnapshot(
 
 export function buildAskVetiosAiSecurityTestPacket(
     snapshot: AskVetiosAiSecuritySnapshot,
+    options: { testCaseType?: AskVetiosAiSecurityTestCaseType } = {},
 ): AskVetiosAiSecurityTestPacket {
     const snapshotHash = hashJson(snapshot);
-    const testCaseType = determineTestCaseType(snapshot);
+    const testCaseType = options.testCaseType ?? determineTestCaseType(snapshot);
     const controls = {
         admin_tools_blocked: snapshot.controls.tool_policy.admin_tools_allowed === false,
         write_actions_blocked: snapshot.controls.tool_policy.write_actions_allowed === false,
