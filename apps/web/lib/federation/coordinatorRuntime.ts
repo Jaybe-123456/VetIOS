@@ -89,7 +89,38 @@ export interface CoordinatorFinalizeRoundResult {
     accepted_submissions: FederatedUpdateSubmissionRow[];
     missing_task_count: number;
     secure_aggregation_status: 'secure_aggregation_ready' | 'secure_aggregation_incomplete';
+    secure_aggregate_materialization: CoordinatorSecureAggregateMaterialization;
     blockers: string[];
+}
+
+export interface CoordinatorSecureAggregateMaterialization {
+    schema: 'vetios_coordinator_secure_aggregate_materialization_v1';
+    status: 'materialized' | 'blocked';
+    federation_round_id: string;
+    federation_key: string;
+    round_key: string;
+    masking_protocol: string;
+    accepted_update_count: number;
+    materialized_update_count: number;
+    unmask_share_submission_count: number;
+    dimension_count: number;
+    dimension_order_digest: string | null;
+    aggregate_masked_integer_vector: Record<string, number>;
+    aggregate_masked_vector_digest: string | null;
+    payload_commitment_hashes: string[];
+    mask_commitment_hashes: string[];
+    masked_vector_digests: string[];
+    pairwise_mask_commitment_count: number;
+    unmask_share_commitment_count: number;
+    encrypted_unmask_share_envelope_count: number;
+    encrypted_unmask_share_envelope_hashes: string[];
+    dropout_recovery_evidence_status: 'encrypted_unmask_envelopes_available' | 'commitment_only' | 'missing';
+    coordinator_visibility: 'secure_aggregate_only_no_site_delta';
+    raw_clinical_rows_shared: false;
+    raw_site_delta_artifacts_stored: false;
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
 }
 
 export class FederationCoordinatorRuntimeError extends Error {
@@ -219,6 +250,143 @@ export function buildCoordinatorTaskPlan(input: {
     };
 }
 
+export function buildCoordinatorSecureAggregateMaterialization(input: {
+    round: FederationRoundRow;
+    acceptedSubmissions: FederatedUpdateSubmissionRow[];
+    tasks?: FederationRoundNodeTaskRow[];
+    inheritedBlockers?: string[];
+}): CoordinatorSecureAggregateMaterialization {
+    const blockers = [...(input.inheritedBlockers ?? [])];
+    const warnings: string[] = [];
+    const updateSubmissions = input.acceptedSubmissions.filter((submission) =>
+        submission.contribution_role !== 'unmask_share',
+    );
+    const unmaskShareSubmissionCount = input.acceptedSubmissions.length - updateSubmissions.length;
+    const aggregateVector: Record<string, number> = {};
+    const payloadCommitmentHashes: string[] = [];
+    const maskCommitmentHashes: string[] = [];
+    const maskedVectorDigests: string[] = [];
+    const encryptedEnvelopeHashes: string[] = [];
+    const maskingProtocols: string[] = [];
+    let dimensionOrderDigest: string | null = null;
+    let materializedUpdateCount = 0;
+    let pairwiseMaskCommitmentCount = 0;
+    let unmaskShareCommitmentCount = 0;
+    let encryptedEnvelopeCount = 0;
+
+    if (updateSubmissions.length === 0) {
+        blockers.push('accepted_masked_update_vectors_missing');
+    }
+
+    for (const submission of updateSubmissions) {
+        const maskedSummary = asRecord(submission.masked_update_summary);
+        const secureAggregation = asRecord(maskedSummary.secure_aggregation);
+        const vector = readMaskedIntegerVector(secureAggregation.masked_integer_vector);
+        const vectorDimensions = Object.keys(vector).sort();
+        const submissionDimensionDigest = readText(secureAggregation.dimension_order_digest);
+        const maskedVectorDigest = readText(secureAggregation.masked_vector_digest);
+        const maskingProtocol = submission.masking_protocol
+            ?? readText(secureAggregation.masking_protocol)
+            ?? 'unknown';
+
+        maskingProtocols.push(maskingProtocol);
+        payloadCommitmentHashes.push(submission.payload_commitment_hash);
+        if (submission.mask_commitment_hash) {
+            maskCommitmentHashes.push(submission.mask_commitment_hash);
+        }
+        if (maskedVectorDigest) {
+            maskedVectorDigests.push(maskedVectorDigest);
+        }
+
+        pairwiseMaskCommitmentCount += Math.max(0, Math.round(readNumber(secureAggregation.pairwise_mask_count) ?? 0));
+        unmaskShareCommitmentCount += Math.max(0, Math.round(readNumber(secureAggregation.unmask_share_count) ?? 0));
+        encryptedEnvelopeCount += Math.max(0, Math.round(readNumber(secureAggregation.encrypted_unmask_share_envelope_count) ?? 0));
+        encryptedEnvelopeHashes.push(...readEncryptedUnmaskEnvelopeHashes(secureAggregation));
+
+        if (vectorDimensions.length === 0) {
+            blockers.push(`masked_integer_vector_missing:${submission.id}`);
+            continue;
+        }
+        if (!submissionDimensionDigest) {
+            blockers.push(`dimension_order_digest_missing:${submission.id}`);
+        } else if (!dimensionOrderDigest) {
+            dimensionOrderDigest = submissionDimensionDigest;
+        } else if (submissionDimensionDigest !== dimensionOrderDigest) {
+            blockers.push(`dimension_order_digest_mismatch:${submission.id}`);
+        }
+
+        for (const dimension of vectorDimensions) {
+            aggregateVector[dimension] = (aggregateVector[dimension] ?? 0) + vector[dimension]!;
+        }
+        materializedUpdateCount += 1;
+    }
+
+    if (maskCommitmentHashes.length < updateSubmissions.length) {
+        blockers.push('mask_commitments_missing_for_some_accepted_updates');
+    }
+    if (maskedVectorDigests.length < updateSubmissions.length) {
+        blockers.push('masked_vector_digests_missing_for_some_accepted_updates');
+    }
+    if (pairwiseMaskCommitmentCount === 0 && updateSubmissions.length > 1) {
+        blockers.push('pairwise_mask_commitments_missing');
+    }
+    if (encryptedEnvelopeCount === 0 && updateSubmissions.length > 1) {
+        warnings.push('encrypted_unmask_share_envelopes_missing_or_commitment_only');
+    }
+
+    const aggregateDimensions = Object.keys(aggregateVector).sort();
+    const aggregateMaskedIntegerVector = Object.fromEntries(
+        aggregateDimensions.map((dimension) => [dimension, aggregateVector[dimension] ?? 0]),
+    ) as Record<string, number>;
+    const aggregateMaskedVectorDigest = materializedUpdateCount > 0
+        ? stableHash({
+            dimension_order_digest: dimensionOrderDigest,
+            aggregate_masked_integer_vector: aggregateMaskedIntegerVector,
+            accepted_payload_commitment_hashes: payloadCommitmentHashes.sort(),
+            accepted_mask_commitment_hashes: maskCommitmentHashes.sort(),
+        })
+        : null;
+    const uniqueBlockers = unique(blockers);
+    const uniqueWarnings = unique(warnings);
+    const status = uniqueBlockers.length === 0 ? 'materialized' : 'blocked';
+    const protocol = chooseAggregateMaskingProtocol(maskingProtocols);
+    const dropoutRecoveryEvidenceStatus = encryptedEnvelopeCount > 0
+        ? 'encrypted_unmask_envelopes_available'
+        : unmaskShareCommitmentCount > 0
+        ? 'commitment_only'
+        : 'missing';
+
+    return {
+        schema: 'vetios_coordinator_secure_aggregate_materialization_v1',
+        status,
+        federation_round_id: input.round.id,
+        federation_key: input.round.federation_key,
+        round_key: input.round.round_key,
+        masking_protocol: protocol,
+        accepted_update_count: input.acceptedSubmissions.length,
+        materialized_update_count: materializedUpdateCount,
+        unmask_share_submission_count: unmaskShareSubmissionCount,
+        dimension_count: aggregateDimensions.length,
+        dimension_order_digest: dimensionOrderDigest,
+        aggregate_masked_integer_vector: aggregateMaskedIntegerVector,
+        aggregate_masked_vector_digest: aggregateMaskedVectorDigest,
+        payload_commitment_hashes: unique(payloadCommitmentHashes.filter((hash) => hash.length > 0)),
+        mask_commitment_hashes: unique(maskCommitmentHashes),
+        masked_vector_digests: unique(maskedVectorDigests),
+        pairwise_mask_commitment_count: pairwiseMaskCommitmentCount,
+        unmask_share_commitment_count: unmaskShareCommitmentCount,
+        encrypted_unmask_share_envelope_count: encryptedEnvelopeCount,
+        encrypted_unmask_share_envelope_hashes: unique(encryptedEnvelopeHashes),
+        dropout_recovery_evidence_status: dropoutRecoveryEvidenceStatus,
+        coordinator_visibility: 'secure_aggregate_only_no_site_delta',
+        raw_clinical_rows_shared: false,
+        raw_site_delta_artifacts_stored: false,
+        blockers: uniqueBlockers,
+        warnings: uniqueWarnings,
+        next_actions: buildSecureAggregateNextActions(status, dropoutRecoveryEvidenceStatus),
+    };
+}
+
 export async function issueFederationRoundNodeTasks(
     client: SupabaseClient,
     input: {
@@ -342,16 +510,24 @@ export async function finalizeFederationRoundSecureAggregation(
     const accepted = submissions.filter((submission) => submission.submission_status === 'accepted');
     const required = input.minimumAcceptedUpdates ?? tasks.filter((task) => task.task_type !== 'unmask_share').length;
     const missingTaskCount = Math.max(0, required - accepted.length);
-    const blockers: string[] = [];
+    const preflightBlockers: string[] = [];
     if (accepted.length < required) {
-        blockers.push('accepted_update_submissions_below_required_count');
+        preflightBlockers.push('accepted_update_submissions_below_required_count');
     }
+    const secureAggregateMaterialization = buildCoordinatorSecureAggregateMaterialization({
+        round,
+        acceptedSubmissions: accepted,
+        tasks,
+        inheritedBlockers: preflightBlockers,
+    });
+    const blockers = unique([...preflightBlockers, ...secureAggregateMaterialization.blockers]);
     const secureAggregationStatus = blockers.length === 0 ? 'secure_aggregation_ready' : 'secure_aggregation_incomplete';
     const updatedRound = await updateRoundSecureAggregationManifest(client, round, {
         secureAggregationStatus,
         accepted,
         tasks,
         blockers,
+        secureAggregateMaterialization,
         actor: input.actor,
         markCompleted: input.markCompleted === true && blockers.length === 0,
         evidence: input.evidence ?? {},
@@ -362,6 +538,7 @@ export async function finalizeFederationRoundSecureAggregation(
         accepted_submissions: accepted,
         missing_task_count: missingTaskCount,
         secure_aggregation_status: secureAggregationStatus,
+        secure_aggregate_materialization: secureAggregateMaterialization,
         blockers,
     };
 }
@@ -505,11 +682,17 @@ async function appendUpdateReviewRecord(
             [C.participant_ref]: input.submission.participant_ref,
             [C.contribution_role]: input.submission.contribution_role,
             [C.submission_status]: input.reviewStatus,
+            [C.masking_protocol]: input.submission.masking_protocol ?? 'pairwise_masked_commitment_v1',
             [C.payload_commitment_hash]: input.submission.payload_commitment_hash,
             [C.mask_commitment_hash]: input.submission.mask_commitment_hash,
             [C.signed_payload_hash]: input.submission.signed_payload_hash,
+            [C.signature_algorithm]: input.submission.signature_algorithm,
             [C.signature_hash]: input.submission.signature_hash,
+            [C.signing_key_fingerprint]: input.submission.signing_key_fingerprint,
+            [C.masked_update_summary]: input.submission.masked_update_summary,
+            [C.public_summary]: input.submission.public_summary,
             [C.evidence]: {
+                ...input.submission.evidence,
                 ...input.evidence,
                 review_event_kind: 'coordinator_update_review',
                 reviewed_submission_id: input.submission.id,
@@ -537,6 +720,7 @@ async function updateRoundSecureAggregationManifest(
         accepted: FederatedUpdateSubmissionRow[];
         tasks: FederationRoundNodeTaskRow[];
         blockers: string[];
+        secureAggregateMaterialization: CoordinatorSecureAggregateMaterialization;
         actor: string | null;
         markCompleted: boolean;
         evidence: Record<string, unknown>;
@@ -549,12 +733,23 @@ async function updateRoundSecureAggregationManifest(
             ...asRecord(round.aggregate_payload.secure_aggregation),
             mode: 'secure_aggregation_v1',
             status: input.secureAggregationStatus,
-            masking_protocol: 'pairwise_masked_commitment_v1',
+            masking_protocol: input.secureAggregateMaterialization.masking_protocol,
             accepted_update_submissions: input.accepted.length,
             issued_task_count: input.tasks.length,
             accepted_submission_ids: input.accepted.map((submission) => submission.id),
             accepted_node_refs: unique(input.accepted.map((submission) => submission.node_ref)),
             accepted_contribution_roles: unique(input.accepted.map((submission) => submission.contribution_role)),
+            materialization_status: input.secureAggregateMaterialization.status,
+            materialized_update_count: input.secureAggregateMaterialization.materialized_update_count,
+            dimension_count: input.secureAggregateMaterialization.dimension_count,
+            dimension_order_digest: input.secureAggregateMaterialization.dimension_order_digest,
+            aggregate_masked_vector_digest: input.secureAggregateMaterialization.aggregate_masked_vector_digest,
+            encrypted_unmask_share_envelope_count: input.secureAggregateMaterialization.encrypted_unmask_share_envelope_count,
+            dropout_recovery_evidence_status: input.secureAggregateMaterialization.dropout_recovery_evidence_status,
+            raw_clinical_rows_shared: false,
+            raw_site_delta_artifacts_stored: false,
+            coordinator_visibility: input.secureAggregateMaterialization.coordinator_visibility,
+            coordinator_secure_aggregate_materialization: input.secureAggregateMaterialization,
             blockers: input.blockers,
             finalized_by: input.actor,
             finalized_at: new Date().toISOString(),
@@ -925,10 +1120,16 @@ function mapUpdateSubmission(row: Record<string, unknown>): FederatedUpdateSubmi
         participant_ref: readText(row.participant_ref) ?? '',
         contribution_role: normalizeUpdateRole(row.contribution_role),
         submission_status: readText(row.submission_status) ?? 'submitted',
+        masking_protocol: readText(row.masking_protocol),
         payload_commitment_hash: readText(row.payload_commitment_hash) ?? '',
         mask_commitment_hash: readText(row.mask_commitment_hash),
         signed_payload_hash: readText(row.signed_payload_hash),
+        signature_algorithm: readText(row.signature_algorithm),
         signature_hash: readText(row.signature_hash),
+        signing_key_fingerprint: readText(row.signing_key_fingerprint),
+        masked_update_summary: asRecord(row.masked_update_summary),
+        public_summary: asRecord(row.public_summary),
+        evidence: asRecord(row.evidence),
         observed_at: readText(row.observed_at),
         created_at: readText(row.created_at),
     };
@@ -961,6 +1162,72 @@ function normalizeUpdateRole(value: unknown): FederatedUpdateRole {
         return value;
     }
     return contributionRoleForTaskType(null);
+}
+
+function readMaskedIntegerVector(value: unknown): Record<string, number> {
+    const record = asRecord(value);
+    const vector: Record<string, number> = {};
+    for (const [dimension, raw] of Object.entries(record)) {
+        const numeric = readNumber(raw);
+        if (numeric == null || !Number.isSafeInteger(numeric)) {
+            continue;
+        }
+        vector[dimension] = numeric;
+    }
+    return vector;
+}
+
+function readEncryptedUnmaskEnvelopeHashes(secureAggregation: Record<string, unknown>): string[] {
+    const directHashes = readStringArray(secureAggregation.encrypted_unmask_share_envelope_hashes);
+    const envelopeHashes = Array.isArray(secureAggregation.encrypted_unmask_share_envelopes)
+        ? secureAggregation.encrypted_unmask_share_envelopes
+            .map((envelope) => readText(asRecord(envelope).envelope_hash))
+            .filter((hash): hash is string => Boolean(hash))
+        : [];
+    return [...directHashes, ...envelopeHashes];
+}
+
+function readStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.map((item) => readText(item)).filter((item): item is string => Boolean(item))
+        : [];
+}
+
+function chooseAggregateMaskingProtocol(protocols: string[]): string {
+    const normalized = unique(protocols.filter((protocol): protocol is string => Boolean(protocol)));
+    if (normalized.length === 0) {
+        return 'unknown';
+    }
+    if (normalized.length === 1) {
+        return normalized[0]!;
+    }
+    if (normalized.every((protocol) => protocol === 'x25519_hkdf_pairwise_masked_v1')) {
+        return 'x25519_hkdf_pairwise_masked_v1';
+    }
+    return 'mixed_secure_aggregation_protocols';
+}
+
+function buildSecureAggregateNextActions(
+    status: CoordinatorSecureAggregateMaterialization['status'],
+    dropoutRecoveryEvidenceStatus: CoordinatorSecureAggregateMaterialization['dropout_recovery_evidence_status'],
+): string[] {
+    if (status === 'blocked') {
+        return [
+            'review_missing_or_inconsistent_masked_update_vectors',
+            'require_nodes_to_resubmit_x25519_masked_update_summaries',
+            'do_not_promote_candidate_from_this_round',
+        ];
+    }
+    if (dropoutRecoveryEvidenceStatus !== 'encrypted_unmask_envelopes_available') {
+        return [
+            'collect_encrypted_unmask_share_envelopes_before_dropout_recovery',
+            'keep_round_in_secure_aggregate_materialized_state',
+        ];
+    }
+    return [
+        'run_threshold_dropout_recovery_if_needed',
+        'handoff_masked_aggregate_to_federated_evaluation_gate',
+    ];
 }
 
 function normalizeNodeRef(value: unknown): string | null {

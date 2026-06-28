@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildCoordinatorSecureAggregateMaterialization,
     buildCoordinatorSecureAggregationConfig,
     buildCoordinatorTaskPlan,
     buildCoordinatorTaskPlanHash,
@@ -7,6 +8,7 @@ import {
     type CoordinatorOutcomeEligibilitySnapshot,
 } from '@/lib/federation/coordinatorRuntime';
 import type {
+    FederatedUpdateSubmissionRow,
     FederationMembershipRow,
     FederationRoundRow,
 } from '@/lib/federation/nodeRuntime';
@@ -148,6 +150,67 @@ describe('federation coordinator runtime', () => {
             status: 'active',
         }]);
     });
+
+    it('materializes coordinator aggregate evidence from accepted masked vectors', () => {
+        const materialization = buildCoordinatorSecureAggregateMaterialization({
+            round: round(),
+            acceptedSubmissions: [
+                submission({
+                    id: 'submission-a',
+                    node_ref: 'clinic-a-node',
+                    payload_commitment_hash: 'a'.repeat(64),
+                    mask_commitment_hash: 'b'.repeat(64),
+                    masked_update_summary: maskedSummary({
+                        symptom_vomiting: 12,
+                        species_canine: -3,
+                    }),
+                }),
+                submission({
+                    id: 'submission-b',
+                    node_ref: 'clinic-b-node',
+                    payload_commitment_hash: 'c'.repeat(64),
+                    mask_commitment_hash: 'd'.repeat(64),
+                    masked_update_summary: maskedSummary({
+                        symptom_vomiting: 8,
+                        species_canine: 7,
+                    }),
+                }),
+            ],
+        });
+
+        expect(materialization.status).toBe('materialized');
+        expect(materialization.masking_protocol).toBe('x25519_hkdf_pairwise_masked_v1');
+        expect(materialization.materialized_update_count).toBe(2);
+        expect(materialization.aggregate_masked_integer_vector).toEqual({
+            species_canine: 4,
+            symptom_vomiting: 20,
+        });
+        expect(materialization.aggregate_masked_vector_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(materialization.encrypted_unmask_share_envelope_count).toBe(2);
+        expect(materialization.dropout_recovery_evidence_status).toBe('encrypted_unmask_envelopes_available');
+        expect(materialization.raw_clinical_rows_shared).toBe(false);
+        expect(materialization.raw_site_delta_artifacts_stored).toBe(false);
+    });
+
+    it('blocks coordinator aggregate evidence when accepted vectors disagree on dimension order', () => {
+        const materialization = buildCoordinatorSecureAggregateMaterialization({
+            round: round(),
+            acceptedSubmissions: [
+                submission({
+                    id: 'submission-a',
+                    masked_update_summary: maskedSummary({ a: 1 }, { dimensionOrderDigest: '1'.repeat(64) }),
+                }),
+                submission({
+                    id: 'submission-b',
+                    masked_update_summary: maskedSummary({ a: 1 }, { dimensionOrderDigest: '2'.repeat(64) }),
+                }),
+            ],
+        });
+
+        expect(materialization.status).toBe('blocked');
+        expect(materialization.blockers).toContain('dimension_order_digest_mismatch:submission-b');
+        expect(materialization.next_actions).toContain('do_not_promote_candidate_from_this_round');
+    });
 });
 
 function round(overrides: Partial<FederationRoundRow> = {}): FederationRoundRow {
@@ -194,5 +257,65 @@ function eligibility(overrides: Partial<CoordinatorOutcomeEligibilitySnapshot> =
         source_record_digest: 'a'.repeat(64),
         observed_at: '2026-06-21T12:00:00.000Z',
         ...overrides,
+    };
+}
+
+function submission(overrides: Partial<FederatedUpdateSubmissionRow> = {}): FederatedUpdateSubmissionRow {
+    return {
+        id: 'submission-001',
+        tenant_id: 'tenant-a',
+        request_id: 'request-001',
+        federation_round_id: 'round-001',
+        round_node_task_id: 'task-001',
+        outcome_eligibility_snapshot_id: 'elig-001',
+        federation_key: 'one_health_amr',
+        round_key: 'one_health_amr:20260621',
+        node_ref: 'clinic-a-node',
+        partner_ref: 'clinic-a',
+        participant_ref: 'one_health_amr:clinic-a-node',
+        contribution_role: 'diagnosis',
+        submission_status: 'accepted',
+        masking_protocol: 'x25519_hkdf_pairwise_masked_v1',
+        payload_commitment_hash: 'a'.repeat(64),
+        mask_commitment_hash: 'b'.repeat(64),
+        signed_payload_hash: 'c'.repeat(64),
+        signature_algorithm: 'hmac-sha256-local-node-key-v1',
+        signature_hash: 'd'.repeat(64),
+        signing_key_fingerprint: 'fingerprint',
+        masked_update_summary: maskedSummary({ symptom_vomiting: 1 }),
+        public_summary: {},
+        evidence: {},
+        observed_at: '2026-06-21T12:00:00.000Z',
+        created_at: '2026-06-21T12:00:00.000Z',
+        ...overrides,
+    };
+}
+
+function maskedSummary(
+    maskedIntegerVector: Record<string, number>,
+    overrides: {
+        dimensionOrderDigest?: string;
+        maskedVectorDigest?: string;
+        encryptedEnvelopeCount?: number;
+    } = {},
+) {
+    return {
+        schema: 'vetios_masked_model_delta_commitment_v1',
+        secure_aggregation: {
+            schema: 'vetios_secure_aggregation_materialization_v1',
+            masking_protocol: 'x25519_hkdf_pairwise_masked_v1',
+            dimension_count: Object.keys(maskedIntegerVector).length,
+            dimension_order_digest: overrides.dimensionOrderDigest ?? 'f'.repeat(64),
+            masked_integer_vector: maskedIntegerVector,
+            masked_vector_digest: overrides.maskedVectorDigest ?? 'e'.repeat(64),
+            pairwise_mask_count: 1,
+            unmask_share_count: 1,
+            encrypted_unmask_share_envelope_count: overrides.encryptedEnvelopeCount ?? 1,
+            encrypted_unmask_share_envelopes: [{
+                envelope_hash: '9'.repeat(64),
+            }],
+        },
+        raw_delta_included: false,
+        raw_records_included: false,
     };
 }

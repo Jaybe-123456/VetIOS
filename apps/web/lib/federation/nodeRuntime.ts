@@ -169,10 +169,16 @@ export interface FederatedUpdateSubmissionRow {
     participant_ref: string;
     contribution_role: FederatedUpdateRole;
     submission_status: string;
+    masking_protocol: string | null;
     payload_commitment_hash: string;
     mask_commitment_hash: string | null;
     signed_payload_hash: string | null;
+    signature_algorithm: string | null;
     signature_hash: string | null;
+    signing_key_fingerprint: string | null;
+    masked_update_summary: Record<string, unknown>;
+    public_summary: Record<string, unknown>;
+    evidence: Record<string, unknown>;
     observed_at: string | null;
     created_at: string | null;
 }
@@ -880,10 +886,16 @@ function mapUpdateSubmission(row: Record<string, unknown>): FederatedUpdateSubmi
         participant_ref: readText(row.participant_ref) ?? '',
         contribution_role: normalizeUpdateRole(row.contribution_role),
         submission_status: readText(row.submission_status) ?? 'submitted',
+        masking_protocol: readText(row.masking_protocol),
         payload_commitment_hash: readText(row.payload_commitment_hash) ?? '',
         mask_commitment_hash: readText(row.mask_commitment_hash),
         signed_payload_hash: readText(row.signed_payload_hash),
+        signature_algorithm: readText(row.signature_algorithm),
         signature_hash: readText(row.signature_hash),
+        signing_key_fingerprint: readText(row.signing_key_fingerprint),
+        masked_update_summary: asRecord(row.masked_update_summary),
+        public_summary: asRecord(row.public_summary),
+        evidence: asRecord(row.evidence),
         observed_at: readText(row.observed_at),
         created_at: readText(row.created_at),
     };
