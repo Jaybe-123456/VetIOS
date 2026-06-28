@@ -154,6 +154,22 @@ Service mode continuously:
 Use `--once` for a single service iteration, or `--max-iterations <n>` for a
 bounded smoke test.
 
+Doctor preflight:
+
+```bash
+vetios-federation-node doctor \
+  --config .vetios-node/clinic-a-node.config.json
+```
+
+Doctor mode performs a local, no-network readiness check before a clinic or lab
+joins a live round. It loads the same record sources as service mode, creates or
+reuses the node key state, computes outcome-eligibility evidence, checks whether
+required secret-manager environment variables are present, and emits a
+ready/blocked packet with source digests, duplicate-record counts, key
+fingerprints, privacy boundaries, blockers, and warnings. It does not print
+tokens, node secrets, private keys, raw records, raw model deltas, or local
+source paths.
+
 Key rotation:
 
 ```bash

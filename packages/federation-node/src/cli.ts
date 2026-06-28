@@ -16,6 +16,7 @@ interface CliOptions {
     init: boolean;
     service: boolean;
     rotateKeys: boolean;
+    doctor: boolean;
     configPath?: string;
     recordsPath?: string;
     recordSourcesPath?: string;
@@ -131,6 +132,10 @@ async function main() {
         await runRotateKeysMode(options);
         return;
     }
+    if (options.doctor) {
+        await runDoctorMode(options);
+        return;
+    }
     if (options.service) {
         await runServiceMode(options);
         return;
@@ -222,10 +227,11 @@ function parseArgs(args: string[]): CliOptions {
         init: args[0] === 'init' || args.includes('--init'),
         service: args[0] === 'service' || args.includes('--service'),
         rotateKeys: args[0] === 'rotate-keys' || args.includes('--rotate-keys'),
+        doctor: args[0] === 'doctor' || args.includes('--doctor'),
         submit: false,
         once: false,
     };
-    const startIndex = args[0] === 'service' || args[0] === 'init' || args[0] === 'rotate-keys' ? 1 : 0;
+    const startIndex = args[0] === 'service' || args[0] === 'init' || args[0] === 'rotate-keys' || args[0] === 'doctor' ? 1 : 0;
     for (let index = startIndex; index < args.length; index += 1) {
         const arg = args[index];
         if (arg === '--init') {
@@ -238,6 +244,10 @@ function parseArgs(args: string[]): CliOptions {
         }
         if (arg === '--rotate-keys') {
             options.rotateKeys = true;
+            continue;
+        }
+        if (arg === '--doctor') {
+            options.doctor = true;
             continue;
         }
         if (arg === '--submit') {
@@ -433,6 +443,128 @@ async function runRotateKeysMode(options: CliOptions): Promise<void> {
     }, null, 2)}\n`);
 }
 
+async function runDoctorMode(options: CliOptions): Promise<void> {
+    const config = options.configPath ? await readJson<ServiceConfig>(options.configPath) : {};
+    const tenantId = readConfiguredText(options.tenantId ?? config.tenant_id ?? process.env.VETIOS_TENANT_ID);
+    const federationKey = readConfiguredText(options.federationKey ?? config.federation_key ?? process.env.VETIOS_FEDERATION_KEY);
+    const nodeRef = readConfiguredText(options.nodeRef ?? config.node_ref ?? process.env.VETIOS_NODE_REF);
+    const partnerRef = readConfiguredText(options.partnerRef ?? config.partner_ref ?? process.env.VETIOS_PARTNER_REF);
+    const baseUrl = readConfiguredText(options.baseUrl ?? config.base_url ?? process.env.VETIOS_BASE_URL);
+    const machineTokenPresent = Boolean(readConfiguredText(options.machineToken ?? config.machine_token ?? process.env.VETIOS_MACHINE_TOKEN));
+    const nodeSecretPresent = Boolean(readConfiguredText(options.secret ?? config.secret ?? process.env.VETIOS_NODE_SECRET));
+    const statePath = options.statePath ?? config.state_path ?? `.vetios-node/${nodeRef ?? 'unconfigured-node'}.state.json`;
+    const blockers = new Set<string>();
+    const warnings = new Set<string>();
+
+    if (!tenantId) blockers.add('tenant_id_missing');
+    if (!federationKey) blockers.add('federation_key_missing');
+    if (!nodeRef) blockers.add('node_ref_missing');
+    if (!baseUrl) blockers.add('base_url_missing');
+    if (!machineTokenPresent) blockers.add('machine_token_missing');
+    if (!nodeSecretPresent) blockers.add('node_secret_missing');
+    if (config.machine_token) warnings.add('machine_token_configured_in_file_prefer_secret_manager');
+    if (config.secret) warnings.add('node_secret_configured_in_file_prefer_secret_manager');
+
+    let recordSources: ServiceRecordSource[] = [];
+    let sourceError: string | null = null;
+    try {
+        recordSources = await resolveRecordSources(options, config);
+    } catch (error) {
+        sourceError = error instanceof Error ? error.message : 'record source resolution failed';
+        blockers.add('record_sources_missing');
+    }
+
+    let loaded = emptyLoadedRecordSet();
+    try {
+        loaded = recordSources.length > 0 ? await loadLocalClinicalRecords(recordSources) : emptyLoadedRecordSet();
+    } catch (error) {
+        sourceError = error instanceof Error ? error.message : 'record source load failed';
+        blockers.add('record_source_load_failed');
+    }
+    if (loaded.records.length === 0) blockers.add('no_records_loaded');
+
+    const state = nodeRef ? await loadOrCreateNodeServiceState(statePath, nodeRef) : null;
+    const dataset = tenantId && federationKey && nodeRef
+        ? trainLocalFederatedTask({
+            task: placeholderHeartbeatTask({
+                federationKey,
+                nodeRef,
+                partnerRef: partnerRef ?? nodeRef,
+            }),
+            records: loaded.records,
+            tenantId,
+            federationKey,
+            partnerRef: partnerRef ?? nodeRef,
+        }).dataset
+        : null;
+    if (dataset && dataset.eligible_records.length === 0) blockers.add('no_federation_eligible_records');
+    if (dataset && dataset.snapshot_draft.blockers.length > 0) {
+        for (const blocker of dataset.snapshot_draft.blockers) blockers.add(`eligibility_${blocker}`);
+    }
+
+    const result = {
+        schema: 'vetios_federation_node_doctor_result_v1',
+        status: blockers.size === 0 ? 'ready' : 'blocked',
+        checked_at: new Date().toISOString(),
+        config_path: options.configPath ?? null,
+        state_path: statePath,
+        federation_key: federationKey,
+        node_ref: nodeRef,
+        partner_ref: partnerRef ?? null,
+        base_url_configured: baseUrl != null,
+        env_readiness: {
+            machine_token_present: machineTokenPresent,
+            node_secret_present: nodeSecretPresent,
+            secrets_written_to_output: false,
+        },
+        key_state: state
+            ? {
+                key_version: state.key_version,
+                node_public_key_fingerprint: state.node_public_key_fingerprint,
+                rotation_count: state.rotation_count ?? 0,
+                private_key_exported: false,
+            }
+            : null,
+        source_evidence: {
+            source_count: recordSources.length,
+            record_count: loaded.records.length,
+            duplicate_record_count: loaded.duplicate_record_count,
+            record_source_digest: loaded.source_digest,
+            record_source_summaries: loaded.source_summaries,
+            local_source_paths_shared: false,
+            source_error: sourceError,
+        },
+        eligibility_evidence: dataset
+            ? {
+                outcome_eligibility_status: dataset.snapshot_draft.eligibility_status,
+                eligible_record_count: dataset.eligible_records.length,
+                outcome_confirmed_rows: dataset.snapshot_draft.outcome_confirmed_rows,
+                provenance_verified_rows: dataset.snapshot_draft.provenance_verified_rows,
+                trust_scored_rows: dataset.snapshot_draft.trust_scored_rows,
+                average_trust_score: dataset.snapshot_draft.average_trust_score,
+                source_record_digest: dataset.snapshot_draft.source_record_digest,
+                blockers: dataset.snapshot_draft.blockers,
+            }
+            : null,
+        privacy_boundary: buildServicePrivacyBoundary(),
+        local_execution_boundary: {
+            network_calls_made: false,
+            raw_records_shared_with_vetios: false,
+            raw_model_delta_shared_with_vetios: false,
+            local_private_key_exported: false,
+            local_source_paths_shared: false,
+        },
+        blockers: Array.from(blockers).sort(),
+        warnings: Array.from(warnings).sort(),
+    };
+    const json = `${JSON.stringify(result, null, 2)}\n`;
+    if (options.outputPath) {
+        await writeFile(options.outputPath, json, 'utf8');
+    } else {
+        process.stdout.write(json);
+    }
+}
+
 async function runServiceMode(options: CliOptions): Promise<void> {
     const config = options.configPath ? await readJson<ServiceConfig>(options.configPath) : {};
     const recordSources = await resolveRecordSources(options, config);
@@ -613,6 +745,15 @@ async function resolveRecordSources(options: CliOptions, config: ServiceConfig):
         return [{ kind: 'vetios_json', path: recordsPath, source_system: 'local-json' }];
     }
     throw new Error('Missing records path or record_sources. Provide --records, --record-sources, or config.record_sources.');
+}
+
+function emptyLoadedRecordSet(): LoadedRecordSet {
+    return {
+        records: [],
+        source_summaries: [],
+        source_digest: createHash('sha256').update('[]').digest('hex'),
+        duplicate_record_count: 0,
+    };
 }
 
 async function loadLocalClinicalRecords(sources: ServiceRecordSource[]): Promise<LoadedRecordSet> {
@@ -1070,6 +1211,10 @@ function parsePositiveInteger(value: string): number | undefined {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function readConfiguredText(value: string | undefined | null): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
 async function withRetryReport<T>(
     operation: () => Promise<T>,
     options: { attempts: number; baseMs: number },
@@ -1114,6 +1259,9 @@ Optional submit mode:
 
 Service mode:
   vetios-federation-node service --config .vetios-node/<node>.config.json
+
+Local doctor preflight:
+  vetios-federation-node doctor --config .vetios-node/<node>.config.json
 
 Rotate local node keys:
   vetios-federation-node rotate-keys --config .vetios-node/<node>.config.json --rotation-reason scheduled_rotation
