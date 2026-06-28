@@ -180,6 +180,8 @@ type FederationAction =
         task_types?: FederatedAggregateTaskType[] | string | null;
         minimum_accepted_updates?: number | string | null;
         mark_completed?: boolean | string | null;
+        coordinator_private_key_pem?: string | null;
+        coordinator_private_key_der_base64?: string | null;
         evidence?: Record<string, unknown>;
     }
     | {
@@ -190,6 +192,8 @@ type FederationAction =
         task_types?: FederatedAggregateTaskType[] | string | null;
         minimum_accepted_updates?: number | string | null;
         mark_completed?: boolean | string | null;
+        coordinator_private_key_pem?: string | null;
+        coordinator_private_key_der_base64?: string | null;
         evidence?: Record<string, unknown>;
     }
     | {
@@ -496,6 +500,8 @@ export async function POST(req: Request) {
                     minimumAcceptedUpdates: normalizePositiveInteger(aggregateBody.minimum_accepted_updates),
                     markCompleted: normalizeBoolean(aggregateBody.mark_completed) ?? false,
                     evidence: asRecord(aggregateBody.evidence),
+                    coordinatorPrivateKeyPem: normalizeOptionalText(aggregateBody.coordinator_private_key_pem),
+                    coordinatorPrivateKeyDerBase64: normalizeOptionalText(aggregateBody.coordinator_private_key_der_base64),
                 }),
             };
         } else if (action === 'run_federated_promotion_automation') {
@@ -514,6 +520,8 @@ export async function POST(req: Request) {
                     minimumAcceptedUpdates: normalizePositiveInteger(automationBody.minimum_accepted_updates),
                     markRoundCompleted: normalizeBoolean(automationBody.mark_completed) ?? false,
                     aggregateEvidence: asRecord(automationBody.evidence),
+                    coordinatorPrivateKeyPem: normalizeOptionalText(automationBody.coordinator_private_key_pem),
+                    coordinatorPrivateKeyDerBase64: normalizeOptionalText(automationBody.coordinator_private_key_der_base64),
                 }),
             };
         } else if (action === 'generate_federated_candidate_evidence') {

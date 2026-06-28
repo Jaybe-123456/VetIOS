@@ -138,6 +138,8 @@ export async function runFederatedPromotionAutomation(
         minimumAcceptedUpdates?: number | null;
         markRoundCompleted?: boolean;
         aggregateEvidence?: Record<string, unknown>;
+        coordinatorPrivateKeyPem?: string | null;
+        coordinatorPrivateKeyDerBase64?: string | null;
         policy?: Partial<FederatedPromotionPolicy>;
     },
 ): Promise<FederatedPromotionAutomationResult> {
@@ -157,6 +159,8 @@ export async function runFederatedPromotionAutomation(
                     automation_stage: 'federated_candidate_promotion',
                     ...(input.aggregateEvidence ?? {}),
                 },
+                coordinatorPrivateKeyPem: input.coordinatorPrivateKeyPem,
+                coordinatorPrivateKeyDerBase64: input.coordinatorPrivateKeyDerBase64,
             });
         } catch (error) {
             if (!(error instanceof FederatedAggregateBuilderError) || error.status !== 409) {
