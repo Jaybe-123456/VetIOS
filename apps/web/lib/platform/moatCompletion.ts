@@ -153,6 +153,22 @@ export interface MoatCompletionEvidence {
         regulatory_blocked_reviews: number;
         last_signal_at: string | null;
     };
+    retrieval_corpus: {
+        audit_events: number;
+        operating_audits: number;
+        red_team_evaluations: number;
+        citation_quality_evaluations: number;
+        source_count: number;
+        document_count: number;
+        chunk_count: number;
+        high_authority_source_count: number;
+        authorized_source_count: number;
+        versioned_source_count: number;
+        covered_index_count: number;
+        red_team_case_count: number;
+        citation_quality_score: number;
+        last_signal_at: string | null;
+    };
     case_graph_promotion: {
         promotion_events: number;
         promoted_to_case: number;
@@ -261,6 +277,7 @@ export async function loadMoatCompletionEvidence(
         inference,
         workflow,
         askVetios,
+        retrievalCorpus,
         caseGraphPromotion,
         amr,
         specialistReview,
@@ -271,6 +288,7 @@ export async function loadMoatCompletionEvidence(
         loadInferenceEvidence(client, tenantId, warnings),
         loadWorkflowEvidence(client, tenantId, warnings),
         loadAskVetiosEvidence(client, tenantId, warnings),
+        loadRetrievalCorpusEvidence(client, tenantId, warnings),
         loadCaseGraphPromotionEvidence(client, tenantId, warnings),
         loadAmrEvidence(client, tenantId, warnings),
         loadSpecialistReviewEvidence(client, tenantId, warnings),
@@ -286,6 +304,7 @@ export async function loadMoatCompletionEvidence(
         inference,
         workflow,
         ask_vetios: askVetios,
+        retrieval_corpus: retrievalCorpus,
         case_graph_promotion: caseGraphPromotion,
         amr,
         specialist_review: specialistReview,
@@ -451,7 +470,20 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
         evidence.ask_vetios.last_signal_at,
         evidence.case_graph_promotion.last_signal_at,
     ]);
+    const lastRetrievalSignal = latestIso([
+        lastAskSignal,
+        evidence.retrieval_corpus.last_signal_at,
+        evidence.dataset.last_signal_at,
+    ]);
     const outcomeLinkedTrust = evidence.inference.outcome_linked_inferences + evidence.inference.cire_sample_size;
+    const retrievalProvenanceEvidence = evidence.ask_vetios.retrieval_grounded
+        + evidence.retrieval_corpus.authorized_source_count
+        + evidence.retrieval_corpus.versioned_source_count
+        + evidence.retrieval_corpus.high_authority_source_count;
+    const retrievalTrustEvidence = evidence.ask_vetios.grounded_drafts
+        + evidence.retrieval_corpus.red_team_case_count
+        + evidence.retrieval_corpus.citation_quality_evaluations
+        + evidence.retrieval_corpus.covered_index_count;
     const federationLiveEvidence = evidence.federation.activation_events
         + evidence.federation.outcome_eligibility_snapshots
         + evidence.federation.runtime_events
@@ -587,12 +619,13 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 'reviewed_case_corpus_feedback',
             ],
             counts: {
-                live_event_count: evidence.ask_vetios.query_events,
+                live_event_count: evidence.ask_vetios.query_events
+                    + evidence.retrieval_corpus.audit_events,
                 outcome_confirmed_count: evidence.dataset.confirmed_labels,
-                provenance_verified_count: evidence.ask_vetios.retrieval_grounded,
-                trust_scored_count: evidence.ask_vetios.grounded_drafts,
+                provenance_verified_count: retrievalProvenanceEvidence,
+                trust_scored_count: retrievalTrustEvidence,
                 external_validation_count: 0,
-                last_signal_at: latestIso([lastAskSignal, evidence.dataset.last_signal_at]),
+                last_signal_at: lastRetrievalSignal,
             },
             defensible_minimums: {
                 live_event_count: 100,
@@ -601,9 +634,24 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 trust_scored_count: 50,
             },
             evidence: {
-                source_tables: ['ask_vetios_queries', 'agentic_rag_moat_snapshots'],
+                source_tables: [
+                    'ask_vetios_queries',
+                    'agentic_rag_moat_snapshots',
+                    'veterinary_retrieval_corpus_audit_events',
+                ],
                 retrieval_grounded: evidence.ask_vetios.retrieval_grounded,
                 grounded_drafts: evidence.ask_vetios.grounded_drafts,
+                corpus_audit_events: evidence.retrieval_corpus.audit_events,
+                operating_corpus_audits: evidence.retrieval_corpus.operating_audits,
+                source_count: evidence.retrieval_corpus.source_count,
+                document_count: evidence.retrieval_corpus.document_count,
+                chunk_count: evidence.retrieval_corpus.chunk_count,
+                high_authority_source_count: evidence.retrieval_corpus.high_authority_source_count,
+                authorized_source_count: evidence.retrieval_corpus.authorized_source_count,
+                versioned_source_count: evidence.retrieval_corpus.versioned_source_count,
+                covered_index_count: evidence.retrieval_corpus.covered_index_count,
+                red_team_case_count: evidence.retrieval_corpus.red_team_case_count,
+                citation_quality_score: evidence.retrieval_corpus.citation_quality_score,
             },
             owner_label: 'Retrieval Ops',
         }),
@@ -1044,6 +1092,50 @@ async function loadAskVetiosEvidence(
     };
 }
 
+async function loadRetrievalCorpusEvidence(
+    client: SupabaseClient,
+    tenantId: string,
+    warnings: string[],
+): Promise<MoatCompletionEvidence['retrieval_corpus']> {
+    const table = 'veterinary_retrieval_corpus_audit_events';
+    const scope = (query: any) => query.eq('tenant_id', tenantId);
+    const [
+        auditEvents,
+        operatingAudits,
+        redTeamEvaluations,
+        citationQualityEvaluations,
+        lastSignalAt,
+        latestSnapshot,
+    ] = await Promise.all([
+        countRows(client, table, scope, warnings, 'veterinary retrieval corpus audit events'),
+        countRows(client, table, (query) => scope(query).eq('moat_status', 'operating'), warnings, 'operating veterinary retrieval corpus audits'),
+        countRows(client, table, (query) => scope(query).eq('audit_type', 'red_team_evaluation'), warnings, 'veterinary retrieval red-team evaluations'),
+        countRows(client, table, (query) => scope(query).eq('audit_type', 'citation_quality_evaluation'), warnings, 'veterinary retrieval citation-quality evaluations'),
+        latestTimestamp(client, table, 'observed_at', scope, warnings, 'veterinary retrieval corpus latest signal'),
+        loadLatestRetrievalCorpusAuditSnapshot(client, table, scope, warnings),
+    ]);
+
+    const coveredIndexCount = (latestSnapshot?.toxicology_index_status === 'covered' ? 1 : 0)
+        + (latestSnapshot?.lab_reference_index_status === 'covered' ? 1 : 0);
+
+    return {
+        audit_events: auditEvents,
+        operating_audits: operatingAudits,
+        red_team_evaluations: redTeamEvaluations,
+        citation_quality_evaluations: citationQualityEvaluations,
+        source_count: latestSnapshot?.source_count ?? 0,
+        document_count: latestSnapshot?.document_count ?? 0,
+        chunk_count: latestSnapshot?.chunk_count ?? 0,
+        high_authority_source_count: latestSnapshot?.high_authority_source_count ?? 0,
+        authorized_source_count: latestSnapshot?.authorized_source_count ?? 0,
+        versioned_source_count: latestSnapshot?.versioned_source_count ?? 0,
+        covered_index_count: coveredIndexCount,
+        red_team_case_count: latestSnapshot?.red_team_case_count ?? 0,
+        citation_quality_score: latestSnapshot?.citation_quality_score ?? 0,
+        last_signal_at: lastSignalAt,
+    };
+}
+
 async function loadCaseGraphPromotionEvidence(
     client: SupabaseClient,
     tenantId: string,
@@ -1304,6 +1396,48 @@ async function loadTrustOpsEvidence(
     };
 }
 
+async function loadLatestRetrievalCorpusAuditSnapshot(
+    client: SupabaseClient,
+    table: string,
+    applyFilters: (query: any) => any,
+    warnings: string[],
+) {
+    const query = applyFilters(client.from(table).select([
+        'source_count',
+        'document_count',
+        'chunk_count',
+        'high_authority_source_count',
+        'authorized_source_count',
+        'versioned_source_count',
+        'toxicology_index_status',
+        'lab_reference_index_status',
+        'red_team_case_count',
+        'citation_quality_score',
+    ].join(',')).order('observed_at', { ascending: false }).limit(1));
+
+    const { data, error } = await query.maybeSingle();
+    if (error) {
+        warnings.push(`veterinary retrieval corpus latest audit unavailable: ${readErrorMessage(error)}`);
+        return null;
+    }
+
+    const row = data as Record<string, unknown> | null;
+    if (!row) return null;
+
+    return {
+        source_count: normalizeCount(row.source_count, 0),
+        document_count: normalizeCount(row.document_count, 0),
+        chunk_count: normalizeCount(row.chunk_count, 0),
+        high_authority_source_count: normalizeCount(row.high_authority_source_count, 0),
+        authorized_source_count: normalizeCount(row.authorized_source_count, 0),
+        versioned_source_count: normalizeCount(row.versioned_source_count, 0),
+        toxicology_index_status: normalizeOptionalText(row.toxicology_index_status),
+        lab_reference_index_status: normalizeOptionalText(row.lab_reference_index_status),
+        red_team_case_count: normalizeCount(row.red_team_case_count, 0),
+        citation_quality_score: normalizeRatio(row.citation_quality_score, 0),
+    };
+}
+
 async function countRows(
     client: SupabaseClient,
     table: string,
@@ -1405,6 +1539,14 @@ function normalizeCount(value: unknown, fallback: number): number {
     return typeof value === 'number' && Number.isFinite(value) && value >= 0
         ? Math.round(value)
         : fallback;
+}
+
+function normalizeRatio(value: unknown, fallback: number): number {
+    const numeric = typeof value === 'number'
+        ? value
+        : typeof value === 'string' ? Number(value) : Number.NaN;
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.max(0, Math.min(1, numeric));
 }
 
 function roundScore(value: number): number {

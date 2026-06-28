@@ -179,6 +179,44 @@ describe('moat completion scoring', () => {
         expect(regulatory?.provenance_verified_count).toBe(7);
     });
 
+    it('graduates veterinary retrieval from corpus audit evidence, not only query grounding', () => {
+        const snapshot = buildMoatCompletionSnapshot(evidence({
+            dataset: {
+                confirmed_labels: 4,
+            },
+            ask_vetios: {
+                query_events: 3,
+                retrieval_grounded: 2,
+                grounded_drafts: 2,
+            },
+            retrieval_corpus: {
+                audit_events: 4,
+                operating_audits: 2,
+                red_team_evaluations: 1,
+                citation_quality_evaluations: 1,
+                source_count: 18,
+                document_count: 42,
+                chunk_count: 640,
+                high_authority_source_count: 7,
+                authorized_source_count: 11,
+                versioned_source_count: 10,
+                covered_index_count: 2,
+                red_team_case_count: 9,
+                citation_quality_score: 0.82,
+            },
+        }));
+
+        const retrieval = snapshot.moats.find((moat) => moat.moat_key === 'veterinary_retrieval');
+
+        expect(retrieval?.completion_level).toBe('operating');
+        expect(retrieval?.live_event_count).toBe(7);
+        expect(retrieval?.provenance_verified_count).toBe(30);
+        expect(retrieval?.trust_scored_count).toBe(14);
+        expect(retrieval?.evidence.source_tables).toContain('veterinary_retrieval_corpus_audit_events');
+        expect(retrieval?.evidence.operating_corpus_audits).toBe(2);
+        expect(retrieval?.evidence.citation_quality_score).toBe(0.82);
+    });
+
     it('scores federated learning from outcome eligibility, masked updates, promotion, and surveillance evidence', () => {
         const snapshot = buildMoatCompletionSnapshot(evidence({
             federation: {
@@ -239,6 +277,7 @@ function evidence(overrides: {
     inference?: Partial<MoatCompletionEvidence['inference']>;
     workflow?: Partial<MoatCompletionEvidence['workflow']>;
     ask_vetios?: Partial<MoatCompletionEvidence['ask_vetios']>;
+    retrieval_corpus?: Partial<MoatCompletionEvidence['retrieval_corpus']>;
     case_graph_promotion?: Partial<MoatCompletionEvidence['case_graph_promotion']>;
     amr?: Partial<MoatCompletionEvidence['amr']>;
     specialist_review?: Partial<MoatCompletionEvidence['specialist_review']>;
@@ -288,6 +327,23 @@ function evidence(overrides: {
             regulatory_blocked_reviews: 0,
             last_signal_at: null,
             ...overrides.ask_vetios,
+        },
+        retrieval_corpus: {
+            audit_events: 0,
+            operating_audits: 0,
+            red_team_evaluations: 0,
+            citation_quality_evaluations: 0,
+            source_count: 0,
+            document_count: 0,
+            chunk_count: 0,
+            high_authority_source_count: 0,
+            authorized_source_count: 0,
+            versioned_source_count: 0,
+            covered_index_count: 0,
+            red_team_case_count: 0,
+            citation_quality_score: 0,
+            last_signal_at: null,
+            ...overrides.retrieval_corpus,
         },
         case_graph_promotion: {
             promotion_events: 0,
