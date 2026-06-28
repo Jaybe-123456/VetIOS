@@ -129,6 +129,17 @@ describe('moat completion scoring', () => {
                 passive_signal_events: 2,
                 integration_run_events: 8,
                 ready_integration_runs: 6,
+                pims_workflow_runs: 2,
+                lab_result_runs: 2,
+                pacs_report_runs: 1,
+                follow_up_runs: 1,
+                operating_pims_workflow_runs: 1,
+                operating_lab_result_runs: 1,
+                operating_pacs_report_runs: 1,
+                operating_follow_up_runs: 1,
+            },
+            inference: {
+                outcome_linked_inferences: 1,
             },
             specialist_review: {
                 review_events: 3,
@@ -166,8 +177,11 @@ describe('moat completion scoring', () => {
         const regulatory = snapshot.moats.find((moat) => moat.moat_key === 'regulatory_claims_discipline');
 
         expect(workflow?.live_event_count).toBe(10);
-        expect(workflow?.provenance_verified_count).toBe(12);
+        expect(workflow?.outcome_confirmed_count).toBe(2);
+        expect(workflow?.provenance_verified_count).toBe(16);
+        expect(workflow?.trust_scored_count).toBe(4);
         expect(workflow?.evidence.source_tables).toContain('workflow_integration_run_events');
+        expect(workflow?.evidence.full_operating_workflow_surface).toBe(true);
         expect(specialist?.live_event_count).toBe(10);
         expect(specialist?.outcome_confirmed_count).toBe(2);
         expect(amr?.live_event_count).toBe(10);
@@ -177,6 +191,44 @@ describe('moat completion scoring', () => {
         expect(security?.provenance_verified_count).toBe(7);
         expect(regulatory?.live_event_count).toBe(16);
         expect(regulatory?.provenance_verified_count).toBe(7);
+    });
+
+    it('keeps workflow integration at foundation when operating evidence is lab-only', () => {
+        const snapshot = buildMoatCompletionSnapshot(evidence({
+            workflow: {
+                passive_signal_events: 8,
+                integration_run_events: 16,
+                ready_integration_runs: 12,
+                pims_workflow_runs: 0,
+                lab_result_runs: 16,
+                pacs_report_runs: 0,
+                follow_up_runs: 0,
+                operating_pims_workflow_runs: 0,
+                operating_lab_result_runs: 12,
+                operating_pacs_report_runs: 0,
+                operating_follow_up_runs: 0,
+            },
+            inference: {
+                outcome_linked_inferences: 12,
+                cire_sample_size: 12,
+            },
+            ask_vetios: {
+                workflow_ready: 6,
+            },
+        }));
+
+        const workflow = snapshot.moats.find((moat) => moat.moat_key === 'workflow_integration');
+
+        expect(workflow?.completion_level).toBe('foundation');
+        expect(workflow?.live_event_count).toBe(24);
+        expect(workflow?.outcome_confirmed_count).toBe(0);
+        expect(workflow?.trust_scored_count).toBe(0);
+        expect(workflow?.provenance_verified_count).toBe(21);
+        expect(workflow?.missing_evidence).toContain('outcome_confirmed_records');
+        expect(workflow?.missing_evidence).toContain('trust_scored_records');
+        expect(workflow?.evidence.workflow_capability_coverage).toBe(1);
+        expect(workflow?.evidence.operating_workflow_capability_coverage).toBe(1);
+        expect(workflow?.evidence.full_operating_workflow_surface).toBe(false);
     });
 
     it('graduates veterinary retrieval from corpus audit evidence, not only query grounding', () => {
@@ -309,6 +361,14 @@ function evidence(overrides: {
             passive_signal_events: 0,
             integration_run_events: 0,
             ready_integration_runs: 0,
+            pims_workflow_runs: 0,
+            lab_result_runs: 0,
+            pacs_report_runs: 0,
+            follow_up_runs: 0,
+            operating_pims_workflow_runs: 0,
+            operating_lab_result_runs: 0,
+            operating_pacs_report_runs: 0,
+            operating_follow_up_runs: 0,
             last_signal_at: null,
             ...overrides.workflow,
         },

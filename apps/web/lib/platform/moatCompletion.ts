@@ -136,6 +136,14 @@ export interface MoatCompletionEvidence {
         passive_signal_events: number;
         integration_run_events: number;
         ready_integration_runs: number;
+        pims_workflow_runs: number;
+        lab_result_runs: number;
+        pacs_report_runs: number;
+        follow_up_runs: number;
+        operating_pims_workflow_runs: number;
+        operating_lab_result_runs: number;
+        operating_pacs_report_runs: number;
+        operating_follow_up_runs: number;
         last_signal_at: string | null;
     };
     ask_vetios: {
@@ -484,6 +492,19 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
         + evidence.retrieval_corpus.red_team_case_count
         + evidence.retrieval_corpus.citation_quality_evaluations
         + evidence.retrieval_corpus.covered_index_count;
+    const workflowCapabilityCoverage = countPositiveValues([
+        evidence.workflow.pims_workflow_runs,
+        evidence.workflow.lab_result_runs,
+        evidence.workflow.pacs_report_runs,
+        evidence.workflow.follow_up_runs,
+    ]);
+    const operatingWorkflowCapabilityCoverage = countPositiveValues([
+        evidence.workflow.operating_pims_workflow_runs,
+        evidence.workflow.operating_lab_result_runs,
+        evidence.workflow.operating_pacs_report_runs,
+        evidence.workflow.operating_follow_up_runs,
+    ]);
+    const fullOperatingWorkflowSurface = operatingWorkflowCapabilityCoverage >= 4;
     const federationLiveEvidence = evidence.federation.activation_events
         + evidence.federation.outcome_eligibility_snapshots
         + evidence.federation.runtime_events
@@ -671,11 +692,16 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 live_event_count: evidence.workflow.passive_signal_events
                     + evidence.workflow.integration_run_events
                     + evidence.dataset.clinical_cases,
-                outcome_confirmed_count: evidence.inference.outcome_linked_inferences,
+                outcome_confirmed_count: fullOperatingWorkflowSurface
+                    ? evidence.inference.outcome_linked_inferences + evidence.workflow.operating_follow_up_runs
+                    : 0,
                 provenance_verified_count: evidence.workflow.passive_signal_events
                     + evidence.workflow.ready_integration_runs
-                    + evidence.ask_vetios.workflow_ready,
-                trust_scored_count: evidence.inference.cire_sample_size,
+                    + evidence.ask_vetios.workflow_ready
+                    + operatingWorkflowCapabilityCoverage,
+                trust_scored_count: fullOperatingWorkflowSurface
+                    ? evidence.inference.cire_sample_size + operatingWorkflowCapabilityCoverage
+                    : 0,
                 external_validation_count: 0,
                 last_signal_at: latestIso([evidence.workflow.last_signal_at, lastAskSignal, evidence.dataset.last_signal_at]),
             },
@@ -690,6 +716,17 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
                 passive_signal_events: evidence.workflow.passive_signal_events,
                 integration_run_events: evidence.workflow.integration_run_events,
                 ready_integration_runs: evidence.workflow.ready_integration_runs,
+                pims_workflow_runs: evidence.workflow.pims_workflow_runs,
+                lab_result_runs: evidence.workflow.lab_result_runs,
+                pacs_report_runs: evidence.workflow.pacs_report_runs,
+                follow_up_runs: evidence.workflow.follow_up_runs,
+                operating_pims_workflow_runs: evidence.workflow.operating_pims_workflow_runs,
+                operating_lab_result_runs: evidence.workflow.operating_lab_result_runs,
+                operating_pacs_report_runs: evidence.workflow.operating_pacs_report_runs,
+                operating_follow_up_runs: evidence.workflow.operating_follow_up_runs,
+                workflow_capability_coverage: workflowCapabilityCoverage,
+                operating_workflow_capability_coverage: operatingWorkflowCapabilityCoverage,
+                full_operating_workflow_surface: fullOperatingWorkflowSurface,
                 workflow_ready_queries: evidence.ask_vetios.workflow_ready,
             },
             owner_label: 'Workflow Ops',
@@ -1015,10 +1052,32 @@ async function loadWorkflowEvidence(
 ): Promise<MoatCompletionEvidence['workflow']> {
     const P = PASSIVE_SIGNAL_EVENTS.COLUMNS;
     const runTable = 'workflow_integration_run_events';
-    const [passiveSignalEvents, integrationRunEvents, readyIntegrationRuns, lastPassiveAt, lastRunAt] = await Promise.all([
+    const [
+        passiveSignalEvents,
+        integrationRunEvents,
+        readyIntegrationRuns,
+        pimsWorkflowRuns,
+        labResultRuns,
+        pacsReportRuns,
+        followUpRuns,
+        operatingPimsWorkflowRuns,
+        operatingLabResultRuns,
+        operatingPacsReportRuns,
+        operatingFollowUpRuns,
+        lastPassiveAt,
+        lastRunAt,
+    ] = await Promise.all([
         countRows(client, PASSIVE_SIGNAL_EVENTS.TABLE, (query) => query.eq(P.tenant_id, tenantId), warnings, 'passive signal events'),
         countRows(client, runTable, (query) => query.eq('tenant_id', tenantId), warnings, 'workflow integration run events'),
         countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).eq('workflow_moat_status', 'operating'), warnings, 'operating workflow integration runs'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).gt('pims_workflow_packets', 0), warnings, 'PIMS workflow integration runs'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).gt('lab_result_packets', 0), warnings, 'lab result workflow integration runs'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).gt('pacs_report_packets', 0), warnings, 'PACS report workflow integration runs'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).gt('follow_up_packets', 0), warnings, 'follow-up workflow integration runs'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).eq('workflow_moat_status', 'operating').gt('pims_workflow_packets', 0), warnings, 'operating PIMS workflow integration runs'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).eq('workflow_moat_status', 'operating').gt('lab_result_packets', 0), warnings, 'operating lab result workflow integration runs'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).eq('workflow_moat_status', 'operating').gt('pacs_report_packets', 0), warnings, 'operating PACS report workflow integration runs'),
+        countRows(client, runTable, (query) => query.eq('tenant_id', tenantId).eq('workflow_moat_status', 'operating').gt('follow_up_packets', 0), warnings, 'operating follow-up workflow integration runs'),
         latestTimestamp(client, PASSIVE_SIGNAL_EVENTS.TABLE, P.created_at, (query) => query.eq(P.tenant_id, tenantId), warnings, 'passive signal latest signal'),
         latestTimestamp(client, runTable, 'observed_at', (query) => query.eq('tenant_id', tenantId), warnings, 'workflow integration latest signal'),
     ]);
@@ -1026,6 +1085,14 @@ async function loadWorkflowEvidence(
         passive_signal_events: passiveSignalEvents,
         integration_run_events: integrationRunEvents,
         ready_integration_runs: readyIntegrationRuns,
+        pims_workflow_runs: pimsWorkflowRuns,
+        lab_result_runs: labResultRuns,
+        pacs_report_runs: pacsReportRuns,
+        follow_up_runs: followUpRuns,
+        operating_pims_workflow_runs: operatingPimsWorkflowRuns,
+        operating_lab_result_runs: operatingLabResultRuns,
+        operating_pacs_report_runs: operatingPacsReportRuns,
+        operating_follow_up_runs: operatingFollowUpRuns,
         last_signal_at: latestIso([lastPassiveAt, lastRunAt]),
     };
 }
@@ -1527,6 +1594,10 @@ function latestIso(values: Array<string | null | undefined>): string | null {
 
 function uniqueStrings(values: string[]): string[] {
     return Array.from(new Set(values.map((value) => value.trim()).filter((value) => value.length > 0)));
+}
+
+function countPositiveValues(values: number[]): number {
+    return values.filter((value) => value > 0).length;
 }
 
 function normalizeOptionalText(value: unknown): string | null {
