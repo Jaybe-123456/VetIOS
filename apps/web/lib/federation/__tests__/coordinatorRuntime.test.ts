@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+    buildCoordinatorSecureAggregationConfig,
     buildCoordinatorTaskPlan,
     buildCoordinatorTaskPlanHash,
     resolveCoordinatorNodeRef,
@@ -88,6 +89,64 @@ describe('federation coordinator runtime', () => {
     it('resolves node refs from membership metadata before falling back to tenant id', () => {
         expect(resolveCoordinatorNodeRef(membership({ metadata: { node_ref: 'Clinic / East' } }))).toBe('clinic_east');
         expect(resolveCoordinatorNodeRef(membership({ tenant_id: 'TENANT:WEST' }))).toBe('tenant:west');
+    });
+
+    it('hydrates node tasks with peer public keys for X25519 secure aggregation', () => {
+        const plan = buildCoordinatorTaskPlan({
+            round: round(),
+            memberships: [
+                membership({
+                    tenant_id: 'tenant-a',
+                    metadata: {
+                        node_ref: 'clinic-a-node',
+                        node_public_key_der_base64: 'public-key-a',
+                        node_public_key_fingerprint: 'fingerprint-a',
+                    },
+                }),
+                membership({
+                    tenant_id: 'tenant-b',
+                    metadata: {
+                        live_node: {
+                            node_ref: 'clinic-b-node',
+                            partner_ref: 'clinic-b',
+                            secure_aggregation: {
+                                public_key_der_base64: 'public-key-b',
+                                public_key_fingerprint: 'fingerprint-b',
+                            },
+                        },
+                    },
+                }),
+            ],
+            outcomeEligibilitySnapshots: [
+                eligibility({ tenant_id: 'tenant-a' }),
+                eligibility({ tenant_id: 'tenant-b' }),
+            ],
+            taskTypes: ['diagnosis_delta'],
+        });
+
+        const config = buildCoordinatorSecureAggregationConfig({
+            round: round(),
+            participant: plan.eligible_participants[0]!,
+            participants: plan.eligible_participants,
+            baseConfig: {
+                coordinator_public_key_der_base64: 'coordinator-public-key',
+                quantization_scale: 10_000,
+            },
+        });
+
+        expect(config.masking_protocol).toBe('x25519_hkdf_pairwise_masked_v1');
+        expect(config.peer_count).toBe(1);
+        expect(config.peer_public_key_count).toBe(1);
+        expect(config.x25519_pairwise_ready).toBe(true);
+        expect(config.peers).toEqual([{
+            node_ref: 'clinic-b-node',
+            partner_ref: 'clinic-b',
+            tenant_id: 'tenant-b',
+            public_key_fingerprint: 'fingerprint-b',
+            public_key_der_base64: 'public-key-b',
+            public_key_pem: null,
+            status: 'active',
+        }]);
     });
 });
 

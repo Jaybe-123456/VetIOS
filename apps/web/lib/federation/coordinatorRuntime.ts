@@ -52,6 +52,16 @@ export interface CoordinatorTaskPlanParticipant {
     eligibility_snapshot: CoordinatorOutcomeEligibilitySnapshot | null;
 }
 
+export interface CoordinatorSecureAggregationPeerConfig {
+    node_ref: string;
+    partner_ref: string;
+    tenant_id: string;
+    public_key_fingerprint: string | null;
+    public_key_der_base64: string | null;
+    public_key_pem: string | null;
+    status: 'active' | 'unknown';
+}
+
 export interface CoordinatorTaskPlan {
     round: FederationRoundRow;
     eligible_participants: CoordinatorTaskPlanParticipant[];
@@ -118,6 +128,52 @@ export function buildCoordinatorTaskPlanHash(input: {
         secure_aggregation_config: input.secureAggregationConfig,
         task_payload: input.taskPayload,
     });
+}
+
+export function buildCoordinatorSecureAggregationConfig(input: {
+    round: FederationRoundRow;
+    participant: CoordinatorTaskPlanParticipant;
+    participants: CoordinatorTaskPlanParticipant[];
+    baseConfig?: Record<string, unknown> | null;
+}): Record<string, unknown> {
+    const baseConfig = asRecord(input.baseConfig);
+    const coordinatorPublicKeyDerBase64 = readText(
+        baseConfig.coordinator_public_key_der_base64
+        ?? baseConfig.coordinatorPublicKeyDerBase64
+        ?? asRecord(baseConfig.coordinator).public_key_der_base64
+        ?? asRecord(baseConfig.coordinator).publicKeyDerBase64,
+    );
+    const coordinatorPublicKeyPem = readText(
+        baseConfig.coordinator_public_key_pem
+        ?? baseConfig.coordinatorPublicKeyPem
+        ?? asRecord(baseConfig.coordinator).public_key_pem
+        ?? asRecord(baseConfig.coordinator).publicKeyPem,
+    );
+    const generatedPeers = input.participants
+        .filter((participant) => participant.node_ref !== input.participant.node_ref)
+        .map((participant) => buildCoordinatorPeerConfig(participant));
+    const configuredPeers = Array.isArray(baseConfig.peers)
+        ? baseConfig.peers.map((peer) => normalizeConfiguredPeer(peer)).filter((peer): peer is CoordinatorSecureAggregationPeerConfig => peer != null)
+        : [];
+    const peers = mergePeerConfigs(generatedPeers, configuredPeers);
+    const activePeersWithPublicKeys = peers.filter((peer) => peer.public_key_der_base64 || peer.public_key_pem).length;
+    const x25519Ready = peers.length > 0
+        && activePeersWithPublicKeys === peers.length
+        && Boolean(coordinatorPublicKeyDerBase64 || coordinatorPublicKeyPem);
+
+    return {
+        ...baseConfig,
+        masking_protocol: x25519Ready ? 'x25519_hkdf_pairwise_masked_v1' : 'pairwise_masked_commitment_v1',
+        coordinator_public_key_der_base64: coordinatorPublicKeyDerBase64 ?? null,
+        coordinator_public_key_pem: coordinatorPublicKeyPem ?? null,
+        peers,
+        peer_count: peers.length,
+        peer_public_key_count: activePeersWithPublicKeys,
+        x25519_pairwise_ready: x25519Ready,
+        generated_by: 'vetios_coordinator_runtime_v1',
+        federation_round_id: input.round.id,
+        participant_node_ref: input.participant.node_ref,
+    };
 }
 
 export function buildCoordinatorTaskPlan(input: {
@@ -201,6 +257,7 @@ export async function issueFederationRoundNodeTasks(
             const record = buildTaskRecord({
                 round,
                 participant,
+                participants: plan.eligible_participants,
                 taskType,
                 datasetPolicy: input.datasetPolicy ?? {},
                 secureAggregationConfig: input.secureAggregationConfig ?? {},
@@ -312,6 +369,7 @@ export async function finalizeFederationRoundSecureAggregation(
 function buildTaskRecord(input: {
     round: FederationRoundRow;
     participant: CoordinatorTaskPlanParticipant;
+    participants: CoordinatorTaskPlanParticipant[];
     taskType: CoordinatorTaskType;
     datasetPolicy: Record<string, unknown>;
     secureAggregationConfig: Record<string, unknown>;
@@ -324,6 +382,12 @@ function buildTaskRecord(input: {
     if (!eligibility) {
         throw new FederationCoordinatorRuntimeError(409, 'Cannot issue a federation node task without an eligible outcome snapshot.');
     }
+    const secureAggregationConfig = buildCoordinatorSecureAggregationConfig({
+        round: input.round,
+        participant: input.participant,
+        participants: input.participants,
+        baseConfig: input.secureAggregationConfig,
+    });
 
     const planHash = buildCoordinatorTaskPlanHash({
         federationRoundId: input.round.id,
@@ -332,7 +396,7 @@ function buildTaskRecord(input: {
         taskType: input.taskType,
         outcomeEligibilitySnapshotId: eligibility.id,
         datasetPolicy: input.datasetPolicy,
-        secureAggregationConfig: input.secureAggregationConfig,
+        secureAggregationConfig,
         taskPayload: input.taskPayload,
     });
 
@@ -350,10 +414,7 @@ function buildTaskRecord(input: {
         plan_hash: planHash,
         model_artifact_ref: null,
         dataset_policy: input.datasetPolicy,
-        secure_aggregation_config: {
-            masking_protocol: 'pairwise_masked_commitment_v1',
-            ...input.secureAggregationConfig,
-        },
+        secure_aggregation_config: secureAggregationConfig,
         task_payload: input.taskPayload,
         due_at: input.dueAt,
         evidence: {
@@ -364,6 +425,9 @@ function buildTaskRecord(input: {
             provenance_verified_rows: eligibility.provenance_verified_rows,
             trust_scored_rows: eligibility.trust_scored_rows,
             average_trust_score: eligibility.average_trust_score,
+            secure_aggregation_peer_count: secureAggregationConfig.peer_count,
+            secure_aggregation_peer_public_key_count: secureAggregationConfig.peer_public_key_count,
+            x25519_pairwise_ready: secureAggregationConfig.x25519_pairwise_ready,
         },
         created_at: createdAt,
     };
@@ -672,6 +736,111 @@ function resolveCoordinatorPartnerRef(membership: Pick<FederationMembershipRow, 
         ?? normalizePartnerRef(asRecord(metadata.federation_node).partner_ref)
         ?? normalizePartnerRef(asRecord(metadata.live_node).partner_ref)
         ?? `tenant:${membership.tenant_id}`;
+}
+
+function buildCoordinatorPeerConfig(participant: CoordinatorTaskPlanParticipant): CoordinatorSecureAggregationPeerConfig {
+    const keyMaterial = readParticipantNodeKeyMaterial(participant.membership.metadata);
+    return {
+        node_ref: participant.node_ref,
+        partner_ref: participant.partner_ref,
+        tenant_id: participant.membership.tenant_id,
+        public_key_fingerprint: keyMaterial.public_key_fingerprint,
+        public_key_der_base64: keyMaterial.public_key_der_base64,
+        public_key_pem: keyMaterial.public_key_pem,
+        status: keyMaterial.public_key_der_base64 || keyMaterial.public_key_pem ? 'active' : 'unknown',
+    };
+}
+
+function normalizeConfiguredPeer(value: unknown): CoordinatorSecureAggregationPeerConfig | null {
+    const peer = asRecord(value);
+    const nodeRef = normalizeNodeRef(peer.node_ref ?? peer.nodeRef);
+    if (!nodeRef) return null;
+    const partnerRef = normalizePartnerRef(peer.partner_ref ?? peer.partnerRef) ?? `node:${nodeRef}`;
+    const publicKeyDerBase64 = readText(peer.public_key_der_base64 ?? peer.publicKeyDerBase64);
+    const publicKeyPem = readText(peer.public_key_pem ?? peer.publicKeyPem);
+    return {
+        node_ref: nodeRef,
+        partner_ref: partnerRef,
+        tenant_id: readText(peer.tenant_id ?? peer.tenantId) ?? '',
+        public_key_fingerprint: readText(peer.public_key_fingerprint ?? peer.publicKeyFingerprint),
+        public_key_der_base64: publicKeyDerBase64,
+        public_key_pem: publicKeyPem,
+        status: peer.status === 'unknown' ? 'unknown' : 'active',
+    };
+}
+
+function mergePeerConfigs(
+    generatedPeers: CoordinatorSecureAggregationPeerConfig[],
+    configuredPeers: CoordinatorSecureAggregationPeerConfig[],
+): CoordinatorSecureAggregationPeerConfig[] {
+    const byNodeRef = new Map<string, CoordinatorSecureAggregationPeerConfig>();
+    for (const peer of generatedPeers) {
+        byNodeRef.set(peer.node_ref, peer);
+    }
+    for (const peer of configuredPeers) {
+        const current = byNodeRef.get(peer.node_ref);
+        byNodeRef.set(peer.node_ref, {
+            node_ref: peer.node_ref,
+            partner_ref: peer.partner_ref || current?.partner_ref || `node:${peer.node_ref}`,
+            tenant_id: peer.tenant_id || current?.tenant_id || '',
+            public_key_fingerprint: peer.public_key_fingerprint ?? current?.public_key_fingerprint ?? null,
+            public_key_der_base64: peer.public_key_der_base64 ?? current?.public_key_der_base64 ?? null,
+            public_key_pem: peer.public_key_pem ?? current?.public_key_pem ?? null,
+            status: peer.status === 'active' || current?.status === 'active' ? 'active' : 'unknown',
+        });
+    }
+    return Array.from(byNodeRef.values()).sort((left, right) => left.node_ref.localeCompare(right.node_ref));
+}
+
+function readParticipantNodeKeyMaterial(metadata: Record<string, unknown>): {
+    public_key_fingerprint: string | null;
+    public_key_der_base64: string | null;
+    public_key_pem: string | null;
+} {
+    const liveNode = asRecord(metadata.live_node);
+    const federationNode = asRecord(metadata.federation_node);
+    const secureAggregation = asRecord(metadata.secure_aggregation);
+    const liveNodeSecureAggregation = asRecord(liveNode.secure_aggregation);
+    const federationNodeSecureAggregation = asRecord(federationNode.secure_aggregation);
+    const sources = [
+        metadata,
+        liveNode,
+        federationNode,
+        secureAggregation,
+        liveNodeSecureAggregation,
+        federationNodeSecureAggregation,
+    ];
+    const publicKeyDerBase64 = readFirstTextFromSources(sources, [
+        'node_public_key_der_base64',
+        'public_key_der_base64',
+        'publicKeyDerBase64',
+    ]);
+    const publicKeyPem = readFirstTextFromSources(sources, [
+        'node_public_key_pem',
+        'public_key_pem',
+        'publicKeyPem',
+    ]);
+    const publicKeyFingerprint = readFirstTextFromSources(sources, [
+        'node_public_key_fingerprint',
+        'public_key_fingerprint',
+        'publicKeyFingerprint',
+    ]);
+
+    return {
+        public_key_fingerprint: publicKeyFingerprint,
+        public_key_der_base64: publicKeyDerBase64,
+        public_key_pem: publicKeyPem,
+    };
+}
+
+function readFirstTextFromSources(sources: Array<Record<string, unknown>>, keys: string[]): string | null {
+    for (const source of sources) {
+        for (const key of keys) {
+            const value = readText(source[key]);
+            if (value) return value;
+        }
+    }
+    return null;
 }
 
 function mapMembership(row: Record<string, unknown>): FederationMembershipRow {
