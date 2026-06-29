@@ -50,6 +50,12 @@ test-results.txt
 check.html
 simulator.html
 
+# Local benchmark artifacts
+vetios_veterinary_reasoning_benchmark*.jsonl
+vetios_vvrb*.jsonl
+apps/web/artifacts/
+artifacts/vvrb-training/
+
 # Local sidecar repos / model checkouts
 /VetIOS/
 /models/

@@ -46,8 +46,13 @@ export async function runLearningCycle(
         const datasetBundle = await buildLearningDatasetBundle(store, {
             tenantId: input.tenantId,
             includeAdversarial: true,
-            includeSynthetic: true,
+            includeSynthetic: false,
             includeQuarantine: true,
+            labelTypes: ['expert_reviewed', 'lab_confirmed'],
+            labelResolver: {
+                allowSynthetic: false,
+                allowInferredForSeverity: false,
+            },
             featureSchemaVersion: DEFAULT_FEATURE_SCHEMA_VERSION,
             labelPolicyVersion: DEFAULT_LABEL_POLICY_VERSION,
             ...input.datasetFilters,
