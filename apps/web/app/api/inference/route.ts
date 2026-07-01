@@ -42,6 +42,7 @@ import {
     reviewSeverityFromActionabilityGate,
     shouldQueueActionabilityGate,
 } from '@/lib/inference/reviewQueue';
+import { recordInferenceReliabilityPacket } from '@/lib/inference/reliabilityOrchestrator';
 
 export const runtime = 'nodejs';
 
@@ -546,8 +547,9 @@ async function recordSuccessfulInferenceTelemetry(input: {
         calibrationSnapshot: calibrationResult.data,
     });
 
+    let reviewQueueEvent = null;
     if (shouldQueueActionabilityGate(actionabilityResult.data)) {
-        await recordInferenceReviewQueueEvent(input.supabase, {
+        const reviewQueueResult = await recordInferenceReviewQueueEvent(input.supabase, {
             tenantId: input.tenantId,
             inferenceEventId: input.result.inference_event_id,
             requestId: input.result.meta.request_id,
@@ -562,7 +564,25 @@ async function recordSuccessfulInferenceTelemetry(input: {
                 source_module: 'clinical_api',
             },
         });
+        reviewQueueEvent = reviewQueueResult.data;
     }
+    await recordInferenceReliabilityPacket(input.supabase, {
+        tenantId: input.tenantId,
+        inferenceEventId: input.result.inference_event_id,
+        requestId: input.result.meta.request_id,
+        caseId: input.result.clinical_case_id,
+        modelName: 'vetios-clinical-engine',
+        modelVersion: input.modelVersion,
+        sourceModule: 'clinical_api',
+        ranker: input.result.ranker,
+        outputPayload: input.result.output_payload,
+        confidenceScore: input.result.data.confidence_score,
+        phiHat: input.result.cire.phi_hat,
+        latencyMs: input.result.latency_ms,
+        calibrationSnapshot: calibrationResult.data,
+        actionabilityGate: actionabilityResult.data,
+        reviewQueueEvent,
+    });
 }
 
 async function recordFailedInferenceTelemetry(input: {
