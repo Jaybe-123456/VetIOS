@@ -329,6 +329,7 @@ export interface CbcPanel {
     pancytopenia?: PresentAbsent;
     hyperproteinaemia?: PresentAbsent;
     hyperglobulinaemia?: PresentAbsent;
+    intramonocytic_morulae?: PresentAbsent;
     packed_cell_volume_percent?: number;
     hemoparasites_seen?: string[];
 }
@@ -457,6 +458,17 @@ export interface InferenceRequest {
     history?: StructuredHistory;
     preventive_history?: PreventiveHistory;
     diagnostic_tests?: DiagnosticTests;
+    evidence_normalization?: {
+        normalized_findings: Array<{
+            source_path: string;
+            source_key: string;
+            source_value: string;
+            canonical_path: string;
+            canonical_value: unknown;
+            evidence_kind: 'confirmatory' | 'supportive' | 'contradictory' | 'context';
+        }>;
+        warnings: string[];
+    };
     physical_exam?: PhysicalExam;
 }
 

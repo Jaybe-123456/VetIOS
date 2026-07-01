@@ -572,6 +572,7 @@ function buildOutputPayload(
         pathway_analysis: clinicalOutput?.pathway_analysis ?? [],
         mechanism_analysis: clinicalOutput?.mechanism_analysis ?? [],
         clinical_intelligence: clinicalOutput?.clinical_intelligence ?? null,
+        evidence_normalization: clinicalOutput?.evidence_normalization ?? null,
         confidence_calibration: clinicalOutput?.confidence_calibration ?? {},
         reliability_breakdown: clinicalOutput?.reliability_breakdown ?? null,
         information_gain_engine: clinicalOutput?.information_gain_engine ?? null,

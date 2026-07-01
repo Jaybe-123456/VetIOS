@@ -3364,10 +3364,20 @@ function formatReadableLabel(value: string): string {
 
 function inferSurgicalSignal(label: string, emergencyLevel: string, operativeRisk: number) {
     const normalized = label.toLowerCase();
-    const likely = /gdv|volvulus|pyometra|foreign body|obstruction|torsion|hernia|rupture|trauma|fracture|cruciate|luxating|ivdd|tumou?r|splenic/i.test(normalized)
-        || emergencyLevel === 'CRITICAL'
-        || operativeRisk >= 0.7;
-    const possible = likely || operativeRisk >= 0.4 || emergencyLevel === 'HIGH' || emergencyLevel === 'REVIEW';
+    const surgicalLabel = /gdv|volvulus|pyometra|foreign body|obstruction|torsion|hernia|rupture|trauma|fracture|cruciate|luxating|ivdd|tumou?r|splenic/i.test(normalized);
+    const medicalInfectiousLabel = /ehrlich|anaplasm|babesi|leptospir|parvo|distemper|dirofilari|heartworm|leishmani|toxoplasm|pneumonia|bronchitis|diabetes|hypothyroid|hyperthyroid|addison|hypoadreno/i.test(normalized);
+    if (medicalInfectiousLabel && !surgicalLabel) {
+        return {
+            need: 'Not primary',
+            procedure: 'No surgical primary pathway inferred',
+            hospitalization: emergencyLevel === 'HIGH' || emergencyLevel === 'CRITICAL'
+                ? 'Medical hospitalization or stabilization may be needed'
+                : 'Outpatient or medical pathway likely',
+            outcome: 'Expected outcome primarily follows medical response, monitoring, and diagnostic confirmation',
+        };
+    }
+    const likely = surgicalLabel && (emergencyLevel === 'CRITICAL' || operativeRisk >= 0.55 || /gdv|volvulus|pyometra|rupture|torsion/.test(normalized));
+    const possible = likely || surgicalLabel || operativeRisk >= 0.7;
     return {
         need: likely ? 'Likely' : possible ? 'Possible' : 'Not primary',
         procedure: inferProcedure(label),

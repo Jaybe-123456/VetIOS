@@ -56,6 +56,15 @@ export function applyHaematologicalPriors(request: InferenceRequest): ScoreAdjus
         );
     }
 
+    if (cbc.intramonocytic_morulae === 'present') {
+        adjustments.push({
+            condition_id: 'ehrlichiosis_canine',
+            delta: 0.18,
+            finding: 'Suspected intramonocytic morulae on blood smear',
+            weight: 'strong',
+        });
+    }
+
     if (cbc.spherocytes === 'present' || cbc.spherocytosis === 'present') {
         adjustments.push(
             { condition_id: 'imha_canine', delta: 0.35, finding: 'Spherocytosis on blood smear - pathognomonic for immune-mediated RBC destruction in dogs', weight: 'definitive' },
@@ -134,6 +143,7 @@ export function applyHaematologicalPriors(request: InferenceRequest): ScoreAdjus
 
     if (cbc.hyperproteinaemia === 'present' || cbc.hyperglobulinaemia === 'present') {
         adjustments.push(
+            { condition_id: 'ehrlichiosis_canine', delta: 0.08, finding: 'Hyperglobulinaemia or hyperproteinaemia supports chronic tick-borne inflammatory disease', weight: 'supportive' },
             { condition_id: 'leishmaniosis_canine', delta: 0.20, finding: 'Hyperglobulinaemia with hypoalbuminaemia is characteristic of leishmaniosis', weight: 'strong' },
             { condition_id: 'feline_infectious_peritonitis', delta: 0.18, finding: 'Hyperproteinaemia with low albumin:globulin ratio supports FIP', weight: 'strong' },
             { condition_id: 'multiple_myeloma', delta: 0.10, finding: 'Monoclonal or marked hyperproteinaemia raises plasma cell neoplasia', weight: 'supportive' },

@@ -40,6 +40,60 @@ describe('clinical inference engine deep upgrade', () => {
         expect(result.ground_truth_summary.primary_diagnosis_status).toBe('confirmed');
     });
 
+    it('does not drop vendor-style positive Ehrlichia PCR evidence from raw lab payloads', () => {
+        const result = runClinicalInferenceEngine({
+            species: 'canine',
+            breed: 'German Shepherd',
+            age: '6 years',
+            weight: '34 kg',
+            sex: 'male neutered',
+            symptoms: [
+                'fever',
+                'lethargy',
+                'anorexia',
+                'epistaxis',
+                'petechiae',
+                'lymphadenopathy',
+                'lameness',
+                'tick exposure',
+            ],
+            labs: {
+                tick_borne_disease_panel: {
+                    Ehrlichia_canis_PCR_EDTA_blood: 'positive',
+                    Ehrlichia_canis_PCR_Ct: '27.8',
+                    Ehrlichia_canis_IFA_IgG: '1:640 POSITIVE HIGH',
+                    Ehrlichia_canis_ewingii_antibody_SNAP: 'positive',
+                    Anaplasma_spp_PCR: 'negative',
+                    Anaplasma_antibody_SNAP: 'negative',
+                    Babesia_PCR: 'negative',
+                    Babesia_blood_smear: 'no piroplasms seen',
+                    Borrelia_burgdorferi_antibody: 'negative',
+                    Heartworm_antigen: 'negative',
+                    blood_smear_review: 'severe thrombocytopenia; rare suspected intramonocytic morulae',
+                },
+                CBC: {
+                    platelets: '28 x10^9/L CRITICAL LOW',
+                    reticulocytes: '38 x10^9/L INADEQUATE',
+                    lymphocytes: '0.7 x10^9/L LOW',
+                    total_plasma_protein: '8.6 g/dL HIGH',
+                },
+                hepatic_panel: {
+                    albumin: '2.4 g/dL LOW',
+                    globulin: '5.7 g/dL HIGH',
+                    A_G_ratio: '0.42 LOW',
+                },
+            },
+        });
+
+        const top = result.differentials[0];
+        expect(top?.condition).toBe('Ehrlichiosis');
+        expect(top?.determination_basis).toBe('pathognomonic_test');
+        expect(top?.supporting_evidence.map((entry) => entry.finding)).toContain('Positive Ehrlichia PCR');
+        expect(top?.missing_evidence?.map((entry) => entry.finding)).not.toContain('Positive Ehrlichia PCR');
+        expect(result.evidence_normalization?.normalized_findings.some((finding) => finding.canonical_path === 'pcr.ehrlichia_pcr')).toBe(true);
+        expect(result.ground_truth_summary.primary_diagnosis_status).toBe('confirmed');
+    });
+
     it('penalises tracheal collapse in a Labrador to below five percent without imaging confirmation', () => {
         const request: InferenceRequest = {
             species: 'canine',

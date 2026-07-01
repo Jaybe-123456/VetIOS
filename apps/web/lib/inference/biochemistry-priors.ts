@@ -20,6 +20,12 @@ export function applyBiochemistryPriors(request: InferenceRequest): ScoreAdjustm
     if (biochemistry.albumin === 'hypoalbuminemia' && biochemistry.globulins === 'hyperglobulinemia') {
         adjustments.push(
             {
+                condition_id: 'ehrlichiosis_canine',
+                delta: 0.08,
+                finding: 'Hypoalbuminaemia with hyperglobulinaemia supports chronic inflammatory tick-borne disease',
+                weight: 'supportive',
+            },
+            {
                 condition_id: 'leishmaniosis_canine',
                 delta: 0.2,
                 finding: 'Hypoalbuminaemia with hyperglobulinaemia',

@@ -9,6 +9,10 @@ import {
     evaluatePathognomicTests,
 } from './pathognomic-gate';
 import { applyEtiologicalPlausibilityGate } from './plausibility-gate';
+import {
+    mergeDiagnosticTests,
+    normalizeClinicalLabEvidence,
+} from './labEvidenceNormalizer';
 import { applyRegionalExposurePriors } from './regional-priors';
 import { applySyndromePatterns } from './syndrome-recogniser';
 import {
@@ -117,6 +121,7 @@ export interface ClinicalInferenceEngineResult extends InferenceResponse {
     mechanism_analysis: MechanismAnalysisEntry[];
     clinical_intelligence: ClinicalIntelligenceReport;
     confidence_calibration: Record<string, ConfidenceCalibrationReport>;
+    evidence_normalization?: InferenceRequest['evidence_normalization'] | null;
     reliability_breakdown: ReliabilityBreakdown;
     information_gain_engine: ClinicalIntelligenceReport['information_gain_engine'];
     explainability_report: string[];
@@ -855,6 +860,12 @@ function coerceInferenceRequest(raw: InferenceRequest | Record<string, unknown>)
     const metadata = candidate.metadata && typeof candidate.metadata === 'object'
         ? candidate.metadata as Record<string, unknown>
         : {};
+    const normalizedLabEvidence = normalizeClinicalLabEvidence(candidate, metadata);
+    const diagnosticTests = mergeDiagnosticTests(
+        metadata.diagnostic_tests as InferenceRequest['diagnostic_tests'] | undefined,
+        normalizedLabEvidence.diagnostic_tests,
+        candidate.diagnostic_tests as InferenceRequest['diagnostic_tests'] | undefined,
+    );
     const presenting = [
         ...collectStringArray(candidate.presenting_signs, candidate.symptom_vector, candidate.symptoms),
         ...collectStringArray(metadata.presenting_signs, metadata.symptom_vector, metadata.symptoms),
@@ -887,7 +898,13 @@ function coerceInferenceRequest(raw: InferenceRequest | Record<string, unknown>)
         presenting_signs: normalizedPresenting,
         history: mergeObject(candidate.history as InferenceRequest['history'] | undefined, metadata.history as InferenceRequest['history'] | undefined),
         preventive_history: mergeObject(candidate.preventive_history as InferenceRequest['preventive_history'] | undefined, metadata.preventive_history as InferenceRequest['preventive_history'] | undefined),
-        diagnostic_tests: mergeObject(candidate.diagnostic_tests as InferenceRequest['diagnostic_tests'] | undefined, metadata.diagnostic_tests as InferenceRequest['diagnostic_tests'] | undefined),
+        diagnostic_tests: diagnosticTests,
+        evidence_normalization: normalizedLabEvidence.normalized_findings.length > 0 || normalizedLabEvidence.warnings.length > 0
+            ? {
+                normalized_findings: normalizedLabEvidence.normalized_findings,
+                warnings: normalizedLabEvidence.warnings,
+            }
+            : undefined,
         physical_exam: mergeObject(candidate.physical_exam as InferenceRequest['physical_exam'] | undefined, metadata.physical_exam as InferenceRequest['physical_exam'] | undefined),
     };
 }
@@ -1814,6 +1831,7 @@ function applyClinicalIntelligence(
         mechanism_analysis: report.mechanism_analysis,
         clinical_intelligence: report,
         confidence_calibration: report.confidence_calibration,
+        evidence_normalization: request.evidence_normalization ?? null,
         reliability_breakdown: report.reliability_breakdown,
         information_gain_engine: report.information_gain_engine,
         explainability_report: report.explainability_report,

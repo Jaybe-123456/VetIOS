@@ -30,6 +30,10 @@ import type { PlatformActor } from '@/lib/platform/types';
 import { getRAGPipeline } from '@/lib/rag/ragPipeline';
 import type { RAGContext } from '@/lib/rag/ragPipeline';
 import { panelsToDiagnosticTests } from '@/lib/inference/panel-diagnostics';
+import {
+    mergeDiagnosticTests,
+    normalizeClinicalLabEvidence,
+} from '@/lib/inference/labEvidenceNormalizer';
 import { recordProductUsageEvent } from '@/lib/billing/entitlements';
 import {
     DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
@@ -60,7 +64,14 @@ function mapV2ToV1InputSignature(
 ): InputSignature {
     const { patient, encounter } = payload;
 
-    const diagnosticTests = panelsToDiagnosticTests(payload.active_system_panels);
+    const panelDiagnosticTests = panelsToDiagnosticTests(payload.active_system_panels);
+    const normalizedLabEvidence = normalizeClinicalLabEvidence({
+        lab_results: payload.lab_results ?? [],
+    });
+    const diagnosticTests = mergeDiagnosticTests(
+        panelDiagnosticTests,
+        normalizedLabEvidence.diagnostic_tests,
+    );
 
     return {
         species: patient.species,
@@ -94,6 +105,12 @@ function mapV2ToV1InputSignature(
             v2_payload: true,
             structured_input_text: structuredText,
             cross_panel_prompt: crossPanelPrompt,
+            evidence_normalization: normalizedLabEvidence.normalized_findings.length > 0 || normalizedLabEvidence.warnings.length > 0
+                ? {
+                    normalized_findings: normalizedLabEvidence.normalized_findings,
+                    warnings: normalizedLabEvidence.warnings,
+                }
+                : undefined,
             sex: patient.sex,
             age_years: patient.age_years ?? undefined,
             medications: encounter.history.medications,
