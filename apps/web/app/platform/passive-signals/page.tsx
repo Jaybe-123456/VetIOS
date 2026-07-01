@@ -9,6 +9,7 @@ import { passiveSignalMarketplace } from '@/lib/platform/passiveSignalMarketplac
 export const metadata: Metadata = {
     title: 'Passive Signals',
     description: 'VetIOS passive signal engine catalog and connector readiness.',
+    alternates: { canonical: '/platform/passive-signals' },
 };
 
 export default function PassiveSignalsPage() {

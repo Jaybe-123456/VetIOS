@@ -29,7 +29,7 @@ export default function DeveloperInfraSection() {
                         OpenAPI specification
                     </Link>
                     {' '}or{' '}
-                    <Link className="text-[#9AE4D1] underline decoration-[#38DCC6]/40 underline-offset-4 hover:text-white" href="/developer">
+                    <Link className="text-[#9AE4D1] underline decoration-[#38DCC6]/40 underline-offset-4 hover:text-white" href="/platform/developers">
                         developer hub
                     </Link>
                     .

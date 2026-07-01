@@ -7,6 +7,7 @@ import { getPopulationSignalService } from '@/lib/populationSignal/populationSig
 export const metadata: Metadata = {
     title: 'Population Intelligence',
     description: 'Aggregate VetIOS disease surveillance and public-health safe advisory feed.',
+    alternates: { canonical: '/platform/population-intelligence' },
 };
 
 export const dynamic = 'force-dynamic';

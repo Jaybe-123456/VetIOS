@@ -7,6 +7,7 @@ import { getPublicPetPassSnapshot } from '@/lib/petpass/service';
 export const metadata: Metadata = {
     title: 'PetPass',
     description: 'VetIOS consumer-layer PetPass network surface.',
+    alternates: { canonical: '/platform/petpass' },
 };
 
 export const dynamic = 'force-dynamic';

@@ -6,7 +6,12 @@ const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/re
 const PUBLIC_MARKETING_PATHS = [...PUBLIC_SEO_PATHS, '/ask-vetios'];
 const PUBLIC_PLATFORM_PATHS = [
     '/platform/cire-standard',
+    '/platform/developers',
+    '/platform/edge-box',
     '/platform/model-cards',
+    '/platform/network-learning',
+    '/platform/passive-signals',
+    '/platform/petpass',
     '/platform/population-intelligence',
 ];
 const PUBLIC_METADATA_PATHS = [
@@ -14,6 +19,7 @@ const PUBLIC_METADATA_PATHS = [
     '/sitemap.xml',
     '/manifest.webmanifest',
     '/icon.svg',
+    '/openapi.yaml',
     '/opengraph-image',
     '/google7e9947396223c1b9.html',
 ];

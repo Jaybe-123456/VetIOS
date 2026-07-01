@@ -8,6 +8,7 @@ import { getPublicModelCardsCatalog, type PublicModelCard } from '@/lib/platform
 export const metadata: Metadata = {
     title: 'Public Model Cards',
     description: 'Read-only VetIOS model cards backed by the registry control plane.',
+    alternates: { canonical: '/platform/model-cards' },
 };
 
 export const dynamic = 'force-dynamic';

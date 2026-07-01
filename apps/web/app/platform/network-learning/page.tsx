@@ -7,6 +7,7 @@ import { getPublicNetworkLearningSnapshot } from '@/lib/platform/networkLearning
 export const metadata: Metadata = {
     title: 'Network Learning',
     description: 'VetIOS public learning-loop and compounding-data snapshot.',
+    alternates: { canonical: '/platform/network-learning' },
 };
 
 export const dynamic = 'force-dynamic';

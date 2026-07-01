@@ -5,6 +5,7 @@ import { PublicPageShell } from '@/components/public/PublicPageShell';
 export const metadata: Metadata = {
     title: 'Contact — VetIOS',
     description: 'Contact the VetIOS platform team for access, partnerships, or enquiries.',
+    alternates: { canonical: '/contact' },
 };
 
 export default function ContactPage() {

@@ -9,6 +9,7 @@ import { getDeveloperContractSummary } from '@/lib/platform/developerContract';
 export const metadata: Metadata = {
     title: 'Developers',
     description: 'VetIOS developer API catalog and integration surface.',
+    alternates: { canonical: '/platform/developers' },
 };
 
 export const dynamic = 'force-dynamic';

@@ -42,10 +42,58 @@ export const PUBLIC_SEO_PAGES = [
         priority: 0.86,
     },
     {
+        path: '/platform/developers',
+        title: 'VetIOS Developer Platform',
+        description: 'Public VetIOS developer API catalog, onboarding intake, quota model, and OpenAPI contract.',
+        priority: 0.84,
+    },
+    {
+        path: '/platform/network-learning',
+        title: 'VetIOS Network Learning',
+        description: 'Public VetIOS learning-loop evidence for dataset versions, benchmark reports, calibration, and federation readiness.',
+        priority: 0.83,
+    },
+    {
+        path: '/platform/edge-box',
+        title: 'VetIOS Edge Box',
+        description: 'Offline clinic node and cloud-edge synchronization plane for VetIOS veterinary intelligence infrastructure.',
+        priority: 0.8,
+    },
+    {
+        path: '/platform/passive-signals',
+        title: 'VetIOS Passive Signals',
+        description: 'Passive connector signal catalog for PIMS, lab, pharmacy, imaging, and workflow evidence ingestion.',
+        priority: 0.8,
+    },
+    {
+        path: '/platform/petpass',
+        title: 'VetIOS PetPass',
+        description: 'Consumer and clinic owner-network substrate for pet profiles, consent, timelines, and notifications.',
+        priority: 0.78,
+    },
+    {
+        path: '/platform/model-cards',
+        title: 'VetIOS Public Model Cards',
+        description: 'Read-only VetIOS model cards exposing registry state, governance gates, and promotion blockers.',
+        priority: 0.77,
+    },
+    {
+        path: '/platform/population-intelligence',
+        title: 'VetIOS Population Intelligence',
+        description: 'Aggregate disease surveillance and public-health safe advisory feed from VetIOS signal infrastructure.',
+        priority: 0.77,
+    },
+    {
         path: '/docs',
         title: 'VetIOS Documentation',
         description: 'API reference and platform documentation for VetIOS veterinary AI infrastructure.',
         priority: 0.82,
+    },
+    {
+        path: '/ask-vetios',
+        title: 'Ask VetIOS',
+        description: 'Public Ask VetIOS clinical intelligence console for veterinary questions, research-depth explanations, and differential reasoning.',
+        priority: 0.81,
     },
     {
         path: '/demo',

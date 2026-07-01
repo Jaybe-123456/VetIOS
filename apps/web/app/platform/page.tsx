@@ -6,6 +6,7 @@ import { PlatformShell } from '@/components/platform/PlatformShell';
 export const metadata: Metadata = {
     title: 'Platform',
     description: 'VetIOS platform overview for veterinary inference, outcomes, and simulation.',
+    alternates: { canonical: '/platform' },
 };
 
 const layers = [

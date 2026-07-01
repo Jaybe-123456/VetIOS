@@ -5,6 +5,7 @@ import { PublicPageShell } from '@/components/public/PublicPageShell';
 export const metadata: Metadata = {
     title: 'Documentation — VetIOS',
     description: 'API reference, integration guides, and platform documentation for VetIOS.',
+    alternates: { canonical: '/docs' },
 };
 
 const endpoints = [

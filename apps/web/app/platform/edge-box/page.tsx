@@ -7,6 +7,7 @@ import { getPublicEdgeBoxSnapshot } from '@/lib/edgeBox/service';
 export const metadata: Metadata = {
     title: 'Edge Box',
     description: 'Offline edge nodes and synchronization plane for VetIOS.',
+    alternates: { canonical: '/platform/edge-box' },
 };
 
 export const dynamic = 'force-dynamic';

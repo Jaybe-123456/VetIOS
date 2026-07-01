@@ -5,6 +5,7 @@ import { PublicPageShell } from '@/components/public/PublicPageShell';
 export const metadata: Metadata = {
     title: 'Support — VetIOS',
     description: 'Get help with VetIOS. Contact support, report issues, and find answers to common questions.',
+    alternates: { canonical: '/support' },
 };
 
 const faqs = [
