@@ -8,6 +8,7 @@
 [![pnpm](https://img.shields.io/badge/pnpm-9.14.4-F69220?logo=pnpm&logoColor=white&style=flat-square)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-87%25-3178C6?logo=typescript&logoColor=white&style=flat-square)](package.json)
 [![Website](https://img.shields.io/badge/website-vetios.tech-6BF7CF?style=flat-square)](https://www.vetios.tech)
+[![CIRE-compatible](https://img.shields.io/badge/CIRE-compatible-7C3AED?style=flat-square)](docs/research/cire-scoring-methodology-v1.0.md)
 
 VetIOS is a simulation-first, inference-driven platform for structured clinical intelligence and adaptive veterinary diagnostics. It replaces passive veterinary record systems with a computable graph of probabilistic diagnostic reasoning.
 
@@ -26,6 +27,7 @@ Public links:
 ## Table of Contents
 
 - [Why VetIOS?](#why-vetios)
+- [CIRE Open Standard](#cire-open-standard)
 - [Architecture](#architecture)
 - [Data Flywheel](#data-flywheel)
 - [Federated Learning Moat](#federated-learning-moat)
@@ -47,6 +49,17 @@ Public links:
 ## Why VetIOS?
 
 VetIOS turns every structured veterinary encounter into an auditable learning loop: inference creates a probabilistic hypothesis, outcomes ground it in reality, and simulations stress-test the next version before failure reaches production.
+
+## CIRE Open Standard
+
+VetIOS publishes the Clinical Inference Reliability Engine (CIRE) as an open reliability specification for veterinary clinical AI. CIRE defines `phi_hat`, input impairment, rolling drift, volatility, CPS safety bands, and the minimum event lineage needed to connect inference, review, outcome confirmation, and calibration.
+
+The strategy is CUDA-like but more precise: CIRE is the free scoring language and reference contract; VetIOS captures value in the managed infrastructure, outcome-confirmed data graph, AMR feeds, governance APIs, and partner-node workflows that run the standard at production quality.
+
+- Human-readable methodology: [CIRE Scoring Methodology v1.0](docs/research/cire-scoring-methodology-v1.0.md)
+- Public standard page: [vetios.tech/platform/cire-standard](https://www.vetios.tech/platform/cire-standard)
+- Machine-readable contract: [vetios.tech/api/public/cire-standard](https://www.vetios.tech/api/public/cire-standard)
+- Reference implementation: [@vetios/cire-engine](packages/cire-engine/src/index.ts)
 
 ## Architecture
 
