@@ -3,6 +3,7 @@ import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import {
+    buildLocalMultiNodeFederatedRoundProof,
     buildTrainedMaskedUpdateCommitment,
     trainLocalFederatedTask,
     toFederatedUpdateSubmissionPayload,
@@ -17,7 +18,9 @@ interface CliOptions {
     service: boolean;
     rotateKeys: boolean;
     doctor: boolean;
+    roundProof: boolean;
     configPath?: string;
+    participantsPath?: string;
     recordsPath?: string;
     recordSourcesPath?: string;
     taskPath?: string;
@@ -37,10 +40,19 @@ interface CliOptions {
     machineToken?: string;
     tenantId?: string;
     federationKey?: string;
+    federationRoundId?: string;
+    roundKey?: string;
+    taskType?: FederationRoundTask['task_type'];
     nodeRef?: string;
     partnerRef?: string;
     secret?: string;
     outcomeEligibilitySnapshotId?: string;
+    minimumParticipants?: number;
+    minimumRequiredRows?: number;
+    minimumProvenanceRows?: number;
+    minimumTrustScoredRows?: number;
+    includeAggregateVector: boolean;
+    includeCoordinatorRecoveryKey: boolean;
 }
 
 interface ServiceConfig {
@@ -70,6 +82,24 @@ interface ServiceRecordSource {
     source_system?: string;
     defaults?: Partial<LocalClinicalLearningRecord>;
     columns?: Record<string, string>;
+}
+
+interface RoundProofParticipantConfig {
+    tenant_id?: string;
+    tenantId?: string;
+    node_ref?: string;
+    nodeRef?: string;
+    partner_ref?: string | null;
+    partnerRef?: string | null;
+    secret?: string | null;
+    outcome_eligibility_snapshot_id?: string | null;
+    outcomeEligibilitySnapshotId?: string | null;
+    records_path?: string;
+    recordsPath?: string;
+    record_sources_path?: string;
+    recordSourcesPath?: string;
+    record_sources?: ServiceRecordSource[];
+    recordSources?: ServiceRecordSource[];
 }
 
 interface LoadedRecordSourceSummary {
@@ -138,6 +168,10 @@ async function main() {
     }
     if (options.doctor) {
         await runDoctorMode(options);
+        return;
+    }
+    if (options.roundProof) {
+        await runRoundProofMode(options);
         return;
     }
     if (options.service) {
@@ -232,10 +266,19 @@ function parseArgs(args: string[]): CliOptions {
         service: args[0] === 'service' || args.includes('--service'),
         rotateKeys: args[0] === 'rotate-keys' || args.includes('--rotate-keys'),
         doctor: args[0] === 'doctor' || args.includes('--doctor'),
+        roundProof: args[0] === 'round-proof' || args.includes('--round-proof'),
         submit: false,
         once: false,
+        includeAggregateVector: false,
+        includeCoordinatorRecoveryKey: false,
     };
-    const startIndex = args[0] === 'service' || args[0] === 'init' || args[0] === 'rotate-keys' || args[0] === 'doctor' ? 1 : 0;
+    const startIndex = args[0] === 'service'
+        || args[0] === 'init'
+        || args[0] === 'rotate-keys'
+        || args[0] === 'doctor'
+        || args[0] === 'round-proof'
+        ? 1
+        : 0;
     for (let index = startIndex; index < args.length; index += 1) {
         const arg = args[index];
         if (arg === '--init') {
@@ -254,8 +297,20 @@ function parseArgs(args: string[]): CliOptions {
             options.doctor = true;
             continue;
         }
+        if (arg === '--round-proof') {
+            options.roundProof = true;
+            continue;
+        }
         if (arg === '--submit') {
             options.submit = true;
+            continue;
+        }
+        if (arg === '--include-aggregate-vector') {
+            options.includeAggregateVector = true;
+            continue;
+        }
+        if (arg === '--include-coordinator-recovery-key') {
+            options.includeCoordinatorRecoveryKey = true;
             continue;
         }
         if (arg === '--once') {
@@ -265,6 +320,7 @@ function parseArgs(args: string[]): CliOptions {
         const value = args[index + 1];
         if (!value) continue;
         if (arg === '--config') options.configPath = value;
+        if (arg === '--participants') options.participantsPath = value;
         if (arg === '--records') options.recordsPath = value;
         if (arg === '--record-sources') options.recordSourcesPath = value;
         if (arg === '--task') options.taskPath = value;
@@ -282,10 +338,17 @@ function parseArgs(args: string[]): CliOptions {
         if (arg === '--machine-token') options.machineToken = value;
         if (arg === '--tenant-id') options.tenantId = value;
         if (arg === '--federation-key') options.federationKey = value;
+        if (arg === '--federation-round-id') options.federationRoundId = value;
+        if (arg === '--round-key') options.roundKey = value;
+        if (arg === '--task-type') options.taskType = readTaskType(value);
         if (arg === '--node-ref') options.nodeRef = value;
         if (arg === '--partner-ref') options.partnerRef = value;
         if (arg === '--secret') options.secret = value;
         if (arg === '--outcome-eligibility-snapshot-id') options.outcomeEligibilitySnapshotId = value;
+        if (arg === '--minimum-participants') options.minimumParticipants = parsePositiveInteger(value);
+        if (arg === '--minimum-required-rows') options.minimumRequiredRows = parsePositiveInteger(value);
+        if (arg === '--minimum-provenance-rows') options.minimumProvenanceRows = parsePositiveInteger(value);
+        if (arg === '--minimum-trust-scored-rows') options.minimumTrustScoredRows = parsePositiveInteger(value);
         index += 1;
     }
     return options;
@@ -582,6 +645,84 @@ async function runDoctorMode(options: CliOptions): Promise<void> {
     }
 }
 
+async function runRoundProofMode(options: CliOptions): Promise<void> {
+    const federationKey = requiredOption(options.federationKey ?? process.env.VETIOS_FEDERATION_KEY, 'federation key');
+    const participantsPath = requiredOption(options.participantsPath, 'participants manifest path');
+    const participants = await readJson<RoundProofParticipantConfig[]>(participantsPath);
+    if (!Array.isArray(participants) || participants.length === 0) {
+        throw new Error('Participants manifest must be a non-empty JSON array.');
+    }
+
+    const loadedParticipants = await Promise.all(participants.map(async (participant, index) => {
+        const tenantId = requiredOption(participant.tenant_id ?? participant.tenantId, `participant ${index + 1} tenant_id`);
+        const nodeRef = requiredOption(participant.node_ref ?? participant.nodeRef, `participant ${index + 1} node_ref`);
+        const partnerRef = participant.partner_ref ?? participant.partnerRef ?? nodeRef;
+        const recordSources = await resolveParticipantRecordSources(participant);
+        const loaded = await loadLocalClinicalRecords(recordSources);
+        return {
+            proof_input: {
+                tenantId,
+                nodeRef,
+                partnerRef,
+                records: loaded.records,
+                secret: participant.secret ?? `round-proof-secret:${nodeRef}`,
+                outcomeEligibilitySnapshotId: participant.outcome_eligibility_snapshot_id
+                    ?? participant.outcomeEligibilitySnapshotId
+                    ?? null,
+            },
+            source_evidence: {
+                tenant_id: tenantId,
+                node_ref: nodeRef,
+                partner_ref: partnerRef,
+                record_count: loaded.records.length,
+                duplicate_record_count: loaded.duplicate_record_count,
+                record_source_digest: loaded.source_digest,
+                record_source_summaries: loaded.source_summaries,
+                local_source_paths_shared: false,
+            },
+        };
+    }));
+
+    const proof = buildLocalMultiNodeFederatedRoundProof({
+        federationKey,
+        roundKey: options.roundKey,
+        taskType: options.taskType ?? 'diagnosis_delta',
+        federationRoundId: options.federationRoundId ?? null,
+        minimumParticipants: options.minimumParticipants,
+        minimumRequiredRows: options.minimumRequiredRows,
+        minimumProvenanceRows: options.minimumProvenanceRows,
+        minimumTrustScoredRows: options.minimumTrustScoredRows,
+        includeAggregateVector: options.includeAggregateVector,
+        includeCoordinatorRecoveryKey: options.includeCoordinatorRecoveryKey,
+        participants: loadedParticipants.map((entry) => entry.proof_input),
+    });
+    const output = {
+        schema: 'vetios_federation_node_round_proof_cli_result_v1',
+        generated_at: proof.generated_at,
+        federation_key: proof.federation_key,
+        round_key: proof.round_key,
+        federation_round_id: proof.federation_round_id,
+        status: proof.status,
+        participant_source_evidence: loadedParticipants.map((entry) => entry.source_evidence),
+        proof,
+        privacy_boundary: {
+            raw_records_shared: false,
+            raw_site_deltas_shared: false,
+            raw_unmask_share_seeds_shared: false,
+            local_source_paths_shared: false,
+            node_private_keys_exported: false,
+            coordinator_private_key_included: options.includeCoordinatorRecoveryKey,
+            coordinator_private_key_local_proof_only: options.includeCoordinatorRecoveryKey,
+        },
+    };
+    const json = `${JSON.stringify(output, null, 2)}\n`;
+    if (options.outputPath) {
+        await writeFile(options.outputPath, json, 'utf8');
+    } else {
+        process.stdout.write(json);
+    }
+}
+
 async function runServiceMode(options: CliOptions): Promise<void> {
     const config = options.configPath ? await readJson<ServiceConfig>(options.configPath) : {};
     const recordSources = await resolveRecordSources(options, config);
@@ -768,6 +909,26 @@ async function resolveRecordSources(options: CliOptions, config: ServiceConfig):
         return [{ kind: 'vetios_json', path: recordsPath, source_system: 'local-json' }];
     }
     throw new Error('Missing records path or record_sources. Provide --records, --record-sources, or config.record_sources.');
+}
+
+async function resolveParticipantRecordSources(participant: RoundProofParticipantConfig): Promise<ServiceRecordSource[]> {
+    const sources = participant.record_sources ?? participant.recordSources;
+    if (Array.isArray(sources) && sources.length > 0) return sources;
+    const sourcesPath = participant.record_sources_path ?? participant.recordSourcesPath;
+    if (sourcesPath) {
+        const loaded = await readJson<ServiceRecordSource[]>(sourcesPath);
+        if (Array.isArray(loaded) && loaded.length > 0) return loaded;
+    }
+    const recordsPath = participant.records_path ?? participant.recordsPath;
+    if (recordsPath) {
+        return [{
+            kind: inferSourceKind(recordsPath),
+            path: recordsPath,
+            source_system: 'round-proof-local-export',
+        }];
+    }
+    const nodeRef = participant.node_ref ?? participant.nodeRef ?? 'unknown-node';
+    throw new Error(`Missing record sources for participant ${nodeRef}. Provide record_sources, record_sources_path, or records_path.`);
 }
 
 function emptyLoadedRecordSet(): LoadedRecordSet {
@@ -1332,6 +1493,17 @@ Local doctor preflight:
 
 Rotate local node keys:
   vetios-federation-node rotate-keys --config .vetios-node/<node>.config.json --rotation-reason scheduled_rotation
+
+Materialize a local multi-node secure aggregation proof:
+  vetios-federation-node round-proof \
+    --participants participants.json \
+    --federation-key one_health_amr \
+    --round-key one_health_amr:round:001 \
+    --federation-round-id round-001 \
+    --minimum-participants 3 \
+    --minimum-required-rows 20 \
+    --include-coordinator-recovery-key \
+    --out round-proof.json
 
 Environment fallbacks:
   VETIOS_TENANT_ID, VETIOS_FEDERATION_KEY, VETIOS_NODE_REF, VETIOS_PARTNER_REF,

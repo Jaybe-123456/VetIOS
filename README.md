@@ -28,6 +28,7 @@ Public links:
 - [Why VetIOS?](#why-vetios)
 - [Architecture](#architecture)
 - [Data Flywheel](#data-flywheel)
+- [Federated Learning Moat](#federated-learning-moat)
 - [Core API](#core-api)
 - [Agentic RAG](#agentic-rag)
 - [Monorepo Map](#monorepo-map)
@@ -95,6 +96,29 @@ The platform favors structured schemas over free text, append-only event logs ov
 > **Inference -> Outcome -> Simulation -> Improved Inference**
 >
 > Every prediction can become supervised signal. Every outcome can reveal calibration drift. Every low-confidence or contradictory case can generate synthetic adversarial variants. The result is a compounding clinical intelligence loop designed for safer model routing, sharper confidence estimates, and clearer operational boundaries.
+
+## Federated Learning Moat
+
+VetIOS is building toward outcome-confirmed federated learning rather than pooled raw clinical data. The `@vetios/federation-node` package provides the deployable clinic/lab node path: local record loading, outcome eligibility checks, deterministic local delta computation, X25519/HKDF pairwise masking, encrypted unmask-share envelopes, Ed25519 update signatures, service-mode heartbeats, retry/audit logging, and key rotation.
+
+The node runner now includes a multi-node secure aggregation proof mode:
+
+```bash
+pnpm --filter @vetios/federation-node build
+vetios-federation-node round-proof \
+  --participants participants.json \
+  --federation-key one_health_amr \
+  --round-key one_health_amr:round:001 \
+  --federation-round-id round-001 \
+  --minimum-participants 3 \
+  --minimum-required-rows 20 \
+  --minimum-provenance-rows 20 \
+  --minimum-trust-scored-rows 20 \
+  --include-coordinator-recovery-key \
+  --out round-proof.json
+```
+
+Round-proof mode emits sanitized accepted-update submissions, participant audits, source digests, mask commitments, encrypted unmask-share evidence, aggregate materialization evidence, and a coordinator artifact input bundle. Raw clinic rows, raw model deltas, raw unmask seeds, source paths, and node private keys stay local. The optional coordinator recovery packet is for local proof only and is marked `do_not_persist_private_material`.
 
 ## Core API
 
@@ -251,6 +275,7 @@ The curated catalog covers AVMA, AAHA, WSAVA, ACVIM, AAFP, CAPC, ESCCAP, IRIS, M
 |   |-- gaas/                 Agent orchestration primitives
 |   |-- inference-schema/     Shared inference types and validation
 |   |-- logger/               Shared logging package
+|   |-- federation-node/      Clinic/lab federated learning node SDK and runner
 |   |-- pharmacos/            Veterinary formulary and drug safety logic
 |   |-- tsconfig/             Shared TypeScript configuration
 |   `-- ui/                   Shared UI primitives
@@ -421,6 +446,8 @@ VetIOS uses layered verification:
 - `pnpm build` for application and package build validation.
 - `bash apps/web/scripts/test-api-local.sh` for core API smoke tests.
 - `pnpm test:adversarial-regressions` for failure-driven regression coverage.
+- `pnpm --filter @vetios/federation-node test` for clinic-node training, masking, signing, and proof-bundle coverage.
+- `pnpm --filter @vetios/web test -- lib/federation/__tests__/aggregateBuilder.test.ts` for coordinator aggregate materialization coverage.
 
 The adversarial runner lives at [`internal/testing/test_adversarial_regressions.ts`](internal/testing/test_adversarial_regressions.ts) and is executed with Node's TypeScript stripping support.
 
@@ -447,6 +474,7 @@ The GitHub Actions pipeline runs linting, typechecking, builds, and API smoke ch
 - **Autonomous Diagnostic Agents:** Multi-agent diagnostic workflows that can request labs from incomplete probability matrices.
 - **Clinical Knowledge Graph:** Species-specific pharmacological interactions, contraindications, and symptom-cluster reasoning.
 - **Multimodal Inputs:** Radiographs, ultrasound, documents, and structured telemetry in the same inference graph.
+- **Outcome-Confirmed Federated Learning:** Clinic/lab nodes that train locally, submit masked updates, and prove aggregate materialization without raw data export.
 - **Reinforcement Learning from Outcomes:** Automated calibration and model-weight updates from clinician-confirmed outcomes.
 - **Real-Time Decision Systems:** Sub-100ms edge inference for critical-care routing and escalation support.
 

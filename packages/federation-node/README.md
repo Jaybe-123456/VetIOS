@@ -196,6 +196,84 @@ Rotation mode:
 Send the key rotation packet to the coordinator, then restart the node service
 so subsequent heartbeats and masked-update tasks use the rotated key version.
 
+Multi-node secure aggregation proof:
+
+```bash
+vetios-federation-node round-proof \
+  --participants participants.json \
+  --federation-key one_health_amr \
+  --round-key one_health_amr:round:001 \
+  --federation-round-id round-001 \
+  --minimum-participants 3 \
+  --minimum-required-rows 20 \
+  --minimum-provenance-rows 20 \
+  --minimum-trust-scored-rows 20 \
+  --include-coordinator-recovery-key \
+  --out round-proof.json
+```
+
+Round-proof mode is a local/coordinator smoke-test for the deepest federation
+moat. It loads each participant's local record sources, trains deterministic
+outcome-confirmed deltas, applies X25519/HKDF pairwise masks, verifies that
+pairwise masks cancel at aggregate materialization, and emits a sanitized proof
+bundle. The proof includes masked update submissions, source digests,
+participant audits, encrypted unmask-share envelope counts, aggregate vector
+digest, a coordinator artifact input bundle, and privacy-boundary evidence.
+
+It does not store or print raw clinic rows, raw site deltas, raw unmask seeds,
+local source paths, node private keys, or owner identifiers. Use
+`--include-aggregate-vector` only for local development; the default output
+keeps the aggregate vector digest without printing the aggregate vector. Use
+`--include-coordinator-recovery-key` only for local smoke tests that must prove
+the existing coordinator artifact builder can decrypt unmask-share envelopes and
+materialize the aggregate. That packet is marked `local_proof_only` and
+`do_not_persist_private_material`; do not send it to clinics or store it in
+production ledgers.
+
+Participant manifest example:
+
+```json
+[
+  {
+    "tenant_id": "tenant-a",
+    "node_ref": "clinic-a-node",
+    "partner_ref": "clinic-a",
+    "record_sources": [
+      {
+        "kind": "pims_csv",
+        "path": "exports/clinic-a-pims.csv",
+        "source_system": "clinic-pims",
+        "defaults": {
+          "consent_status": "granted",
+          "provenance_status": "source_attested"
+        }
+      },
+      {
+        "kind": "lab_csv",
+        "path": "exports/clinic-a-lab.csv",
+        "source_system": "reference-lab",
+        "defaults": {
+          "consent_status": "granted",
+          "provenance_status": "externally_verified"
+        }
+      }
+    ]
+  },
+  {
+    "tenant_id": "tenant-b",
+    "node_ref": "clinic-b-node",
+    "partner_ref": "clinic-b",
+    "records_path": "exports/clinic-b-records.json"
+  },
+  {
+    "tenant_id": "tenant-c",
+    "node_ref": "clinic-c-node",
+    "partner_ref": "clinic-c",
+    "record_sources_path": "exports/clinic-c-sources.json"
+  }
+]
+```
+
 Config-file equivalent:
 
 ```json

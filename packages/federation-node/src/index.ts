@@ -5,6 +5,7 @@ import {
     createPrivateKey,
     createPublicKey,
     diffieHellman,
+    generateKeyPairSync,
     randomBytes,
     randomUUID,
     sign,
@@ -274,6 +275,127 @@ export interface LocalSecureAggregationMaterialization {
 export interface TrainedMaskedUpdateCommitment extends MaskedUpdateCommitment {
     local_delta: LocalFederatedModelDelta;
     secure_aggregation_materialization: LocalSecureAggregationMaterialization;
+}
+
+export interface LocalFederatedRoundProofParticipantInput {
+    tenantId: string;
+    nodeRef: string;
+    partnerRef?: string | null;
+    records: LocalClinicalLearningRecord[];
+    secret?: string | null;
+    outcomeEligibilitySnapshotId?: string | null;
+}
+
+export interface LocalFederatedRoundProofParticipantAudit {
+    tenant_id: string;
+    node_ref: string;
+    partner_ref: string | null;
+    contribution_role: FederatedUpdateRole;
+    outcome_eligibility_status: FederatedOutcomeEligibilitySnapshotDraft['eligibility_status'];
+    eligible_record_count: number;
+    record_digest: string;
+    payload_commitment_hash: string;
+    mask_commitment_hash: string;
+    signed_payload_hash: string;
+    signature_algorithm: UpdateSignatureAlgorithm;
+    signing_key_fingerprint: string;
+    masked_vector_digest: string;
+    encrypted_unmask_share_envelope_count: number;
+    public_summary: Record<string, unknown>;
+    audit: {
+        raw_records_shared: false;
+        raw_model_delta_shared: false;
+        local_training_data_shared: false;
+        encrypted_unmask_share_payload_shared: boolean;
+        node_private_key_exported: false;
+    };
+}
+
+export interface CoordinatorAcceptedUpdateEvidenceDraft extends MaskedUpdateCommitment {
+    id: string;
+    tenant_id: string;
+    federation_round_id: string;
+    federation_key: string;
+    round_key: string;
+    participant_ref: string;
+    submission_status: 'accepted';
+    observed_at: string;
+    created_at: string;
+}
+
+export interface LocalCoordinatorRecoveryPacket {
+    schema: 'vetios_local_coordinator_recovery_packet_v1';
+    public_key_der_base64: string;
+    public_key_fingerprint: string;
+    private_key_der_base64: string;
+    local_proof_only: true;
+    do_not_persist_private_material: true;
+    raw_node_private_keys_exported: false;
+}
+
+export interface LocalMultiNodeFederatedRoundProof {
+    schema: 'vetios_local_multi_node_federated_round_proof_v1';
+    status: 'materialized' | 'blocked';
+    federation_round_id: string;
+    federation_key: string;
+    round_key: string;
+    task_type: FederationNodeTaskType;
+    contribution_role: FederatedUpdateRole;
+    generated_at: string;
+    participant_count: number;
+    minimum_participants: number;
+    sanitized_update_submissions: MaskedUpdateCommitment[];
+    participant_audits: LocalFederatedRoundProofParticipantAudit[];
+    coordinator_artifact_bundle: {
+        schema: 'vetios_coordinator_aggregate_artifact_input_bundle_v1';
+        round: {
+            id: string;
+            federation_key: string;
+            coordinator_tenant_id: string;
+            round_key: string;
+            status: 'aggregating';
+            aggregation_strategy: 'secure_aggregation_v1';
+            participant_count: number;
+        };
+        task_type: 'diagnosis' | 'severity' | null;
+        accepted_updates: CoordinatorAcceptedUpdateEvidenceDraft[];
+        coordinator_recovery_key_required: boolean;
+        coordinator_recovery_packet: LocalCoordinatorRecoveryPacket | null;
+        coordinator_private_material_included: boolean;
+    };
+    aggregate_materialization: {
+        schema: 'vetios_local_multi_node_secure_aggregate_materialization_v1';
+        status: 'materialized' | 'blocked';
+        masking_protocol: 'x25519_hkdf_pairwise_masked_v1' | 'pairwise_masked_commitment_v1' | 'mixed' | 'unknown';
+        materialized_update_count: number;
+        dimension_count: number;
+        dimension_order_digest: string | null;
+        aggregate_integer_vector_digest: string | null;
+        aggregate_integer_vector: Record<string, number> | null;
+        pairwise_mask_cancellation_verified: boolean;
+        payload_commitment_hashes: string[];
+        mask_commitment_hashes: string[];
+        masked_vector_digests: string[];
+        encrypted_unmask_share_envelope_count: number;
+        raw_site_delta_artifacts_stored: false;
+        raw_clinical_rows_shared: false;
+    };
+    audit_packet: {
+        schema: 'vetios_local_multi_node_round_audit_v1';
+        package: '@vetios/federation-node';
+        local_runner: 'deterministic_outcome_delta_v1';
+        proof_digest: string;
+        participant_record_digests: string[];
+        raw_records_shared: false;
+        raw_site_deltas_shared: false;
+        raw_unmask_share_seeds_shared: false;
+        node_private_keys_exported: false;
+        synthetic_rows_admitted: false;
+        coordinator_visibility: 'sanitized_submissions_and_secure_aggregate_only';
+    };
+    blockers: string[];
+    warnings: string[];
+    next_actions: string[];
 }
 
 export interface VetiosFederationNodeClientOptions {
@@ -604,6 +726,338 @@ export function buildTrainedMaskedUpdateCommitment(input: {
     };
 }
 
+export function buildLocalMultiNodeFederatedRoundProof(input: {
+    federationKey: string;
+    participants: LocalFederatedRoundProofParticipantInput[];
+    taskType?: FederationNodeTaskType;
+    roundKey?: string | null;
+    federationRoundId?: string | null;
+    generatedAt?: string | null;
+    minimumParticipants?: number | null;
+    policy?: Partial<EligibilityPolicy>;
+    minimumRequiredRows?: number;
+    minimumProvenanceRows?: number;
+    minimumTrustScoredRows?: number;
+    quantizationScale?: number | null;
+    maskRange?: number | null;
+    includeAggregateVector?: boolean;
+    includeCoordinatorRecoveryKey?: boolean;
+}): LocalMultiNodeFederatedRoundProof {
+    const generatedAt = input.generatedAt ?? new Date().toISOString();
+    const taskType = input.taskType ?? 'diagnosis_delta';
+    const contributionRole = contributionRoleForTaskType(taskType);
+    const roundKey = normalizeText(input.roundKey) ?? `${input.federationKey}:${generatedAt.slice(0, 10)}`;
+    const federationRoundId = normalizeText(input.federationRoundId) ?? `local-round-${stableHash({
+        federation_key: input.federationKey,
+        round_key: roundKey,
+        task_type: taskType,
+        participant_refs: input.participants.map((participant) => participant.nodeRef).sort(),
+    }).slice(0, 24)}`;
+    const minimumParticipants = Math.max(2, Math.round(input.minimumParticipants ?? 3));
+    const quantizationScale = Math.max(1, Math.min(1_000_000, Math.round(input.quantizationScale ?? 10_000)));
+    const maskRange = Math.max(1, Math.min(1_000_000, Math.round(input.maskRange ?? 100_000)));
+    const blockers = new Set<string>();
+    const warnings = new Set<string>();
+
+    if (input.participants.length < minimumParticipants) {
+        blockers.add('participant_count_below_secure_aggregation_minimum');
+    }
+    if (new Set(input.participants.map((participant) => normalizeText(participant.nodeRef))).size !== input.participants.length) {
+        blockers.add('participant_node_refs_not_unique');
+    }
+
+    const coordinatorKeys = generateKeyPairSync('x25519');
+    const coordinatorPublicKeyDer = coordinatorKeys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+    const coordinatorPrivateKeyDer = coordinatorKeys.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+    const coordinatorPublicKeyFingerprint = createHash('sha256').update(coordinatorPublicKeyDer).digest('hex').slice(0, 32);
+    const nodeKeys = input.participants.map((participant) => {
+        const keys = generateKeyPairSync('x25519');
+        const publicKeyDer = keys.publicKey.export({ format: 'der', type: 'spki' }) as Buffer;
+        const privateKeyDer = keys.privateKey.export({ format: 'der', type: 'pkcs8' }) as Buffer;
+        return {
+            participant,
+            keys,
+            publicKeyDer,
+            privateKeyDer,
+            publicKeyDerBase64: publicKeyDer.toString('base64'),
+            privateKeyDerBase64: privateKeyDer.toString('base64'),
+            publicKeyFingerprint: createHash('sha256').update(publicKeyDer).digest('hex').slice(0, 32),
+        };
+    });
+    const peerRegistry = nodeKeys.map((entry) => ({
+        node_ref: entry.participant.nodeRef,
+        partner_ref: entry.participant.partnerRef ?? null,
+        public_key_fingerprint: entry.publicKeyFingerprint,
+        public_key_der_base64: entry.publicKeyDerBase64,
+        status: 'active' as const,
+    }));
+
+    const commitments: TrainedMaskedUpdateCommitment[] = [];
+    const sanitizedSubmissions: MaskedUpdateCommitment[] = [];
+    const participantAudits: LocalFederatedRoundProofParticipantAudit[] = [];
+    const aggregateMaskedVector: Record<string, number> = {};
+    const aggregateUnmaskedQuantizedVector: Record<string, number> = {};
+    const dimensionOrderDigests: string[] = [];
+    const maskingProtocols: Array<LocalSecureAggregationMaterialization['masking_protocol']> = [];
+
+    for (const entry of nodeKeys) {
+        const nodeRef = entry.participant.nodeRef;
+        const partnerRef = entry.participant.partnerRef ?? nodeRef;
+        const task: FederationRoundTask = {
+            id: `task-${stableHash({ federationRoundId, nodeRef, taskType }).slice(0, 24)}`,
+            federation_round_id: federationRoundId,
+            federation_key: input.federationKey,
+            round_key: roundKey,
+            node_ref: nodeRef,
+            partner_ref: partnerRef,
+            task_type: taskType,
+            plan_hash: stableHash({
+                federation_round_id: federationRoundId,
+                round_key: roundKey,
+                node_ref: nodeRef,
+                task_type: taskType,
+                peer_public_key_fingerprints: peerRegistry
+                    .filter((peer) => peer.node_ref !== nodeRef)
+                    .map((peer) => peer.public_key_fingerprint)
+                    .sort(),
+            }),
+            secure_aggregation_config: {
+                masking_protocol: 'x25519_hkdf_pairwise_masked_v1',
+                quantization_scale: quantizationScale,
+                mask_range: maskRange,
+                node_private_key_der_base64: entry.privateKeyDerBase64,
+                node_public_key_der_base64: entry.publicKeyDerBase64,
+                node_public_key_fingerprint: entry.publicKeyFingerprint,
+                coordinator_public_key_der_base64: coordinatorPublicKeyDer.toString('base64'),
+                peers: peerRegistry.filter((peer) => peer.node_ref !== nodeRef),
+            },
+        };
+        const trained = trainLocalFederatedTask({
+            task,
+            records: entry.participant.records,
+            tenantId: entry.participant.tenantId,
+            federationKey: input.federationKey,
+            partnerRef,
+            policy: input.policy,
+            minimumRequiredRows: input.minimumRequiredRows,
+            minimumProvenanceRows: input.minimumProvenanceRows,
+            minimumTrustScoredRows: input.minimumTrustScoredRows,
+        });
+        if (trained.dataset.snapshot_draft.eligibility_status !== 'eligible') {
+            blockers.add(`participant_not_outcome_eligible:${nodeRef}`);
+        }
+        const commitment = buildTrainedMaskedUpdateCommitment({
+            task,
+            dataset: trained.dataset,
+            delta: trained.delta,
+            outcomeEligibilitySnapshotId: entry.participant.outcomeEligibilitySnapshotId ?? stableHash({
+                node_ref: nodeRef,
+                record_digest: trained.dataset.record_digest,
+            }),
+            secret: entry.participant.secret ?? `local-proof-secret:${nodeRef}`,
+        });
+        commitments.push(commitment);
+        const submission = toFederatedUpdateSubmissionPayload(commitment);
+        sanitizedSubmissions.push(submission);
+
+        const secureAggregation = commitment.secure_aggregation_materialization;
+        dimensionOrderDigests.push(secureAggregation.dimension_order_digest);
+        maskingProtocols.push(secureAggregation.masking_protocol);
+        addVectorInto(aggregateMaskedVector, secureAggregation.masked_integer_vector);
+        addVectorInto(aggregateUnmaskedQuantizedVector, quantizeFeatureWeights(
+            commitment.local_delta.feature_weights,
+            quantizationScale,
+        ));
+
+        participantAudits.push({
+            tenant_id: entry.participant.tenantId,
+            node_ref: nodeRef,
+            partner_ref: partnerRef,
+            contribution_role: commitment.contribution_role,
+            outcome_eligibility_status: trained.dataset.snapshot_draft.eligibility_status,
+            eligible_record_count: trained.dataset.eligible_records.length,
+            record_digest: trained.dataset.record_digest,
+            payload_commitment_hash: commitment.payload_commitment_hash,
+            mask_commitment_hash: commitment.mask_commitment_hash,
+            signed_payload_hash: commitment.signed_payload_hash,
+            signature_algorithm: commitment.signature_algorithm,
+            signing_key_fingerprint: commitment.signing_key_fingerprint,
+            masked_vector_digest: secureAggregation.masked_vector_digest,
+            encrypted_unmask_share_envelope_count: secureAggregation.encrypted_unmask_share_envelopes.length,
+            public_summary: commitment.public_summary,
+            audit: {
+                raw_records_shared: false,
+                raw_model_delta_shared: false,
+                local_training_data_shared: false,
+                encrypted_unmask_share_payload_shared: secureAggregation.encrypted_unmask_share_envelopes.length > 0,
+                node_private_key_exported: false,
+            },
+        });
+    }
+
+    const uniqueDimensionOrderDigests = Array.from(new Set(dimensionOrderDigests));
+    if (uniqueDimensionOrderDigests.length > 1) {
+        blockers.add('dimension_order_digest_mismatch_across_participants');
+    }
+    const uniqueMaskingProtocols = Array.from(new Set(maskingProtocols));
+    if (uniqueMaskingProtocols.length > 1) {
+        blockers.add('mixed_masking_protocols_across_participants');
+    }
+    if (uniqueMaskingProtocols.includes('pairwise_masked_commitment_v1')) {
+        blockers.add('legacy_commitment_protocol_not_secure_aggregation_materialized');
+    }
+    if (participantAudits.some((audit) => audit.encrypted_unmask_share_envelope_count === 0) && input.participants.length > 1) {
+        warnings.add('encrypted_unmask_share_envelopes_missing_for_some_participants');
+    }
+
+    const aggregateDimensions = Array.from(new Set([
+        ...Object.keys(aggregateMaskedVector),
+        ...Object.keys(aggregateUnmaskedQuantizedVector),
+    ])).sort();
+    const normalizedAggregateMaskedVector = pickVectorDimensions(aggregateMaskedVector, aggregateDimensions);
+    const normalizedAggregateUnmaskedVector = pickVectorDimensions(aggregateUnmaskedQuantizedVector, aggregateDimensions);
+    const pairwiseMaskCancellationVerified = stableHash(normalizedAggregateMaskedVector) === stableHash(normalizedAggregateUnmaskedVector);
+    if (!pairwiseMaskCancellationVerified) {
+        blockers.add('pairwise_mask_cancellation_not_verified');
+    }
+    const aggregateDigest = aggregateDimensions.length > 0
+        ? stableHash({
+            dimension_order_digest: uniqueDimensionOrderDigests[0] ?? null,
+            aggregate_integer_vector: normalizedAggregateMaskedVector,
+            participant_count: commitments.length,
+        })
+        : null;
+    const status = blockers.size === 0 ? 'materialized' : 'blocked';
+    const proofDigest = stableHash({
+        federation_round_id: federationRoundId,
+        round_key: roundKey,
+        payload_commitment_hashes: commitments.map((commitment) => commitment.payload_commitment_hash).sort(),
+        aggregate_integer_vector_digest: aggregateDigest,
+        participant_record_digests: participantAudits.map((audit) => audit.record_digest).sort(),
+    });
+    const coordinatorArtifactTaskType = contributionRole === 'diagnosis' || contributionRole === 'severity'
+        ? contributionRole
+        : null;
+    const acceptedUpdates = buildCoordinatorAcceptedUpdateEvidenceDrafts({
+        proofGeneratedAt: generatedAt,
+        federationRoundId,
+        federationKey: input.federationKey,
+        roundKey,
+        submissions: sanitizedSubmissions,
+        participantAudits,
+    });
+    const coordinatorRecoveryPacket: LocalCoordinatorRecoveryPacket | null = input.includeCoordinatorRecoveryKey === true
+        ? {
+            schema: 'vetios_local_coordinator_recovery_packet_v1',
+            public_key_der_base64: coordinatorPublicKeyDer.toString('base64'),
+            public_key_fingerprint: coordinatorPublicKeyFingerprint,
+            private_key_der_base64: coordinatorPrivateKeyDer.toString('base64'),
+            local_proof_only: true,
+            do_not_persist_private_material: true,
+            raw_node_private_keys_exported: false,
+        }
+        : null;
+
+    return {
+        schema: 'vetios_local_multi_node_federated_round_proof_v1',
+        status,
+        federation_round_id: federationRoundId,
+        federation_key: input.federationKey,
+        round_key: roundKey,
+        task_type: taskType,
+        contribution_role: contributionRole,
+        generated_at: generatedAt,
+        participant_count: input.participants.length,
+        minimum_participants: minimumParticipants,
+        sanitized_update_submissions: sanitizedSubmissions,
+        participant_audits: participantAudits,
+        coordinator_artifact_bundle: {
+            schema: 'vetios_coordinator_aggregate_artifact_input_bundle_v1',
+            round: {
+                id: federationRoundId,
+                federation_key: input.federationKey,
+                coordinator_tenant_id: 'local-coordinator',
+                round_key: roundKey,
+                status: 'aggregating',
+                aggregation_strategy: 'secure_aggregation_v1',
+                participant_count: input.participants.length,
+            },
+            task_type: coordinatorArtifactTaskType,
+            accepted_updates: acceptedUpdates,
+            coordinator_recovery_key_required: true,
+            coordinator_recovery_packet: coordinatorRecoveryPacket,
+            coordinator_private_material_included: coordinatorRecoveryPacket != null,
+        },
+        aggregate_materialization: {
+            schema: 'vetios_local_multi_node_secure_aggregate_materialization_v1',
+            status,
+            masking_protocol: uniqueMaskingProtocols.length === 1
+                ? uniqueMaskingProtocols[0] ?? 'unknown'
+                : uniqueMaskingProtocols.length > 1
+                    ? 'mixed'
+                    : 'unknown',
+            materialized_update_count: commitments.length,
+            dimension_count: aggregateDimensions.length,
+            dimension_order_digest: uniqueDimensionOrderDigests.length === 1 ? uniqueDimensionOrderDigests[0] ?? null : null,
+            aggregate_integer_vector_digest: aggregateDigest,
+            aggregate_integer_vector: input.includeAggregateVector === true ? normalizedAggregateMaskedVector : null,
+            pairwise_mask_cancellation_verified: pairwiseMaskCancellationVerified,
+            payload_commitment_hashes: commitments.map((commitment) => commitment.payload_commitment_hash),
+            mask_commitment_hashes: commitments.map((commitment) => commitment.mask_commitment_hash),
+            masked_vector_digests: commitments.map((commitment) => commitment.secure_aggregation_materialization.masked_vector_digest),
+            encrypted_unmask_share_envelope_count: commitments.reduce((sum, commitment) =>
+                sum + commitment.secure_aggregation_materialization.encrypted_unmask_share_envelopes.length, 0),
+            raw_site_delta_artifacts_stored: false,
+            raw_clinical_rows_shared: false,
+        },
+        audit_packet: {
+            schema: 'vetios_local_multi_node_round_audit_v1',
+            package: '@vetios/federation-node',
+            local_runner: 'deterministic_outcome_delta_v1',
+            proof_digest: proofDigest,
+            participant_record_digests: participantAudits.map((audit) => audit.record_digest),
+            raw_records_shared: false,
+            raw_site_deltas_shared: false,
+            raw_unmask_share_seeds_shared: false,
+            node_private_keys_exported: false,
+            synthetic_rows_admitted: false,
+            coordinator_visibility: 'sanitized_submissions_and_secure_aggregate_only',
+        },
+        blockers: Array.from(blockers).sort(),
+        warnings: Array.from(warnings).sort(),
+        next_actions: buildLocalRoundProofNextActions(status, Array.from(blockers)),
+    };
+}
+
+function buildCoordinatorAcceptedUpdateEvidenceDrafts(input: {
+    proofGeneratedAt: string;
+    federationRoundId: string;
+    federationKey: string;
+    roundKey: string;
+    submissions: MaskedUpdateCommitment[];
+    participantAudits: LocalFederatedRoundProofParticipantAudit[];
+}): CoordinatorAcceptedUpdateEvidenceDraft[] {
+    return input.submissions.map((submission) => {
+        const audit = input.participantAudits.find((entry) => entry.node_ref === submission.node_ref);
+        return {
+            id: `local-submission-${stableHash({
+                federation_round_id: input.federationRoundId,
+                node_ref: submission.node_ref,
+                payload_commitment_hash: submission.payload_commitment_hash,
+            }).slice(0, 24)}`,
+            tenant_id: audit?.tenant_id ?? `unknown:${submission.node_ref}`,
+            federation_round_id: input.federationRoundId,
+            federation_key: input.federationKey,
+            round_key: input.roundKey,
+            participant_ref: `${input.federationKey}:${submission.node_ref}`,
+            submission_status: 'accepted',
+            observed_at: input.proofGeneratedAt,
+            created_at: input.proofGeneratedAt,
+            ...submission,
+        };
+    });
+}
+
 export function buildSecureAggregationMaterialization(input: {
     task: FederationRoundTask;
     delta: LocalFederatedModelDelta;
@@ -626,6 +1080,8 @@ export function buildSecureAggregationMaterialization(input: {
     const pairwiseMaskCommitments: PairwiseMaskCommitment[] = [];
     const unmaskShareCommitments: UnmaskShareCommitment[] = [];
     const encryptedUnmaskShareEnvelopes: EncryptedUnmaskShareEnvelope[] = [];
+    const pairwiseMaskScope = readRawText(config.pairwise_mask_scope ?? config.pairwiseMaskScope)
+        ?? `${input.task.federation_round_id}:${input.task.round_key}:${input.task.task_type}`;
 
     for (const peer of activePeers) {
         const direction = input.task.node_ref.localeCompare(peer.node_ref) <= 0 ? 'add' : 'subtract';
@@ -633,20 +1089,21 @@ export function buildSecureAggregationMaterialization(input: {
         const seedMaterial = stableStringify({
             protocol: 'pairwise_masked_commitment_v1',
             federation_round_id: input.task.federation_round_id,
-            round_node_task_id: input.task.id,
+            round_key: input.task.round_key,
+            task_type: input.task.task_type,
+            pairwise_mask_scope: pairwiseMaskScope,
             local_node_ref: input.task.node_ref,
             peer_node_ref: peer.node_ref,
             ordered_pair: [input.task.node_ref, peer.node_ref].sort(),
             peer_public_key_fingerprint: peer.public_key_fingerprint ?? null,
-            delta_digest: input.delta.delta_digest,
         });
         const keyAgreement = derivePairwiseMaskSeed({
             localPrivateKey,
             peer,
             task: input.task,
-            delta: input.delta,
             fallbackSecret: input.secret,
             seedMaterial,
+            pairwiseMaskScope,
         });
         const maskSeed = keyAgreement.seed;
         const maskVector = Object.fromEntries(dimensions.map((dimension, index) => {
@@ -1336,9 +1793,9 @@ function derivePairwiseMaskSeed(input: {
     localPrivateKey: KeyObject | null;
     peer: SecureAggregationPeer;
     task: FederationRoundTask;
-    delta: LocalFederatedModelDelta;
     fallbackSecret: string;
     seedMaterial: string;
+    pairwiseMaskScope: string;
 }): {
     seed: string;
     protocol: 'x25519_hkdf_sha256_v1' | 'hmac_shared_secret_legacy_v1';
@@ -1352,11 +1809,12 @@ function derivePairwiseMaskSeed(input: {
             });
             const salt = Buffer.from(stableHash({
                 federation_round_id: input.task.federation_round_id,
-                round_node_task_id: input.task.id,
+                round_key: input.task.round_key,
+                task_type: input.task.task_type,
+                pairwise_mask_scope: input.pairwiseMaskScope,
                 ordered_pair: [input.task.node_ref, input.peer.node_ref].sort(),
-                delta_digest: input.delta.delta_digest,
             }), 'hex');
-            const info = Buffer.from(`vetios-secagg-mask:${input.task.round_key}:${input.task.id}`, 'utf8');
+            const info = Buffer.from(`vetios-secagg-mask:${input.task.round_key}:${input.task.task_type}:${input.pairwiseMaskScope}`, 'utf8');
             return {
                 seed: hkdfSha256(sharedSecret, salt, info, 32).toString('hex'),
                 protocol: 'x25519_hkdf_sha256_v1',
@@ -1478,6 +1936,55 @@ function pairwiseMaskValue(seed: string, dimension: string, index: number, maskR
     const parsed = Number.parseInt(digest.slice(0, 12), 16);
     const bounded = Number.isFinite(parsed) ? parsed % (maskRange * 2 + 1) : 0;
     return bounded - maskRange;
+}
+
+function addVectorInto(target: Record<string, number>, source: Record<string, number>): void {
+    for (const [dimension, value] of Object.entries(source)) {
+        target[dimension] = (target[dimension] ?? 0) + value;
+    }
+}
+
+function quantizeFeatureWeights(
+    featureWeights: Record<string, number>,
+    scale: number,
+): Record<string, number> {
+    return Object.fromEntries(Object.keys(featureWeights).sort().map((dimension) => [
+        dimension,
+        Math.round((featureWeights[dimension] ?? 0) * scale),
+    ]));
+}
+
+function pickVectorDimensions(
+    vector: Record<string, number>,
+    dimensions: string[],
+): Record<string, number> {
+    return Object.fromEntries(dimensions.map((dimension) => [dimension, vector[dimension] ?? 0]));
+}
+
+function buildLocalRoundProofNextActions(
+    status: 'materialized' | 'blocked',
+    blockers: string[],
+): string[] {
+    if (status === 'materialized') {
+        return [
+            'submit_sanitized_update_payloads_to_federation_api',
+            'persist_round_audit_packet',
+            'run_coordinator_aggregate_builder_with_recovery_key',
+        ];
+    }
+    if (blockers.includes('participant_count_below_secure_aggregation_minimum')) {
+        return ['enroll_additional_attested_partner_nodes'];
+    }
+    if (blockers.some((blocker) => blocker.startsWith('participant_not_outcome_eligible:'))) {
+        return ['collect_more_outcome_confirmed_records_before_round'];
+    }
+    if (blockers.includes('dimension_order_digest_mismatch_across_participants')) {
+        return ['issue_round_with_shared_feature_schema'];
+    }
+    if (blockers.includes('pairwise_mask_cancellation_not_verified')) {
+        return ['quarantine_round_and_reissue_secure_aggregation_plan'];
+    }
+    return ['resolve_round_proof_blockers_before_submission'];
 }
 
 async function readJsonResponse(response: Response): Promise<unknown> {

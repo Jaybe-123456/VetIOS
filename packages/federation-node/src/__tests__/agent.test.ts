@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, verify } from 'node:crypto';
 import {
     assessLearningRecordEligibility,
+    buildLocalMultiNodeFederatedRoundProof,
     buildMaskedUpdateCommitment,
     buildOutcomeEligibilitySnapshotDraft,
     buildSecureAggregationMaterialization,
@@ -256,3 +257,108 @@ assert.deepEqual(blocked.exclusion_reasons.sort(), [
     'provenance_not_verified',
     'trust_score_below_threshold',
 ]);
+
+const proofParticipants = [
+    {
+        tenantId: 'tenant-a',
+        nodeRef: 'clinic-a-node',
+        partnerRef: 'clinic-a',
+        records: records.map((record) => ({ ...record, local_record_id: `a-${record.local_record_id}` })),
+    },
+    {
+        tenantId: 'tenant-b',
+        nodeRef: 'clinic-b-node',
+        partnerRef: 'clinic-b',
+        records: records.map((record) => ({ ...record, local_record_id: `b-${record.local_record_id}` })),
+    },
+    {
+        tenantId: 'tenant-c',
+        nodeRef: 'clinic-c-node',
+        partnerRef: 'clinic-c',
+        records: records.map((record) => ({ ...record, local_record_id: `c-${record.local_record_id}` })),
+    },
+];
+
+const multiNodeProof = buildLocalMultiNodeFederatedRoundProof({
+    federationKey: 'one_health_amr',
+    roundKey: 'one_health_amr:proof:20260629',
+    federationRoundId: 'round-proof-001',
+    taskType: 'diagnosis_delta',
+    minimumParticipants: 3,
+    minimumRequiredRows: 1,
+    minimumProvenanceRows: 1,
+    minimumTrustScoredRows: 1,
+    quantizationScale: 10000,
+    maskRange: 1000,
+    includeAggregateVector: true,
+    generatedAt: '2026-06-29T12:00:00.000Z',
+    participants: proofParticipants,
+});
+assert.equal(multiNodeProof.schema, 'vetios_local_multi_node_federated_round_proof_v1');
+assert.equal(multiNodeProof.status, 'materialized');
+assert.deepEqual(multiNodeProof.blockers, []);
+assert.equal(multiNodeProof.participant_count, 3);
+assert.equal(multiNodeProof.sanitized_update_submissions.length, 3);
+assert.equal(multiNodeProof.participant_audits.length, 3);
+assert.equal(multiNodeProof.aggregate_materialization.masking_protocol, 'x25519_hkdf_pairwise_masked_v1');
+assert.equal(multiNodeProof.aggregate_materialization.pairwise_mask_cancellation_verified, true);
+assert.equal(multiNodeProof.aggregate_materialization.encrypted_unmask_share_envelope_count, 6);
+assert.match(multiNodeProof.aggregate_materialization.aggregate_integer_vector_digest ?? '', /^[a-f0-9]{64}$/);
+assert.ok(Object.keys(multiNodeProof.aggregate_materialization.aggregate_integer_vector ?? {}).length > 0);
+assert.equal(multiNodeProof.coordinator_artifact_bundle.schema, 'vetios_coordinator_aggregate_artifact_input_bundle_v1');
+assert.equal(multiNodeProof.coordinator_artifact_bundle.task_type, 'diagnosis');
+assert.equal(multiNodeProof.coordinator_artifact_bundle.accepted_updates.length, 3);
+assert.equal(multiNodeProof.coordinator_artifact_bundle.accepted_updates[0]?.submission_status, 'accepted');
+assert.equal(multiNodeProof.coordinator_artifact_bundle.accepted_updates[0]?.federation_round_id, 'round-proof-001');
+assert.equal(multiNodeProof.coordinator_artifact_bundle.coordinator_recovery_packet, null);
+assert.equal(multiNodeProof.coordinator_artifact_bundle.coordinator_private_material_included, false);
+assert.equal(multiNodeProof.audit_packet.raw_records_shared, false);
+assert.equal(multiNodeProof.audit_packet.raw_site_deltas_shared, false);
+assert.equal(multiNodeProof.audit_packet.raw_unmask_share_seeds_shared, false);
+assert.equal(multiNodeProof.audit_packet.node_private_keys_exported, false);
+assert.equal(multiNodeProof.audit_packet.synthetic_rows_admitted, false);
+const serializedMultiNodeProof = JSON.stringify(multiNodeProof);
+assert.equal(serializedMultiNodeProof.includes('"local_delta":'), false);
+assert.equal(serializedMultiNodeProof.includes('"mask_seed":'), false);
+assert.equal(serializedMultiNodeProof.includes('"private_key_der_base64":'), false);
+assert.equal(serializedMultiNodeProof.includes('a-case-1'), false);
+
+const coordinatorRecoveryProof = buildLocalMultiNodeFederatedRoundProof({
+    federationKey: 'one_health_amr',
+    roundKey: 'one_health_amr:proof:20260629',
+    federationRoundId: 'round-proof-001',
+    taskType: 'diagnosis_delta',
+    minimumParticipants: 3,
+    minimumRequiredRows: 1,
+    minimumProvenanceRows: 1,
+    minimumTrustScoredRows: 1,
+    generatedAt: '2026-06-29T12:00:00.000Z',
+    includeCoordinatorRecoveryKey: true,
+    participants: proofParticipants,
+});
+assert.equal(coordinatorRecoveryProof.coordinator_artifact_bundle.coordinator_private_material_included, true);
+assert.equal(coordinatorRecoveryProof.coordinator_artifact_bundle.coordinator_recovery_packet?.local_proof_only, true);
+assert.equal(coordinatorRecoveryProof.coordinator_artifact_bundle.coordinator_recovery_packet?.do_not_persist_private_material, true);
+assert.equal(coordinatorRecoveryProof.coordinator_artifact_bundle.coordinator_recovery_packet?.raw_node_private_keys_exported, false);
+assert.match(coordinatorRecoveryProof.coordinator_artifact_bundle.coordinator_recovery_packet?.private_key_der_base64 ?? '', /^[A-Za-z0-9+/=]+$/);
+
+const blockedMultiNodeProof = buildLocalMultiNodeFederatedRoundProof({
+    federationKey: 'one_health_amr',
+    minimumParticipants: 3,
+    minimumRequiredRows: 1,
+    participants: [
+        {
+            tenantId: 'tenant-a',
+            nodeRef: 'clinic-a-node',
+            records: records.slice(0, 2),
+        },
+        {
+            tenantId: 'tenant-b',
+            nodeRef: 'clinic-b-node',
+            records: records.slice(0, 2),
+        },
+    ],
+});
+assert.equal(blockedMultiNodeProof.status, 'blocked');
+assert.ok(blockedMultiNodeProof.blockers.includes('participant_count_below_secure_aggregation_minimum'));
+assert.deepEqual(blockedMultiNodeProof.next_actions, ['enroll_additional_attested_partner_nodes']);

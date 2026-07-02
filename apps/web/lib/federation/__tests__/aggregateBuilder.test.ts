@@ -12,6 +12,10 @@ import {
     type FederatedAggregateUpdateEvidence,
 } from '@/lib/federation/aggregateBuilder';
 import type { FederationRoundRow } from '@/lib/federation/nodeRuntime';
+import {
+    buildLocalMultiNodeFederatedRoundProof,
+    type LocalClinicalLearningRecord,
+} from '../../../../../packages/federation-node/src/index.ts';
 
 type X25519KeyPair = { publicKey: KeyObject; privateKey: KeyObject };
 
@@ -56,6 +60,87 @@ describe('federated aggregate artifact builder', () => {
         expect((draft.artifact_payload.secure_aggregate_materialization as Record<string, unknown>).decrypted_unmask_share_count).toBe(2);
         expect((draft.artifact_payload.secure_aggregate_materialization as Record<string, unknown>).dropout_recovery_evidence_status).toBe('decrypted_no_dropout_correction_needed');
         expect(draft.summary.status).toBe('aggregate_candidate_ready');
+    });
+
+    it('materializes a coordinator aggregate candidate from federation-node round proof submissions', () => {
+        const localRecords: LocalClinicalLearningRecord[] = Array.from({ length: 8 }, (_, index) => ({
+            local_record_id: `proof-case-${index + 1}`,
+            species: index % 2 === 0 ? 'Canine' : 'Feline',
+            signs: ['fever', 'lethargy'],
+            labs: { culture: 'e_coli', ast: 'available' },
+            treatment: { antimicrobial: 'amoxicillin-clavulanate' },
+            diagnosis: index % 2 === 0 ? 'urinary tract infection' : 'pyelonephritis',
+            outcome: 'improved',
+            outcome_confirmed: true,
+            lab_confirmed: true,
+            amr_related: true,
+            culture_collected: true,
+            consent_status: 'granted',
+            provenance_status: 'hash_verified',
+            source_system: 'clinic-pims',
+        }));
+        const proof = buildLocalMultiNodeFederatedRoundProof({
+            federationKey: 'one_health_amr',
+            roundKey: 'one_health_amr:proof:artifact',
+            federationRoundId: 'round-proof-artifact-001',
+            taskType: 'diagnosis_delta',
+            minimumParticipants: 3,
+            minimumRequiredRows: 1,
+            minimumProvenanceRows: 1,
+            minimumTrustScoredRows: 1,
+            quantizationScale: 10000,
+            maskRange: 1000,
+            includeAggregateVector: true,
+            includeCoordinatorRecoveryKey: true,
+            generatedAt: '2026-06-29T12:00:00.000Z',
+            participants: ['a', 'b', 'c'].map((suffix) => ({
+                tenantId: `tenant-${suffix}`,
+                nodeRef: `clinic-${suffix}-node`,
+                partnerRef: `clinic-${suffix}`,
+                records: localRecords.map((record) => ({
+                    ...record,
+                    local_record_id: `${suffix}-${record.local_record_id}`,
+                })),
+            })),
+        });
+        const recoveryPacket = proof.coordinator_artifact_bundle.coordinator_recovery_packet;
+
+        expect(proof.status).toBe('materialized');
+        expect(proof.coordinator_artifact_bundle.task_type).toBe('diagnosis');
+        expect(recoveryPacket?.local_proof_only).toBe(true);
+
+        const draft = buildFederatedAggregateArtifactDraft({
+            round: round({
+                id: proof.federation_round_id,
+                federation_key: proof.federation_key,
+                coordinator_tenant_id: proof.coordinator_artifact_bundle.round.coordinator_tenant_id,
+                round_key: proof.round_key,
+                participant_count: proof.participant_count,
+            }),
+            taskType: 'diagnosis',
+            acceptedUpdates: proof.coordinator_artifact_bundle.accepted_updates as FederatedAggregateUpdateEvidence[],
+            minimumAcceptedUpdates: 3,
+            coordinatorRecoveryKeyMaterial: {
+                privateKeyDerBase64: recoveryPacket?.private_key_der_base64,
+            },
+            builtAt: '2026-06-29T12:05:00.000Z',
+        });
+        const materialization = draft.artifact_payload.secure_aggregate_materialization as Record<string, unknown>;
+
+        expect(draft.blockers).toEqual([]);
+        expect(draft.summary.status).toBe('aggregate_candidate_ready');
+        expect(materialization.status).toBe('materialized');
+        expect(materialization.protocol).toBe('x25519_hkdf_pairwise_masked_v1');
+        expect(materialization.decrypted_unmask_share_count).toBe(6);
+        expect(materialization.dropout_recovery_evidence_status).toBe('decrypted_no_dropout_correction_needed');
+        expect(materialization.aggregate_integer_vector).toEqual(proof.aggregate_materialization.aggregate_integer_vector);
+        expect(draft.artifact_payload.raw_site_delta_artifacts_stored).toBe(false);
+        expect(draft.artifact_payload.raw_clinical_rows_shared).toBe(false);
+
+        const serialized = JSON.stringify(draft.artifact_payload);
+        expect(serialized).not.toContain('proof-case-1');
+        expect(serialized).not.toContain('mask_seed');
+        expect(serialized).not.toContain('private_key_der_base64');
     });
 
     it('blocks candidates that lack secure aggregation mask commitments', () => {
