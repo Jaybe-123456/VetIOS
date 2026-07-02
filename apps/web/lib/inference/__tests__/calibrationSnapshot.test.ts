@@ -137,4 +137,69 @@ describe('inference calibration snapshot moat', () => {
         });
         expect(inserted[0]?.snapshot).not.toHaveProperty('output_payload');
     });
+
+    it('prefers real outcome calibration buckets over the legacy label counter', async () => {
+        const client = {
+            from: (table: string) => {
+                if (table === 'outcome_calibration_buckets') {
+                    return {
+                        select: () => ({
+                            eq: () => ({
+                                eq: () => ({
+                                    order: () => ({
+                                        limit: () => ({
+                                            maybeSingle: async () => ({
+                                                data: {
+                                                    outcome_label_count: 18,
+                                                    mean_delta: 0.01,
+                                                    expected_calibration_error: 0.03,
+                                                    calibration_status: 'calibrated',
+                                                    model_version: 'vetios-clinical-v1',
+                                                },
+                                                error: null,
+                                            }),
+                                        }),
+                                    }),
+                                }),
+                            }),
+                        }),
+                    };
+                }
+                if (table === 'label_calibration') {
+                    return {
+                        select: () => ({
+                            eq: () => ({
+                                eq: () => ({
+                                    maybeSingle: async () => ({
+                                        data: { sample_count: 2, mean_delta: -0.3 },
+                                        error: null,
+                                    }),
+                                }),
+                            }),
+                        }),
+                    };
+                }
+                throw new Error(`Unexpected table ${table}`);
+            },
+        };
+
+        const snapshot = await buildInferenceCalibrationSnapshot(client as never, {
+            tenantId: '11111111-1111-4111-8111-111111111111',
+            inferenceEventId: '22222222-2222-4222-8222-222222222222',
+            modelVersion: 'vetios-clinical-v1',
+            confidenceScore: 0.91,
+            phiHat: 0.9,
+            outputPayload: {
+                differentials: [
+                    { label: 'Ehrlichiosis', p: 0.91 },
+                    { label: 'Anaplasmosis', p: 0.06 },
+                ],
+            },
+        });
+
+        expect(snapshot.calibration_status).toBe('calibrated');
+        expect(snapshot.historical_sample_count).toBe(18);
+        expect(snapshot.expected_calibration_error).toBe(0.03);
+        expect(snapshot.snapshot.historical_calibration_source).toBe('outcome_calibration_buckets');
+    });
 });

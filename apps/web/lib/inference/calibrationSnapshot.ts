@@ -132,11 +132,13 @@ export async function buildInferenceCalibrationSnapshot(
         ?? 0);
     const marginTop2 = clamp01(top && second ? top.probability - second.probability : top?.probability ?? 0);
     const entropy = computeNormalizedEntropy(differentials.map((entry) => entry.probability));
+    const modelVersion = input.modelVersion ?? readString(asRecord(input.outputPayload.governance_lineage).model_version);
     const historical = top?.label
-        ? await loadLabelCalibration(client, input.tenantId, top.label)
-        : { sampleCount: 0, meanDelta: null };
-    const status = classifyCalibrationStatus(historical.sampleCount, historical.meanDelta);
-    const expectedError = historical.meanDelta == null ? null : roundMetric(Math.abs(historical.meanDelta));
+        ? await loadLabelCalibration(client, input.tenantId, top.label, modelVersion)
+        : { sampleCount: 0, meanDelta: null, expectedCalibrationError: null, source: 'none' };
+    const status = historical.status ?? classifyCalibrationStatus(historical.sampleCount, historical.meanDelta);
+    const expectedError = historical.expectedCalibrationError
+        ?? (historical.meanDelta == null ? null : roundMetric(Math.abs(historical.meanDelta)));
     const reliabilityScore = clamp01(
         (confidence * 0.3)
         + (phiHat * 0.3)
@@ -166,7 +168,7 @@ export async function buildInferenceCalibrationSnapshot(
             distribution_digest: digestUnknown(differentials),
             top_label: top?.label ?? null,
             differential_labels: differentials.slice(0, 8).map((entry) => entry.label),
-            historical_calibration_source: historical.sampleCount > 0 ? 'label_calibration' : 'none',
+            historical_calibration_source: historical.source,
             privacy_boundary: 'no raw symptoms, notes, owner identifiers, patient names, contacts, or microchip IDs stored',
         },
     };
@@ -176,7 +178,17 @@ async function loadLabelCalibration(
     client: CalibrationSupabaseClient,
     tenantId: string,
     label: string,
-): Promise<{ sampleCount: number; meanDelta: number | null }> {
+    modelVersion: string | null,
+): Promise<{
+    sampleCount: number;
+    meanDelta: number | null;
+    expectedCalibrationError: number | null;
+    status?: InferenceCalibrationSnapshot['calibration_status'];
+    source: string;
+}> {
+    const bucket = await loadOutcomeCalibrationBucket(client, tenantId, label, modelVersion);
+    if (bucket && bucket.sampleCount >= 5) return bucket;
+
     try {
         const table = client.from('label_calibration') as {
             select: (columns: string) => {
@@ -192,13 +204,78 @@ async function loadLabelCalibration(
             .eq('tenant_id', tenantId)
             .eq('label', label)
             .maybeSingle();
-        if (error || !data) return { sampleCount: 0, meanDelta: null };
+        if (error || !data) {
+            return {
+                sampleCount: 0,
+                meanDelta: null,
+                expectedCalibrationError: null,
+                source: 'none',
+            };
+        }
         const sampleCount = Math.max(0, Math.trunc(readNumber(data.sample_count) ?? 0));
         const meanDelta = readNumber(data.mean_delta)
             ?? (sampleCount > 0 ? (readNumber(data.cumulative_delta) ?? 0) / sampleCount : null);
-        return { sampleCount, meanDelta };
+        return {
+            sampleCount,
+            meanDelta,
+            expectedCalibrationError: null,
+            source: 'label_calibration',
+        };
     } catch {
-        return { sampleCount: 0, meanDelta: null };
+        return {
+            sampleCount: 0,
+            meanDelta: null,
+            expectedCalibrationError: null,
+            source: 'none',
+        };
+    }
+}
+
+async function loadOutcomeCalibrationBucket(
+    client: CalibrationSupabaseClient,
+    tenantId: string,
+    label: string,
+    modelVersion: string | null,
+): Promise<{
+    sampleCount: number;
+    meanDelta: number | null;
+    expectedCalibrationError: number | null;
+    status?: InferenceCalibrationSnapshot['calibration_status'];
+    source: string;
+} | null> {
+    try {
+        const table = client.from('outcome_calibration_buckets') as {
+            select: (columns: string) => {
+                eq: (column: string, value: string) => {
+                    eq: (column: string, value: string) => {
+                        order: (column: string, options: { ascending: boolean }) => {
+                            limit: (count: number) => {
+                                maybeSingle: () => QueryResult<Record<string, unknown>>;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+        const { data, error } = await table
+            .select('outcome_label_count, mean_delta, expected_calibration_error, calibration_status, model_version')
+            .eq('tenant_id', tenantId)
+            .eq('normalized_label', normalizeCalibrationLabel(label))
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        if (error || !data) return null;
+        const rowModelVersion = readString(data.model_version);
+        if (modelVersion && rowModelVersion && rowModelVersion !== modelVersion) return null;
+        return {
+            sampleCount: Math.max(0, Math.trunc(readNumber(data.outcome_label_count) ?? 0)),
+            meanDelta: readNumber(data.mean_delta),
+            expectedCalibrationError: readNumber(data.expected_calibration_error),
+            status: readCalibrationStatus(data.calibration_status),
+            source: 'outcome_calibration_buckets',
+        };
+    } catch {
+        return null;
     }
 }
 
@@ -329,6 +406,10 @@ function stableStringify(value: unknown): string {
 
 function normalizeLabel(value: string): string {
     return value.trim().replace(/\s+/g, ' ');
+}
+
+function normalizeCalibrationLabel(value: string): string {
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
