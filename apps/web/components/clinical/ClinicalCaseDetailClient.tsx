@@ -16,6 +16,7 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
     const result = buildResult(clinicalCase);
     const isClosed = Boolean(clinicalCase.confirmed_diagnosis) || clinicalCase.case_status === 'closed';
     const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+    const reasoning = useMemo(() => result ? buildReasoningSummary(result) : null, [result]);
     const soapNote = useMemo(() => {
         if (!result) return '';
         const cire = asRecord(result.cire);
@@ -134,6 +135,52 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
                         )}
                     </ClinicalSection>
 
+                    {reasoning ? (
+                        <ClinicalSection title="Reasoning & Evidence">
+                            <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
+                                <div className="rounded-md border border-white/10 bg-white/[0.025] p-4">
+                                    <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/48">Top reasoning path</div>
+                                    <p className="mt-3 text-sm leading-6 text-white/76">
+                                        {formatClinicalLabel(reasoning.topLabel)} leads at {formatPercent(reasoning.topProbability)}.
+                                        {' '}
+                                        {reasoning.confirmationStatus
+                                            ? `Confirmation status: ${formatClinicalLabel(reasoning.confirmationStatus)}.`
+                                            : 'Confirmation status has not been recorded yet.'}
+                                    </p>
+
+                                    <div className="mt-4 grid gap-3 md:grid-cols-3">
+                                        <ReasoningEvidenceList title="Supports" items={reasoning.supportingEvidence} tone="accent" />
+                                        <ReasoningEvidenceList title="Missing" items={reasoning.missingEvidence} tone="warn" />
+                                        <ReasoningEvidenceList title="Against" items={reasoning.contradictingEvidence} tone="muted" />
+                                    </div>
+                                </div>
+
+                                <div className="rounded-md border border-accent/20 bg-accent/[0.04] p-4">
+                                    <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-white/48">CIRE / phi interpretation</div>
+                                    <div className="mt-3 grid grid-cols-3 gap-2">
+                                        <ReasoningMetric label="Phi" value={reasoning.phi == null ? 'n/a' : reasoning.phi.toFixed(2)} tone={reasoning.phi != null && reasoning.phi >= 0.75 ? 'accent' : 'warn'} />
+                                        <ReasoningMetric label="CPS" value={reasoning.cps == null ? 'n/a' : reasoning.cps.toFixed(2)} tone={reasoning.cps != null && reasoning.cps <= 0.25 ? 'accent' : 'warn'} />
+                                        <ReasoningMetric label="Safety" value={formatClinicalLabel(reasoning.safetyState ?? 'unscored')} tone={reasoning.safetyState === 'nominal' ? 'accent' : 'warn'} />
+                                    </div>
+                                    <p className="mt-4 text-sm leading-6 text-white/74">{reasoning.interpretation}</p>
+
+                                    {reasoning.reliabilityRows.length > 0 ? (
+                                        <div className="mt-4 divide-y divide-white/8 border-t border-white/8 pt-2">
+                                            {reasoning.reliabilityRows.map((row) => (
+                                                <div key={row.label} className="flex items-center justify-between gap-3 py-2 text-sm">
+                                                    <span className="text-white/48">{row.label}</span>
+                                                    <span className={row.tone === 'accent' ? 'text-accent' : row.tone === 'warn' ? 'text-amber-200' : 'text-white/70'}>
+                                                        {row.value}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </ClinicalSection>
+                    ) : null}
+
                     <ClinicalSection title="Reliability">
                         <div className="space-y-2 text-sm leading-6 text-white/74">
                             <p>
@@ -203,6 +250,20 @@ export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseD
     );
 }
 
+type ClinicalReasoningSummary = {
+    topLabel: string;
+    topProbability: number;
+    supportingEvidence: string[];
+    missingEvidence: string[];
+    contradictingEvidence: string[];
+    confirmationStatus: string | null;
+    phi: number | null;
+    cps: number | null;
+    safetyState: string | null;
+    interpretation: string;
+    reliabilityRows: Array<{ label: string; value: string; tone: 'accent' | 'warn' | 'muted' }>;
+};
+
 function ClinicalSection({ title, children }: { title: string; children: React.ReactNode }) {
     return (
         <section className="space-y-4">
@@ -212,6 +273,52 @@ function ClinicalSection({ title, children }: { title: string; children: React.R
             </div>
             {children}
         </section>
+    );
+}
+
+function ReasoningEvidenceList({
+    title,
+    items,
+    tone,
+}: {
+    title: string;
+    items: string[];
+    tone: 'accent' | 'warn' | 'muted';
+}) {
+    const markerClass = tone === 'accent' ? 'text-accent' : tone === 'warn' ? 'text-amber-200' : 'text-white/44';
+    return (
+        <div className="rounded-md border border-white/8 bg-black/15 p-3">
+            <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/44">{title}</div>
+            {items.length > 0 ? (
+                <ul className="mt-2 space-y-2 text-sm leading-5 text-white/72">
+                    {items.map((item) => (
+                        <li key={item} className="flex gap-2">
+                            <span className={markerClass}>-</span>
+                            <span>{formatEvidenceText(item)}</span>
+                        </li>
+                    ))}
+                </ul>
+            ) : (
+                <p className="mt-2 text-sm leading-5 text-white/44">None captured</p>
+            )}
+        </div>
+    );
+}
+
+function ReasoningMetric({
+    label,
+    value,
+    tone,
+}: {
+    label: string;
+    value: string;
+    tone: 'accent' | 'warn';
+}) {
+    return (
+        <div className="rounded-md border border-white/8 bg-black/15 p-3">
+            <div className="font-mono text-[9px] uppercase tracking-[0.14em] text-white/42">{label}</div>
+            <div className={`mt-1 text-base font-semibold ${tone === 'accent' ? 'text-accent' : 'text-amber-200'}`}>{value}</div>
+        </div>
     );
 }
 
@@ -236,6 +343,67 @@ function buildResult(clinicalCase: CaseDetail): ClinicalDiagnosisResult | null {
         reliability_note: buildReliabilityNote(confidence, output, differentials.length),
         cire: asRecord(output.cire),
         raw: inference,
+    };
+}
+
+function buildReasoningSummary(result: ClinicalDiagnosisResult): ClinicalReasoningSummary {
+    const raw = asRecord(result.raw);
+    const output = asRecord(raw.output_payload);
+    const diagnosis = asRecord(output.diagnosis);
+    const rows = Array.isArray(diagnosis.top_differentials)
+        ? diagnosis.top_differentials
+        : Array.isArray(output.differentials) ? output.differentials : [];
+    const top = result.differentials[0];
+    const topRecord = findTopDifferentialRecord(rows, top?.label);
+    const groundTruth = asRecord(topRecord.ground_truth_explanation);
+    const reliability = asRecord(output.reliability_breakdown);
+    const cire = { ...asRecord(output.cire), ...asRecord(raw.cire), ...asRecord(result.cire) };
+    const phi = readNumber(reliability.composite_reliability_score)
+        ?? readNumber(cire.phi_hat)
+        ?? readNumber(raw.phi_hat)
+        ?? result.confidence;
+    const cps = readNumber(cire.cps);
+    const safetyState = readText(cire.safety_state) ?? inferClinicalSafetyState(phi);
+    const supportingEvidence = collectEvidenceList(
+        readEvidenceArray(topRecord.supporting_evidence),
+        readEvidenceArray(groundTruth.supporting_findings),
+    );
+    const missingEvidence = collectEvidenceList(
+        readEvidenceArray(topRecord.missing_evidence),
+        readArray(groundTruth.missing_criteria),
+    );
+    const contradictingEvidence = collectEvidenceList(
+        readEvidenceArray(topRecord.contradicting_evidence),
+        readEvidenceArray(groundTruth.contradicting_findings),
+    );
+    const reliabilityRows = [
+        reliabilityRow('Input completeness', reliability.input_completeness),
+        reliabilityRow('Evidence density', reliability.evidence_density),
+        reliabilityRow('Diagnostic separation', reliability.diagnostic_separation),
+        reliabilityRow('Ontology match', reliability.ontology_match),
+        reliabilityRow('Contradiction burden', reliability.contradiction_burden),
+        reliabilityRow('Composite reliability', reliability.composite_reliability_score),
+    ].filter((row): row is ClinicalReasoningSummary['reliabilityRows'][number] => Boolean(row));
+
+    return {
+        topLabel: top?.label ?? readText(topRecord.condition) ?? readText(topRecord.label) ?? 'Undetermined',
+        topProbability: top?.probability ?? readNumber(topRecord.probability) ?? result.confidence,
+        supportingEvidence,
+        missingEvidence,
+        contradictingEvidence,
+        confirmationStatus: readText(groundTruth.confirmation_status),
+        phi,
+        cps,
+        safetyState,
+        interpretation: buildCireInterpretation({
+            phi,
+            cps,
+            safetyState,
+            supportingEvidence,
+            missingEvidence,
+            contradictingEvidence,
+        }),
+        reliabilityRows,
     };
 }
 
@@ -351,6 +519,85 @@ function normalizeDiagnosisKey(value: string): string {
 function cleanClinicalText(value: string | null): string | null {
     const repaired = value == null ? null : repairDisplayText(value).replace(/^Test:\s*/i, '').trim();
     return repaired && repaired.length > 0 ? repaired : null;
+}
+
+function findTopDifferentialRecord(rows: unknown[], label: string | null | undefined): Record<string, unknown> {
+    const normalizedLabel = label ? normalizeDiagnosisKey(label) : null;
+    const records = rows.map((entry) => asRecord(entry));
+    if (normalizedLabel) {
+        const match = records.find((entry) => {
+            const candidate = readText(entry.condition) ?? readText(entry.name) ?? readText(entry.label);
+            return candidate ? normalizeDiagnosisKey(candidate) === normalizedLabel : false;
+        });
+        if (match) return match;
+    }
+    return records[0] ?? {};
+}
+
+function collectEvidenceList(...groups: string[][]): string[] {
+    const values = new Map<string, string>();
+    for (const group of groups) {
+        for (const value of group) {
+            const cleaned = cleanClinicalText(value);
+            if (!cleaned) continue;
+            const key = normalizeDiagnosisKey(cleaned);
+            if (!values.has(key)) values.set(key, cleaned);
+        }
+    }
+    return Array.from(values.values()).slice(0, 6);
+}
+
+function reliabilityRow(label: string, value: unknown): ClinicalReasoningSummary['reliabilityRows'][number] | null {
+    const score = readNumber(value);
+    if (score == null) return null;
+    return {
+        label,
+        value: formatPercent(score),
+        tone: score >= 0.75 ? 'accent' : score >= 0.5 ? 'muted' : 'warn',
+    };
+}
+
+function buildCireInterpretation(input: {
+    phi: number | null;
+    cps: number | null;
+    safetyState: string | null;
+    supportingEvidence: string[];
+    missingEvidence: string[];
+    contradictingEvidence: string[];
+}): string {
+    const phiText = input.phi == null
+        ? 'CIRE phi has not been scored for this inference'
+        : input.phi >= 0.75
+            ? 'CIRE phi is high, meaning the differential distribution is concentrated and the inference is less entropic'
+            : input.phi >= 0.5
+                ? 'CIRE phi is moderate, meaning the case has useful signal but still needs clinician review'
+                : 'CIRE phi is low, meaning the differential distribution or evidence quality is too weak for confident closure';
+    const cpsText = input.cps == null
+        ? 'collapse pressure is not recorded'
+        : input.cps <= 0.25
+            ? 'collapse pressure is low'
+            : input.cps <= 0.5
+                ? 'collapse pressure is moderate'
+                : 'collapse pressure is elevated';
+    const evidenceText = input.contradictingEvidence.length > 0
+        ? 'Contradicting evidence is present, so this should remain in review until reconciled.'
+        : input.missingEvidence.length > 0
+            ? 'Missing confirmatory evidence should be collected before closing or treating the case as outcome-confirmed.'
+            : input.supportingEvidence.length > 0
+                ? 'Captured supporting evidence is present, but outcome confirmation is still needed for calibration.'
+                : 'No structured evidence map was captured, so manual review is required.';
+    return `${phiText}; ${cpsText}; safety state is ${formatClinicalLabel(input.safetyState ?? 'unscored')}. ${evidenceText}`;
+}
+
+function inferClinicalSafetyState(phi: number | null): string | null {
+    if (phi == null) return null;
+    if (phi >= 0.75) return 'nominal';
+    if (phi >= 0.5) return 'review';
+    return 'hold';
+}
+
+function formatEvidenceText(value: string): string {
+    return formatClinicalLabel(value.replace(/[.:]+/g, ' '));
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
