@@ -21,7 +21,7 @@ export interface ClinicalDiagnosisResult {
 }
 
 export function formatClinicalLabel(value: string): string {
-    return value
+    return repairDisplayText(value)
         .replace(/[_-]+/g, ' ')
         .replace(/\s+/g, ' ')
         .trim()
@@ -32,6 +32,16 @@ export function formatClinicalLabel(value: string): string {
             return /^[A-Z0-9]{2,5}$/.test(word) ? word : `${word[0]?.toUpperCase() ?? ''}${word.slice(1).toLowerCase()}`;
         })
         .join(' ');
+}
+
+export function repairDisplayText(value: string): string {
+    return value
+        .replace(/\u00e2\u20ac\u201d/g, '\u2014')
+        .replace(/\u00e2\u20ac\u201c/g, '\u2013')
+        .replace(/\u00e2\u20ac\u2018/g, '\u2011')
+        .replace(/\u00e2\u20ac\u2122/g, "'")
+        .replace(/\u00e2\u20ac\u0153|\u00e2\u20ac\u009d/g, '"')
+        .replace(/\u00c2/g, '');
 }
 
 export function formatCaseNumber(id: string): string {

@@ -76,15 +76,15 @@ export function OutcomeConfirmButton({
                 }),
             });
             const body = await response.json().catch(() => ({}));
-            if (!response.ok) {
-                throw new Error(readPlainError(body));
-            }
+            if (!response.ok) throw new Error(readPlainError(body));
             const outcomeId = typeof body.outcome_event_id === 'string' ? body.outcome_event_id : requestId;
             setStatus('saved');
             onConfirmed(outcomeId);
-        } catch {
+        } catch (caught) {
             setStatus('error');
-            setError("Couldn't save the outcome. Please try again.");
+            setError(caught instanceof Error && caught.message
+                ? caught.message
+                : "Couldn't save the outcome. Please try again.");
         }
     }
 
@@ -199,6 +199,7 @@ function readPlainError(body: unknown): string {
         const record = body as Record<string, unknown>;
         const raw = record.detail ?? record.error;
         if (typeof raw === 'string' && raw.includes('403')) return "You don't have access to this. Contact support.";
+        if (typeof raw === 'string' && raw.trim()) return raw;
     }
-    return 'Something went wrong. Please try again.';
+    return "Couldn't save the outcome. Please try again.";
 }

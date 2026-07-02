@@ -798,10 +798,10 @@ function deriveCaseResultSummary(inference: Record<string, unknown>): {
     const rows = Array.isArray(diagnosis.top_differentials)
         ? diagnosis.top_differentials
         : Array.isArray(output.differentials) ? output.differentials : [];
-    const differentials = rows
+    const differentials = dedupeCaseDifferentials(rows
         .map((entry) => mapCaseDifferential(asRecord(entry)))
         .filter((entry): entry is CaseDifferentialSummary => Boolean(entry))
-        .slice(0, 8);
+    );
     const confidence = readNumber(output.confidence_score)
         ?? readNumber(inference.confidence_score)
         ?? differentials[0]?.probability
@@ -818,7 +818,7 @@ function deriveCaseResultSummary(inference: Record<string, unknown>): {
 }
 
 function mapCaseDifferential(entry: Record<string, unknown>): CaseDifferentialSummary | null {
-    const label = readText(entry.condition) ?? readText(entry.name) ?? readText(entry.label);
+    const label = cleanClinicalText(readText(entry.condition) ?? readText(entry.name) ?? readText(entry.label));
     if (!label) return null;
     return {
         label,
@@ -827,18 +827,36 @@ function mapCaseDifferential(entry: Record<string, unknown>): CaseDifferentialSu
     };
 }
 
+function dedupeCaseDifferentials(entries: CaseDifferentialSummary[]): CaseDifferentialSummary[] {
+    const byLabel = new Map<string, CaseDifferentialSummary>();
+    for (const entry of entries) {
+        const key = normalizeDiagnosisKey(entry.label);
+        const existing = byLabel.get(key);
+        if (!existing) {
+            byLabel.set(key, entry);
+            continue;
+        }
+        byLabel.set(key, {
+            label: existing.label,
+            probability: Math.max(existing.probability, entry.probability),
+            urgency: mergeCaseUrgency(existing.urgency, entry.urgency),
+        });
+    }
+    return Array.from(byLabel.values()).sort((left, right) => right.probability - left.probability).slice(0, 8);
+}
+
 function collectRecommendedTests(rows: unknown[], output: Record<string, unknown>): string[] {
     const tests = new Set<string>();
     for (const row of rows) {
         const record = asRecord(row);
-        for (const value of readStringArray(record.recommended_confirmatory_tests)) tests.add(value);
-        for (const value of readEvidenceArray(record.missing_evidence)) tests.add(value.replace(/^Test:\s*/i, ''));
+        for (const value of readStringArray(record.recommended_confirmatory_tests)) tests.add(cleanClinicalText(value) ?? value);
+        for (const value of readEvidenceArray(record.missing_evidence)) tests.add(cleanClinicalText(value) ?? value);
         const groundTruth = asRecord(record.ground_truth_explanation);
-        for (const value of readStringArray(groundTruth.missing_criteria)) tests.add(value);
+        for (const value of readStringArray(groundTruth.missing_criteria)) tests.add(cleanClinicalText(value) ?? value);
     }
     const summary = asRecord(output.ground_truth_summary);
-    for (const value of readStringArray(summary.missing_confirmatory_tests)) tests.add(value);
-    for (const value of readStringArray(output.recommended_tests)) tests.add(value);
+    for (const value of readStringArray(summary.missing_confirmatory_tests)) tests.add(cleanClinicalText(value) ?? value);
+    for (const value of readStringArray(output.recommended_tests)) tests.add(cleanClinicalText(value) ?? value);
     return Array.from(tests).slice(0, 6);
 }
 
@@ -860,6 +878,33 @@ function mapCaseUrgency(value: string | null): CaseDifferentialSummary['urgency'
     if (value === 'immediate' || value === 'urgent' || value === 'high') return 'high';
     if (value === 'review' || value === 'medium') return 'medium';
     return 'low';
+}
+
+function mergeCaseUrgency(
+    left: CaseDifferentialSummary['urgency'],
+    right: CaseDifferentialSummary['urgency'],
+): CaseDifferentialSummary['urgency'] {
+    const rank = { low: 0, medium: 1, high: 2 } satisfies Record<CaseDifferentialSummary['urgency'], number>;
+    return rank[right] > rank[left] ? right : left;
+}
+
+function normalizeDiagnosisKey(value: string): string {
+    return repairDisplayText(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function cleanClinicalText(value: string | null): string | null {
+    const repaired = value == null ? null : repairDisplayText(value).replace(/^Test:\s*/i, '').trim();
+    return repaired && repaired.length > 0 ? repaired : null;
+}
+
+function repairDisplayText(value: string): string {
+    return value
+        .replace(/\u00e2\u20ac\u201d/g, '\u2014')
+        .replace(/\u00e2\u20ac\u201c/g, '\u2013')
+        .replace(/\u00e2\u20ac\u2018/g, '\u2011')
+        .replace(/\u00e2\u20ac\u2122/g, "'")
+        .replace(/\u00e2\u20ac\u0153|\u00e2\u20ac\u009d/g, '"')
+        .replace(/\u00c2/g, '');
 }
 
 async function loadLatestInference(

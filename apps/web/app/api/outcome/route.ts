@@ -254,6 +254,7 @@ export async function POST(req: Request) {
         });
         return retryAfterResponse({ requestId, errorCode, detail: error instanceof Error ? error.message : 'Unknown insert error' });
     }
+    const outcomeWarnings: string[] = [];
 
     const outcomeResolution = {
         resolved: true,
@@ -281,15 +282,7 @@ export async function POST(req: Request) {
             errorCode,
             error: error instanceof SupabaseWriteError ? error.originalError : error,
         });
-        logApiCompleted({
-            event: 'outcome.completed',
-            route: '/api/outcome',
-            tenantId,
-            requestId,
-            startTime,
-            error: errorCode,
-        });
-        return retryAfterResponse({ requestId, errorCode, detail: error instanceof Error ? error.message : 'Unknown calibration error' });
+        outcomeWarnings.push(`label_calibration_update_failed (${errorCode}): ${error instanceof Error ? error.message : 'Unknown calibration error'}`);
     }
 
     let clinicalCase: ClinicalCaseRecord | null = null;
@@ -317,18 +310,7 @@ export async function POST(req: Request) {
                 );
             }
         } catch (error) {
-            logApiCompleted({
-                event: 'outcome.completed',
-                route: '/api/outcome',
-                tenantId,
-                requestId,
-                startTime,
-                error: 'clinical_case_update_failed',
-            });
-            return NextResponse.json(
-                { error: 'clinical_case_update_failed', detail: error instanceof Error ? error.message : 'Unknown clinical case update error' },
-                { status: 500 },
-            );
+            outcomeWarnings.push(`clinical_case_update_failed: ${error instanceof Error ? error.message : 'Unknown clinical case update error'}`);
         }
     }
 
@@ -419,6 +401,7 @@ export async function POST(req: Request) {
             multimodal_artifact_ledger: multimodalArtifactLedger,
             patient_timeline_ledger: patientTimelineLedger,
             warnings: [
+                ...outcomeWarnings,
                 ...derivedUpdates.warnings,
                 ...[
                     diagnosisRecord.warning,
@@ -450,6 +433,14 @@ export async function POST(req: Request) {
             prediction_correct: predictionCorrect,
         },
         client: supabase,
+    }).catch((error) => {
+        logSupabaseFailure({
+            route: '/api/outcome',
+            requestId,
+            tenantId,
+            errorCode: 'product_usage_event_failed',
+            error,
+        });
     });
     return NextResponse.json(responseBody);
 }

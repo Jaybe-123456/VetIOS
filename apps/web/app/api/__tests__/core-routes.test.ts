@@ -166,6 +166,33 @@ describe('core API regression suite', () => {
         expect(body.outcome_event_id).toBe(outcomeEventId);
     });
 
+    it('Outcome route: calibration write failure does not block confirmed outcome capture', async () => {
+        mocks.getSupabaseServer.mockReturnValue(createOutcomeSupabaseMock({
+            inferenceFound: true,
+            labelCalibrationUpsertError: true,
+        }));
+
+        const response = await outcomePost(jsonRequest('/api/outcome', {
+            request_id: requestId,
+            inference_event_id: inferenceEventId,
+            outcome: {
+                type: 'confirmed_diagnosis',
+                payload: {
+                    label: 'canine_pancreatitis',
+                    confidence: 0.9,
+                },
+                timestamp: '2026-05-22T12:00:00.000Z',
+            },
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(body.outcome_event_id).toBe(outcomeEventId);
+        expect(body.derived_updates.warnings.some((warning: string) =>
+            warning.includes('label_calibration_update_failed'),
+        )).toBe(true);
+    });
+
     it('Outcome route: duplicate request_id at insert returns cached outcome', async () => {
         mocks.getSupabaseServer.mockReturnValue(createOutcomeSupabaseMock({
             inferenceFound: true,
@@ -311,6 +338,7 @@ function createOutcomeSupabaseMock(input: {
     inferenceFound: boolean;
     duplicateOutcomeInsert?: boolean;
     cachedOutcomeAfterDuplicate?: boolean;
+    labelCalibrationUpsertError?: boolean;
 }) {
     let outcomeSelectCount = 0;
 
@@ -378,6 +406,15 @@ function createOutcomeSupabaseMock(input: {
             return { data: null, error: null };
         }
         if (table === 'label_calibration' && action === 'upsert') {
+            if (input.labelCalibrationUpsertError) {
+                return {
+                    data: null,
+                    error: {
+                        code: '42P01',
+                        message: 'relation "public.label_calibration" does not exist',
+                    },
+                };
+            }
             return { data: null, error: null };
         }
         if (table === 'diagnosis_records' && action === 'insert') {

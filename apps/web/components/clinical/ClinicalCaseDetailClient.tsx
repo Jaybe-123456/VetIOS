@@ -8,7 +8,7 @@ import { OutcomeConfirmButton } from './OutcomeConfirmButton';
 import { MultimodalEvidenceLedger } from './MultimodalEvidenceLedger';
 import { ModelTrustPanel } from './ModelTrustPanel';
 import { PatientTimelinePanel } from './PatientTimelinePanel';
-import { formatCaseNumber, formatClinicalLabel, formatPercent, type ClinicalDiagnosisResult, type ClinicalUrgency } from './clinicalTypes';
+import { formatCaseNumber, formatClinicalLabel, formatPercent, repairDisplayText, type ClinicalDiagnosisResult, type ClinicalUrgency } from './clinicalTypes';
 import { generateSOAP } from '@/lib/generateSOAP';
 
 export function ClinicalCaseDetailClient({ clinicalCase }: { clinicalCase: CaseDetail }) {
@@ -224,7 +224,9 @@ function buildResult(clinicalCase: CaseDetail): ClinicalDiagnosisResult | null {
     const rows = Array.isArray(diagnosis.top_differentials)
         ? diagnosis.top_differentials
         : Array.isArray(output.differentials) ? output.differentials : [];
-    const differentials = rows.map((entry) => mapDifferential(asRecord(entry))).filter(Boolean) as ClinicalDiagnosisResult['differentials'];
+    const differentials = dedupeDifferentials(
+        rows.map((entry) => mapDifferential(asRecord(entry))).filter(Boolean) as ClinicalDiagnosisResult['differentials'],
+    );
     const confidence = readNumber(output.confidence_score) ?? readNumber(inference.confidence_score) ?? differentials[0]?.probability ?? 0;
     return {
         inference_event_id: inferenceId,
@@ -292,24 +294,42 @@ function buildReliabilityNote(confidence: number, output: Record<string, unknown
 }
 
 function mapDifferential(entry: Record<string, unknown>) {
-    const label = readText(entry.condition) ?? readText(entry.name) ?? readText(entry.label);
+    const label = cleanClinicalText(readText(entry.condition) ?? readText(entry.name) ?? readText(entry.label));
     const probability = readNumber(entry.probability) ?? readNumber(entry.p) ?? readNumber(entry.confidence) ?? 0;
     if (!label) return null;
     return { label, probability, urgency: mapUrgency(readText(entry.clinical_urgency)) };
+}
+
+function dedupeDifferentials(entries: ClinicalDiagnosisResult['differentials']): ClinicalDiagnosisResult['differentials'] {
+    const byLabel = new Map<string, ClinicalDiagnosisResult['differentials'][number]>();
+    for (const entry of entries) {
+        const key = normalizeDiagnosisKey(entry.label);
+        const existing = byLabel.get(key);
+        if (!existing) {
+            byLabel.set(key, entry);
+            continue;
+        }
+        byLabel.set(key, {
+            label: existing.label,
+            probability: Math.max(existing.probability, entry.probability),
+            urgency: mergeUrgency(existing.urgency, entry.urgency),
+        });
+    }
+    return Array.from(byLabel.values()).sort((left, right) => right.probability - left.probability).slice(0, 8);
 }
 
 function collectRecommendedTests(rows: unknown[], output: Record<string, unknown>): string[] {
     const tests = new Set<string>();
     for (const row of rows) {
         const record = asRecord(row);
-        for (const value of readArray(record.recommended_confirmatory_tests)) tests.add(value);
-        for (const value of readEvidenceArray(record.missing_evidence)) tests.add(value);
+        for (const value of readArray(record.recommended_confirmatory_tests)) tests.add(cleanClinicalText(value) ?? value);
+        for (const value of readEvidenceArray(record.missing_evidence)) tests.add(cleanClinicalText(value) ?? value);
         const groundTruth = asRecord(record.ground_truth_explanation);
-        for (const value of readArray(groundTruth.missing_criteria)) tests.add(value);
+        for (const value of readArray(groundTruth.missing_criteria)) tests.add(cleanClinicalText(value) ?? value);
     }
     const summary = asRecord(output.ground_truth_summary);
-    for (const value of readArray(summary.missing_confirmatory_tests)) tests.add(value);
-    for (const value of readArray(output.recommended_tests)) tests.add(value);
+    for (const value of readArray(summary.missing_confirmatory_tests)) tests.add(cleanClinicalText(value) ?? value);
+    for (const value of readArray(output.recommended_tests)) tests.add(cleanClinicalText(value) ?? value);
     return Array.from(tests).slice(0, 6);
 }
 
@@ -317,6 +337,20 @@ function mapUrgency(value: string | null): ClinicalUrgency {
     if (value === 'immediate' || value === 'urgent' || value === 'high') return 'high';
     if (value === 'review' || value === 'medium') return 'medium';
     return 'low';
+}
+
+function mergeUrgency(left: ClinicalUrgency, right: ClinicalUrgency): ClinicalUrgency {
+    const rank = { low: 0, medium: 1, high: 2 } satisfies Record<ClinicalUrgency, number>;
+    return rank[right] > rank[left] ? right : left;
+}
+
+function normalizeDiagnosisKey(value: string): string {
+    return repairDisplayText(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function cleanClinicalText(value: string | null): string | null {
+    const repaired = value == null ? null : repairDisplayText(value).replace(/^Test:\s*/i, '').trim();
+    return repaired && repaired.length > 0 ? repaired : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
