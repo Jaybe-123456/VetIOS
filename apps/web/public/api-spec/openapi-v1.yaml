@@ -349,6 +349,42 @@ paths:
           $ref: '#/components/responses/Error'
         '403':
           $ref: '#/components/responses/Error'
+  /api/public/cire-standard:
+    get:
+      operationId: getPublicCireStandard
+      summary: Read the public CIRE reliability standard
+      security: []
+      responses:
+        '200':
+          description: CIRE standard returned
+          headers:
+            CIRE-Standard-Version:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CireStandardResponse'
+  /api/public/cire-conformance:
+    get:
+      operationId: getPublicCireConformance
+      summary: Read the public CIRE conformance fixture and validation result
+      security: []
+      responses:
+        '200':
+          description: CIRE conformance artifact returned
+          headers:
+            CIRE-Standard-Version:
+              schema:
+                type: string
+            CIRE-Conformance-Result:
+              schema:
+                type: string
+                enum: [passed, failed]
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CireConformanceResponse'
   /api/health:
     get:
       operationId: getHealth
@@ -860,6 +896,58 @@ components:
         safety_state:
           type: string
           enum: [nominal, review, hold]
+    CireStandardResponse:
+      type: object
+      required: [standard_key, version, status, canonical_url, machine_readable_url, conformance_report_url]
+      additionalProperties: true
+      properties:
+        standard_key:
+          type: string
+          enum: [vetios-cire-open-standard]
+        version:
+          type: string
+          example: 1.0.0
+        status:
+          type: string
+          enum: [public_reference]
+        canonical_url:
+          type: string
+        machine_readable_url:
+          type: string
+        conformance_report_url:
+          type: string
+    CireConformanceResponse:
+      type: object
+      required: [artifact_key, standard_version, standard_url, conformance_url, report, validation]
+      properties:
+        artifact_key:
+          type: string
+          enum: [vetios-cire-conformance-v1]
+        standard_version:
+          type: string
+          example: 1.0.0
+        standard_url:
+          type: string
+        conformance_url:
+          type: string
+        report:
+          type: object
+          additionalProperties: true
+        validation:
+          type: object
+          required: [passed, summary, checks]
+          additionalProperties: true
+          properties:
+            passed:
+              type: boolean
+            summary:
+              type: object
+              additionalProperties: true
+            checks:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
     InputSignature:
       type: object
       required: [species, symptoms]
