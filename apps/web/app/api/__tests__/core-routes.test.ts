@@ -5,6 +5,7 @@ import { POST as inferencePost } from '../inference/route';
 import { POST as outcomePost } from '../outcome/route';
 import { GET as outboxFlushGet } from '../cron/outbox-flush/route';
 import { GET as cireCalibrationCronGet } from '../cron/cire-calibration/route';
+import { GET as cireReferenceCertificationCronGet } from '../cron/cire-reference-certification/route';
 
 const mocks = vi.hoisted(() => ({
     getSupabaseServer: vi.fn(),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     runInference: vi.fn(),
     confirmOutcome: vi.fn(),
     startCireCalibration: vi.fn(),
+    submitReferenceCireCertification: vi.fn(),
 }));
 
 vi.mock('@/lib/supabaseServer', () => ({
@@ -36,6 +38,10 @@ vi.mock('@/lib/cire/engine', () => ({
     startCireCalibration: mocks.startCireCalibration,
 }));
 
+vi.mock('@/lib/cire/referenceCertification', () => ({
+    submitReferenceCireCertification: mocks.submitReferenceCireCertification,
+}));
+
 const tenantId = '22222222-2222-4222-8222-222222222222';
 const userId = '33333333-3333-4333-8333-333333333333';
 const requestId = '11111111-1111-4111-8111-111111111111';
@@ -57,6 +63,20 @@ describe('core API regression suite', () => {
         mocks.startCireCalibration.mockResolvedValue({
             simulation_id: '88888888-8888-4888-8888-888888888888',
             estimated_duration_seconds: 180,
+        });
+        mocks.submitReferenceCireCertification.mockResolvedValue({
+            certification_id: '99999999-9999-4999-8999-999999999999',
+            request_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            cached: false,
+            certification_status: 'passed',
+            conformance_result: 'passed',
+            conformance_score: 1,
+            total_checks: 10,
+            passed_checks: 10,
+            failed_checks: 0,
+            public_listing_eligible: true,
+            signed_payload_hash: 'a'.repeat(64),
+            blockers: [],
         });
     });
 
@@ -326,6 +346,32 @@ describe('core API regression suite', () => {
                 authMode: 'service_account',
             }),
         }));
+    });
+
+    it('CIRE reference certification cron: unauthorized request is rejected', async () => {
+        const response = await cireReferenceCertificationCronGet(new Request('https://vetios.test/api/cron/cire-reference-certification'));
+        const body = await response.json();
+
+        expect(response.status).toBe(401);
+        expect(body.error).toBe('Unauthorized');
+        expect(mocks.submitReferenceCireCertification).not.toHaveBeenCalled();
+    });
+
+    it('CIRE reference certification cron: authorized request submits reference certification', async () => {
+        const supabase = createSupabaseMock(() => ({ data: null, error: null }));
+        mocks.getSupabaseServer.mockReturnValue(supabase);
+
+        const response = await cireReferenceCertificationCronGet(new Request(`https://vetios.test/api/cron/cire-reference-certification?tenant_id=${tenantId}`, {
+            headers: { Authorization: 'Bearer cron-secret' },
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(201);
+        expect(body.certification.certification_id).toBe('99999999-9999-4999-8999-999999999999');
+        expect(body.certification.conformance_result).toBe('passed');
+        expect(body.cron.job).toBe('cire-reference-certification');
+        expect(body.cron.tenant_id).toBe(tenantId);
+        expect(mocks.submitReferenceCireCertification).toHaveBeenCalledWith(supabase, tenantId);
     });
 
     it('Immutability trigger: UPDATE on ai_inference_events is blocked by migration trigger', () => {
