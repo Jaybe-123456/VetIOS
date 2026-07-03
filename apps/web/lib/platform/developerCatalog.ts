@@ -241,4 +241,16 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             'The registry is append-only and backed by signed payload hashes where provided.',
         ],
     },
+    {
+        id: 'public-cire-operational-proof',
+        method: 'GET',
+        path: '/api/public/cire-operational-proof',
+        auth: 'public',
+        readiness: 'public',
+        purpose: 'Read public-safe CIRE operating evidence for cron execution, certification registry population, migration targets, and calibration runs.',
+        notes: [
+            'Summarizes append-only operational proof events without exposing tenant, clinic, patient, owner, or credential details.',
+            'Designed to distinguish a paper standard from a running reliability substrate with auditable proof digests.',
+        ],
+    },
 ];
