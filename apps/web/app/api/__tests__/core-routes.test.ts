@@ -4,12 +4,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { POST as inferencePost } from '../inference/route';
 import { POST as outcomePost } from '../outcome/route';
 import { GET as outboxFlushGet } from '../cron/outbox-flush/route';
+import { GET as cireCalibrationCronGet } from '../cron/cire-calibration/route';
 
 const mocks = vi.hoisted(() => ({
     getSupabaseServer: vi.fn(),
     resolveClinicalApiActor: vi.fn(),
     runInference: vi.fn(),
     confirmOutcome: vi.fn(),
+    startCireCalibration: vi.fn(),
 }));
 
 vi.mock('@/lib/supabaseServer', () => ({
@@ -30,6 +32,10 @@ vi.mock('@/lib/vectorStore/vetVectorStore', () => ({
     }),
 }));
 
+vi.mock('@/lib/cire/engine', () => ({
+    startCireCalibration: mocks.startCireCalibration,
+}));
+
 const tenantId = '22222222-2222-4222-8222-222222222222';
 const userId = '33333333-3333-4333-8333-333333333333';
 const requestId = '11111111-1111-4111-8111-111111111111';
@@ -48,6 +54,10 @@ describe('core API regression suite', () => {
             },
         });
         mocks.confirmOutcome.mockResolvedValue(undefined);
+        mocks.startCireCalibration.mockResolvedValue({
+            simulation_id: '88888888-8888-4888-8888-888888888888',
+            estimated_duration_seconds: 180,
+        });
     });
 
     it('Inference route: valid payload returns 200 with inference_event_id and confidence_score', async () => {
@@ -284,6 +294,38 @@ describe('core API regression suite', () => {
         expect(response.status).toBe(200);
         expect(body.dead_lettered).toBe(1);
         expect(updates.some((update) => update.status === 'dead_lettered' && update.attempt_count === 5)).toBe(true);
+    });
+
+    it('CIRE calibration cron: unauthorized request is rejected', async () => {
+        const response = await cireCalibrationCronGet(new Request('https://vetios.test/api/cron/cire-calibration'));
+        const body = await response.json();
+
+        expect(response.status).toBe(401);
+        expect(body.error).toBe('Unauthorized');
+        expect(mocks.startCireCalibration).not.toHaveBeenCalled();
+    });
+
+    it('CIRE calibration cron: authorized request starts calibration sweep', async () => {
+        const supabase = createSupabaseMock(() => ({ data: null, error: null }));
+        mocks.getSupabaseServer.mockReturnValue(supabase);
+
+        const response = await cireCalibrationCronGet(new Request(`https://vetios.test/api/cron/cire-calibration?tenant_id=${tenantId}`, {
+            headers: { Authorization: 'Bearer cron-secret' },
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(202);
+        expect(body.calibration.simulation_id).toBe('88888888-8888-4888-8888-888888888888');
+        expect(body.cron.job).toBe('cire-calibration');
+        expect(body.cron.tenant_id).toBe(tenantId);
+        expect(mocks.startCireCalibration).toHaveBeenCalledWith(supabase, expect.objectContaining({
+            tenantId,
+            actor: expect.objectContaining({
+                tenantId,
+                role: 'system_admin',
+                authMode: 'service_account',
+            }),
+        }));
     });
 
     it('Immutability trigger: UPDATE on ai_inference_events is blocked by migration trigger', () => {
