@@ -177,6 +177,7 @@ VetIOS exposes CIRE through:
 - `ai_inference_events` for inference lineage.
 - `clinical_outcome_events` for outcome closure.
 - `cire_snapshots`, `cire_incidents`, and `cire_collapse_profiles` for runtime monitoring.
+- `cire-conformance` for third-party compatibility checks against the v1 reference numerics.
 
 ## 8. Compatibility Badge Rules
 
@@ -189,6 +190,18 @@ A project may call itself CIRE-compatible if it:
 5. Does not treat synthetic or unconfirmed data as outcome-confirmed evidence.
 6. Separates runtime reliability from post-outcome calibration.
 7. Documents model version, input handling, and human review flow.
+
+Reference check:
+
+```bash
+pnpm --filter @vetios/cire-engine test
+```
+
+This runs the bundled CIRE v1 conformance fixture across entropy, input impairment, CPS, safety-state, and vector-extraction cases. Third-party implementations can generate their own JSON report and validate it with:
+
+```bash
+node packages/cire-engine/dist/conformance-cli.js path/to/report.json --strict
+```
 
 ## 9. Why This Creates a Moat
 

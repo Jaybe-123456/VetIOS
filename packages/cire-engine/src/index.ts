@@ -59,6 +59,75 @@ export interface PhiSentinelResult<TOutput> extends SafetyClassification {
     raw_output: TOutput;
 }
 
+export interface CireConformanceDifferentialCase {
+    id: string;
+    probabilities: number[];
+    expected_phi_hat: number;
+    tolerance?: number;
+}
+
+export interface CireConformanceInputCase {
+    id: string;
+    input: InferenceInput;
+    expected_input_m_hat?: number;
+    min_input_m_hat?: number;
+    max_input_m_hat?: number;
+    tolerance?: number;
+}
+
+export interface CireConformanceCpsCase {
+    id: string;
+    phi_hat: number;
+    delta_rolling: number;
+    sigma_delta: number;
+    phi0: number;
+    expected_cps: number;
+    expected_safety_state: SafetyState;
+    expected_reliability_badge: ReliabilityBadge;
+    tolerance?: number;
+}
+
+export interface CireConformanceOutputVectorCase {
+    id: string;
+    output: unknown;
+    preferred_path?: string | null;
+    expected_vector: number[];
+}
+
+export interface CireConformanceReport {
+    standard_version: string;
+    implementation?: {
+        name?: string;
+        version?: string;
+        url?: string;
+    };
+    differential_cases?: CireConformanceDifferentialCase[];
+    input_cases?: CireConformanceInputCase[];
+    cps_cases?: CireConformanceCpsCase[];
+    output_vector_cases?: CireConformanceOutputVectorCase[];
+}
+
+export interface CireConformanceCheck {
+    id: string;
+    group: 'differential' | 'input' | 'cps' | 'output_vector';
+    passed: boolean;
+    message: string;
+    actual: unknown;
+    expected: unknown;
+}
+
+export interface CireConformanceResult {
+    passed: boolean;
+    standard_version: string;
+    implementation: CireConformanceReport['implementation'];
+    summary: {
+        total: number;
+        passed: number;
+        failed: number;
+    };
+    checks: CireConformanceCheck[];
+}
+
 const DEFAULT_ALPHA = 0.1;
 const DEFAULT_SIGMA_WINDOW = 50;
 
@@ -424,6 +493,116 @@ export class PhiSentinel {
     }
 }
 
+export function validateCireConformanceReport(report: CireConformanceReport): CireConformanceResult {
+    const checks: CireConformanceCheck[] = [];
+
+    for (const testCase of report.differential_cases ?? []) {
+        const tolerance = testCase.tolerance ?? 0.000001;
+        const actual = roundNumber(computePhiHat(testCase.probabilities), 6);
+        const expected = testCase.expected_phi_hat;
+        const passed = nearlyEqual(actual, expected, tolerance);
+        checks.push({
+            id: testCase.id,
+            group: 'differential',
+            passed,
+            message: passed
+                ? 'phi_hat matched expected entropy score'
+                : `phi_hat mismatch: expected ${expected}, received ${actual}`,
+            actual,
+            expected,
+        });
+    }
+
+    for (const testCase of report.input_cases ?? []) {
+        const tolerance = testCase.tolerance ?? 0.000001;
+        const actual = roundNumber(computeInputMHat(testCase.input), 6);
+        const expected = {
+            expected_input_m_hat: testCase.expected_input_m_hat,
+            min_input_m_hat: testCase.min_input_m_hat,
+            max_input_m_hat: testCase.max_input_m_hat,
+        };
+        const expectedMatch = testCase.expected_input_m_hat == null
+            || nearlyEqual(actual, testCase.expected_input_m_hat, tolerance);
+        const minMatch = testCase.min_input_m_hat == null || actual >= testCase.min_input_m_hat;
+        const maxMatch = testCase.max_input_m_hat == null || actual <= testCase.max_input_m_hat;
+        const passed = expectedMatch && minMatch && maxMatch;
+        checks.push({
+            id: testCase.id,
+            group: 'input',
+            passed,
+            message: passed
+                ? 'input_m_hat matched expected impairment bounds'
+                : `input_m_hat outside expected bounds: received ${actual}`,
+            actual,
+            expected,
+        });
+    }
+
+    for (const testCase of report.cps_cases ?? []) {
+        const tolerance = testCase.tolerance ?? 0.000001;
+        const cps = roundNumber(computeCPS(
+            testCase.phi_hat,
+            testCase.delta_rolling,
+            testCase.sigma_delta,
+            testCase.phi0,
+        ), 6);
+        const classification = classifySafetyState(cps);
+        const expected = {
+            cps: testCase.expected_cps,
+            safety_state: testCase.expected_safety_state,
+            reliability_badge: testCase.expected_reliability_badge,
+        };
+        const passed = nearlyEqual(cps, testCase.expected_cps, tolerance)
+            && classification.safety_state === testCase.expected_safety_state
+            && classification.reliability_badge === testCase.expected_reliability_badge;
+        checks.push({
+            id: testCase.id,
+            group: 'cps',
+            passed,
+            message: passed
+                ? 'CPS and safety classification matched expected values'
+                : `CPS/classification mismatch: received ${cps} ${classification.safety_state}/${classification.reliability_badge}`,
+            actual: {
+                cps,
+                ...classification,
+            },
+            expected,
+        });
+    }
+
+    for (const testCase of report.output_vector_cases ?? []) {
+        const actual = extractProbabilityVectorFromOutput(testCase.output, testCase.preferred_path);
+        const passed = actual.length === testCase.expected_vector.length
+            && actual.every((value, index) => {
+                const expectedValue = testCase.expected_vector[index];
+                return expectedValue != null && nearlyEqual(value, expectedValue, 0.000001);
+            });
+        checks.push({
+            id: testCase.id,
+            group: 'output_vector',
+            passed,
+            message: passed
+                ? 'output probability vector extraction matched expected values'
+                : 'output probability vector extraction mismatch',
+            actual,
+            expected: testCase.expected_vector,
+        });
+    }
+
+    const passedCount = checks.filter((check) => check.passed).length;
+    return {
+        passed: passedCount === checks.length && checks.length > 0,
+        standard_version: report.standard_version,
+        implementation: report.implementation,
+        summary: {
+            total: checks.length,
+            passed: passedCount,
+            failed: checks.length - passedCount,
+        },
+        checks,
+    };
+}
+
 function classifyWithThresholds(
     cps: number,
     thresholds: {
@@ -442,6 +621,10 @@ function classifyWithThresholds(
         return { safety_state: 'critical', reliability_badge: 'CAUTION' };
     }
     return { safety_state: 'blocked', reliability_badge: 'SUPPRESSED' };
+}
+
+function nearlyEqual(left: number, right: number, tolerance: number): boolean {
+    return Math.abs(left - right) <= tolerance;
 }
 
 function normalizeInputEnvelope(inputPayload: InferenceInput): Record<string, unknown> & {
