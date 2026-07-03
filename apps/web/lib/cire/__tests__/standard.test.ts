@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { CIRE_STANDARD_API_PATH, CIRE_STANDARD_KEY, CIRE_STANDARD_PATH, getCireOpenStandard } from '../standard';
+import {
+    CIRE_CONFORMANCE_API_PATH,
+    CIRE_STANDARD_API_PATH,
+    CIRE_STANDARD_KEY,
+    CIRE_STANDARD_PATH,
+    getCireOpenStandard,
+} from '../standard';
 
 describe('CIRE open standard', () => {
     it('publishes a versioned public reliability contract', () => {
@@ -9,6 +15,7 @@ describe('CIRE open standard', () => {
         expect(standard.version).toMatch(/^\d+\.\d+\.\d+$/);
         expect(standard.canonical_url).toBe(`https://www.vetios.tech${CIRE_STANDARD_PATH}`);
         expect(standard.machine_readable_url).toBe(`https://www.vetios.tech${CIRE_STANDARD_API_PATH}`);
+        expect(standard.conformance_report_url).toBe(`https://www.vetios.tech${CIRE_CONFORMANCE_API_PATH}`);
         expect(standard.implementation.package_name).toBe('@vetios/cire-engine');
     });
 
@@ -30,5 +37,6 @@ describe('CIRE open standard', () => {
             'reliability_badge',
             'input_signature',
         ]));
+        expect(standard.public_api_surfaces).toContain(CIRE_CONFORMANCE_API_PATH);
     });
 });

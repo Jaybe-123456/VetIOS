@@ -217,4 +217,16 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             'Managed VetIOS deployments provide hosted lineage, outcome loops, model cards, and enterprise SLA support around the standard.',
         ],
     },
+    {
+        id: 'public-cire-conformance',
+        method: 'GET',
+        path: '/api/public/cire-conformance',
+        auth: 'public',
+        readiness: 'public',
+        purpose: 'Publish the reference CIRE conformance fixture and validation result for third-party compatibility checks.',
+        notes: [
+            'External implementers can run this report through @vetios/cire-engine or their own validator.',
+            'Passing the fixture does not certify clinical safety; it proves compatibility with the public CIRE signal contract.',
+        ],
+    },
 ];
