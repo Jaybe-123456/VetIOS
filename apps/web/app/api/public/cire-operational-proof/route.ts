@@ -54,7 +54,7 @@ export async function GET(req: Request) {
 
         return NextResponse.json({
             configured: true,
-            snapshot: buildPublicCireOperationalProofSnapshot((Array.isArray(data) ? data : []) as CireOperationalProofRow[]),
+            snapshot: buildPublicCireOperationalProofSnapshot((Array.isArray(data) ? data : []) as unknown as CireOperationalProofRow[]),
             error: null,
         }, {
             headers: {
