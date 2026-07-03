@@ -60,6 +60,7 @@ The strategy is CUDA-like but more precise: CIRE is the free scoring language an
 - Public standard page: [vetios.tech/platform/cire-standard](https://www.vetios.tech/platform/cire-standard)
 - Machine-readable contract: [vetios.tech/api/public/cire-standard](https://www.vetios.tech/api/public/cire-standard)
 - Public conformance artifact: [vetios.tech/api/public/cire-conformance](https://www.vetios.tech/api/public/cire-conformance)
+- Public certification registry: [vetios.tech/api/public/cire-certifications](https://www.vetios.tech/api/public/cire-certifications)
 - Reference implementation: [@vetios/cire-engine](packages/cire-engine/src/index.ts)
 - Compatibility check: `pnpm --filter @vetios/cire-engine test`
 

@@ -385,6 +385,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CireConformanceResponse'
+  /api/public/cire-certifications:
+    get:
+      operationId: getPublicCireCertifications
+      summary: Read the public CIRE implementation certification registry
+      security: []
+      responses:
+        '200':
+          description: Public CIRE certification registry returned
+          headers:
+            CIRE-Standard-Version:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CireCertificationRegistryResponse'
   /api/health:
     get:
       operationId: getHealth
@@ -916,6 +932,8 @@ components:
           type: string
         conformance_report_url:
           type: string
+        certification_registry_url:
+          type: string
     CireConformanceResponse:
       type: object
       required: [artifact_key, standard_version, standard_url, conformance_url, report, validation]
@@ -948,6 +966,50 @@ components:
               items:
                 type: object
                 additionalProperties: true
+    CireCertificationRegistryResponse:
+      type: object
+      required: [configured, registry]
+      properties:
+        configured:
+          type: boolean
+        registry:
+          type: object
+          required: [registry_key, standard_version, summary, listings]
+          properties:
+            registry_key:
+              type: string
+              enum: [vetios-cire-certification-registry]
+            standard_version:
+              type: string
+              example: 1.0.0
+            summary:
+              type: object
+              additionalProperties: true
+            listings:
+              type: array
+              items:
+                type: object
+                required: [implementation_name, certification_status, conformance_score]
+                additionalProperties: true
+                properties:
+                  implementation_name:
+                    type: string
+                  implementation_version:
+                    type: string
+                    nullable: true
+                  certification_status:
+                    type: string
+                    enum: [passed]
+                  verification_status:
+                    type: string
+                    enum: [self_attested, reviewer_verified, signature_verified, third_party_verified]
+                  conformance_score:
+                    type: number
+                    minimum: 0
+                    maximum: 1
+        error:
+          type: string
+          nullable: true
     InputSignature:
       type: object
       required: [species, symptoms]

@@ -229,4 +229,16 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
             'Passing the fixture does not certify clinical safety; it proves compatibility with the public CIRE signal contract.',
         ],
     },
+    {
+        id: 'public-cire-certifications',
+        method: 'GET',
+        path: '/api/public/cire-certifications',
+        auth: 'public',
+        readiness: 'public',
+        purpose: 'Read the public CIRE implementation certification registry without exposing tenant or clinic details.',
+        notes: [
+            'Only explicitly public, passing conformance events are listed.',
+            'The registry is append-only and backed by signed payload hashes where provided.',
+        ],
+    },
 ];

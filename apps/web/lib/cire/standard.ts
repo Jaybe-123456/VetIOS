@@ -3,6 +3,7 @@ export const CIRE_STANDARD_KEY = 'vetios-cire-open-standard';
 export const CIRE_STANDARD_PATH = '/platform/cire-standard';
 export const CIRE_STANDARD_API_PATH = '/api/public/cire-standard';
 export const CIRE_CONFORMANCE_API_PATH = '/api/public/cire-conformance';
+export const CIRE_CERTIFICATION_API_PATH = '/api/public/cire-certifications';
 
 export type CireSignalKey =
     | 'phi_hat'
@@ -34,6 +35,7 @@ export interface CireOpenStandard {
     canonical_url: string;
     machine_readable_url: string;
     conformance_report_url: string;
+    certification_registry_url: string;
     implementation: {
         package_name: '@vetios/cire-engine';
         runtime_surface: 'inference_event_lineage';
@@ -139,6 +141,7 @@ export function getCireOpenStandard(baseUrl = 'https://www.vetios.tech'): CireOp
         canonical_url: absoluteUrl(baseUrl, CIRE_STANDARD_PATH),
         machine_readable_url: absoluteUrl(baseUrl, CIRE_STANDARD_API_PATH),
         conformance_report_url: absoluteUrl(baseUrl, CIRE_CONFORMANCE_API_PATH),
+        certification_registry_url: absoluteUrl(baseUrl, CIRE_CERTIFICATION_API_PATH),
         implementation: {
             package_name: '@vetios/cire-engine',
             runtime_surface: 'inference_event_lineage',
@@ -179,6 +182,7 @@ export function getCireOpenStandard(baseUrl = 'https://www.vetios.tech'): CireOp
         public_api_surfaces: [
             CIRE_STANDARD_API_PATH,
             CIRE_CONFORMANCE_API_PATH,
+            CIRE_CERTIFICATION_API_PATH,
             '/api/public/model-cards',
             '/api/public/developer-catalog',
         ],
