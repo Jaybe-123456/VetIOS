@@ -52,6 +52,9 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck --filter=@vetios/web
 
+      - name: CIRE conformance
+        run: pnpm run cire:conformance
+
       - name: API auth surface
         run: pnpm run security:routes
 
