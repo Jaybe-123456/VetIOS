@@ -65,6 +65,12 @@ function mergeDiagnosticValue(currentValue: unknown, nextValue: unknown): unknow
 
 function diagnosticBucketForPanel(panel: SystemPanel): DiagnosticBucket {
     if (panel.panel === 'CBC') return 'cbc';
+    if (panel.panel === 'ruminant_haematology' || panel.panel === 'neonatal_calf_panel') return 'cbc';
+    if (panel.panel === 'ruminant_metabolic') return 'biochemistry';
+    if (panel.panel === 'ruminant_rumen_abdominal') return 'abdominal_ultrasound';
+    if (panel.panel === 'ruminant_mastitis_milk') return 'cytology';
+    if (panel.panel === 'ruminant_pcr') return 'pcr';
+    if (panel.panel === 'ruminant_parasitology') return 'parasitology';
     if (panel.panel === 'thoracic_radiograph') return 'thoracic_radiograph';
     if (panel.panel === 'abdominal_ultrasound') return 'abdominal_ultrasound';
     if (panel.panel === 'echocardiography') return 'echocardiography';
@@ -109,6 +115,57 @@ function canonicalMappingsForPanelTest(
             { bucket: 'serology', key: 'leishmania_antibody' },
             { bucket: 'serology', key: 'leishmania_serology' },
         ];
+    }
+
+    if (panel.panel === 'ruminant_haematology') {
+        if (key === 'haemoparasites_seen') return [{ bucket: 'cbc', key: 'hemoparasites_seen', value: splitPanelTextValue(value) }];
+        return [{ bucket: 'cbc', key }];
+    }
+
+    if (panel.panel === 'ruminant_metabolic') {
+        if (key === 'glucose') {
+            if (value === 'elevated') return [{ bucket: 'biochemistry', key: 'glucose', value: 'hyperglycemia' }];
+            if (value === 'low') return [{ bucket: 'biochemistry', key: 'glucose', value: 'hypoglycemia' }];
+            if (value === 'normal') return [{ bucket: 'biochemistry', key: 'glucose', value: 'normal' }];
+        }
+        return [{ bucket: 'biochemistry', key }];
+    }
+
+    if (panel.panel === 'ruminant_herd_infectious') {
+        if (key.endsWith('_pcr')) return [{ bucket: 'pcr', key, value: normalizeQualitativePcrValue(value) }];
+        return [{ bucket: 'serology', key, value: normalizeQualitativeScreenValue(value) }];
+    }
+
+    if (panel.panel === 'ruminant_mastitis_milk') {
+        return [{ bucket: 'cytology', key, value: key.includes('organism') || key.includes('susceptibility') || key.includes('gram') ? splitPanelTextValue(value) : value }];
+    }
+
+    if (panel.panel === 'ruminant_pcr') {
+        return [{ bucket: 'pcr', key, value: normalizeQualitativePcrValue(value) }];
+    }
+
+    if (panel.panel === 'ruminant_parasitology') {
+        if (key === 'coccidia_oocysts' && value === 'present') {
+            return [{ bucket: 'parasitology', key: 'fecal_flotation', value: ['Coccidia'] }];
+        }
+        return [{ bucket: 'parasitology', key, value: splitPanelTextValue(value) }];
+    }
+
+    if (panel.panel === 'ruminant_rumen_abdominal') {
+        return [{ bucket: key === 'rumen_ph' ? 'biochemistry' : 'abdominal_ultrasound', key }];
+    }
+
+    if (panel.panel === 'neonatal_calf_panel') {
+        if (key === 'blood_glucose') {
+            if (value === 'elevated') return [{ bucket: 'biochemistry', key: 'glucose', value: 'hyperglycemia' }];
+            if (value === 'low') return [{ bucket: 'biochemistry', key: 'glucose', value: 'hypoglycemia' }];
+            if (value === 'normal') return [{ bucket: 'biochemistry', key: 'glucose', value: 'normal' }];
+        }
+        if (key === 'serum_total_protein') return [{ bucket: 'biochemistry', key: 'total_protein' }];
+        if (key === 'cryptosporidium' || key === 'rotavirus_coronavirus' || key === 'e_coli_k99') {
+            return [{ bucket: 'serology', key, value: normalizeQualitativeScreenValue(value) }];
+        }
+        return [{ bucket: 'cbc', key }];
     }
 
     if (panel.panel === 'thyroid' && key === 'total_t4') {
@@ -213,6 +270,10 @@ function normalizeSodiumPotassiumRatio(value: TestValue): 'low' | 'normal' | nul
 
 function normalizeQualitativePcrValue(value: TestValue): 'positive' | 'negative' | 'not_done' {
     return value === 'positive' || value === 'negative' ? value : 'not_done';
+}
+
+function normalizeQualitativeScreenValue(value: TestValue): TestValue {
+    return value === 'equivocal' ? 'not_done' : value;
 }
 
 function splitPanelTextValue(value: TestValue): TestValue | string[] {

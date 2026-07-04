@@ -11,6 +11,7 @@ export {
     type SystemPanel,
     type PanelDefinition,
     type PanelTestDefinition,
+    type PanelSpeciesScope,
     type SpeciesPanelEntry,
     type Sex,
     type MMColour,

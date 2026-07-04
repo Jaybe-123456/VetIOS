@@ -33,6 +33,7 @@ export function PanelSelector({
   const [expandedPanelIndex, setExpandedPanelIndex] = useState<number | null>(null);
 
   const allowedPanels = SPECIES_PANEL_MAP[species] || [];
+  const speciesGuidance = SPECIES_PANEL_GUIDANCE[species];
   const populatedPanels = activePanels.filter(panelHasPopulatedTests);
   const availableToAdd = allowedPanels.filter(ap => 
     !activePanels.some(p => p.system === ap.system && p.panel === ap.panel)
@@ -109,6 +110,19 @@ export function PanelSelector({
             <option value="reptile">Reptile</option>
             <option value="exotic">Exotic</option>
           </select>
+          <div className="mt-3 border border-grid/70 bg-background/40 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-accent">
+                {speciesGuidance.mode}
+              </div>
+              <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted">
+                {allowedPanels.length} panels
+              </div>
+            </div>
+            <p className="mt-2 font-mono text-[11px] leading-relaxed text-muted">
+              {speciesGuidance.description}
+            </p>
+          </div>
         </div>
 
         <div className="flex flex-col justify-end">
@@ -187,6 +201,9 @@ export function PanelSelector({
                     >
                       <div className="font-mono text-[10px] text-accent/70 uppercase tracking-tighter mb-0.5">{ap.system}</div>
                       <div className="font-mono text-xs text-foreground uppercase tracking-wider font-bold">{PANEL_TEST_DEFINITIONS[ap.panel]?.label || ap.panel}</div>
+                      <div className="mt-2 font-mono text-[9px] uppercase tracking-[0.16em] text-muted">
+                        {(PANEL_TEST_DEFINITIONS[ap.panel]?.species_scope ?? ['all']).join(' / ')}
+                      </div>
                     </button>
                   ))
                 ) : (
@@ -212,3 +229,38 @@ function panelHasPopulatedTests(panel: SystemPanel): boolean {
     return value != null;
   });
 }
+
+const SPECIES_PANEL_GUIDANCE: Record<Species, { mode: string; description: string }> = {
+  canine: {
+    mode: 'Companion animal mode',
+    description: 'Canine panels prioritize CBC/chemistry, tick-borne, heartworm, endocrine, imaging, cytology, parasitology, and small-animal infectious workups.',
+  },
+  feline: {
+    mode: 'Companion animal mode',
+    description: 'Feline panels remove canine-only heartworm-first defaults and emphasize feline infectious, renal, endocrine, imaging, cytology, and parasite evidence.',
+  },
+  equine: {
+    mode: 'Equine mode',
+    description: 'Equine panels emphasize CBC/chemistry, SAA, Coggins/EIA, abdominal or thoracic imaging, culture, molecular diagnostics, and parasite surveillance.',
+  },
+  bovine: {
+    mode: 'Ruminant herd mode',
+    description: 'Bovine panels are cattle-specific: metabolic/mineral disease, mastitis and milk quality, herd infectious screens, rumen/abdominal findings, neonatal calf workups, AMR culture, and One Health signals. Small-animal heartworm/adrenal/tick panels are excluded.',
+  },
+  ovine: {
+    mode: 'Small ruminant mode',
+    description: 'Ovine panels focus on flock-level infectious disease, parasitology, mineral/metabolic disease, neonatal lamb signals, culture/AMR, and ruminant abdominal assessment.',
+  },
+  avian: {
+    mode: 'Avian mode',
+    description: 'Avian panels use heterophil/thrombocyte-oriented hematology, cytology, molecular tests, culture, electrolytes, and parasite workups instead of mammalian defaults.',
+  },
+  reptile: {
+    mode: 'Reptile mode',
+    description: 'Reptile panels use avian/reptile hematology and cytology, culture, molecular tests, electrolytes, and parasitology rather than canine/feline panels.',
+  },
+  exotic: {
+    mode: 'Exotic triage mode',
+    description: 'Exotic panels blend avian/reptile screening with limited mammalian diagnostics until a narrower species family is selected in a later ontology build.',
+  },
+};

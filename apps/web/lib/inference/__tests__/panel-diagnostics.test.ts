@@ -152,4 +152,70 @@ describe('panelsToDiagnosticTests', () => {
             },
         });
     });
+
+    it('maps ruminant-specific panels into canonical inference buckets', () => {
+        const panels: SystemPanel[] = [
+            {
+                system: 'biochemistry',
+                panel: 'ruminant_metabolic',
+                tests: {
+                    bhba: 'elevated',
+                    calcium: 'low',
+                    glucose: 'low',
+                },
+            },
+            {
+                system: 'serology',
+                panel: 'ruminant_herd_infectious',
+                tests: {
+                    bvd_antigen: 'positive',
+                    lumpy_skin_disease_pcr: 'positive',
+                    fmd_screen: 'negative',
+                },
+            },
+            {
+                system: 'microbiology',
+                panel: 'ruminant_mastitis_milk',
+                tests: {
+                    california_mastitis_test: 'positive',
+                    somatic_cell_count: 850000,
+                    organism: 'Staphylococcus aureus; Streptococcus uberis',
+                },
+            },
+            {
+                system: 'parasitology',
+                panel: 'ruminant_parasitology',
+                tests: {
+                    fecal_egg_count: 1200,
+                    coccidia_oocysts: 'present',
+                    liver_fluke: 'negative',
+                },
+            },
+        ];
+
+        expect(panelsToDiagnosticTests(panels)).toEqual({
+            biochemistry: {
+                bhba: 'elevated',
+                calcium: 'low',
+                glucose: 'hypoglycemia',
+            },
+            serology: {
+                bvd_antigen: 'positive',
+                fmd_screen: 'negative',
+            },
+            pcr: {
+                lumpy_skin_disease_pcr: 'positive',
+            },
+            cytology: {
+                california_mastitis_test: 'positive',
+                somatic_cell_count: 850000,
+                organism: ['Staphylococcus aureus', 'Streptococcus uberis'],
+            },
+            parasitology: {
+                fecal_egg_count: 1200,
+                fecal_flotation: ['Coccidia'],
+                liver_fluke: 'negative',
+            },
+        });
+    });
 });

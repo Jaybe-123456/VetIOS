@@ -67,10 +67,13 @@ export interface PanelTestDefinition {
     unit?: string;
 }
 
+export type PanelSpeciesScope = 'companion' | 'equine' | 'ruminant' | 'avian_reptile' | 'exotic' | 'all';
+
 export interface PanelDefinition {
     system: SystemType;
     panel: string;
     label: string;
+    species_scope?: PanelSpeciesScope[];
     tests: PanelTestDefinition[];
 }
 
@@ -79,7 +82,7 @@ export interface SpeciesPanelEntry {
     panel: string;
 }
 
-const BASE_PANEL_ENTRIES: SpeciesPanelEntry[] = [
+const COMPANION_PANEL_ENTRIES: SpeciesPanelEntry[] = [
     { system: 'haematology', panel: 'CBC' },
     { system: 'haematology', panel: 'coagulation' },
     { system: 'endocrine', panel: 'adrenal' },
@@ -105,25 +108,67 @@ const BASE_PANEL_ENTRIES: SpeciesPanelEntry[] = [
     { system: 'parasitology', panel: 'skin_parasitology' },
 ];
 
-const EQUINE_SPECIFIC_PANEL_ENTRIES: SpeciesPanelEntry[] = [
-    { system: 'serology', panel: 'coggins_test' },
+const EQUINE_PANEL_ENTRIES: SpeciesPanelEntry[] = [
+    { system: 'haematology', panel: 'CBC' },
+    { system: 'haematology', panel: 'coagulation' },
+    { system: 'biochemistry', panel: 'renal' },
+    { system: 'biochemistry', panel: 'hepatic' },
+    { system: 'biochemistry', panel: 'electrolytes' },
     { system: 'biochemistry', panel: 'SAA' },
+    { system: 'imaging', panel: 'thoracic_radiograph' },
+    { system: 'imaging', panel: 'abdominal_ultrasound' },
+    { system: 'imaging', panel: 'echocardiography' },
+    { system: 'imaging', panel: 'neurologic_imaging' },
+    { system: 'cytology', panel: 'fine_needle_aspirate' },
+    { system: 'cytology', panel: 'effusion_analysis' },
+    { system: 'microbiology', panel: 'culture_sensitivity' },
+    { system: 'molecular', panel: 'pcr_panel' },
+    { system: 'parasitology', panel: 'fecal_parasitology' },
+    { system: 'serology', panel: 'coggins_test' },
 ];
 
 const AVIAN_REPTILE_DEFAULT_PANEL_ENTRIES: SpeciesPanelEntry[] = [
     { system: 'cytology', panel: 'cytology_avian' },
     { system: 'haematology', panel: 'haematology_avian' },
+    { system: 'biochemistry', panel: 'electrolytes' },
+    { system: 'microbiology', panel: 'culture_sensitivity' },
+    { system: 'molecular', panel: 'pcr_panel' },
+    { system: 'parasitology', panel: 'fecal_parasitology' },
+];
+
+const RUMINANT_PANEL_ENTRIES: SpeciesPanelEntry[] = [
+    { system: 'haematology', panel: 'ruminant_haematology' },
+    { system: 'biochemistry', panel: 'ruminant_metabolic' },
+    { system: 'biochemistry', panel: 'electrolytes' },
+    { system: 'urinalysis', panel: 'urinalysis' },
+    { system: 'serology', panel: 'ruminant_herd_infectious' },
+    { system: 'microbiology', panel: 'ruminant_mastitis_milk' },
+    { system: 'microbiology', panel: 'culture_sensitivity' },
+    { system: 'molecular', panel: 'ruminant_pcr' },
+    { system: 'parasitology', panel: 'ruminant_parasitology' },
+    { system: 'imaging', panel: 'ruminant_rumen_abdominal' },
+    { system: 'haematology', panel: 'neonatal_calf_panel' },
+];
+
+const EXOTIC_PANEL_ENTRIES: SpeciesPanelEntry[] = [
+    ...AVIAN_REPTILE_DEFAULT_PANEL_ENTRIES,
+    { system: 'haematology', panel: 'CBC' },
+    { system: 'biochemistry', panel: 'renal' },
+    { system: 'biochemistry', panel: 'hepatic' },
+    { system: 'cytology', panel: 'fine_needle_aspirate' },
+    { system: 'microbiology', panel: 'culture_sensitivity' },
+    { system: 'parasitology', panel: 'skin_parasitology' },
 ];
 
 export const SPECIES_PANEL_MAP: Record<Species, SpeciesPanelEntry[]> = {
-    canine: [...BASE_PANEL_ENTRIES],
-    feline: BASE_PANEL_ENTRIES.filter((entry) => entry.panel !== 'heartworm_antigen'),
-    equine: [...BASE_PANEL_ENTRIES, ...EQUINE_SPECIFIC_PANEL_ENTRIES],
+    canine: [...COMPANION_PANEL_ENTRIES],
+    feline: COMPANION_PANEL_ENTRIES.filter((entry) => entry.panel !== 'heartworm_antigen'),
+    equine: [...EQUINE_PANEL_ENTRIES],
     avian: [...AVIAN_REPTILE_DEFAULT_PANEL_ENTRIES],
     reptile: [...AVIAN_REPTILE_DEFAULT_PANEL_ENTRIES],
-    exotic: [...BASE_PANEL_ENTRIES],
-    bovine: [...BASE_PANEL_ENTRIES],
-    ovine: [...BASE_PANEL_ENTRIES],
+    exotic: [...EXOTIC_PANEL_ENTRIES],
+    bovine: [...RUMINANT_PANEL_ENTRIES],
+    ovine: [...RUMINANT_PANEL_ENTRIES],
 };
 
 const QUALITATIVE_OPTIONS = [
@@ -506,15 +551,133 @@ export const PANEL_TEST_DEFINITIONS: Record<string, PanelDefinition> = {
         system: 'biochemistry',
         panel: 'SAA',
         label: 'Serum Amyloid A',
+        species_scope: ['equine'],
         tests: [
             { key: 'saa_level', label: 'SAA Level', type: 'select', options: LEVEL_OPTIONS },
             { key: 'saa_value', label: 'SAA Value', type: 'numeric', unit: 'mg/L' },
+        ],
+    },
+    ruminant_haematology: {
+        system: 'haematology',
+        panel: 'ruminant_haematology',
+        label: 'Ruminant Haematology',
+        species_scope: ['ruminant'],
+        tests: [
+            { key: 'packed_cell_volume_percent', label: 'PCV', type: 'numeric', unit: '%' },
+            { key: 'fibrinogen', label: 'Fibrinogen', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'total_plasma_protein', label: 'Total Plasma Protein', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'left_shift', label: 'Left Shift', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'toxic_neutrophils', label: 'Toxic Neutrophils', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'haemoparasites_seen', label: 'Hemoparasites Seen', type: 'text' },
+        ],
+    },
+    ruminant_metabolic: {
+        system: 'biochemistry',
+        panel: 'ruminant_metabolic',
+        label: 'Ruminant Metabolic / Mineral',
+        species_scope: ['ruminant'],
+        tests: [
+            { key: 'bhba', label: 'BHBA', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'nefa', label: 'NEFA', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'calcium', label: 'Calcium', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'magnesium', label: 'Magnesium', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'phosphorus', label: 'Phosphorus', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'glucose', label: 'Glucose', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'ast', label: 'AST', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'ggt', label: 'GGT', type: 'select', options: LEVEL_OPTIONS },
+        ],
+    },
+    ruminant_herd_infectious: {
+        system: 'serology',
+        panel: 'ruminant_herd_infectious',
+        label: 'Ruminant Herd Infectious',
+        species_scope: ['ruminant'],
+        tests: [
+            { key: 'bvd_antigen', label: 'BVD Antigen', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'johnes_elisa', label: 'Johne ELISA', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'brucella_screen', label: 'Brucella Screen', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'leptospira_mat', label: 'Leptospira MAT', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'fmd_screen', label: 'FMD Screen', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'lumpy_skin_disease_pcr', label: 'Lumpy Skin Disease PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'theileria_screen', label: 'Theileria Screen', type: 'select', options: QUALITATIVE_OPTIONS },
+        ],
+    },
+    ruminant_mastitis_milk: {
+        system: 'microbiology',
+        panel: 'ruminant_mastitis_milk',
+        label: 'Mastitis / Milk Quality',
+        species_scope: ['ruminant'],
+        tests: [
+            { key: 'california_mastitis_test', label: 'CMT', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'somatic_cell_count', label: 'Somatic Cell Count', type: 'numeric', unit: 'cells/mL' },
+            { key: 'milk_culture_growth', label: 'Milk Culture Growth', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'milk_gram_stain', label: 'Milk Gram Stain', type: 'text' },
+            { key: 'bulk_tank_scc', label: 'Bulk Tank SCC', type: 'numeric', unit: 'cells/mL' },
+            { key: 'organism', label: 'Organism', type: 'text' },
+            { key: 'antimicrobial_susceptibility', label: 'Susceptibility Pattern', type: 'text' },
+        ],
+    },
+    ruminant_pcr: {
+        system: 'molecular',
+        panel: 'ruminant_pcr',
+        label: 'Ruminant PCR / Molecular',
+        species_scope: ['ruminant'],
+        tests: [
+            { key: 'bvd_pcr', label: 'BVD PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'theileria_pcr', label: 'Theileria PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'anaplasma_marginale_pcr', label: 'Anaplasma marginale PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'mycoplasma_bovis_pcr', label: 'Mycoplasma bovis PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'salmonella_pcr', label: 'Salmonella PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'coxiella_burnetii_pcr', label: 'Coxiella burnetii PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+        ],
+    },
+    ruminant_parasitology: {
+        system: 'parasitology',
+        panel: 'ruminant_parasitology',
+        label: 'Ruminant Parasitology',
+        species_scope: ['ruminant'],
+        tests: [
+            { key: 'fecal_egg_count', label: 'Fecal Egg Count', type: 'numeric', unit: 'EPG' },
+            { key: 'coccidia_oocysts', label: 'Coccidia Oocysts', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'liver_fluke', label: 'Liver Fluke', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'lungworm_baermann', label: 'Lungworm Baermann', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'haemonchus_risk', label: 'Haemonchus Risk / FAMACHA', type: 'select', options: SEVERITY_OPTIONS },
+        ],
+    },
+    ruminant_rumen_abdominal: {
+        system: 'imaging',
+        panel: 'ruminant_rumen_abdominal',
+        label: 'Rumen / Abdominal Assessment',
+        species_scope: ['ruminant'],
+        tests: [
+            { key: 'rumen_ph', label: 'Rumen pH', type: 'numeric' },
+            { key: 'forestomach_motility', label: 'Forestomach Motility', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'left_displaced_abomasum_ping', label: 'LDA Ping', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'right_abdominal_ping', label: 'Right Abdominal Ping', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'abdominal_free_fluid', label: 'Abdominal Free Fluid', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+            { key: 'traumatic_reticuloperitonitis_signs', label: 'Hardware Disease Signs', type: 'select', options: PRESENT_ABSENT_OPTIONS },
+        ],
+    },
+    neonatal_calf_panel: {
+        system: 'haematology',
+        panel: 'neonatal_calf_panel',
+        label: 'Neonatal Calf / Small Ruminant',
+        species_scope: ['ruminant'],
+        tests: [
+            { key: 'serum_total_protein', label: 'Serum Total Protein', type: 'numeric', unit: 'g/dL' },
+            { key: 'igg_transfer_status', label: 'IgG / Transfer Status', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'blood_glucose', label: 'Blood Glucose', type: 'select', options: LEVEL_OPTIONS },
+            { key: 'dehydration_severity', label: 'Dehydration Severity', type: 'select', options: SEVERITY_OPTIONS },
+            { key: 'cryptosporidium', label: 'Cryptosporidium', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'rotavirus_coronavirus', label: 'Rota/Corona', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'e_coli_k99', label: 'E. coli K99', type: 'select', options: QUALITATIVE_OPTIONS },
         ],
     },
     cytology_avian: {
         system: 'cytology',
         panel: 'cytology_avian',
         label: 'Avian/Reptile Cytology',
+        species_scope: ['avian_reptile', 'exotic'],
         tests: [
             { key: 'heterophils', label: 'Heterophils', type: 'select', options: LEVEL_OPTIONS },
             { key: 'toxic_changes', label: 'Toxic Changes', type: 'select', options: PRESENT_ABSENT_OPTIONS },
@@ -524,6 +687,7 @@ export const PANEL_TEST_DEFINITIONS: Record<string, PanelDefinition> = {
         system: 'haematology',
         panel: 'haematology_avian',
         label: 'Avian/Reptile Haematology',
+        species_scope: ['avian_reptile', 'exotic'],
         tests: [
             { key: 'pcv', label: 'PCV', type: 'numeric', unit: '%' },
             { key: 'heterophil_lymphocyte_ratio', label: 'H:L Ratio', type: 'numeric', unit: 'ratio' },

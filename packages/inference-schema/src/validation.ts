@@ -187,6 +187,7 @@ export function buildCrossPanelSystemPromptBlock(species: Species, panels: Syste
 
     const activeSystems = extractActiveSystems(panels);
     const systemList = activeSystems.join(', ');
+    const speciesInstruction = buildSpeciesSpecificReasoningInstruction(species);
 
     return [
         'STRUCTURED DIAGNOSTIC PANEL DATA',
@@ -198,9 +199,28 @@ export function buildCrossPanelSystemPromptBlock(species: Species, panels: Syste
         'CROSS-PANEL REASONING INSTRUCTION',
         `Reason across all ${activeSystems.length} active diagnostic systems simultaneously.`,
         'Before rendering differentials, identify cross-system interactions, contradictions, and co-morbid disease patterns.',
-        'Resolve haemolysis localisation conflicts when haematology and urinalysis data coexist.',
-        'Consider concurrent multisystemic conditions such as IMHA, hypoadrenocorticism, and protein-losing nephropathy when the evidence supports more than one process.',
+        speciesInstruction,
         'Flag panel results that are inconsistent with the selected species or expected reference range.',
         'END STRUCTURED DIAGNOSTIC PANEL DATA',
     ].join('\n');
+}
+
+function buildSpeciesSpecificReasoningInstruction(species: Species): string {
+    if (species === 'bovine' || species === 'ovine') {
+        return 'For ruminants, reason across individual disease, herd outbreak context, metabolic/mineral status, mastitis/milk quality, culture/AMR evidence, neonatal transfer status, and One Health reportability.';
+    }
+
+    if (species === 'equine') {
+        return 'For equine cases, reason across inflammatory markers, colic/abdominal evidence, respiratory/cardiac findings, infectious disease controls, performance history, and herd or premises exposure.';
+    }
+
+    if (species === 'avian' || species === 'reptile') {
+        return 'For avian and reptile cases, interpret heterophil/thrombocyte patterns, husbandry and temperature context, cytology, culture, molecular diagnostics, and parasite burden rather than mammalian defaults.';
+    }
+
+    if (species === 'exotic') {
+        return 'For exotic species, treat the case as family-specific triage: separate avian/reptile/mammal assumptions, flag uncertain reference ranges, and prioritize specialist review when species biology is underspecified.';
+    }
+
+    return 'Resolve haemolysis localisation conflicts when haematology and urinalysis data coexist. Consider concurrent multisystemic conditions such as IMHA, hypoadrenocorticism, and protein-losing nephropathy when evidence supports more than one process.';
 }
