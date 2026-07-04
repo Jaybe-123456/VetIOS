@@ -71,6 +71,7 @@ function diagnosticBucketForPanel(panel: SystemPanel): DiagnosticBucket {
     if (panel.panel === 'ruminant_mastitis_milk') return 'cytology';
     if (panel.panel === 'ruminant_pcr') return 'pcr';
     if (panel.panel === 'ruminant_parasitology') return 'parasitology';
+    if (panel.panel === 'culture_sensitivity') return 'microbiology';
     if (panel.panel === 'thoracic_radiograph') return 'thoracic_radiograph';
     if (panel.panel === 'abdominal_ultrasound') return 'abdominal_ultrasound';
     if (panel.panel === 'echocardiography') return 'echocardiography';
@@ -79,6 +80,7 @@ function diagnosticBucketForPanel(panel: SystemPanel): DiagnosticBucket {
     if (panel.system === 'biochemistry') return 'biochemistry';
     if (panel.system === 'endocrine') return 'serology';
     if (panel.system === 'cytology') return 'cytology';
+    if (panel.system === 'microbiology') return 'microbiology';
     if (panel.system === 'molecular') return 'pcr';
     if (panel.system === 'parasitology') return 'parasitology';
     return 'serology';
@@ -236,6 +238,10 @@ function canonicalMappingsForPanelTest(
     if (panel.panel === 'effusion_analysis') {
         if (key === 'effusion_rivalta') return [{ bucket: 'cytology', key: 'effusion_rivalta' }];
         return [{ bucket: 'cytology', key }];
+    }
+
+    if (panel.panel === 'culture_sensitivity') {
+        return [{ bucket: 'microbiology', key, value: key === 'organism' || key === 'sensitivity_pattern' ? splitPanelTextValue(value) : value }];
     }
 
     if (panel.panel === 'pcr_panel') {

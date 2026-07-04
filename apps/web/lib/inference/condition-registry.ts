@@ -1,4 +1,5 @@
 import { getTreatmentProtocolsForCondition } from '../treatment/treatment-registry';
+import { EQUINE_CONDITIONS } from './equine-conditions';
 import { RUMINANT_CONDITIONS } from './ruminant-conditions';
 import type { Species, VeterinaryCondition } from './types';
 
@@ -314,6 +315,7 @@ export function getConditionById(conditionId: string): VeterinaryCondition | und
 }
 
 VETERINARY_CONDITIONS.push(...RUMINANT_CONDITIONS);
+VETERINARY_CONDITIONS.push(...EQUINE_CONDITIONS);
 
 export function findConditionByName(name: string): VeterinaryCondition | undefined {
     const normalized = name.trim().toLowerCase();

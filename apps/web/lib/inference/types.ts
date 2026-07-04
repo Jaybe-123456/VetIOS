@@ -308,6 +308,7 @@ export interface SerologyPanel {
     acth_stimulation?: 'not_performed' | 'flat_response' | 'normal_response';
     sodium_potassium_ratio?: 'not_assessed' | 'low' | 'normal';
     antiplatelet_antibody?: 'not_performed' | 'negative' | 'positive';
+    coggins_result?: DiagnosticResult;
     free_t4?: LowHighDiagnosticResult;
     fungal_titers?: Record<string, DiagnosticResult>;
     [key: string]: unknown;
@@ -350,6 +351,8 @@ export interface BiochemistryPanel {
     nefa?: LabLevelStatus;
     phosphorus?: LabLevelStatus;
     rumen_ph?: number;
+    saa_level?: LabLevelStatus;
+    saa_value?: number;
     sodium_potassium_ratio?: 'not_assessed' | 'low' | 'normal';
     total_protein?: TotalProteinStatus | number;
     bilirubin?: BilirubinStatus;
@@ -372,6 +375,7 @@ export interface ThoracicRadiographPanel {
     pulmonary_artery_enlargement?: PresentAbsent;
     cardiomegaly?: CardiomegalyPattern;
     pleural_effusion?: PresentAbsent;
+    pulmonary_infiltrates?: PresentAbsent;
     gastric_volvulus?: PresentAbsent;
     mass_lesion?: PresentAbsent;
     tracheal_deviation?: PresentAbsent;
@@ -382,10 +386,12 @@ export interface AbdominalUltrasoundPanel {
     hepatomegaly?: PresentAbsent;
     splenomegaly?: PresentAbsent;
     ascites?: PresentAbsent;
+    free_fluid?: PresentAbsent;
     uterine_distension?: PresentAbsent;
     lymphadenopathy?: PresentAbsent;
     mass_lesion?: PresentAbsent;
     hyperechoic_liver?: PresentAbsent;
+    renal_changes?: PresentAbsent;
     abdominal_free_fluid?: PresentAbsent;
     forestomach_motility?: LabLevelStatus;
     left_displaced_abomasum_ping?: PresentAbsent;
@@ -409,6 +415,8 @@ export interface CytologyPanel {
     bone_marrow?: string;
     abdominal_fluid_bacteria?: PresentAbsent;
     effusion_rivalta?: 'negative' | 'positive';
+    chylous_effusion?: PresentAbsent;
+    septic_exudate?: PresentAbsent;
     antimicrobial_susceptibility?: string[];
     bulk_tank_scc?: number;
     california_mastitis_test?: DiagnosticResult;
@@ -421,6 +429,12 @@ export interface CytologyPanel {
 export interface ImagingPanel {
     abdominal_ultrasound?: string;
     thoracic_radiograph?: string;
+}
+
+export interface MicrobiologyPanel {
+    growth?: 'not_done' | 'no_growth' | 'light' | 'moderate' | 'heavy';
+    organism?: string[];
+    sensitivity_pattern?: string[];
 }
 
 export interface ParasitologyPanel {
@@ -446,6 +460,7 @@ export interface DiagnosticTests {
     imaging?: ImagingPanel;
     echocardiography?: EchocardiographyPanel;
     cytology?: CytologyPanel;
+    microbiology?: MicrobiologyPanel;
     pcr?: Record<string, 'positive' | 'negative' | 'not_done'>;
     parasitology?: ParasitologyPanel;
 }
