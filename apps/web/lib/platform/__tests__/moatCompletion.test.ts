@@ -90,6 +90,43 @@ describe('moat completion scoring', () => {
         expect(digest.missing_evidence).toEqual([]);
     });
 
+    it('keeps stale high-volume evidence below defensible claim posture', () => {
+        const digest = buildMoatCompletionAssessment({
+            moat_key: 'stale_moat',
+            moat_name: 'Stale Moat',
+            value_capture_layer: 'data_provenance',
+            foundation_ready: true,
+            hard_to_substitute: true,
+            two_quarter_replicability: 'not_replicable_short_term',
+            scarcity_basis: ['confirmed_outcomes', 'verified_provenance'],
+            assessed_at: '2026-07-20T12:00:00.000Z',
+            counts: {
+                live_event_count: 100,
+                outcome_confirmed_count: 50,
+                provenance_verified_count: 50,
+                trust_scored_count: 30,
+                external_validation_count: 0,
+                last_signal_at: '2026-06-19T12:00:00.000Z',
+            },
+            defensible_minimums: {
+                live_event_count: 100,
+                outcome_confirmed_count: 50,
+                provenance_verified_count: 50,
+                trust_scored_count: 30,
+            },
+        });
+
+        expect(digest.completion_level).toBe('operating');
+        expect(digest.claim_posture).toBe('measured_activity');
+        expect(digest.missing_evidence).toContain('fresh_operating_signal_30d');
+        expect(digest.next_unblock_action).toBe('Append a fresh live evidence event before making a defensible moat claim.');
+        expect(digest.evidence.freshness).toMatchObject({
+            status: 'stale',
+            signal_age_days: 31,
+            max_defensible_age_days: 30,
+        });
+    });
+
     it('builds a portfolio snapshot that separates defensible data moats from copyable controls', () => {
         const snapshot = buildMoatCompletionSnapshot(evidence({
             dataset: {
@@ -223,7 +260,7 @@ describe('moat completion scoring', () => {
         expect(workflow?.live_event_count).toBe(24);
         expect(workflow?.outcome_confirmed_count).toBe(0);
         expect(workflow?.trust_scored_count).toBe(0);
-        expect(workflow?.provenance_verified_count).toBe(21);
+        expect(workflow?.provenance_verified_count).toBe(27);
         expect(workflow?.missing_evidence).toContain('outcome_confirmed_records');
         expect(workflow?.missing_evidence).toContain('trust_scored_records');
         expect(workflow?.evidence.workflow_capability_coverage).toBe(1);

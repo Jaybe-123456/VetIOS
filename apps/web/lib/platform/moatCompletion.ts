@@ -44,10 +44,22 @@ export const TWO_QUARTER_REPLICABILITY = [
     'not_replicable_short_term',
 ] as const;
 
+const DEFENSIBLE_SIGNAL_MAX_AGE_DAYS = 30;
+const MS_PER_DAY = 86_400_000;
+
 export type MoatCompletionLevel = typeof MOAT_COMPLETION_LEVELS[number];
 export type MoatClaimPosture = typeof MOAT_CLAIM_POSTURES[number];
 export type MoatValueCaptureLayer = typeof MOAT_VALUE_CAPTURE_LAYERS[number];
 export type TwoQuarterReplicability = typeof TWO_QUARTER_REPLICABILITY[number];
+type MoatEvidenceFreshnessStatus = 'unknown' | 'missing' | 'fresh' | 'stale';
+
+interface MoatEvidenceFreshness {
+    status: MoatEvidenceFreshnessStatus;
+    signal_age_days: number | null;
+    max_defensible_age_days: number;
+    last_signal_at: string | null;
+    assessed_at: string | null;
+}
 
 export interface MoatCompletionCounts {
     live_event_count: number;
@@ -80,6 +92,7 @@ export interface MoatCompletionAssessmentInput {
     requires_external_validation?: boolean;
     counts: MoatCompletionCounts;
     defensible_minimums: Partial<MoatCompletionMinimums>;
+    assessed_at?: string | null;
     evidence?: Record<string, unknown>;
     owner_label?: string | null;
 }
@@ -383,6 +396,8 @@ export function buildMoatCompletionAssessment(
     const requiresProvenance = input.requires_provenance ?? true;
     const requiresTrustScore = input.requires_trust_score ?? true;
     const requiresExternalValidation = input.requires_external_validation ?? false;
+    const evidenceFreshness = resolveEvidenceFreshness(input.counts.last_signal_at, input.assessed_at);
+    const hasFreshDefensibleSignal = evidenceFreshness.status === 'fresh' || evidenceFreshness.status === 'unknown';
 
     const missingEvidence = new Set<string>();
     if (!input.foundation_ready) missingEvidence.add('technical_foundation');
@@ -402,6 +417,7 @@ export function buildMoatCompletionAssessment(
 
     const defensibleReady = input.foundation_ready
         && input.hard_to_substitute
+        && hasFreshDefensibleSignal
         && input.counts.live_event_count >= minimums.live_event_count
         && (!requiresOutcomeLoop || input.counts.outcome_confirmed_count >= minimums.outcome_confirmed_count)
         && (!requiresProvenance || input.counts.provenance_verified_count >= minimums.provenance_verified_count)
@@ -409,6 +425,9 @@ export function buildMoatCompletionAssessment(
         && (!requiresExternalValidation || input.counts.external_validation_count >= minimums.external_validation_count);
 
     if (!defensibleReady) {
+        if (!hasFreshDefensibleSignal && input.counts.live_event_count > 0) {
+            missingEvidence.add(`fresh_operating_signal_${DEFENSIBLE_SIGNAL_MAX_AGE_DAYS}d`);
+        }
         if (input.counts.live_event_count < minimums.live_event_count) {
             missingEvidence.add(`defensible_live_volume_${minimums.live_event_count}`);
         }
@@ -473,7 +492,10 @@ export function buildMoatCompletionAssessment(
             requires_external_validation: requiresExternalValidation,
             defensible_minimums: minimums,
         },
-        evidence: input.evidence ?? {},
+        evidence: {
+            ...(input.evidence ?? {}),
+            freshness: evidenceFreshness,
+        },
         owner_label: normalizeOptionalText(input.owner_label),
         next_unblock_action: resolveNextUnblockAction(Array.from(missingEvidence)),
     };
@@ -559,6 +581,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
 
     return [
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'outcome_provenance_layer',
             moat_name: 'Outcome-Linked Provenance Layer',
             value_capture_layer: 'data_provenance',
@@ -593,6 +616,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'Clinical Data Ops',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'ask_vetios_case_graph',
             moat_name: 'Ask VetIOS Case Graph Promotion',
             value_capture_layer: 'data_provenance',
@@ -629,6 +653,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'Ask VetIOS',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'model_trust_layer',
             moat_name: 'Model Trust and CIRE Layer',
             value_capture_layer: 'trust_scoring',
@@ -662,6 +687,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'Trust Ops',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'veterinary_retrieval',
             moat_name: 'Veterinary-Specific Retrieval',
             value_capture_layer: 'data_provenance',
@@ -711,6 +737,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'Retrieval Ops',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'workflow_integration',
             moat_name: 'Workflow Integration Evidence',
             value_capture_layer: 'workflow',
@@ -766,6 +793,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'Workflow Ops',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'specialist_review_loop',
             moat_name: 'Specialist and Human Review Loop',
             value_capture_layer: 'data_provenance',
@@ -806,6 +834,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'Clinical Review Ops',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'amr_stewardship',
             moat_name: 'AMR Stewardship and Surveillance Loop',
             value_capture_layer: 'surveillance',
@@ -847,6 +876,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'AMR Ops',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'federation_activation',
             moat_name: 'Outcome-Confirmed Federated Learning',
             value_capture_layer: 'federation',
@@ -904,6 +934,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'Federation Ops',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'ai_security_layer',
             moat_name: 'AI Security and Abuse-Resistance Layer',
             value_capture_layer: 'trust_scoring',
@@ -955,6 +986,7 @@ export function buildMoatCompletionDigests(evidence: MoatCompletionEvidence): Mo
             owner_label: 'Security Ops',
         }),
         buildMoatCompletionAssessment({
+            assessed_at: evidence.generated_at,
             moat_key: 'regulatory_claims_discipline',
             moat_name: 'Regulatory and Claims Discipline',
             value_capture_layer: 'trust_scoring',
@@ -1015,6 +1047,45 @@ function resolveClaimPosture(level: MoatCompletionLevel): MoatClaimPosture {
     if (level === 'defensible') return 'evidence_grade_claims';
     if (level === 'operating') return 'measured_activity';
     return 'architecture_only';
+}
+
+function resolveEvidenceFreshness(
+    lastSignalAt: string | null,
+    assessedAt?: string | null,
+): MoatEvidenceFreshness {
+    const assessedMs = parseOptionalTimestamp(assessedAt);
+    const signalMs = parseOptionalTimestamp(lastSignalAt);
+    const normalizedAssessedAt = assessedMs === null ? null : new Date(assessedMs).toISOString();
+    const normalizedLastSignalAt = signalMs === null ? null : new Date(signalMs).toISOString();
+
+    if (assessedMs === null) {
+        return {
+            status: 'unknown',
+            signal_age_days: null,
+            max_defensible_age_days: DEFENSIBLE_SIGNAL_MAX_AGE_DAYS,
+            last_signal_at: normalizedLastSignalAt,
+            assessed_at: null,
+        };
+    }
+
+    if (signalMs === null) {
+        return {
+            status: 'missing',
+            signal_age_days: null,
+            max_defensible_age_days: DEFENSIBLE_SIGNAL_MAX_AGE_DAYS,
+            last_signal_at: null,
+            assessed_at: normalizedAssessedAt,
+        };
+    }
+
+    const signalAgeDays = roundDays(Math.max(0, (assessedMs - signalMs) / MS_PER_DAY));
+    return {
+        status: signalAgeDays <= DEFENSIBLE_SIGNAL_MAX_AGE_DAYS ? 'fresh' : 'stale',
+        signal_age_days: signalAgeDays,
+        max_defensible_age_days: DEFENSIBLE_SIGNAL_MAX_AGE_DAYS,
+        last_signal_at: normalizedLastSignalAt,
+        assessed_at: normalizedAssessedAt,
+    };
 }
 
 function scoreCompletion(input: {
@@ -1691,6 +1762,9 @@ function resolveNextUnblockAction(missingEvidence: string[]): string | null {
     if (missing.has('provenance_verified_records')) return 'Attach provenance evidence: source table, reviewer, consent, culture, citation, or partner attestation.';
     if (missing.has('trust_scored_records')) return 'Run trust scoring or CIRE-style calibration on the outcome-linked records.';
     if (missing.has('external_validation')) return 'Add independent review, attestation, certification, or partner validation evidence.';
+    if (missingEvidence.some((entry) => entry.startsWith('fresh_operating_signal_'))) {
+        return 'Append a fresh live evidence event before making a defensible moat claim.';
+    }
     const thresholdGap = missingEvidence.find((entry) => entry.startsWith('defensible_'));
     if (thresholdGap) return `Increase evidence volume for ${thresholdGap}.`;
     return null;
@@ -1703,6 +1777,12 @@ function latestIso(values: Array<string | null | undefined>): string | null {
         .filter((entry) => Number.isFinite(entry.ms))
         .sort((left, right) => right.ms - left.ms);
     return timestamps[0]?.value ?? null;
+}
+
+function parseOptionalTimestamp(value: string | null | undefined): number | null {
+    if (typeof value !== 'string' || value.length === 0) return null;
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? timestamp : null;
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -1731,6 +1811,10 @@ function normalizeRatio(value: unknown, fallback: number): number {
         : typeof value === 'string' ? Number(value) : Number.NaN;
     if (!Number.isFinite(numeric)) return fallback;
     return Math.max(0, Math.min(1, numeric));
+}
+
+function roundDays(value: number): number {
+    return Math.round(value * 100) / 100;
 }
 
 function roundScore(value: number): number {
