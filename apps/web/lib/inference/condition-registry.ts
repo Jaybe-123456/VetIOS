@@ -1,4 +1,5 @@
 import { getTreatmentProtocolsForCondition } from '../treatment/treatment-registry';
+import { RUMINANT_CONDITIONS } from './ruminant-conditions';
 import type { Species, VeterinaryCondition } from './types';
 
 const CORE_REFS = ['WSAVA Global Guidelines', 'ESCCAP 2023', 'Peer-reviewed veterinary internal medicine literature'];
@@ -311,6 +312,8 @@ export function getConditionsForSpecies(species: string | null | undefined): Vet
 export function getConditionById(conditionId: string): VeterinaryCondition | undefined {
     return VETERINARY_CONDITIONS.find((condition) => condition.id === conditionId);
 }
+
+VETERINARY_CONDITIONS.push(...RUMINANT_CONDITIONS);
 
 export function findConditionByName(name: string): VeterinaryCondition | undefined {
     const normalized = name.trim().toLowerCase();

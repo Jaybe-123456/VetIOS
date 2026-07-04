@@ -14,6 +14,7 @@ import {
     normalizeClinicalLabEvidence,
 } from './labEvidenceNormalizer';
 import { applyRegionalExposurePriors } from './regional-priors';
+import { applyRuminantPriors } from './ruminant-priors';
 import { applySyndromePatterns } from './syndrome-recogniser';
 import {
     buildClinicalSignalProfile,
@@ -1927,6 +1928,7 @@ export function runClinicalInferenceEngine(
     applyAdjustments(states, applySyndromePatterns(request));
     applyAdjustments(states, applyHaematologicalPriors(request));
     applyAdjustments(states, applyBiochemistryPriors(request));
+    applyAdjustments(states, applyRuminantPriors(request));
     applyAdjustments(states, applyImagingPriors(request));
     scoreSymptoms(states, signalProfile, routingSummary);
     applyFelineRespiratoryRouting(states, request, signalProfile, routingSummary);

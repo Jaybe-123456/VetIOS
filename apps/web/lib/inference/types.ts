@@ -18,6 +18,7 @@ export type GlucoseStatus = 'normal' | 'hyperglycemia' | 'hypoglycemia';
 export type TotalProteinStatus = 'normal' | 'elevated' | 'decreased';
 export type BilirubinStatus = 'normal' | 'elevated';
 export type CalciumStatus = 'normal' | 'hypercalcemia' | 'hypocalcemia';
+export type LabLevelStatus = 'not_done' | 'low' | 'normal' | 'elevated';
 export type PulmonaryPattern = 'bronchial' | 'alveolar' | 'interstitial' | 'vascular' | 'normal' | 'mixed';
 export type CardiomegalyPattern = 'right_sided' | 'left_sided' | 'generalised' | 'absent';
 export type SkinScrapeResult = 'demodex' | 'sarcoptes' | 'negative' | 'not_done';
@@ -332,18 +333,27 @@ export interface CbcPanel {
     intramonocytic_morulae?: PresentAbsent;
     packed_cell_volume_percent?: number;
     hemoparasites_seen?: string[];
+    dehydration_severity?: string;
+    igg_transfer_status?: LabLevelStatus;
 }
 
 export interface BiochemistryPanel {
     alt_ast?: AltAstStatus;
     albumin?: AlbuminStatus;
+    ast?: LabLevelStatus;
+    bhba?: LabLevelStatus;
     bun_creatinine?: BunCreatinineStatus;
     globulins?: GlobulinStatus;
     glucose?: GlucoseStatus;
+    ggt?: LabLevelStatus;
+    magnesium?: LabLevelStatus;
+    nefa?: LabLevelStatus;
+    phosphorus?: LabLevelStatus;
+    rumen_ph?: number;
     sodium_potassium_ratio?: 'not_assessed' | 'low' | 'normal';
-    total_protein?: TotalProteinStatus;
+    total_protein?: TotalProteinStatus | number;
     bilirubin?: BilirubinStatus;
-    calcium?: CalciumStatus;
+    calcium?: CalciumStatus | LabLevelStatus;
 }
 
 export interface UrinalysisPanel {
@@ -376,6 +386,11 @@ export interface AbdominalUltrasoundPanel {
     lymphadenopathy?: PresentAbsent;
     mass_lesion?: PresentAbsent;
     hyperechoic_liver?: PresentAbsent;
+    abdominal_free_fluid?: PresentAbsent;
+    forestomach_motility?: LabLevelStatus;
+    left_displaced_abomasum_ping?: PresentAbsent;
+    right_abdominal_ping?: PresentAbsent;
+    traumatic_reticuloperitonitis_signs?: PresentAbsent;
 }
 
 export interface EchocardiographyPanel {
@@ -394,6 +409,13 @@ export interface CytologyPanel {
     bone_marrow?: string;
     abdominal_fluid_bacteria?: PresentAbsent;
     effusion_rivalta?: 'negative' | 'positive';
+    antimicrobial_susceptibility?: string[];
+    bulk_tank_scc?: number;
+    california_mastitis_test?: DiagnosticResult;
+    milk_culture_growth?: PresentAbsent;
+    milk_gram_stain?: string[];
+    organism?: string[];
+    somatic_cell_count?: number;
 }
 
 export interface ImagingPanel {
@@ -404,6 +426,10 @@ export interface ImagingPanel {
 export interface ParasitologyPanel {
     fecal_flotation?: string[];
     fecal_direct_smear?: string[];
+    fecal_egg_count?: number;
+    haemonchus_risk?: 'low' | 'moderate' | 'high' | 'severe' | string;
+    liver_fluke?: DiagnosticResult;
+    lungworm_baermann?: DiagnosticResult;
     modified_baermann?: DiagnosticResult;
     skin_scrape?: SkinScrapeResult;
     buffy_coat_smear?: string[];
