@@ -421,5 +421,5 @@ function sanitizeNextPath(value: string | null, fallback = '/cases'): string {
 }
 
 function resolveStoredModePath(): string {
-    return window.localStorage.getItem('vetios_mode') === 'console' ? '/console' : '/cases';
+    return window.localStorage.getItem('vetios_mode') === 'console' ? '/dashboard' : '/cases';
 }

@@ -20,19 +20,44 @@ import {
 } from 'lucide-react';
 
 const navItems = [
-    { name: 'Dashboard',         href: '/dashboard',    icon: LayoutDashboard },
-    { name: 'Clinical Cases',    href: '/cases',        icon: ClipboardList   },
-    { name: 'Ask VetIOS',        href: '/ask-vetios',   icon: MessageSquare   },
-    { name: 'Inference Console', href: '/inference',    icon: TerminalSquare  },
-    { name: 'Outcome Learning',  href: '/outcome',      icon: GraduationCap   },
-    { name: 'Adversarial Sim',   href: '/simulate',     icon: ShieldAlert     },
-    { name: 'Clinical Dataset',  href: '/dataset',      icon: Database        },
-    { name: 'Agentic RAG',       href: '/rag',          icon: BookOpenCheck   },
-    { name: 'Experiment Track',  href: '/experiments',  icon: FlaskConical    },
-    { name: 'Model Registry',    href: '/models',       icon: Cpu             },
-    { name: 'Telemetry',         href: '/telemetry',    icon: Activity        },
-    { name: 'Network',           href: '/intelligence', icon: Network         },
-    { name: 'Settings',          href: '/settings',     icon: Settings        },
+    {
+        label: 'Start Here',
+        items: [
+            { name: 'System Dashboard', href: '/dashboard', icon: LayoutDashboard },
+        ],
+    },
+    {
+        label: 'Clinical Loop',
+        items: [
+            { name: 'Inference Console', href: '/inference', icon: TerminalSquare },
+            { name: 'Outcome Learning', href: '/outcome', icon: GraduationCap },
+            { name: 'Ask VetIOS', href: '/ask-vetios', icon: MessageSquare },
+            { name: 'Clinical Cases', href: '/cases', icon: ClipboardList },
+        ],
+    },
+    {
+        label: 'Evidence Layer',
+        items: [
+            { name: 'Clinical Dataset', href: '/dataset', icon: Database },
+            { name: 'Agentic RAG', href: '/rag', icon: BookOpenCheck },
+        ],
+    },
+    {
+        label: 'Model Ops',
+        items: [
+            { name: 'Adversarial Sim', href: '/simulate', icon: ShieldAlert },
+            { name: 'Experiment Track', href: '/experiments', icon: FlaskConical },
+            { name: 'Model Registry', href: '/models', icon: Cpu },
+        ],
+    },
+    {
+        label: 'Infrastructure Ops',
+        items: [
+            { name: 'Telemetry', href: '/telemetry', icon: Activity },
+            { name: 'Topology', href: '/intelligence', icon: Network },
+            { name: 'Control Plane', href: '/settings', icon: Settings },
+        ],
+    },
 ];
 
 interface SidebarProps {
@@ -78,42 +103,49 @@ export default function Sidebar({ isOpen, onClose, isMobile }: SidebarProps) {
             {/* ── Nav label ── */}
             <div className="px-5 pt-4 pb-1">
                 <span className="font-mono text-[9px] text-[hsl(0_0%_48%)] tracking-[0.22em] uppercase">
-                    Navigation
+                    Infrastructure Console
                 </span>
             </div>
 
             {/* ── Navigation Items ── */}
-            <nav className="flex-1 overflow-y-auto py-1 px-2 flex flex-col gap-0.5">
-                {navItems.map((item) => {
-                    const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
-                    const Icon = item.icon;
-                    return (
-                        <Link
-                            key={item.href}
-                            href={item.href}
-                            onClick={isMobile ? onClose : undefined}
-                            className={`
-                                flex items-center gap-3 px-3 py-3 sm:py-2.5 font-mono text-[11px] min-h-[44px]
-                                uppercase tracking-[0.12em] transition-all duration-150 group
-                                border-l-2
-                                ${isActive
-                                    ? 'border-l-accent nav-item-active text-accent'
-                                    : 'border-l-transparent text-[hsl(0_0%_62%)] hover:text-[hsl(0_0%_90%)] nav-item-glass hover:border-l-[hsl(0_0%_32%)]'
-                                }
-                            `}
-                        >
-                            <Icon className={`w-3.5 h-3.5 shrink-0 transition-colors ${
-                                isActive
-                                    ? 'text-accent'
-                                    : 'text-[hsl(0_0%_48%)] group-hover:text-[hsl(0_0%_75%)]'
-                            }`} />
-                            <span className="truncate leading-none">{item.name}</span>
-                            {isActive && (
-                                <span className="ml-auto w-1 h-1 bg-accent shrink-0" />
-                            )}
-                        </Link>
-                    );
-                })}
+            <nav className="flex-1 overflow-y-auto py-1 px-2 flex flex-col gap-2">
+                {navItems.map((section) => (
+                    <div key={section.label} className="flex flex-col gap-0.5">
+                        <div className="px-3 pt-2 pb-1 font-mono text-[8px] uppercase tracking-[0.2em] text-[hsl(0_0%_42%)]">
+                            {section.label}
+                        </div>
+                        {section.items.map((item) => {
+                            const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+                            const Icon = item.icon;
+                            return (
+                                <Link
+                                    key={item.href}
+                                    href={item.href}
+                                    onClick={isMobile ? onClose : undefined}
+                                    className={`
+                                        flex items-center gap-3 px-3 py-3 sm:py-2.5 font-mono text-[11px] min-h-[44px]
+                                        uppercase tracking-[0.12em] transition-all duration-150 group
+                                        border-l-2
+                                        ${isActive
+                                            ? 'border-l-accent nav-item-active text-accent'
+                                            : 'border-l-transparent text-[hsl(0_0%_62%)] hover:text-[hsl(0_0%_90%)] nav-item-glass hover:border-l-[hsl(0_0%_32%)]'
+                                        }
+                                    `}
+                                >
+                                    <Icon className={`w-3.5 h-3.5 shrink-0 transition-colors ${
+                                        isActive
+                                            ? 'text-accent'
+                                            : 'text-[hsl(0_0%_48%)] group-hover:text-[hsl(0_0%_75%)]'
+                                    }`} />
+                                    <span className="truncate leading-none">{item.name}</span>
+                                    {isActive && (
+                                        <span className="ml-auto w-1 h-1 bg-accent shrink-0" />
+                                    )}
+                                </Link>
+                            );
+                        })}
+                    </div>
+                ))}
             </nav>
 
             {/* ── System Status ── */}
