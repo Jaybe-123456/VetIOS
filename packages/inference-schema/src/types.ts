@@ -514,6 +514,11 @@ export const PANEL_TEST_DEFINITIONS: Record<string, PanelDefinition> = {
             { key: 'leptospira_pcr', label: 'Leptospira PCR', type: 'select', options: QUALITATIVE_OPTIONS },
             { key: 'toxoplasma_pcr', label: 'Toxoplasma PCR', type: 'select', options: QUALITATIVE_OPTIONS },
             { key: 'neospora_pcr', label: 'Neospora PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'chlamydia_psittaci_pcr', label: 'Chlamydia psittaci PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'avian_influenza_pcr', label: 'Avian Influenza PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'aspergillus_pcr', label: 'Aspergillus PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'herpesvirus_pcr', label: 'Herpesvirus PCR', type: 'select', options: QUALITATIVE_OPTIONS },
+            { key: 'salmonella_pcr', label: 'Salmonella PCR', type: 'select', options: QUALITATIVE_OPTIONS },
         ],
     },
     fecal_parasitology: {

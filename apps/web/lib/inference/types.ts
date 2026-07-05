@@ -50,7 +50,7 @@ export type ConditionClass =
     | 'Traumatic'
     | 'Degenerative'
     | 'Idiopathic / Unknown';
-export type Species = 'canine' | 'feline' | 'bovine' | 'ovine' | 'caprine' | 'equine';
+export type Species = 'canine' | 'feline' | 'bovine' | 'ovine' | 'caprine' | 'equine' | 'avian' | 'reptile' | 'exotic';
 export type EtiologicalClass =
     | 'parasitic_helminth'
     | 'parasitic_protozoan'
@@ -335,7 +335,10 @@ export interface CbcPanel {
     packed_cell_volume_percent?: number;
     hemoparasites_seen?: string[];
     dehydration_severity?: string;
+    heterophil_lymphocyte_ratio?: number;
     igg_transfer_status?: LabLevelStatus;
+    pcv?: number;
+    thrombocytes?: LabLevelStatus;
 }
 
 export interface BiochemistryPanel {
@@ -414,9 +417,13 @@ export interface CytologyPanel {
     mass_fnab?: string;
     bone_marrow?: string;
     abdominal_fluid_bacteria?: PresentAbsent;
+    cellularity?: 'low' | 'moderate' | 'high';
     effusion_rivalta?: 'negative' | 'positive';
+    heterophils?: LabLevelStatus;
+    malignancy?: 'benign' | 'suspicious' | 'malignant';
     chylous_effusion?: PresentAbsent;
     septic_exudate?: PresentAbsent;
+    toxic_changes?: PresentAbsent;
     antimicrobial_susceptibility?: string[];
     bulk_tank_scc?: number;
     california_mastitis_test?: DiagnosticResult;

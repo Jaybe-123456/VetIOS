@@ -9,6 +9,7 @@ import {
     evaluatePathognomicTests,
 } from './pathognomic-gate';
 import { applyEtiologicalPlausibilityGate } from './plausibility-gate';
+import { applyAvianReptileExoticPriors } from './avian-reptile-exotic-priors';
 import { applyEquinePriors } from './equine-priors';
 import {
     mergeDiagnosticTests,
@@ -1929,6 +1930,7 @@ export function runClinicalInferenceEngine(
     applyAdjustments(states, applySyndromePatterns(request));
     applyAdjustments(states, applyHaematologicalPriors(request));
     applyAdjustments(states, applyBiochemistryPriors(request));
+    applyAdjustments(states, applyAvianReptileExoticPriors(request));
     applyAdjustments(states, applyEquinePriors(request));
     applyAdjustments(states, applyRuminantPriors(request));
     applyAdjustments(states, applyImagingPriors(request));

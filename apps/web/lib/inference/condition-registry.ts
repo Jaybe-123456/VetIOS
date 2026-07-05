@@ -1,4 +1,5 @@
 import { getTreatmentProtocolsForCondition } from '../treatment/treatment-registry';
+import { AVIAN_REPTILE_EXOTIC_CONDITIONS } from './avian-reptile-exotic-conditions';
 import { EQUINE_CONDITIONS } from './equine-conditions';
 import { RUMINANT_CONDITIONS } from './ruminant-conditions';
 import type { Species, VeterinaryCondition } from './types';
@@ -302,6 +303,9 @@ export function normalizeSpecies(species: string | undefined | null): Species {
     if (normalized.startsWith('ovi') || normalized === 'sheep') return 'ovine';
     if (normalized.startsWith('cap') || normalized === 'goat') return 'caprine';
     if (normalized.startsWith('equ') || normalized === 'horse') return 'equine';
+    if (normalized.startsWith('avi') || normalized === 'bird' || normalized === 'birds') return 'avian';
+    if (normalized.startsWith('rep') || normalized === 'snake' || normalized === 'lizard' || normalized === 'chelonian' || normalized === 'turtle' || normalized === 'tortoise') return 'reptile';
+    if (normalized.startsWith('exo') || normalized === 'rabbit' || normalized === 'ferret' || normalized === 'guinea_pig' || normalized === 'guinea pig') return 'exotic';
     return 'canine';
 }
 
@@ -316,6 +320,7 @@ export function getConditionById(conditionId: string): VeterinaryCondition | und
 
 VETERINARY_CONDITIONS.push(...RUMINANT_CONDITIONS);
 VETERINARY_CONDITIONS.push(...EQUINE_CONDITIONS);
+VETERINARY_CONDITIONS.push(...AVIAN_REPTILE_EXOTIC_CONDITIONS);
 
 export function findConditionByName(name: string): VeterinaryCondition | undefined {
     const normalized = name.trim().toLowerCase();

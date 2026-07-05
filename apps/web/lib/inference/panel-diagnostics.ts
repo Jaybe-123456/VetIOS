@@ -66,6 +66,7 @@ function mergeDiagnosticValue(currentValue: unknown, nextValue: unknown): unknow
 function diagnosticBucketForPanel(panel: SystemPanel): DiagnosticBucket {
     if (panel.panel === 'CBC') return 'cbc';
     if (panel.panel === 'ruminant_haematology' || panel.panel === 'neonatal_calf_panel') return 'cbc';
+    if (panel.panel === 'haematology_avian') return 'cbc';
     if (panel.panel === 'ruminant_metabolic') return 'biochemistry';
     if (panel.panel === 'ruminant_rumen_abdominal') return 'abdominal_ultrasound';
     if (panel.panel === 'ruminant_mastitis_milk') return 'cytology';
@@ -79,6 +80,7 @@ function diagnosticBucketForPanel(panel: SystemPanel): DiagnosticBucket {
     if (panel.system === 'serology') return 'serology';
     if (panel.system === 'biochemistry') return 'biochemistry';
     if (panel.system === 'endocrine') return 'serology';
+    if (panel.system === 'haematology') return 'cbc';
     if (panel.system === 'cytology') return 'cytology';
     if (panel.system === 'microbiology') return 'microbiology';
     if (panel.system === 'molecular') return 'pcr';
@@ -168,6 +170,15 @@ function canonicalMappingsForPanelTest(
             return [{ bucket: 'serology', key, value: normalizeQualitativeScreenValue(value) }];
         }
         return [{ bucket: 'cbc', key }];
+    }
+
+    if (panel.panel === 'haematology_avian') {
+        if (key === 'pcv') return [{ bucket: 'cbc', key: 'packed_cell_volume_percent', value }];
+        return [{ bucket: 'cbc', key }];
+    }
+
+    if (panel.panel === 'cytology_avian') {
+        return [{ bucket: 'cytology', key }];
     }
 
     if (panel.panel === 'thyroid' && key === 'total_t4') {
