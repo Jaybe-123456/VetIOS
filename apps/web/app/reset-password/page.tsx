@@ -96,8 +96,25 @@ export default function ResetPasswordPage() {
             return;
         }
 
+        const revocationResponse = await fetch('/api/auth/password-reset-complete', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            credentials: 'same-origin',
+            cache: 'no-store',
+        });
+
+        if (!revocationResponse.ok) {
+            await supabase.auth.signOut({ scope: 'global' });
+            setStatus('error');
+            setErrorMessage('Password changed, but VetIOS could not complete global session revocation. Sign in again and contact support if another device remains active.');
+            return;
+        }
+
         setStatus('success');
-        await supabase.auth.signOut();
+        const { error: signOutError } = await supabase.auth.signOut({ scope: 'global' });
+        if (signOutError) {
+            await supabase.auth.signOut();
+        }
         router.push('/login?reset=success');
         router.refresh();
     }

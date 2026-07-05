@@ -16,6 +16,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getEmailVerificationState } from '@/lib/auth/emailVerification';
+import { assessSessionFreshness } from '@/lib/auth/sessionFreshness';
 
 let _client: SupabaseClient | null = null;
 let _publicClient: SupabaseClient | null = null;
@@ -214,6 +215,13 @@ export async function resolveSessionState(): Promise<
 
     const { data: { user }, error } = authResult;
     if (error || !user) {
+        return { status: 'unauthenticated' };
+    }
+
+    const sessionResult = await supabase.auth.getSession();
+    const freshness = assessSessionFreshness(user, sessionResult.data.session ?? null);
+    if (!freshness.fresh) {
+        console.warn('[auth] stale session rejected:', freshness.reason);
         return { status: 'unauthenticated' };
     }
 
