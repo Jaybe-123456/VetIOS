@@ -19,7 +19,7 @@ import { applyExperimentRegistryAction, getModelRegistryControlPlaneSnapshot } f
 import { createSupabaseExperimentTrackingStore } from '@/lib/experiments/supabaseStore';
 import type { ModelRegistryControlPlaneSnapshot, RegistryAuditLogRecord } from '@/lib/experiments/types';
 import { getTopologySnapshot, resolveTopologySimulationTarget } from '@/lib/intelligence/topologyService';
-import type { TopologyAlert, TopologyControlPlaneState } from '@/lib/intelligence/types';
+import type { TopologyAlert, TopologyControlPlaneState, TopologySnapshot } from '@/lib/intelligence/types';
 import { logSimulation } from '@/lib/logging/simulationLogger';
 import {
     buildTelemetrySnapshotFromEvents,
@@ -89,6 +89,7 @@ const CONTROL_PLANE_TELEMETRY_SELECT_COLUMNS = [
 const MAX_CONTROL_PLANE_TELEMETRY_EVENTS = 120;
 const MAX_CONTROL_PLANE_WORKLOAD_TELEMETRY_EVENTS = 60;
 const CONTROL_PLANE_READ_TIMEOUT_MS = 8_000;
+const DASHBOARD_OPTIONAL_READ_TIMEOUT_MS = 2_500;
 
 type ControlPlaneUserContext = {
     user: User | null;
@@ -269,6 +270,7 @@ export async function getDashboardControlPlaneSnapshot(input: {
     const registrySnapshotPromise = getModelRegistryControlPlaneSnapshot(experimentStore, input.tenantId, {
         readOnly: input.readOnly === true,
     });
+    const degradedWarnings: string[] = [];
     const [
         telemetryEvents,
         topologySnapshot,
@@ -278,33 +280,94 @@ export async function getDashboardControlPlaneSnapshot(input: {
         dashboardRouting,
         dashboardDriftHistory,
     ] = await Promise.all([
-        listTelemetryEvents(input.client, input.tenantId),
-        getTopologySnapshot(input.client, input.tenantId, {
-            window: '24h',
-            observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
-            registrySnapshot: registrySnapshotPromise,
+        dashboardOptionalRead({
+            label: TELEMETRY_EVENTS.TABLE,
+            fallback: [] as TelemetryEventRecord[],
+            warnings: degradedWarnings,
+            read: () => listTelemetryEvents(input.client, input.tenantId),
         }),
-        registrySnapshotPromise,
-        getControlPlaneConfigBundle(input.client, input.tenantId),
-        listDashboardInferenceHistory(input.client, input.tenantId),
-        loadDashboardRoutingSummary(input.client, input.tenantId),
-        loadDashboardDriftHistory(input.client, input.tenantId),
+        dashboardOptionalRead({
+            label: 'topology_snapshot',
+            fallback: createDegradedTopologySnapshot(input.tenantId, 'Topology snapshot read timed out or failed.'),
+            warnings: degradedWarnings,
+            read: () => getTopologySnapshot(input.client, input.tenantId, {
+                window: '24h',
+                observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
+                registrySnapshot: registrySnapshotPromise,
+            }),
+        }),
+        dashboardOptionalRead({
+            label: 'model_registry_control_plane',
+            fallback: createEmptyRegistryControlPlaneSnapshot(input.tenantId),
+            warnings: degradedWarnings,
+            read: () => registrySnapshotPromise,
+        }),
+        dashboardOptionalRead({
+            label: CONTROL_PLANE_CONFIGS.TABLE,
+            fallback: {
+                config: DEFAULT_CONFIG,
+                warnings: ['control_plane_configs unavailable; default settings are in use.'],
+            },
+            warnings: degradedWarnings,
+            read: () => getControlPlaneConfigBundle(input.client, input.tenantId),
+        }),
+        dashboardOptionalRead({
+            label: AI_INFERENCE_EVENTS.TABLE,
+            fallback: [] as ControlPlaneDashboardInferenceRecord[],
+            warnings: degradedWarnings,
+            read: () => listDashboardInferenceHistory(input.client, input.tenantId),
+        }),
+        dashboardOptionalRead({
+            label: MODEL_ROUTING_DECISIONS.TABLE,
+            fallback: createEmptyDashboardRouting(),
+            warnings: degradedWarnings,
+            read: () => loadDashboardRoutingSummary(input.client, input.tenantId),
+        }),
+        dashboardOptionalRead({
+            label: MODEL_EVALUATION_EVENTS.TABLE,
+            fallback: [] as Array<{ time: string; value: number }>,
+            warnings: degradedWarnings,
+            read: () => loadDashboardDriftHistory(input.client, input.tenantId),
+        }),
     ]);
     const telemetrySnapshot = buildTelemetrySnapshotFromEvents(telemetryEvents, {
         observerHeartbeatTimestamp: input.observerHeartbeatTimestamp ?? null,
     });
     const recentTelemetryTimestamps = collectRecentTelemetryTimestamps(telemetryEvents);
 
-    const decisionEngine = await evaluateDecisionEngine({
-        client: input.client,
-        tenantId: input.tenantId,
-        topologySnapshot,
-        registrySnapshot,
-        triggerSource: 'dashboard_control_plane',
-        readOnly: input.readOnly === true,
-    });
-    const persistedAlerts = await listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts);
+    const [decisionEngine, persistedAlerts] = await Promise.all([
+        dashboardOptionalRead({
+            label: 'decision_engine',
+            fallback: createDegradedDashboardDecisionEngine(),
+            warnings: degradedWarnings,
+            read: () => evaluateDecisionEngine({
+                client: input.client,
+                tenantId: input.tenantId,
+                topologySnapshot,
+                registrySnapshot,
+                triggerSource: 'dashboard_control_plane',
+                readOnly: input.readOnly === true,
+            }),
+        }),
+        dashboardOptionalRead({
+            label: CONTROL_PLANE_ALERTS.TABLE,
+            fallback: mapTopologyAlertsToControlPlaneAlerts(topologySnapshot.alerts),
+            warnings: degradedWarnings,
+            read: () => listControlPlaneAlerts(input.client, input.tenantId, topologySnapshot.alerts),
+        }),
+    ]);
     const pipelines = buildPipelineStates(topologySnapshot);
+    const dashboardLogs = buildDashboardLogs({
+        telemetryLogs: telemetrySnapshot.logs,
+        alerts: persistedAlerts,
+        decisionAudit: decisionEngine.audit_log,
+    });
+    const logs = degradedWarnings.length > 0
+        ? [
+            ...degradedWarnings.map((warning, index) => createDashboardDegradedLog(warning, index)),
+            ...dashboardLogs,
+        ].slice(0, 12)
+        : dashboardLogs;
 
     return {
         system_health: buildSystemHealthFromTimestamps(
@@ -317,7 +380,7 @@ export async function getDashboardControlPlaneSnapshot(input: {
             topologySnapshot.control_plane_state,
             topologySnapshot.summary,
             pipelines,
-            configBundle.warnings,
+            [...configBundle.warnings, ...degradedWarnings],
         ),
         configuration: {
             simulation_enabled: configBundle.config.simulation_enabled,
@@ -331,11 +394,7 @@ export async function getDashboardControlPlaneSnapshot(input: {
             latest_action: decisionEngine.latest_action,
         },
         alerts: persistedAlerts.slice(0, 24),
-        logs: buildDashboardLogs({
-            telemetryLogs: telemetrySnapshot.logs,
-            alerts: persistedAlerts,
-            decisionAudit: decisionEngine.audit_log,
-        }),
+        logs,
         governance: {
             families: buildDashboardGovernanceFamilies(registrySnapshot),
         },
@@ -1883,6 +1942,38 @@ function stripUndefined<T extends Record<string, unknown>>(value: T) {
     return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
+async function dashboardOptionalRead<T>(input: {
+    label: string;
+    fallback: T;
+    warnings: string[];
+    read: () => Promise<T>;
+}): Promise<T> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let timedOut = false;
+    const read = Promise.resolve().then(() => input.read()).catch((error) => {
+        const message = extractControlPlaneErrorMessage(error);
+        if (!timedOut) {
+            input.warnings.push(`${input.label} unavailable: ${message}`);
+        }
+        warnControlPlaneDashboardDegradation(input.label, message);
+        return input.fallback;
+    });
+
+    const timeout = new Promise<T>((resolve) => {
+        timeoutId = setTimeout(() => {
+            timedOut = true;
+            const message = `read timed out after ${DASHBOARD_OPTIONAL_READ_TIMEOUT_MS}ms`;
+            input.warnings.push(`${input.label} unavailable: ${message}`);
+            warnControlPlaneDashboardDegradation(input.label, message);
+            resolve(input.fallback);
+        }, DASHBOARD_OPTIONAL_READ_TIMEOUT_MS);
+    });
+
+    return Promise.race([read, timeout]).finally(() => {
+        if (timeoutId) clearTimeout(timeoutId);
+    });
+}
+
 function applyControlPlaneReadTimeout<T extends { abortSignal(signal: AbortSignal): T }>(query: T): T {
     return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
         ? query.abortSignal(AbortSignal.timeout(CONTROL_PLANE_READ_TIMEOUT_MS))
@@ -1909,6 +2000,113 @@ function isControlPlaneReadTimeout(error: unknown): boolean {
 
 function warnControlPlaneReadTimeout(tableName: string): void {
     console.warn(`[control-plane] degraded optional read table=${tableName} timeout_ms=${CONTROL_PLANE_READ_TIMEOUT_MS}`);
+}
+
+function warnControlPlaneDashboardDegradation(label: string, reason: string): void {
+    console.warn(`[control-plane] dashboard degraded dependency=${label} reason=${reason}`);
+}
+
+function extractControlPlaneErrorMessage(error: unknown): string {
+    if (error instanceof Error && error.message.trim().length > 0) return error.message;
+    const record = asRecord(error);
+    return textOrNull(record.message) ?? 'unknown error';
+}
+
+function createDegradedTopologySnapshot(tenantId: string, reason: string): TopologySnapshot {
+    const now = new Date().toISOString();
+
+    return {
+        tenant_id: tenantId,
+        refreshed_at: now,
+        window: '24h',
+        mode: 'live',
+        control_plane_state: 'STREAM_DISCONNECTED',
+        playback: {
+            live_supported: false,
+            current_until: now,
+            event_timeline: [],
+        },
+        diagnostics: {
+            telemetry_stream_connected: false,
+            evaluation_events_table_exists: false,
+            latest_telemetry_timestamp: null,
+            latest_inference_timestamp: null,
+            latest_outcome_timestamp: null,
+            latest_evaluation_timestamp: null,
+            latest_simulation_timestamp: null,
+            active_alert_count: 1,
+        },
+        network_health_score: 0,
+        summary: {
+            where_failing: 'dashboard_dependency',
+            root_cause: reason,
+            impact: 'The dashboard is showing a degraded fallback because one or more control-plane reads did not complete in time.',
+            next_action: 'Open System Alerts and Recent Signal Flow, then verify telemetry, topology, registry, and Supabase table latency.',
+        },
+        nodes: [],
+        edges: [],
+        alerts: [{
+            id: `dashboard-degraded-${now}`,
+            severity: 'warning',
+            category: 'stream',
+            title: 'Dashboard dependency degraded',
+            message: reason,
+            node_id: 'control_plane',
+            timestamp: now,
+        }],
+        failure_impacts: [],
+        recommendations: [{
+            id: 'dashboard-degraded-retry',
+            severity: 'warning',
+            message: 'Refresh the dashboard after checking telemetry and topology table latency.',
+        }],
+    };
+}
+
+function createEmptyRegistryControlPlaneSnapshot(tenantId: string): ModelRegistryControlPlaneSnapshot {
+    return {
+        tenant_id: tenantId,
+        families: [],
+        routing_pointers: [],
+        audit_history: [],
+        registry_health: 'degraded',
+        consistency_issues: [],
+        refreshed_at: new Date().toISOString(),
+    };
+}
+
+function createDegradedDashboardDecisionEngine(): Awaited<ReturnType<typeof evaluateDecisionEngine>> {
+    return {
+        mode: 'observe',
+        safe_mode_enabled: true,
+        abstain_threshold: DEFAULT_CONFIG.abstain_threshold,
+        auto_execute_confidence_threshold: DEFAULT_CONFIG.auto_execute_confidence_threshold,
+        last_evaluated_at: new Date().toISOString(),
+        active_decision_count: 0,
+        latest_trigger: null,
+        latest_action: null,
+        decisions: [],
+        audit_log: [],
+        summary: {
+            where_failing: 'decision_engine',
+            root_cause: 'Decision engine read timed out or failed during dashboard snapshot assembly.',
+            impact: 'Autonomous control state is withheld until the decision engine can be evaluated.',
+            next_action: 'Retry the dashboard snapshot and inspect control-plane action logs.',
+        },
+    };
+}
+
+function createDashboardDegradedLog(message: string, index: number): ControlPlaneLogRecord {
+    return {
+        id: `dashboard-degraded-${Date.now()}-${index}`,
+        category: 'system',
+        level: 'WARN',
+        message: `[DASHBOARD] ${message}`,
+        timestamp: new Date(Date.now() - index).toISOString(),
+        run_id: null,
+        model_version: 'control-plane',
+        event_type: 'dashboard_degraded',
+    };
 }
 
 function createEmptyDashboardRouting(): ControlPlaneSnapshot['dashboard']['routing'] {
