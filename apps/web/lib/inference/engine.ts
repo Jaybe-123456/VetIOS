@@ -15,6 +15,7 @@ import {
     mergeDiagnosticTests,
     normalizeClinicalLabEvidence,
 } from './labEvidenceNormalizer';
+import { interpretReferenceIntervals } from './reference-intervals';
 import { applyRegionalExposurePriors } from './regional-priors';
 import { applyRuminantPriors } from './ruminant-priors';
 import { applySyndromePatterns } from './syndrome-recogniser';
@@ -864,11 +865,22 @@ function coerceInferenceRequest(raw: InferenceRequest | Record<string, unknown>)
         ? candidate.metadata as Record<string, unknown>
         : {};
     const normalizedLabEvidence = normalizeClinicalLabEvidence(candidate, metadata);
-    const diagnosticTests = mergeDiagnosticTests(
+    const mergedDiagnosticTests = mergeDiagnosticTests(
         metadata.diagnostic_tests as InferenceRequest['diagnostic_tests'] | undefined,
         normalizedLabEvidence.diagnostic_tests,
         candidate.diagnostic_tests as InferenceRequest['diagnostic_tests'] | undefined,
     );
+    const species = typeof candidate.species === 'string' ? candidate.species : typeof metadata.species === 'string' ? metadata.species : 'canine';
+    const referenceInterpretation = interpretReferenceIntervals({
+        species,
+        age_years: typeof candidate.age_years === 'number'
+            ? candidate.age_years
+            : typeof metadata.age_years === 'number'
+                ? metadata.age_years
+                : undefined,
+        diagnostic_tests: mergedDiagnosticTests,
+    });
+    const diagnosticTests = referenceInterpretation.diagnostic_tests;
     const presenting = [
         ...collectStringArray(candidate.presenting_signs, candidate.symptom_vector, candidate.symptoms),
         ...collectStringArray(metadata.presenting_signs, metadata.symptom_vector, metadata.symptoms),
@@ -881,7 +893,7 @@ function coerceInferenceRequest(raw: InferenceRequest | Record<string, unknown>)
     const canonicalSymptomVector = normalizeCanonicalSignalArray(presenting);
 
     return {
-        species: typeof candidate.species === 'string' ? candidate.species : typeof metadata.species === 'string' ? metadata.species : 'canine',
+        species,
         breed: typeof candidate.breed === 'string' ? candidate.breed : typeof metadata.breed === 'string' ? metadata.breed : undefined,
         age_years: typeof candidate.age_years === 'number'
             ? candidate.age_years
@@ -902,10 +914,19 @@ function coerceInferenceRequest(raw: InferenceRequest | Record<string, unknown>)
         history: mergeObject(candidate.history as InferenceRequest['history'] | undefined, metadata.history as InferenceRequest['history'] | undefined),
         preventive_history: mergeObject(candidate.preventive_history as InferenceRequest['preventive_history'] | undefined, metadata.preventive_history as InferenceRequest['preventive_history'] | undefined),
         diagnostic_tests: diagnosticTests,
-        evidence_normalization: normalizedLabEvidence.normalized_findings.length > 0 || normalizedLabEvidence.warnings.length > 0
+        evidence_normalization: normalizedLabEvidence.normalized_findings.length > 0
+            || normalizedLabEvidence.warnings.length > 0
+            || referenceInterpretation.normalized_findings.length > 0
+            || referenceInterpretation.warnings.length > 0
             ? {
-                normalized_findings: normalizedLabEvidence.normalized_findings,
-                warnings: normalizedLabEvidence.warnings,
+                normalized_findings: [
+                    ...normalizedLabEvidence.normalized_findings,
+                    ...referenceInterpretation.normalized_findings,
+                ],
+                warnings: [
+                    ...normalizedLabEvidence.warnings,
+                    ...referenceInterpretation.warnings,
+                ],
             }
             : undefined,
         physical_exam: mergeObject(candidate.physical_exam as InferenceRequest['physical_exam'] | undefined, metadata.physical_exam as InferenceRequest['physical_exam'] | undefined),
