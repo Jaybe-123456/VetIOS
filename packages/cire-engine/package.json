@@ -13,9 +13,10 @@
         }
     },
     "bin": {
-        "cire-conformance": "./dist/conformance-cli.js"
+        "cire-conformance": "./bin/conformance-cli.js"
     },
     "files": [
+        "bin",
         "dist",
         "fixtures",
         "README.md",
