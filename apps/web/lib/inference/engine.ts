@@ -19,6 +19,7 @@ import { interpretReferenceIntervals } from './reference-intervals';
 import { applyRegionalExposurePriors } from './regional-priors';
 import { applyRuminantPriors } from './ruminant-priors';
 import { applySyndromePatterns } from './syndrome-recogniser';
+import { assessGlobalConditionCoverage } from './globalOneHealthOntology';
 import {
     buildClinicalSignalProfile,
     domainsForSignal,
@@ -1893,6 +1894,7 @@ export function runClinicalInferenceEngine(
     rawRequest: InferenceRequest | Record<string, unknown>,
 ): ClinicalInferenceEngineResult {
     const request = coerceInferenceRequest(rawRequest);
+    const globalConditionCoverage = assessGlobalConditionCoverage(request);
     const signalProfile = buildClinicalSignalProfile(
         request.symptom_vector,
         request.history?.owner_observations,
@@ -1944,6 +1946,7 @@ export function runClinicalInferenceEngine(
             diagnosis_feature_importance: outputFeatureImportance,
             differential_spread: computeDifferentialSpread(confirmed),
             uncertainty_notes: uncertaintyNotes,
+            global_condition_coverage: globalConditionCoverage,
         };
         return applyClinicalIntelligence(baseResult, request, signalProfile, routingSummary, contradictionAnalysis);
     }
@@ -2039,6 +2042,7 @@ export function runClinicalInferenceEngine(
         diagnosis_feature_importance: outputFeatureImportance,
         differential_spread: computeDifferentialSpread(differentials),
         uncertainty_notes: uncertaintyNotes,
+        global_condition_coverage: globalConditionCoverage,
     };
     return applyClinicalIntelligence(baseResult, request, signalProfile, routingSummary, contradictionAnalysis);
 }

@@ -352,6 +352,107 @@ function readAskVetiosStringArray(value: unknown): string[] {
         : [];
 }
 
+function OntologyCoverageCard({ payload }: { payload: Record<string, unknown> | null }) {
+    const coverage = readRecord(payload?.global_condition_coverage);
+    const expansion = readRecord(payload?.global_condition_expansion);
+    if (!coverage && !expansion) return null;
+
+    const coverageScore = readNumberValue(coverage?.score);
+    const coverageStatus = readDisplayString(coverage?.status, 'unknown');
+    const openWorldStatus = readDisplayString(coverage?.open_world_candidate_generation, 'missing');
+    const verifiedMappingCount = readNumberValue(expansion?.verified_mapping_count) ?? 0;
+    const graphCandidateCount = readNumberValue(expansion?.graph_candidate_count) ?? 0;
+    const graphRelationshipCount = readNumberValue(expansion?.graph_relationship_count) ?? 0;
+    const blockers = readDisplayStringArray(expansion?.blockers).concat(readDisplayStringArray(coverage?.blockers)).slice(0, 4);
+    const verifiedMappings = readRecordArray(expansion?.verified_mappings).slice(0, 3);
+    const graphCandidates = readRecordArray(expansion?.graph_candidates).slice(0, 3);
+
+    return (
+        <ConsoleCard title="Ontology Coverage">
+            <div className="space-y-4 font-mono text-xs">
+                <div className="grid grid-cols-2 gap-3">
+                    <div className="border border-grid bg-black/20 p-3">
+                        <div className="text-[10px] uppercase tracking-widest text-muted">Coverage</div>
+                        <div className="mt-2 text-lg text-accent">
+                            {coverageScore === null ? '--' : `${(coverageScore * 100).toFixed(0)}%`}
+                        </div>
+                    </div>
+                    <div className="border border-grid bg-black/20 p-3">
+                        <div className="text-[10px] uppercase tracking-widest text-muted">Open World</div>
+                        <div className={openWorldStatus === 'active' ? 'mt-2 text-accent' : 'mt-2 text-yellow-300'}>
+                            {openWorldStatus.toUpperCase()}
+                        </div>
+                    </div>
+                </div>
+                <DataRow label="Coverage State" value={coverageStatus.toUpperCase()} />
+                <DataRow label="Verified Mappings" value={String(verifiedMappingCount)} />
+                <DataRow label="Graph Candidates" value={`${graphCandidateCount} / ${graphRelationshipCount} edges`} />
+                <DataRow label="Scoring State" value="BLOCKED PENDING REVIEW" />
+
+                {verifiedMappings.length > 0 ? (
+                    <div className="space-y-2">
+                        <div className="text-[10px] uppercase tracking-widest text-muted">Verified Mapping Refs</div>
+                        {verifiedMappings.map((mapping, index) => (
+                            <div key={`${readDisplayString(mapping.external_code, 'code')}-${index}`} className="border border-grid bg-black/20 p-2">
+                                <div className="text-accent">{readDisplayString(mapping.condition_key, 'unknown')}</div>
+                                <div className="text-muted">
+                                    {readDisplayString(mapping.external_code_system, 'SOURCE')}:{' '}
+                                    {readDisplayString(mapping.external_code, 'pending')}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : null}
+
+                {graphCandidates.length > 0 ? (
+                    <div className="space-y-2">
+                        <div className="text-[10px] uppercase tracking-widest text-muted">Shadow Graph Candidates</div>
+                        {graphCandidates.map((candidate, index) => (
+                            <div key={`${readDisplayString(candidate.candidate_external_code, 'candidate')}-${index}`} className="border border-yellow-400/30 bg-yellow-400/5 p-2">
+                                <div className="text-yellow-300">{readDisplayString(candidate.candidate_label, 'unknown candidate')}</div>
+                                <div className="text-muted">
+                                    {readDisplayString(candidate.predicate, 'related_to')} via {readDisplayString(candidate.provider_key, 'provider')}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : null}
+
+                {blockers.length > 0 ? (
+                    <div className="border border-yellow-400/30 bg-yellow-400/5 p-3 text-yellow-200">
+                        <div className="mb-2 text-[10px] uppercase tracking-widest">Blocked Until</div>
+                        <ul className="space-y-1">
+                            {blockers.map((blocker) => (
+                                <li key={blocker}>- {blocker}</li>
+                            ))}
+                        </ul>
+                    </div>
+                ) : null}
+            </div>
+        </ConsoleCard>
+    );
+}
+
+function readDisplayString(value: unknown, fallback: string): string {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function readNumberValue(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readDisplayStringArray(value: unknown): string[] {
+    return Array.isArray(value)
+        ? value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+        : [];
+}
+
+function readRecordArray(value: unknown): Array<Record<string, unknown>> {
+    return Array.isArray(value)
+        ? value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+        : [];
+}
+
 export default function InferenceConsole() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<InferenceTab>('analysis');
@@ -1491,6 +1592,8 @@ export default function InferenceConsole() {
                                     </div>
                                 </ConsoleCard>
                             )}
+
+                            <OntologyCoverageCard payload={state.responsePayload} />
 
                             {state.status === 'success' && (
                                 <div className="p-6 border border-accent/20 bg-accent/5 text-center space-y-4 animate-in fade-in zoom-in duration-500">

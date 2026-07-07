@@ -43,6 +43,10 @@ import {
     shouldQueueActionabilityGate,
 } from '@/lib/inference/reviewQueue';
 import { recordInferenceReliabilityPacket } from '@/lib/inference/reliabilityOrchestrator';
+import { recordConditionCoverageSnapshotEvent } from '@/lib/inference/conditionCoverageSnapshot';
+import { expandGlobalConditionCandidatesFromVerifiedMappings } from '@/lib/inference/globalOneHealthExpansion';
+import { recordGlobalConditionExpansionEvent } from '@/lib/inference/globalConditionExpansionEvents';
+import type { GlobalConditionCoverageReport, GlobalConditionExpansionReport } from '@/lib/inference/types';
 
 export const runtime = 'nodejs';
 
@@ -315,15 +319,33 @@ export async function POST(req: Request) {
                 quantum_ranker: quantumRanking.ranker,
             },
         );
+        const globalConditionCoverage = readGlobalConditionCoverage(result.output_payload);
+        const globalConditionExpansion = await trace.measure(
+            'global_condition_expansion',
+            'Verified global condition candidate expansion',
+            () => expandGlobalConditionCandidatesFromVerifiedMappings({
+                client: supabase as unknown as Parameters<typeof expandGlobalConditionCandidatesFromVerifiedMappings>[0]['client'],
+                tenantId,
+                coverage: globalConditionCoverage,
+            }),
+            {
+                candidate_count: globalConditionCoverage?.condition_candidate_hints.length ?? 0,
+            },
+        );
+        const responseOutputPayload = {
+            ...result.output_payload,
+            global_condition_expansion: globalConditionExpansion,
+        };
         trace.recordCompleted('response_build', 'Inference response built', {
             ranker: result.ranker,
             latency_ms: result.latency_ms,
             cire_state: result.cire.safety_state,
+            global_condition_expansion_status: globalConditionExpansion.status,
         });
         await trace.flush(traceStore, {
             inferenceEventId: result.inference_event_id,
             ranker: result.ranker,
-            outputDigestSource: result.output_payload,
+            outputDigestSource: responseOutputPayload,
         });
 
         const response = NextResponse.json({
@@ -331,9 +353,10 @@ export async function POST(req: Request) {
             clinical_case_id: result.clinical_case_id,
             data: {
                 ...result.data,
-                output_payload: result.output_payload,
+                output_payload: responseOutputPayload,
             },
-            output_payload: result.output_payload,
+            output_payload: responseOutputPayload,
+            global_condition_expansion: globalConditionExpansion,
             latency_ms: result.latency_ms,
             cire: result.cire,
             ranker: result.ranker,
@@ -347,6 +370,8 @@ export async function POST(req: Request) {
             supabase,
             tenantId,
             result,
+            outputPayload: responseOutputPayload,
+            globalConditionExpansion,
             modelVersion: parsed.data.model.version,
         });
         if (!simulationContext.isSynthetic) {
@@ -477,15 +502,17 @@ async function recordSuccessfulInferenceTelemetry(input: {
     supabase: ReturnType<typeof getSupabaseServer>;
     tenantId: string;
     result: Awaited<ReturnType<typeof runInference>>;
+    outputPayload: Record<string, unknown>;
+    globalConditionExpansion: GlobalConditionExpansionReport;
     modelVersion: string;
 }): Promise<void> {
     if (!input.result.inference_event_id) return;
 
     const observedAt = new Date().toISOString();
-    const contradiction = asCoreRecord(input.result.output_payload.contradiction_analysis);
-    const contradictionScore = readNumber(input.result.output_payload.contradiction_score)
+    const contradiction = asCoreRecord(input.outputPayload.contradiction_analysis);
+    const contradictionScore = readNumber(input.outputPayload.contradiction_score)
         ?? readNumber(contradiction.contradiction_score);
-    const prediction = extractPredictionLabel(input.result.output_payload);
+    const prediction = extractPredictionLabel(input.outputPayload);
 
     const sharedTelemetryWrites = [
         recordInferenceObservability(input.supabase, {
@@ -493,7 +520,7 @@ async function recordSuccessfulInferenceTelemetry(input: {
             tenantId: input.tenantId,
             modelVersion: input.modelVersion,
             observedAt,
-            outputPayload: input.result.output_payload,
+            outputPayload: input.outputPayload,
             confidenceScore: input.result.data.confidence_score,
             contradictionScore,
         }),
@@ -506,7 +533,7 @@ async function recordSuccessfulInferenceTelemetry(input: {
             event_type: 'inference',
             timestamp: observedAt,
             model_version: input.modelVersion,
-            run_id: resolveTelemetryRunId(input.modelVersion, asCoreRecord(input.result.output_payload.telemetry).run_id),
+            run_id: resolveTelemetryRunId(input.modelVersion, asCoreRecord(input.outputPayload.telemetry).run_id),
             metrics: {
                 latency_ms: input.result.latency_ms,
                 confidence: input.result.data.confidence_score,
@@ -516,7 +543,9 @@ async function recordSuccessfulInferenceTelemetry(input: {
             metadata: {
                 source_module: 'clinical_api',
                 inference_event_id: input.result.inference_event_id,
-                vision_status: asCoreRecord(input.result.output_payload.vision_inference).status ?? null,
+                vision_status: asCoreRecord(input.outputPayload.vision_inference).status ?? null,
+                global_condition_expansion_status: input.globalConditionExpansion.status,
+                global_condition_verified_mapping_count: input.globalConditionExpansion.verified_mapping_count,
             },
         }),
     ];
@@ -528,7 +557,7 @@ async function recordSuccessfulInferenceTelemetry(input: {
         modelVersion: input.modelVersion,
         sourceModule: 'clinical_api',
         ranker: input.result.ranker,
-        outputPayload: input.result.output_payload,
+        outputPayload: input.outputPayload,
         confidenceScore: input.result.data.confidence_score,
         phiHat: input.result.cire.phi_hat,
     });
@@ -541,7 +570,7 @@ async function recordSuccessfulInferenceTelemetry(input: {
         inferenceEventId: input.result.inference_event_id,
         requestId: input.result.meta.request_id,
         caseId: input.result.clinical_case_id,
-        outputPayload: input.result.output_payload,
+        outputPayload: input.outputPayload,
         confidenceScore: input.result.data.confidence_score,
         phiHat: input.result.cire.phi_hat,
         calibrationSnapshot: calibrationResult.data,
@@ -575,7 +604,7 @@ async function recordSuccessfulInferenceTelemetry(input: {
         modelVersion: input.modelVersion,
         sourceModule: 'clinical_api',
         ranker: input.result.ranker,
-        outputPayload: input.result.output_payload,
+        outputPayload: input.outputPayload,
         confidenceScore: input.result.data.confidence_score,
         phiHat: input.result.cire.phi_hat,
         latencyMs: input.result.latency_ms,
@@ -583,6 +612,29 @@ async function recordSuccessfulInferenceTelemetry(input: {
         actionabilityGate: actionabilityResult.data,
         reviewQueueEvent,
     });
+    await recordConditionCoverageSnapshotEvent(input.supabase, {
+        tenantId: input.tenantId,
+        inferenceEventId: input.result.inference_event_id,
+        requestId: input.result.meta.request_id,
+        coverage: readGlobalConditionCoverage(input.outputPayload),
+    });
+    await recordGlobalConditionExpansionEvent(
+        input.supabase as unknown as Parameters<typeof recordGlobalConditionExpansionEvent>[0],
+        {
+            tenantId: input.tenantId,
+            inferenceEventId: input.result.inference_event_id,
+            requestId: `${input.result.meta.request_id}:global_condition_expansion`,
+            expansion: input.globalConditionExpansion,
+            observedAt,
+        },
+    );
+}
+
+function readGlobalConditionCoverage(outputPayload: Record<string, unknown>): GlobalConditionCoverageReport | null {
+    const coverage = asCoreRecord(outputPayload.global_condition_coverage);
+    if (coverage.registry_scope !== 'closed_world') return null;
+    if (typeof coverage.status !== 'string' || typeof coverage.score !== 'number') return null;
+    return coverage as unknown as GlobalConditionCoverageReport;
 }
 
 async function recordFailedInferenceTelemetry(input: {

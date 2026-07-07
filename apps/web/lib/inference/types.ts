@@ -674,6 +674,98 @@ export interface ClinicalIntelligenceReport {
     };
 }
 
+export type GlobalConditionCoverageStatus = 'covered' | 'partial' | 'gap' | 'unsupported';
+
+export interface GlobalConditionSourceExpansionHint {
+    source_key: string;
+    source_name: string;
+    source_type: string;
+    authority_tier: string;
+    species_scope: string[];
+    medicine_domain: string[];
+    reason: string;
+}
+
+export interface GlobalConditionCandidateHint {
+    condition_key: string;
+    canonical_name: string;
+    condition_domain: string;
+    species_scope: string[];
+    host_scope: string[];
+    human_relevance: string;
+    zoonotic_role: string;
+    amr_relevance: string;
+    source_keys: string[];
+    matched_terms: string[];
+    reason: string;
+}
+
+export interface GlobalConditionVerifiedMapping {
+    condition_key: string;
+    source_key: string;
+    source_authority: string;
+    source_type: string;
+    external_code_system: string;
+    external_code: string;
+    mapping_status: 'source_attested' | 'reviewer_verified' | 'externally_verified';
+    mapping_confidence: number;
+    source_version?: string | null;
+    created_at?: string | null;
+}
+
+export interface GlobalConditionGraphCandidate {
+    source_condition_key: string;
+    source_external_code_system: string;
+    source_external_code: string;
+    candidate_external_code_system: string;
+    candidate_external_code: string;
+    candidate_label: string;
+    relationship_kind: string;
+    predicate: string;
+    source_key: string;
+    provider_key: string;
+}
+
+export interface GlobalConditionExpansionReport {
+    status:
+        | 'verified_candidates_available'
+        | 'graph_candidates_available'
+        | 'no_candidate_hints'
+        | 'no_verified_mappings'
+        | 'query_failed';
+    candidate_count: number;
+    verified_mapping_count: number;
+    graph_candidate_count: number;
+    graph_relationship_count: number;
+    candidate_keys: string[];
+    verified_mappings: GlobalConditionVerifiedMapping[];
+    graph_candidates: GlobalConditionGraphCandidate[];
+    blockers: string[];
+    warnings: string[];
+    recommended_next_action: string;
+}
+
+export interface GlobalConditionCoverageReport {
+    status: GlobalConditionCoverageStatus;
+    score: number;
+    registry_scope: 'closed_world';
+    canonical_species: Species;
+    input_species: string;
+    registered_candidate_count: number;
+    source_backed_count: number;
+    one_health_source_count: number;
+    human_correlation_requested: boolean;
+    one_health_review_required: boolean;
+    open_world_candidate_generation: 'missing' | 'shadow' | 'active' | 'blocked';
+    candidate_expansion_status: 'source_hints_only';
+    candidate_expansion_hints: GlobalConditionSourceExpansionHint[];
+    condition_candidate_status: 'seeded_source_candidates' | 'none';
+    condition_candidate_hints: GlobalConditionCandidateHint[];
+    blockers: string[];
+    warnings: string[];
+    recommended_next_action: string;
+}
+
 export interface AbstainDecision {
     abstain: boolean;
     reason: InferenceAbstainReason;
@@ -711,6 +803,8 @@ export interface InferenceResponse {
     airway_level?: 'upper' | 'lower' | 'mixed';
     cluster_scores?: Record<string, number>;
     clinical_intelligence?: ClinicalIntelligenceReport;
+    global_condition_coverage?: GlobalConditionCoverageReport;
+    global_condition_expansion?: GlobalConditionExpansionReport;
     species_validation?: SpeciesValidationReport;
     pathway_analysis?: PathwayAnalysisEntry[];
     mechanism_analysis?: MechanismAnalysisEntry[];

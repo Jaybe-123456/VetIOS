@@ -64,6 +64,7 @@ The strategy is CUDA-like but more precise: CIRE is the free scoring language an
 - Reference implementation: [@vetios/cire-engine](packages/cire-engine/src/index.ts)
 - Compatibility check: `pnpm --filter @vetios/cire-engine test`
 - Reference certification runner: `/api/cron/cire-reference-certification` submits an idempotent public registry event for the VetIOS reference engine.
+- Complete infrastructure build standard: [VetIOS Complete Infrastructure Build Guidelines](docs/vetios-complete-infrastructure-build-guidelines.md)
 
 ## Architecture
 
