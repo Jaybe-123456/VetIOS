@@ -71,8 +71,9 @@ export async function buildGlobalBiomedicalOntologyPopulationRows(
 
     for (const provider of OFFICIAL_ONTOLOGY_PROVIDERS.filter((entry) => providerKeys.has(entry.provider_key))) {
         const plan = planByKey.get(provider.provider_key);
-        const allowBlockedWahisEvidence = provider.provider_key === 'woah_wahis_official_export';
-        if ((!plan || plan.status !== 'ready') && !allowBlockedWahisEvidence) {
+        const allowBlockedDatasetEvidence = provider.provider_key === 'woah_wahis_official_export'
+            || provider.provider_key === 'cdc_open_data_surveillance';
+        if ((!plan || plan.status !== 'ready') && !allowBlockedDatasetEvidence) {
             skippedProviders.push({
                 provider_key: provider.provider_key,
                 reason: plan?.status ?? 'not_planned',
@@ -225,6 +226,10 @@ async function fetchProviderSpecificPopulationRows(input: {
 
     if (input.provider.provider_key === 'woah_wahis_official_export') {
         return fetchWahisAutoIngestionRows(input);
+    }
+
+    if (input.provider.provider_key === 'cdc_open_data_surveillance') {
+        return fetchCdcOpenDataRows(input);
     }
 
     const releaseUrl = input.provider.release_url_env
@@ -402,6 +407,182 @@ async function fetchWahisAutoIngestionRows(input: {
             nodeRows: [],
             relationshipRows: [],
             skippedReason: error instanceof Error ? error.message : 'unknown_wahis_import_error',
+        };
+    }
+}
+
+async function fetchCdcOpenDataRows(input: {
+    provider: OfficialOntologyProvider;
+    fetchImpl: OfficialFetch;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+    maxRelationships: number;
+    env?: Record<string, string | undefined>;
+}) {
+    const releaseUrl = normalizeOptionalText(input.env?.CDC_OPEN_DATA_URL ?? process.env.CDC_OPEN_DATA_URL);
+    if (!releaseUrl) {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: 'missing_open_data_url',
+            expected_env: 'CDC_OPEN_DATA_URL',
+            expected_url_shape: 'https://data.cdc.gov/resource/<dataset-id>.json',
+            source_catalog: input.provider.url,
+            clinical_boundary: 'CDC Open Data ingestion is blocked until a specific Socrata CSV/JSON dataset endpoint is configured.',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: input.provider.url,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'blocked',
+                licenseStatus: 'blocked',
+                releasePacket,
+                blockers: ['missing_open_data_url:CDC_OPEN_DATA_URL'],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: 'missing_open_data_url',
+        };
+    }
+
+    const urlStatus = classifyCdcOpenDataUrl(releaseUrl);
+    if (urlStatus.status !== 'ready') {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: urlStatus.status,
+            source_url: releaseUrl,
+            expected_url_shape: 'https://data.cdc.gov/resource/<dataset-id>.json or .csv',
+            source_catalog: input.provider.url,
+            clinical_boundary: 'CDC Open Data URL must point to a machine-readable Socrata dataset endpoint, not the catalog homepage.',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: releaseUrl,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'blocked',
+                licenseStatus: 'blocked',
+                releasePacket,
+                blockers: [`cdc_open_data_url_${urlStatus.status}`],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: urlStatus.status,
+        };
+    }
+
+    const fetchUrl = buildCdcFetchUrl(releaseUrl, input.maxNodes);
+    const appToken = normalizeOptionalText(
+        input.env?.CDC_OPEN_DATA_APP_TOKEN
+        ?? input.env?.CDC_APP_TOKEN
+        ?? process.env.CDC_OPEN_DATA_APP_TOKEN
+        ?? process.env.CDC_APP_TOKEN,
+    );
+    const headers = appToken ? { 'X-App-Token': appToken } : undefined;
+
+    try {
+        const response = await input.fetchImpl(fetchUrl, {
+            cache: 'no-store',
+            ...(headers ? { headers } : {}),
+        });
+        if (!response.ok) {
+            const releasePacket = {
+                provider_name: input.provider.name,
+                provider_status: 'fetch_failed',
+                source_url: releaseUrl,
+                fetch_url: fetchUrl,
+                http_status: response.status,
+                http_status_text: response.statusText,
+            };
+            return {
+                releaseRows: [buildGenericReleaseRow({
+                    provider: input.provider,
+                    sourceUrl: releaseUrl,
+                    tenantId: input.tenantId,
+                    requestId: input.requestId,
+                    observedAt: input.observedAt,
+                    payloadHash: sha256(releasePacket),
+                    nodeCount: 0,
+                    importedNodeCount: 0,
+                    relationshipCount: 0,
+                    importedRelationshipCount: 0,
+                    releaseStatus: 'failed',
+                    licenseStatus: 'public_reference',
+                    releasePacket,
+                    blockers: [`cdc_open_data_fetch_failed_${response.status}`],
+                })],
+                nodeRows: [],
+                relationshipRows: [],
+                skippedReason: `fetch_failed_${response.status}`,
+            };
+        }
+
+        const contentType = response.headers?.get('content-type')?.toLowerCase() ?? '';
+        const payloadText = response.text
+            ? await response.text()
+            : stableStringify(await response.json());
+        const parsed = parseCdcOpenDataPopulation({
+            provider: input.provider,
+            payloadText,
+            contentType,
+            sourceUrl: releaseUrl,
+            fetchUrl,
+            appTokenUsed: Boolean(appToken),
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            maxNodes: input.maxNodes,
+        });
+        return {
+            releaseRows: [parsed.releaseRow],
+            nodeRows: parsed.nodeRows,
+            relationshipRows: [],
+            skippedReason: null,
+        };
+    } catch (error) {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: 'parse_or_fetch_error',
+            source_url: releaseUrl,
+            fetch_url: fetchUrl,
+            error: error instanceof Error ? error.message : 'unknown_cdc_open_data_import_error',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: releaseUrl,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'failed',
+                licenseStatus: 'public_reference',
+                releasePacket,
+                blockers: ['cdc_open_data_parse_or_fetch_error'],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: error instanceof Error ? error.message : 'unknown_cdc_open_data_import_error',
         };
     }
 }
@@ -851,6 +1032,201 @@ function buildWahisNodeFromRecord(input: {
             raw_record_keys: Object.keys(input.record).sort(),
             record_digest: sha256(input.record),
             clinical_boundary: 'Imported WAHIS surveillance record; use for population context and ontology coverage, not individual diagnosis.',
+        },
+    });
+}
+
+function parseCdcOpenDataPopulation(input: {
+    provider: OfficialOntologyProvider;
+    payloadText: string;
+    contentType: string;
+    sourceUrl: string;
+    fetchUrl: string;
+    appTokenUsed: boolean;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+}) {
+    const trimmed = input.payloadText.trim();
+    const payloadHash = createHash('sha256').update(input.payloadText).digest('hex');
+    const records = looksLikeJson(trimmed) || input.contentType.includes('json')
+        ? extractGenericRecords(JSON.parse(trimmed || '[]'))
+        : parseDelimitedText(trimmed);
+    const limitedRecords = records.slice(0, input.maxNodes);
+    const nodeRows = limitedRecords
+        .map((record, index) => buildCdcNodeFromRecord({
+            provider: input.provider,
+            record,
+            index,
+            sourceUrl: input.sourceUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+        }))
+        .filter(isRecordRow) as Record<string, unknown>[];
+    const skippedRows = Math.max(0, records.length - nodeRows.length);
+    const parser = input.contentType.includes('json') || looksLikeJson(trimmed)
+        ? 'cdc_socrata_json_v1'
+        : 'cdc_socrata_csv_v1';
+    const releasePacket = {
+        provider_name: input.provider.name,
+        provider_status: nodeRows.length > 0 ? 'imported' : 'no_importable_rows',
+        parser,
+        source_url: input.sourceUrl,
+        fetch_url: input.fetchUrl,
+        source_catalog: input.provider.url,
+        app_token_used: input.appTokenUsed,
+        source_hash: payloadHash,
+        raw_rows: records.length,
+        imported_rows: nodeRows.length,
+        skipped_rows: skippedRows,
+        truncated_rows: Math.max(0, records.length - limitedRecords.length),
+        ontology_coverage: {
+            provider_key: input.provider.provider_key,
+            code_system: input.provider.code_system,
+            node_kind: 'surveillance_record',
+            imported_public_health_records: nodeRows.length,
+        },
+        clinical_boundary: 'CDC Open Data rows are public-health surveillance/context evidence only; they do not validate veterinary patient-level diagnoses.',
+    };
+
+    const releaseRow = buildGenericReleaseRow({
+        provider: input.provider,
+        sourceUrl: input.sourceUrl,
+        tenantId: input.tenantId,
+        requestId: input.requestId,
+        observedAt: input.observedAt,
+        payloadHash,
+        nodeCount: records.length,
+        importedNodeCount: nodeRows.length,
+        relationshipCount: 0,
+        importedRelationshipCount: 0,
+        releaseStatus: nodeRows.length === 0 ? 'partial' : skippedRows > 0 ? 'partial' : 'imported',
+        licenseStatus: 'public_reference',
+        releasePacket,
+        blockers: nodeRows.length === 0 ? ['cdc_open_data_has_no_importable_rows'] : [],
+    });
+
+    return { releaseRow, nodeRows };
+}
+
+function buildCdcNodeFromRecord(input: {
+    provider: OfficialOntologyProvider;
+    record: Record<string, unknown>;
+    index: number;
+    sourceUrl: string;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+}) {
+    const condition = readFirstString(input.record, [
+        'condition',
+        'Condition',
+        'disease',
+        'Disease',
+        'disease_name',
+        'Disease Name',
+        'illness',
+        'Illness',
+        'pathogen',
+        'Pathogen',
+        'indicator',
+        'Indicator',
+        'topic',
+        'Topic',
+        'measure',
+        'Measure',
+        'syndrome',
+        'Syndrome',
+    ]);
+    if (!condition) return null;
+
+    const jurisdiction = readFirstString(input.record, [
+        'jurisdiction',
+        'Jurisdiction',
+        'state',
+        'State',
+        'state_name',
+        'State Name',
+        'county',
+        'County',
+        'country',
+        'Country',
+        'location',
+        'Location',
+        'reporting_area',
+        'Reporting Area',
+    ]);
+    const population = readFirstString(input.record, [
+        'species',
+        'Species',
+        'host',
+        'Host',
+        'population',
+        'Population',
+        'age_group',
+        'Age Group',
+        'demographic',
+        'Demographic',
+    ]);
+    const period = readFirstString(input.record, [
+        'date',
+        'Date',
+        'week_end',
+        'week_ending',
+        'Week Ending',
+        'report_date',
+        'Report Date',
+        'year',
+        'Year',
+        'mmwr_year',
+        'mmwr_week',
+        'collection_date',
+        'Collection Date',
+    ]);
+    const recordId = readFirstString(input.record, [
+        'id',
+        'record_id',
+        'case_id',
+        'event_id',
+        'data_id',
+        ':id',
+    ]);
+    const fallbackCode = sha256({
+        provider_key: input.provider.provider_key,
+        index: input.index,
+        condition,
+        jurisdiction,
+        population,
+        period,
+        recordId,
+    }).slice(0, 16);
+    const externalCode = `CDC:${sanitizeCode(recordId ?? fallbackCode)}`;
+    const label = [condition, jurisdiction, population, period].filter(Boolean).join(' - ');
+
+    return buildGenericNodeRow({
+        provider: input.provider,
+        tenantId: input.tenantId,
+        requestId: input.requestId,
+        observedAt: input.observedAt,
+        externalCode,
+        canonicalLabel: label || condition,
+        sourceIri: readFirstString(input.record, ['url', 'source_url', 'source', 'source_iri']) ?? input.sourceUrl,
+        nodeKind: 'surveillance_record',
+        nodePacket: {
+            provider_key: input.provider.provider_key,
+            source_key: input.provider.source_key,
+            condition,
+            jurisdiction,
+            population,
+            report_period: period,
+            cases: readFirstString(input.record, ['cases', 'Cases', 'case_count', 'Case Count', 'count', 'Count']),
+            deaths: readFirstString(input.record, ['deaths', 'Deaths', 'death_count', 'Death Count']),
+            rate: readFirstString(input.record, ['rate', 'Rate', 'incidence_rate', 'Incidence Rate']),
+            raw_record_keys: Object.keys(input.record).sort(),
+            record_digest: sha256(input.record),
+            clinical_boundary: 'Imported CDC Open Data public-health record; use as One Health context, not patient-level outcome truth.',
         },
     });
 }
@@ -1384,6 +1760,31 @@ function inferDelimiter(headerLine: string): string {
 
 function looksLikeJson(value: string): boolean {
     return value.startsWith('{') || value.startsWith('[');
+}
+
+function classifyCdcOpenDataUrl(value: string): { status: 'ready' | 'invalid_url' | 'portal_url_not_dataset_endpoint' | 'non_cdc_open_data_host' } {
+    let parsed: URL;
+    try {
+        parsed = new URL(value);
+    } catch {
+        return { status: 'invalid_url' };
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (host !== 'data.cdc.gov') return { status: 'non_cdc_open_data_host' };
+    const path = parsed.pathname.toLowerCase();
+    if (path === '/' || path === '') return { status: 'portal_url_not_dataset_endpoint' };
+    if (/^\/resource\/[a-z0-9]{4}-[a-z0-9]{4}\.(json|csv)$/.test(path)) return { status: 'ready' };
+    if (/^\/api\/views\/[a-z0-9]{4}-[a-z0-9]{4}\/rows\.(json|csv)$/.test(path)) return { status: 'ready' };
+    return { status: 'portal_url_not_dataset_endpoint' };
+}
+
+function buildCdcFetchUrl(value: string, maxNodes: number): string {
+    const parsed = new URL(value);
+    const path = parsed.pathname.toLowerCase();
+    if (path.startsWith('/resource/') && path.endsWith('.json') && !parsed.searchParams.has('$limit')) {
+        parsed.searchParams.set('$limit', String(Math.min(Math.max(maxNodes, 1), 50000)));
+    }
+    return parsed.toString();
 }
 
 function normalizeOptionalText(value: string | undefined): string | null {

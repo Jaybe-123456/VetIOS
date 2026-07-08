@@ -286,6 +286,200 @@ describe('global biomedical ontology population importer', () => {
         });
     });
 
+    it('records a blocked CDC Open Data run when the dataset URL is missing', async () => {
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'cdc-missing-url-test',
+            providerKeys: ['cdc_open_data_surveillance'],
+            env: {},
+            fetchImpl: async () => {
+                throw new Error('fetch should not run without CDC_OPEN_DATA_URL');
+            },
+        });
+
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(0);
+        expect(rows.skippedProviders).toEqual([
+            {
+                provider_key: 'cdc_open_data_surveillance',
+                reason: 'missing_open_data_url',
+            },
+        ]);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'cdc_open_data_surveillance',
+            release_status: 'blocked',
+            license_status: 'blocked',
+            imported_node_count: 0,
+            blockers: ['missing_open_data_url:CDC_OPEN_DATA_URL'],
+        });
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            provider_status: 'missing_open_data_url',
+            expected_url_shape: 'https://data.cdc.gov/resource/<dataset-id>.json',
+        });
+    });
+
+    it('rejects the CDC Open Data catalog homepage because it is not an ingestable endpoint', async () => {
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'cdc-portal-url-test',
+            providerKeys: ['cdc_open_data_surveillance'],
+            env: {
+                CDC_OPEN_DATA_URL: 'https://data.cdc.gov/',
+            },
+            fetchImpl: async () => {
+                throw new Error('fetch should not run for portal homepage');
+            },
+        });
+
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(0);
+        expect(rows.skippedProviders).toEqual([
+            {
+                provider_key: 'cdc_open_data_surveillance',
+                reason: 'portal_url_not_dataset_endpoint',
+            },
+        ]);
+        expect(rows.releaseRows[0]).toMatchObject({
+            release_status: 'blocked',
+            blockers: ['cdc_open_data_url_portal_url_not_dataset_endpoint'],
+        });
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            provider_status: 'portal_url_not_dataset_endpoint',
+        });
+    });
+
+    it('auto-ingests CDC Socrata JSON endpoints with limit, app token, source hash, and row evidence', async () => {
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'cdc-json-test',
+            providerKeys: ['cdc_open_data_surveillance'],
+            maxNodesPerProvider: 2,
+            env: {
+                CDC_OPEN_DATA_URL: 'https://data.cdc.gov/resource/abcd-1234.json',
+                CDC_OPEN_DATA_APP_TOKEN: 'cdc-token',
+            },
+            fetchImpl: async (url, init) => {
+                expect(url).toBe('https://data.cdc.gov/resource/abcd-1234.json?%24limit=2');
+                expect(init?.headers).toEqual({ 'X-App-Token': 'cdc-token' });
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                        get(name: string) {
+                            return name.toLowerCase() === 'content-type' ? 'application/json' : null;
+                        },
+                    },
+                    async json() {
+                        throw new Error('json endpoint should be read from text for stable hashing');
+                    },
+                    async text() {
+                        return JSON.stringify([
+                            {
+                                id: 'CDC-1',
+                                condition: 'Rabies exposure',
+                                jurisdiction: 'United States',
+                                population: 'Human',
+                                week_end: '2026-07-04',
+                                cases: '7',
+                                deaths: '0',
+                            },
+                            {
+                                id: 'CDC-2',
+                                condition: 'Salmonellosis',
+                                jurisdiction: 'United States',
+                                population: 'Human',
+                                week_end: '2026-07-04',
+                                cases: '42',
+                            },
+                        ]);
+                    },
+                };
+            },
+        });
+
+        expect(rows.skippedProviders).toHaveLength(0);
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(2);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'cdc_open_data_surveillance',
+            access_mode: 'public_dataset',
+            release_status: 'imported',
+            node_count: 2,
+            imported_node_count: 2,
+        });
+        expect(rows.releaseRows[0].source_document_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            provider_status: 'imported',
+            parser: 'cdc_socrata_json_v1',
+            raw_rows: 2,
+            imported_rows: 2,
+            skipped_rows: 0,
+            app_token_used: true,
+        });
+        expect(rows.nodeRows[0]).toMatchObject({
+            provider_key: 'cdc_open_data_surveillance',
+            code_system: 'CDC',
+            external_code: 'CDC:CDC-1',
+            canonical_label: 'Rabies exposure - United States - Human - 2026-07-04',
+            node_kind: 'surveillance_record',
+        });
+    });
+
+    it('auto-ingests CDC CSV exports and records skipped rows without condition signals', async () => {
+        const csv = [
+            'id,condition,state,date,cases,deaths',
+            'CDC-10,Leptospirosis,Florida,2026-07-01,3,0',
+            'CDC-11,,Georgia,2026-07-01,1,0',
+        ].join('\n');
+
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'cdc-csv-test',
+            providerKeys: ['cdc_open_data_surveillance'],
+            env: {
+                CDC_OPEN_DATA_URL: 'https://data.cdc.gov/resource/wxyz-9876.csv',
+            },
+            fetchImpl: async (url) => {
+                expect(url).toBe('https://data.cdc.gov/resource/wxyz-9876.csv');
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                        get(name: string) {
+                            return name.toLowerCase() === 'content-type' ? 'text/csv' : null;
+                        },
+                    },
+                    async json() {
+                        throw new Error('csv should be read as text');
+                    },
+                    async text() {
+                        return csv;
+                    },
+                };
+            },
+        });
+
+        expect(rows.skippedProviders).toHaveLength(0);
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(1);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'cdc_open_data_surveillance',
+            release_status: 'partial',
+            node_count: 2,
+            imported_node_count: 1,
+        });
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            provider_status: 'imported',
+            parser: 'cdc_socrata_csv_v1',
+            raw_rows: 2,
+            imported_rows: 1,
+            skipped_rows: 1,
+        });
+        expect(rows.nodeRows[0]).toMatchObject({
+            external_code: 'CDC:CDC-10',
+            canonical_label: 'Leptospirosis - Florida - 2026-07-01',
+            node_kind: 'surveillance_record',
+        });
+    });
+
     it('imports ICD-11 nodes through the credentialed WHO API adapter', async () => {
         const requestedUrls: string[] = [];
         const rows = await buildGlobalBiomedicalOntologyPopulationRows({

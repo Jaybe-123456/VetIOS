@@ -162,7 +162,7 @@ Content-Type: application/json
 | SNOMED CT | License-gated release source | Requires a licensed JSON release URL and deployment-specific terms. |
 | VeNom | Release/license-gated veterinary nomenclature | Requires release/source URL and review before verified code writes. |
 | WOAH WAHIS | Auto-ingestion official export adapter | Requires `WAHIS_EXPORT_URL`; imports CSV/JSON surveillance records as review-gated nodes. If missing, records `provider_status = missing_export_url` in a blocked release event. |
-| CDC Open Data | Official export importer | Requires `CDC_OPEN_DATA_URL`; imports public-health records as review-gated nodes. |
+| CDC Open Data | Auto-ingestion Socrata adapter | Requires `CDC_OPEN_DATA_URL`; imports CDC JSON/CSV public-health records as review-gated One Health surveillance nodes. Optional `CDC_OPEN_DATA_APP_TOKEN` is supported. |
 
 ## WOAH WAHIS Auto-Ingestion Adapter
 
@@ -205,6 +205,44 @@ event_id,disease_name,country,species,event_start_date,status,cases,deaths
 
 The parser also recognizes common variants such as `Disease`, `Disease Name`, `Country`, `Species`, `eventId`, `reportId`, `outbreakId`, `eventStartDate`, and `submissionDate`.
 
+## CDC Open Data Adapter
+
+CDC Open Data runs on Socrata/SODA-style dataset endpoints. Do not set `CDC_OPEN_DATA_URL` to `https://data.cdc.gov/`; that is the catalog homepage, not an ingestable dataset.
+
+Use a specific machine-readable endpoint:
+
+```text
+https://data.cdc.gov/resource/<dataset-id>.json
+https://data.cdc.gov/resource/<dataset-id>.csv
+https://data.cdc.gov/api/views/<dataset-id>/rows.csv?accessType=DOWNLOAD
+```
+
+Set:
+
+```bash
+CDC_OPEN_DATA_URL=https://data.cdc.gov/resource/<dataset-id>.json
+CDC_OPEN_DATA_APP_TOKEN=
+```
+
+`CDC_OPEN_DATA_APP_TOKEN` is optional, but recommended for production scheduled ingestion because Socrata app tokens improve API throttling behavior.
+
+Adapter behavior:
+
+- If `CDC_OPEN_DATA_URL` is missing, VetIOS writes a blocked `official_ontology_release_events` row with `release_packet.provider_status = "missing_open_data_url"` and blocker `missing_open_data_url:CDC_OPEN_DATA_URL`.
+- If `CDC_OPEN_DATA_URL` points to `https://data.cdc.gov/`, VetIOS writes a blocked release row with `provider_status = "portal_url_not_dataset_endpoint"`.
+- JSON `/resource/<id>.json` endpoints get a bounded `$limit` query parameter when one is not already present.
+- CSV and JSON rows become `global_biomedical_ontology_node_events` with `node_kind = "surveillance_record"`.
+- Each run stores source hash, parser version, source URL, fetch URL, raw row count, imported row count, skipped row count, app-token usage, and coverage evidence.
+- CDC rows remain public-health surveillance context. They do not directly alter veterinary diagnosis probabilities.
+
+Minimal CDC row fields supported:
+
+```csv
+id,condition,state,date,cases,deaths
+```
+
+The parser also recognizes common variants such as `disease`, `disease_name`, `illness`, `pathogen`, `indicator`, `topic`, `jurisdiction`, `state_name`, `county`, `location`, `reporting_area`, `week_end`, `week_ending`, `report_date`, `mmwr_year`, and `mmwr_week`.
+
 ## Environment Variables
 
 ```bash
@@ -214,6 +252,7 @@ WHO_ICD_CLIENT_SECRET=
 NCBI_API_KEY=
 WAHIS_EXPORT_URL=
 CDC_OPEN_DATA_URL=
+CDC_OPEN_DATA_APP_TOKEN=
 SNOMED_CT_RELEASE_URL=
 VENOM_RELEASE_URL=
 GLOBAL_ONTOLOGY_MAX_NODES_PER_PROVIDER=5000
