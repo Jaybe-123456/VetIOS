@@ -447,12 +447,6 @@ function readDisplayStringArray(value: unknown): string[] {
         : [];
 }
 
-function readRecordArray(value: unknown): Array<Record<string, unknown>> {
-    return Array.isArray(value)
-        ? value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
-        : [];
-}
-
 export default function InferenceConsole() {
     const router = useRouter();
     const [activeTab, setActiveTab] = useState<InferenceTab>('analysis');
