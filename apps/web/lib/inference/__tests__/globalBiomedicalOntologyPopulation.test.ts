@@ -189,6 +189,103 @@ describe('global biomedical ontology population importer', () => {
         });
     });
 
+    it('records a blocked WAHIS provider run when the export URL is missing', async () => {
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'wahis-missing-url-test',
+            providerKeys: ['woah_wahis_official_export'],
+            env: {},
+            fetchImpl: async () => {
+                throw new Error('fetch should not run without WAHIS_EXPORT_URL');
+            },
+        });
+
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(0);
+        expect(rows.skippedProviders).toEqual([
+            {
+                provider_key: 'woah_wahis_official_export',
+                reason: 'missing_export_url',
+            },
+        ]);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'woah_wahis_official_export',
+            release_status: 'blocked',
+            license_status: 'blocked',
+            imported_node_count: 0,
+            blockers: ['missing_export_url:WAHIS_EXPORT_URL'],
+        });
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            provider_status: 'missing_export_url',
+            expected_storage_path: 'ontology-provider-exports/wahis/latest.csv',
+        });
+        expect(rows.snapshotRow).toMatchObject({
+            imported_provider_count: 0,
+            blocked_provider_count: 1,
+        });
+    });
+
+    it('auto-ingests WAHIS CSV exports with source hash and row-count evidence', async () => {
+        const csv = [
+            'event_id,disease_name,country,species,event_start_date,status,cases,deaths',
+            'EVT-1,Rabies,Kenya,Canine,2026-07-01,ongoing,4,1',
+            'EVT-2,Foot and mouth disease,Uganda,Bovine,2026-07-02,resolved,20,0',
+            'EVT-3,,Tanzania,,2026-07-03,ongoing,,',
+        ].join('\n');
+
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'wahis-csv-test',
+            providerKeys: ['woah_wahis_official_export'],
+            env: {
+                WAHIS_EXPORT_URL: 'https://example.test/storage/wahis/latest.csv',
+            },
+            fetchImpl: async (url) => {
+                expect(url).toBe('https://example.test/storage/wahis/latest.csv');
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                        get(name: string) {
+                            return name.toLowerCase() === 'content-type' ? 'text/csv' : null;
+                        },
+                    },
+                    async json() {
+                        throw new Error('csv should be read as text');
+                    },
+                    async text() {
+                        return csv;
+                    },
+                };
+            },
+        });
+
+        expect(rows.skippedProviders).toHaveLength(0);
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(2);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'woah_wahis_official_export',
+            access_mode: 'public_dataset',
+            release_status: 'partial',
+            node_count: 3,
+            imported_node_count: 2,
+        });
+        expect(rows.releaseRows[0].source_document_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            provider_status: 'imported',
+            parser: 'wahis_csv_export_v1',
+            raw_rows: 3,
+            imported_rows: 2,
+            skipped_rows: 1,
+        });
+        expect(rows.nodeRows[0]).toMatchObject({
+            provider_key: 'woah_wahis_official_export',
+            code_system: 'WAHIS',
+            external_code: 'WAHIS:EVT-1',
+            canonical_label: 'Rabies · Kenya · Canine',
+            node_kind: 'surveillance_record',
+        });
+    });
+
     it('imports ICD-11 nodes through the credentialed WHO API adapter', async () => {
         const requestedUrls: string[] = [];
         const rows = await buildGlobalBiomedicalOntologyPopulationRows({

@@ -11,6 +11,10 @@ type OfficialFetch = (input: string, init?: RequestInit) => Promise<{
     status: number;
     statusText: string;
     json: () => Promise<unknown>;
+    text?: () => Promise<string>;
+    headers?: {
+        get: (name: string) => string | null;
+    };
 }>;
 
 type PopulationSupabaseClient = {
@@ -56,7 +60,8 @@ export async function buildGlobalBiomedicalOntologyPopulationRows(
 ): Promise<GlobalBiomedicalOntologyPopulationRows> {
     const fetchImpl = input.fetchImpl ?? (globalThis.fetch as unknown as OfficialFetch);
     const providerKeys = new Set(input.providerKeys ?? OFFICIAL_ONTOLOGY_PROVIDERS.map((provider) => provider.provider_key));
-    const providerPlan = buildOfficialOntologyIngestionPlan(input.env);
+    const providerPlan = buildOfficialOntologyIngestionPlan(input.env)
+        .filter((plan) => providerKeys.has(plan.provider_key));
     const planByKey = new Map(providerPlan.map((plan) => [plan.provider_key, plan]));
     const releaseRows: Record<string, unknown>[] = [];
     const nodeRows: Record<string, unknown>[] = [];
@@ -66,7 +71,8 @@ export async function buildGlobalBiomedicalOntologyPopulationRows(
 
     for (const provider of OFFICIAL_ONTOLOGY_PROVIDERS.filter((entry) => providerKeys.has(entry.provider_key))) {
         const plan = planByKey.get(provider.provider_key);
-        if (!plan || plan.status !== 'ready') {
+        const allowBlockedWahisEvidence = provider.provider_key === 'woah_wahis_official_export';
+        if ((!plan || plan.status !== 'ready') && !allowBlockedWahisEvidence) {
             skippedProviders.push({
                 provider_key: provider.provider_key,
                 reason: plan?.status ?? 'not_planned',
@@ -90,11 +96,10 @@ export async function buildGlobalBiomedicalOntologyPopulationRows(
                     provider_key: provider.provider_key,
                     reason: parsed.skippedReason,
                 });
-            } else {
-                releaseRows.push(...parsed.releaseRows);
-                nodeRows.push(...parsed.nodeRows);
-                relationshipRows.push(...parsed.relationshipRows);
             }
+            releaseRows.push(...parsed.releaseRows);
+            nodeRows.push(...parsed.nodeRows);
+            relationshipRows.push(...parsed.relationshipRows);
             continue;
         }
 
@@ -218,6 +223,10 @@ async function fetchProviderSpecificPopulationRows(input: {
         return fetchNcbiLiteraturePopulationRows(input);
     }
 
+    if (input.provider.provider_key === 'woah_wahis_official_export') {
+        return fetchWahisAutoIngestionRows(input);
+    }
+
     const releaseUrl = input.provider.release_url_env
         ? input.env?.[input.provider.release_url_env] ?? process.env[input.provider.release_url_env]
         : null;
@@ -265,6 +274,134 @@ async function fetchProviderSpecificPopulationRows(input: {
             nodeRows: [],
             relationshipRows: [],
             skippedReason: error instanceof Error ? error.message : 'unknown_provider_import_error',
+        };
+    }
+}
+
+async function fetchWahisAutoIngestionRows(input: {
+    provider: OfficialOntologyProvider;
+    fetchImpl: OfficialFetch;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+    maxRelationships: number;
+    env?: Record<string, string | undefined>;
+}) {
+    const releaseUrl = normalizeOptionalText(input.env?.WAHIS_EXPORT_URL ?? process.env.WAHIS_EXPORT_URL);
+    if (!releaseUrl) {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: 'missing_export_url',
+            expected_env: 'WAHIS_EXPORT_URL',
+            expected_storage_path: 'ontology-provider-exports/wahis/latest.csv',
+            source_portal: input.provider.url,
+            setup_mode: 'one_time_admin_export_link',
+            clinical_boundary: 'WAHIS ingestion is blocked until an official WOAH WAHIS CSV/JSON export URL is configured.',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: input.provider.url,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'blocked',
+                licenseStatus: 'blocked',
+                releasePacket,
+                blockers: ['missing_export_url:WAHIS_EXPORT_URL'],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: 'missing_export_url',
+        };
+    }
+
+    try {
+        const response = await input.fetchImpl(releaseUrl, { cache: 'no-store' });
+        if (!response.ok) {
+            const releasePacket = {
+                provider_name: input.provider.name,
+                provider_status: 'fetch_failed',
+                source_url: releaseUrl,
+                http_status: response.status,
+                http_status_text: response.statusText,
+            };
+            return {
+                releaseRows: [buildGenericReleaseRow({
+                    provider: input.provider,
+                    sourceUrl: releaseUrl,
+                    tenantId: input.tenantId,
+                    requestId: input.requestId,
+                    observedAt: input.observedAt,
+                    payloadHash: sha256(releasePacket),
+                    nodeCount: 0,
+                    importedNodeCount: 0,
+                    relationshipCount: 0,
+                    importedRelationshipCount: 0,
+                    releaseStatus: 'failed',
+                    licenseStatus: 'public_reference',
+                    releasePacket,
+                    blockers: [`wahis_fetch_failed_${response.status}`],
+                })],
+                nodeRows: [],
+                relationshipRows: [],
+                skippedReason: `fetch_failed_${response.status}`,
+            };
+        }
+
+        const contentType = response.headers?.get('content-type')?.toLowerCase() ?? '';
+        const payloadText = response.text
+            ? await response.text()
+            : stableStringify(await response.json());
+        const parsed = parseWahisExportPopulation({
+            provider: input.provider,
+            payloadText,
+            contentType,
+            sourceUrl: releaseUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            maxNodes: input.maxNodes,
+        });
+        return {
+            releaseRows: [parsed.releaseRow],
+            nodeRows: parsed.nodeRows,
+            relationshipRows: [],
+            skippedReason: null,
+        };
+    } catch (error) {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: 'parse_or_fetch_error',
+            source_url: releaseUrl,
+            error: error instanceof Error ? error.message : 'unknown_wahis_import_error',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: releaseUrl,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'failed',
+                licenseStatus: 'public_reference',
+                releasePacket,
+                blockers: ['wahis_parse_or_fetch_error'],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: error instanceof Error ? error.message : 'unknown_wahis_import_error',
         };
     }
 }
@@ -548,6 +685,174 @@ function parseGenericOfficialJsonPopulation(input: {
     });
 
     return { releaseRow, nodeRows };
+}
+
+function parseWahisExportPopulation(input: {
+    provider: OfficialOntologyProvider;
+    payloadText: string;
+    contentType: string;
+    sourceUrl: string;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+}) {
+    const trimmed = input.payloadText.trim();
+    const payloadHash = createHash('sha256').update(input.payloadText).digest('hex');
+    const records = looksLikeJson(trimmed) || input.contentType.includes('json')
+        ? extractGenericRecords(JSON.parse(trimmed || '{}'))
+        : parseDelimitedText(trimmed);
+    const limitedRecords = records.slice(0, input.maxNodes);
+    const nodeRows = limitedRecords
+        .map((record, index) => buildWahisNodeFromRecord({
+            provider: input.provider,
+            record,
+            index,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+        }))
+        .filter(isRecordRow) as Record<string, unknown>[];
+    const skippedRows = Math.max(0, records.length - nodeRows.length);
+    const releasePacket = {
+        provider_name: input.provider.name,
+        provider_status: nodeRows.length > 0 ? 'imported' : 'no_importable_rows',
+        parser: input.contentType.includes('json') || looksLikeJson(trimmed)
+            ? 'wahis_json_export_v1'
+            : 'wahis_csv_export_v1',
+        source_url: input.sourceUrl,
+        source_portal: input.provider.url,
+        expected_storage_path: 'ontology-provider-exports/wahis/latest.csv',
+        source_hash: payloadHash,
+        raw_rows: records.length,
+        imported_rows: nodeRows.length,
+        skipped_rows: skippedRows,
+        truncated_rows: Math.max(0, records.length - limitedRecords.length),
+        ontology_coverage: {
+            provider_key: input.provider.provider_key,
+            code_system: input.provider.code_system,
+            node_kind: 'surveillance_record',
+            imported_surveillance_records: nodeRows.length,
+        },
+        clinical_boundary: 'WAHIS rows are population surveillance evidence only; they do not validate patient-level diagnosis or treatment decisions.',
+    };
+
+    const releaseRow = buildGenericReleaseRow({
+        provider: input.provider,
+        sourceUrl: input.sourceUrl,
+        tenantId: input.tenantId,
+        requestId: input.requestId,
+        observedAt: input.observedAt,
+        payloadHash,
+        nodeCount: records.length,
+        importedNodeCount: nodeRows.length,
+        relationshipCount: 0,
+        importedRelationshipCount: 0,
+        releaseStatus: nodeRows.length === 0 ? 'partial' : skippedRows > 0 ? 'partial' : 'imported',
+        licenseStatus: 'public_reference',
+        releasePacket,
+        blockers: nodeRows.length === 0 ? ['wahis_export_has_no_importable_rows'] : [],
+    });
+
+    return { releaseRow, nodeRows };
+}
+
+function buildWahisNodeFromRecord(input: {
+    provider: OfficialOntologyProvider;
+    record: Record<string, unknown>;
+    index: number;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+}) {
+    const disease = readFirstString(input.record, [
+        'disease_name',
+        'disease',
+        'Disease',
+        'Disease name',
+        'Disease Name',
+        'event_disease',
+        'eventDisease',
+        'name',
+    ]);
+    const country = readFirstString(input.record, [
+        'country',
+        'Country',
+        'country_name',
+        'Country name',
+        'Country Name',
+        'territory',
+    ]);
+    const species = readFirstString(input.record, [
+        'species',
+        'Species',
+        'host',
+        'Host',
+        'animal_type',
+        'animalType',
+        'domestic_wild',
+    ]);
+    const eventId = readFirstString(input.record, [
+        'event_id',
+        'eventId',
+        'Event ID',
+        'event',
+        'report_id',
+        'reportId',
+        'outbreak_id',
+        'outbreakId',
+        'id',
+    ]);
+    const date = readFirstString(input.record, [
+        'event_start_date',
+        'eventStartDate',
+        'start_date',
+        'Start date',
+        'report_date',
+        'submissionDate',
+        'date',
+    ]);
+    if (!disease) return null;
+    const label = [disease, country, species].filter(Boolean).join(' · ');
+
+    const fallbackCode = sha256({
+        provider_key: input.provider.provider_key,
+        index: input.index,
+        disease,
+        country,
+        species,
+        eventId,
+        date,
+    }).slice(0, 16);
+    const externalCode = `WAHIS:${sanitizeCode(eventId ?? fallbackCode)}`;
+    const sourceIri = readFirstString(input.record, ['url', 'source_url', 'source', 'report_url']) ?? input.provider.url;
+
+    return buildGenericNodeRow({
+        provider: input.provider,
+        tenantId: input.tenantId,
+        requestId: input.requestId,
+        observedAt: input.observedAt,
+        externalCode,
+        canonicalLabel: label || disease || `WAHIS surveillance record ${input.index + 1}`,
+        sourceIri,
+        nodeKind: 'surveillance_record',
+        nodePacket: {
+            provider_key: input.provider.provider_key,
+            source_key: input.provider.source_key,
+            disease_name: disease,
+            country,
+            species,
+            event_id: eventId,
+            event_date: date,
+            report_type: readFirstString(input.record, ['report_type', 'reportType', 'Report type']),
+            event_status: readFirstString(input.record, ['event_status', 'eventStatus', 'status', 'Status']),
+            cases: readFirstString(input.record, ['cases', 'Cases']),
+            deaths: readFirstString(input.record, ['deaths', 'Deaths']),
+            raw_record_keys: Object.keys(input.record).sort(),
+            record_digest: sha256(input.record),
+            clinical_boundary: 'Imported WAHIS surveillance record; use for population context and ontology coverage, not individual diagnosis.',
+        },
+    });
 }
 
 function buildGenericNodeFromRecord(input: {
@@ -837,7 +1142,9 @@ function buildPopulationSnapshotRow(input: {
     errors: Array<{ provider_key: string; error: string }>;
     observedAt: string | null;
 }) {
-    const importedProviderCount = new Set(input.releaseRows.map((row) => String(row.provider_key))).size;
+    const importedProviderCount = new Set(input.releaseRows
+        .filter((row) => ['imported', 'partial'].includes(String(row.release_status)))
+        .map((row) => String(row.provider_key))).size;
     const blockedProviderCount = input.providerPlan.length - importedProviderCount;
     const licensedProviderCount = input.providerPlan.filter((provider) => provider.access === 'licensed_release').length;
     const credentialedProviderCount = input.providerPlan.filter((provider) => provider.access === 'credentialed_api').length;
@@ -848,6 +1155,7 @@ function buildPopulationSnapshotRow(input: {
         errors: input.errors.length,
         licensedProviderCount,
         credentialedProviderCount,
+        completeProviderCatalog: input.providerPlan.length === OFFICIAL_ONTOLOGY_PROVIDERS.length,
     });
 
     const packet = {
@@ -891,12 +1199,13 @@ function classifyPopulationStatus(input: {
     errors: number;
     licensedProviderCount: number;
     credentialedProviderCount: number;
+    completeProviderCatalog: boolean;
 }) {
     if (input.importedProviderCount === 0) return 'foundation';
     if (input.errors > 0) return 'partial';
-    if (input.blockedProviderCount === 0) return 'fully_populated';
+    if (input.blockedProviderCount === 0 && input.completeProviderCatalog) return 'fully_populated';
     if (input.importedProviderCount > 0 && input.licensedProviderCount + input.credentialedProviderCount > 0) return 'public_sources_populated';
-    return input.importedProviderCount === input.providerCount ? 'fully_populated' : 'partial';
+    return input.importedProviderCount === input.providerCount ? 'public_sources_populated' : 'partial';
 }
 
 function buildPopulationBlockers(
@@ -1014,6 +1323,80 @@ function extractGenericRecords(payload: unknown): Array<Record<string, unknown>>
         if (rows.length > 0) return rows;
     }
     return Object.keys(record).length > 0 ? [record] : [];
+}
+
+function parseDelimitedText(value: string): Array<Record<string, unknown>> {
+    const lines = value
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length < 2) return [];
+    const delimiter = inferDelimiter(lines[0]);
+    const headers = splitDelimitedLine(lines[0], delimiter)
+        .map((header) => header.trim())
+        .filter(Boolean);
+    if (headers.length === 0) return [];
+    return lines.slice(1)
+        .map((line) => {
+            const values = splitDelimitedLine(line, delimiter);
+            return headers.reduce<Record<string, unknown>>((record, header, index) => {
+                const value = values[index]?.trim();
+                if (value) record[header] = value;
+                return record;
+            }, {});
+        })
+        .filter((record) => Object.keys(record).length > 0);
+}
+
+function splitDelimitedLine(line: string, delimiter: string): string[] {
+    const cells: string[] = [];
+    let current = '';
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+        const char = line[index];
+        const next = line[index + 1];
+        if (char === '"' && next === '"') {
+            current += '"';
+            index += 1;
+            continue;
+        }
+        if (char === '"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (char === delimiter && !quoted) {
+            cells.push(current);
+            current = '';
+            continue;
+        }
+        current += char;
+    }
+    cells.push(current);
+    return cells;
+}
+
+function inferDelimiter(headerLine: string): string {
+    const candidates = [',', ';', '\t'];
+    return candidates
+        .map((delimiter) => ({ delimiter, columns: splitDelimitedLine(headerLine, delimiter).length }))
+        .sort((a, b) => b.columns - a.columns)[0]?.delimiter ?? ',';
+}
+
+function looksLikeJson(value: string): boolean {
+    return value.startsWith('{') || value.startsWith('[');
+}
+
+function normalizeOptionalText(value: string | undefined): string | null {
+    const trimmed = value?.trim();
+    return trimmed ? trimmed : null;
+}
+
+function sanitizeCode(value: string): string {
+    return value
+        .trim()
+        .replace(/\s+/g, '_')
+        .replace(/[^A-Za-z0-9:._-]/g, '')
+        .slice(0, 96);
 }
 
 function readBoolean(value: unknown): boolean | null {

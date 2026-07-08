@@ -81,6 +81,19 @@ Content-Type: application/json
 
 Set `dry_run` to `false` only after reviewing node counts, provider skips, release hashes, and expected Supabase write volume.
 
+Populate only the WOAH WAHIS provider:
+
+```http
+POST /api/ontology/global-one-health/populate
+Content-Type: application/json
+
+{
+  "request_id": "wahis-auto-ingestion-2026-07-08",
+  "provider_keys": ["woah_wahis_official_export"],
+  "dry_run": true
+}
+```
+
 Run the full scheduled ontology orchestrator:
 
 ```http
@@ -148,8 +161,49 @@ Content-Type: application/json
 | PubMed/PMC | Public API importers | Uses NCBI E-utilities; production should set an API key. |
 | SNOMED CT | License-gated release source | Requires a licensed JSON release URL and deployment-specific terms. |
 | VeNom | Release/license-gated veterinary nomenclature | Requires release/source URL and review before verified code writes. |
-| WOAH WAHIS | Official export importer | Requires `WAHIS_EXPORT_URL`; imports surveillance records as review-gated nodes. |
+| WOAH WAHIS | Auto-ingestion official export adapter | Requires `WAHIS_EXPORT_URL`; imports CSV/JSON surveillance records as review-gated nodes. If missing, records `provider_status = missing_export_url` in a blocked release event. |
 | CDC Open Data | Official export importer | Requires `CDC_OPEN_DATA_URL`; imports public-health records as review-gated nodes. |
+
+## WOAH WAHIS Auto-Ingestion Adapter
+
+WAHIS is treated as a one-time official export link, then automatic cron ingestion.
+
+Do not set `WAHIS_EXPORT_URL` to `https://wahis.woah.org/`; that is the interactive portal, not an ingestable export artifact.
+
+Recommended storage shape:
+
+```text
+Supabase Storage bucket:
+ontology-provider-exports
+
+Object path:
+wahis/latest.csv
+
+Stable URL:
+https://<project>.supabase.co/storage/v1/object/public/ontology-provider-exports/wahis/latest.csv
+```
+
+Set:
+
+```bash
+WAHIS_EXPORT_URL=https://<project>.supabase.co/storage/v1/object/public/ontology-provider-exports/wahis/latest.csv
+```
+
+Adapter behavior:
+
+- If `WAHIS_EXPORT_URL` is missing, VetIOS writes a blocked `official_ontology_release_events` row with `release_packet.provider_status = "missing_export_url"` and blocker `missing_export_url:WAHIS_EXPORT_URL`.
+- If the URL exists, VetIOS fetches it on cron and accepts CSV or JSON.
+- Imported rows become `global_biomedical_ontology_node_events` with `node_kind = "surveillance_record"`.
+- Every run stores `source_document_hash`, raw row count, imported row count, skipped row count, parser version, source URL, and ontology coverage in `release_packet`.
+- WAHIS rows stay review-gated population surveillance evidence. They do not directly alter diagnosis probabilities.
+
+Minimal CSV columns supported:
+
+```csv
+event_id,disease_name,country,species,event_start_date,status,cases,deaths
+```
+
+The parser also recognizes common variants such as `Disease`, `Disease Name`, `Country`, `Species`, `eventId`, `reportId`, `outbreakId`, `eventStartDate`, and `submissionDate`.
 
 ## Environment Variables
 
