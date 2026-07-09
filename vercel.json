@@ -86,6 +86,10 @@
     {
       "path": "/api/cron/cire-reference-certification",
       "schedule": "20 3 * * *"
+    },
+    {
+      "path": "/api/cron/global-ontology-ingestion",
+      "schedule": "35 3 * * *"
     }
   ]
 }

@@ -3,8 +3,8 @@
  *
  * Enforces:
  * 1. Timing-safe token comparison (prevents timing attacks)
- * 2. x-vercel-cron header verification (Vercel-originating calls)
- * 3. CRON_SECRET or VETIOS_INTERNAL_API_TOKEN bearer token
+ * 2. Vercel cron header detection for audit attribution
+ * 3. CRON_SECRET, VETIOS_CRON_SECRET, or VETIOS_INTERNAL_API_TOKEN bearer token
  * 4. Structured auth failure logging
  * 5. Least-privilege: rejects if CRON_SECRET is not set
  */
@@ -37,18 +37,20 @@ function extractBearerToken(authorization: string | null): string | null {
 }
 
 /**
- * Verifies integrity of the cron job path using HMAC.
- * Vercel sends x-vercel-cron: 1 on legitimate cron calls.
+ * Detect Vercel cron calls for audit attribution. Vercel cron requests are still
+ * required to present a valid bearer token before they can execute work.
  */
 function isVercelCronOrigin(req: Request): boolean {
-  return req.headers.get('x-vercel-cron') === '1';
+  return req.headers.get('x-vercel-cron') === '1'
+    || Boolean(req.headers.get('x-vercel-cron-schedule'));
 }
 
 /**
  * Main auth function. Call at the top of every cron GET handler.
  */
 export function authorizeCronRequest(req: Request, jobName: string): CronAuthResult {
-  const cronSecret = process.env.CRON_SECRET?.trim();
+  const cronSecret = process.env.CRON_SECRET?.trim()
+    || process.env.VETIOS_CRON_SECRET?.trim();
   const internalToken = process.env.VETIOS_INTERNAL_API_TOKEN?.trim();
 
   // 1. CRON_SECRET must always be set — misconfiguration = reject
