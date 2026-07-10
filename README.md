@@ -29,6 +29,7 @@ Public links:
 - [Why VetIOS?](#why-vetios)
 - [CIRE Open Standard](#cire-open-standard)
 - [Architecture](#architecture)
+- [Decision Rails](#decision-rails)
 - [Data Flywheel](#data-flywheel)
 - [Federated Learning Moat](#federated-learning-moat)
 - [Core API](#core-api)
@@ -108,6 +109,19 @@ edge_simulation_events
 ```
 
 The platform favors structured schemas over free text, append-only event logs over destructive updates, and safety-bounded simulation over post-hoc incident response.
+
+## Decision Rails
+
+VetIOS Decision Rails v1 is the cross-module operating packet that turns the platform from separate features into one clinical infrastructure control plane. `GET /api/decision-rails` reads the tenant's inference anchor, CIRE reliability packet, gate decision, review queue, outcome linkage, ontology coverage, federation runtime, workflow integration, specialist review, AMR surveillance, AI security, and regulatory claim evidence, then returns one read-only decision posture.
+
+The packet answers four operational questions:
+
+- What inference or request is the current decision anchored to?
+- Which rails are operational, degraded, missing, or blocked?
+- What is the next required action: outcome capture, clinician review, blocker repair, or continued monitoring?
+- Should compute use cached replay, deterministic routing, high-reasoning escalation, or human review first?
+
+Decision Rails does not replace the underlying ledgers and does not mutate clinical records. It is the orchestration layer for dashboards, service accounts, and future compute-routing markets where cost, latency, reviewability, and evidence quality need to be visible before execution.
 
 ## Data Flywheel
 
