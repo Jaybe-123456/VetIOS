@@ -463,7 +463,7 @@ export default function DashboardControlPlaneClient() {
 
                 {/* ── Control Plane Operations HUD ── */}
                 <ConsoleCard title="Control Plane Core Operations" className="mt-4 glass-card-accent accent-line-top" collapsible defaultCollapsed={false}>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-7 gap-2 sm:gap-3 mb-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-8 gap-2 sm:gap-3 mb-4">
                         <button type="button" onClick={() => void refreshSnapshot(false)} className="col-span-2 sm:col-span-1 xl:col-span-1 border border-accent/60 shadow-[0_0_10px_rgba(0,255,65,0.2)] bg-accent/5 active:bg-accent active:text-black sm:hover:bg-accent sm:hover:text-black text-accent flex flex-col items-center justify-center gap-2 h-full py-4 sm:py-5 transition-all text-[10px] sm:text-xs font-mono uppercase tracking-widest disabled:opacity-50 min-h-[80px] touch-manipulation">
                             <Activity className={`w-6 h-6 ${refreshing ? 'animate-spin' : ''}`} />
                             {refreshing ? 'REFRESHING...' : 'REFRESH\nSNAPSHOT'}
@@ -495,6 +495,10 @@ export default function DashboardControlPlaneClient() {
                         <Link href="/developer" className="border border-[hsl(0_0%_20%)] hover:border-accent/50 bg-[hsl(0_0%_8%)] flex flex-col justify-center gap-3 p-4 transition-all group">
                             <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.7)]"><Bot className="w-6 h-6" /></div>
                             <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_82%)] group-hover:text-[hsl(0_0%_95%)]">Moat Ops</div>
+                        </Link>
+                        <Link href="/dashboard/ingestion" className="border border-accent/40 hover:border-accent bg-accent/5 flex flex-col justify-center gap-3 p-4 transition-all group">
+                            <div className="text-accent group-hover:drop-shadow-[0_0_8px_rgba(0,255,65,0.8)]"><Database className="w-6 h-6" /></div>
+                            <div className="font-mono text-[11px] uppercase tracking-[0.12em] text-[hsl(0_0%_88%)] group-hover:text-[hsl(0_0%_98%)]">Ontology Ops</div>
                         </Link>
                     </div>
 

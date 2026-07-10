@@ -224,6 +224,55 @@ describe('global biomedical ontology population importer', () => {
         });
     });
 
+    it('blocks provider portal homepages when release/export file URLs are required', async () => {
+        const wahis = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'wahis-portal-url-test',
+            providerKeys: ['woah_wahis_official_export'],
+            env: { WAHIS_EXPORT_URL: 'https://wahis.woah.org/' },
+            fetchImpl: async () => {
+                throw new Error('fetch should not run for WAHIS portal homepage');
+            },
+        });
+        const snomed = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'snomed-portal-url-test',
+            providerKeys: ['snomed_ct_release'],
+            env: { SNOMED_CT_RELEASE_URL: 'https://www.snomed.org/' },
+            fetchImpl: async () => {
+                throw new Error('fetch should not run for SNOMED homepage');
+            },
+        });
+        const venom = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'venom-portal-url-test',
+            providerKeys: ['venom_release'],
+            env: { VENOM_RELEASE_URL: 'https://venomcoding.org/' },
+            fetchImpl: async () => {
+                throw new Error('fetch should not run for VeNom homepage');
+            },
+        });
+
+        expect(wahis.skippedProviders).toEqual([
+            { provider_key: 'woah_wahis_official_export', reason: 'portal_url_not_export_file' },
+        ]);
+        expect(wahis.releaseRows[0]).toMatchObject({
+            release_status: 'blocked',
+            blockers: ['wahis_export_url_portal_url_not_export_file'],
+        });
+        expect(snomed.skippedProviders).toEqual([
+            { provider_key: 'snomed_ct_release', reason: 'portal_url_not_release_file' },
+        ]);
+        expect(snomed.releaseRows[0]).toMatchObject({
+            release_status: 'blocked',
+            blockers: ['snomed_ct_release_url_portal_url_not_release_file'],
+        });
+        expect(venom.skippedProviders).toEqual([
+            { provider_key: 'venom_release', reason: 'portal_url_not_release_file' },
+        ]);
+        expect(venom.releaseRows[0]).toMatchObject({
+            release_status: 'blocked',
+            blockers: ['venom_release_url_portal_url_not_release_file'],
+        });
+    });
+
     it('auto-ingests WAHIS CSV exports with source hash and row-count evidence', async () => {
         const csv = [
             'event_id,disease_name,country,species,event_start_date,status,cases,deaths',
@@ -531,4 +580,250 @@ describe('global biomedical ontology population importer', () => {
             node_kind: 'class',
         });
     });
+
+    it('imports SNOMED CT RF2 manifest rows from a licensed release URL', async () => {
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'snomed-rf2-test',
+            providerKeys: ['snomed_ct_release'],
+            env: {
+                SNOMED_CT_RELEASE_URL: 'https://example.test/licensed/snomed-rf2.json',
+            },
+            fetchImpl: async (url) => {
+                expect(url).toBe('https://example.test/licensed/snomed-rf2.json');
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                        get(name: string) {
+                            return name.toLowerCase() === 'content-type' ? 'application/json' : null;
+                        },
+                    },
+                    async json() {
+                        throw new Error('SNOMED manifest should be read as text for stable hashing');
+                    },
+                    async text() {
+                        return JSON.stringify({
+                            concepts_tsv: [
+                                'id\teffectiveTime\tactive\tmoduleId\tdefinitionStatusId',
+                                '404684003\t20260131\t1\t900000000000207008\t900000000000074008',
+                                '111111111\t20260131\t0\t900000000000207008\t900000000000074008',
+                            ].join('\n'),
+                            descriptions_tsv: [
+                                'id\teffectiveTime\tactive\tmoduleId\tconceptId\tlanguageCode\ttypeId\tterm\tcaseSignificanceId',
+                                '555\t20260131\t1\t900000000000207008\t404684003\ten\t900000000000013009\tClinical finding\t900000000000448009',
+                            ].join('\n'),
+                            relationships_tsv: [
+                                'id\teffectiveTime\tactive\tmoduleId\tsourceId\tdestinationId\trelationshipGroup\ttypeId\tcharacteristicTypeId\tmodifierId',
+                                '777\t20260131\t1\t900000000000207008\t404684003\t138875005\t0\t116680003\t900000000000011006\t900000000000451002',
+                            ].join('\n'),
+                        });
+                    },
+                };
+            },
+        });
+
+        expect(rows.skippedProviders).toHaveLength(0);
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(1);
+        expect(rows.relationshipRows).toHaveLength(1);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'snomed_ct_release',
+            code_system: 'SNOMEDCT',
+            access_mode: 'licensed_release',
+            license_status: 'licensed',
+            release_status: 'imported',
+            imported_node_count: 1,
+            imported_relationship_count: 1,
+        });
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            parser: 'snomed_ct_rf2_manifest_json_v1',
+            active_concepts: 1,
+            imported_nodes: 1,
+            imported_relationships: 1,
+        });
+        expect(rows.nodeRows[0]).toMatchObject({
+            provider_key: 'snomed_ct_release',
+            external_code: 'SNOMEDCT:404684003',
+            canonical_label: 'Clinical finding',
+            node_kind: 'terminology_concept',
+        });
+        expect(rows.relationshipRows[0]).toMatchObject({
+            subject_code: 'SNOMEDCT:404684003',
+            predicate: 'SNOMEDCT:116680003',
+            object_code: 'SNOMEDCT:138875005',
+            relationship_kind: 'is_a',
+        });
+    });
+
+    it('imports SNOMED CT RF2 ZIP release artifacts when a licensed ZIP URL is configured', async () => {
+        const zip = makeStoredZip([
+            {
+                name: 'Snapshot/Terminology/sct2_Concept_Snapshot_INT_20260131.txt',
+                text: [
+                    'id\teffectiveTime\tactive\tmoduleId\tdefinitionStatusId',
+                    '404684003\t20260131\t1\t900000000000207008\t900000000000074008',
+                ].join('\n'),
+            },
+            {
+                name: 'Snapshot/Terminology/sct2_Description_Snapshot-en_INT_20260131.txt',
+                text: [
+                    'id\teffectiveTime\tactive\tmoduleId\tconceptId\tlanguageCode\ttypeId\tterm\tcaseSignificanceId',
+                    '555\t20260131\t1\t900000000000207008\t404684003\ten\t900000000000013009\tClinical finding\t900000000000448009',
+                ].join('\n'),
+            },
+            {
+                name: 'Snapshot/Terminology/sct2_Relationship_Snapshot_INT_20260131.txt',
+                text: [
+                    'id\teffectiveTime\tactive\tmoduleId\tsourceId\tdestinationId\trelationshipGroup\ttypeId\tcharacteristicTypeId\tmodifierId',
+                    '777\t20260131\t1\t900000000000207008\t404684003\t138875005\t0\t116680003\t900000000000011006\t900000000000451002',
+                ].join('\n'),
+            },
+        ]);
+
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'snomed-rf2-zip-test',
+            providerKeys: ['snomed_ct_release'],
+            env: {
+                SNOMED_CT_RELEASE_URL: 'https://example.test/licensed/snomed-rf2.zip',
+            },
+            fetchImpl: async () => ({
+                ok: true,
+                status: 200,
+                statusText: 'OK',
+                headers: {
+                    get(name: string) {
+                        return name.toLowerCase() === 'content-type' ? 'application/zip' : null;
+                    },
+                },
+                async json() {
+                    throw new Error('zip should be read as arrayBuffer');
+                },
+                async text() {
+                    throw new Error('zip should be read as arrayBuffer');
+                },
+                async arrayBuffer() {
+                    return zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength);
+                },
+            }),
+        });
+
+        expect(rows.skippedProviders).toHaveLength(0);
+        expect(rows.nodeRows).toHaveLength(1);
+        expect(rows.relationshipRows).toHaveLength(1);
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            parser: 'snomed_ct_rf2_manifest_json_v1',
+            imported_nodes: 1,
+            imported_relationships: 1,
+        });
+    });
+
+    it('imports VeNom licensed dictionary exports with hierarchy evidence', async () => {
+        const csv = [
+            'venom_id,term,status,parent_id,body_system,top_level_model',
+            'V001,Rabies,active,VROOT,Neurologic,Diagnosis',
+            'V002,Retired term,inactive,VROOT,General,Diagnosis',
+        ].join('\n');
+
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'venom-release-test',
+            providerKeys: ['venom_release'],
+            env: {
+                VENOM_RELEASE_URL: 'https://example.test/licensed/venom.csv',
+            },
+            fetchImpl: async (url) => {
+                expect(url).toBe('https://example.test/licensed/venom.csv');
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                        get(name: string) {
+                            return name.toLowerCase() === 'content-type' ? 'text/csv' : null;
+                        },
+                    },
+                    async json() {
+                        throw new Error('VeNom CSV should be read as text');
+                    },
+                    async text() {
+                        return csv;
+                    },
+                };
+            },
+        });
+
+        expect(rows.skippedProviders).toHaveLength(0);
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(1);
+        expect(rows.relationshipRows).toHaveLength(1);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'venom_release',
+            code_system: 'VeNom',
+            access_mode: 'licensed_release',
+            license_status: 'licensed',
+            release_status: 'partial',
+            node_count: 2,
+            imported_node_count: 1,
+        });
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            parser: 'venom_release_delimited_v1',
+            raw_rows: 2,
+            active_rows: 1,
+            imported_rows: 1,
+            relationship_rows: 1,
+        });
+        expect(rows.nodeRows[0]).toMatchObject({
+            provider_key: 'venom_release',
+            external_code: 'VeNom:V001',
+            canonical_label: 'Rabies',
+            node_kind: 'veterinary_nomenclature',
+        });
+        expect(rows.relationshipRows[0]).toMatchObject({
+            subject_code: 'VeNom:V001',
+            predicate: 'broader_than',
+            object_code: 'VeNom:VROOT',
+            relationship_kind: 'terminology_hierarchy',
+        });
+    });
 });
+
+function makeStoredZip(entries: Array<{ name: string; text: string }>) {
+    const localParts: Buffer[] = [];
+    const centralParts: Buffer[] = [];
+    let offset = 0;
+
+    for (const entry of entries) {
+        const name = Buffer.from(entry.name, 'utf8');
+        const data = Buffer.from(entry.text, 'utf8');
+        const local = Buffer.alloc(30);
+        local.writeUInt32LE(0x04034b50, 0);
+        local.writeUInt16LE(20, 4);
+        local.writeUInt16LE(0, 8);
+        local.writeUInt32LE(data.length, 18);
+        local.writeUInt32LE(data.length, 22);
+        local.writeUInt16LE(name.length, 26);
+        localParts.push(local, name, data);
+
+        const central = Buffer.alloc(46);
+        central.writeUInt32LE(0x02014b50, 0);
+        central.writeUInt16LE(20, 4);
+        central.writeUInt16LE(20, 6);
+        central.writeUInt16LE(0, 10);
+        central.writeUInt32LE(data.length, 20);
+        central.writeUInt32LE(data.length, 24);
+        central.writeUInt16LE(name.length, 28);
+        central.writeUInt32LE(offset, 42);
+        centralParts.push(central, name);
+        offset += local.length + name.length + data.length;
+    }
+
+    const localDirectory = Buffer.concat(localParts);
+    const centralDirectory = Buffer.concat(centralParts);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(entries.length, 8);
+    end.writeUInt16LE(entries.length, 10);
+    end.writeUInt32LE(centralDirectory.length, 12);
+    end.writeUInt32LE(localDirectory.length, 16);
+    return Buffer.concat([localDirectory, centralDirectory, end]);
+}

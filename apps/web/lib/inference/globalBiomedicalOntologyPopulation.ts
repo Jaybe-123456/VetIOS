@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { inflateRawSync } from 'zlib';
 import {
     OFFICIAL_ONTOLOGY_PROVIDERS,
     buildOfficialOntologyIngestionPlan,
@@ -12,6 +13,7 @@ type OfficialFetch = (input: string, init?: RequestInit) => Promise<{
     statusText: string;
     json: () => Promise<unknown>;
     text?: () => Promise<string>;
+    arrayBuffer?: () => Promise<ArrayBuffer>;
     headers?: {
         get: (name: string) => string | null;
     };
@@ -232,6 +234,14 @@ async function fetchProviderSpecificPopulationRows(input: {
         return fetchCdcOpenDataRows(input);
     }
 
+    if (input.provider.provider_key === 'snomed_ct_release') {
+        return fetchSnomedCtReleaseRows(input);
+    }
+
+    if (input.provider.provider_key === 'venom_release') {
+        return fetchVenomReleaseRows(input);
+    }
+
     const releaseUrl = input.provider.release_url_env
         ? input.env?.[input.provider.release_url_env] ?? process.env[input.provider.release_url_env]
         : null;
@@ -324,6 +334,39 @@ async function fetchWahisAutoIngestionRows(input: {
             nodeRows: [],
             relationshipRows: [],
             skippedReason: 'missing_export_url',
+        };
+    }
+
+    const urlStatus = classifyWahisExportUrl(releaseUrl);
+    if (urlStatus.status !== 'ready') {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: urlStatus.status,
+            source_url: releaseUrl,
+            expected_url_shape: 'A direct WOAH WAHIS CSV/JSON export URL or a Supabase Storage latest.csv/latest.json URL.',
+            source_portal: input.provider.url,
+            clinical_boundary: 'WAHIS_EXPORT_URL must point to a machine-readable export file, not the WAHIS portal homepage.',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: releaseUrl,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'blocked',
+                licenseStatus: 'blocked',
+                releasePacket,
+                blockers: [`wahis_export_url_${urlStatus.status}`],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: urlStatus.status,
         };
     }
 
@@ -583,6 +626,200 @@ async function fetchCdcOpenDataRows(input: {
             nodeRows: [],
             relationshipRows: [],
             skippedReason: error instanceof Error ? error.message : 'unknown_cdc_open_data_import_error',
+        };
+    }
+}
+
+async function fetchSnomedCtReleaseRows(input: {
+    provider: OfficialOntologyProvider;
+    fetchImpl: OfficialFetch;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+    maxRelationships: number;
+    env?: Record<string, string | undefined>;
+}) {
+    const releaseUrl = normalizeOptionalText(input.env?.SNOMED_CT_RELEASE_URL ?? process.env.SNOMED_CT_RELEASE_URL);
+    if (!releaseUrl) {
+        return {
+            releaseRows: [],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: 'snomed_ct_release_url_not_configured',
+        };
+    }
+
+    const urlStatus = classifyLicensedReleaseUrl(releaseUrl, input.provider.url);
+    if (urlStatus.status !== 'ready') {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: urlStatus.status,
+            source_url: releaseUrl,
+            expected_url_shape: 'A licensed SNOMED CT RF2 release file URL, extracted RF2 TSV manifest URL, or protected storage URL.',
+            source_portal: input.provider.url,
+            clinical_boundary: 'SNOMED_CT_RELEASE_URL must point to a licensed release artifact, not the SNOMED homepage or MLDS portal page.',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: releaseUrl,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'blocked',
+                licenseStatus: 'blocked',
+                releasePacket,
+                blockers: [`snomed_ct_release_url_${urlStatus.status}`],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: urlStatus.status,
+        };
+    }
+
+    try {
+        const response = await input.fetchImpl(releaseUrl, { cache: 'no-store' });
+        if (!response.ok) {
+            return {
+                releaseRows: [],
+                nodeRows: [],
+                relationshipRows: [],
+                skippedReason: `snomed_ct_fetch_failed_${response.status}`,
+            };
+        }
+        const contentType = response.headers?.get('content-type')?.toLowerCase() ?? '';
+        const payloadText = await readReleasePayloadText({
+            response,
+            sourceUrl: releaseUrl,
+            contentType,
+            mode: 'snomed_rf2',
+        });
+        const parsed = parseSnomedCtReleasePopulation({
+            provider: input.provider,
+            payloadText,
+            contentType,
+            sourceUrl: releaseUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            maxNodes: input.maxNodes,
+            maxRelationships: input.maxRelationships,
+        });
+        return {
+            releaseRows: [parsed.releaseRow],
+            nodeRows: parsed.nodeRows,
+            relationshipRows: parsed.relationshipRows,
+            skippedReason: null,
+        };
+    } catch (error) {
+        return {
+            releaseRows: [],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: error instanceof Error ? error.message : 'unknown_snomed_ct_import_error',
+        };
+    }
+}
+
+async function fetchVenomReleaseRows(input: {
+    provider: OfficialOntologyProvider;
+    fetchImpl: OfficialFetch;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+    maxRelationships: number;
+    env?: Record<string, string | undefined>;
+}) {
+    const releaseUrl = normalizeOptionalText(input.env?.VENOM_RELEASE_URL ?? process.env.VENOM_RELEASE_URL);
+    if (!releaseUrl) {
+        return {
+            releaseRows: [],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: 'venom_release_url_not_configured',
+        };
+    }
+
+    const urlStatus = classifyLicensedReleaseUrl(releaseUrl, input.provider.url);
+    if (urlStatus.status !== 'ready') {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: urlStatus.status,
+            source_url: releaseUrl,
+            expected_url_shape: 'A licensed/requested VeNom CSV/TSV/JSON/ZIP export URL or protected storage URL.',
+            source_portal: input.provider.url,
+            clinical_boundary: 'VENOM_RELEASE_URL must point to a VeNom release artifact, not the VeNom public homepage.',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: releaseUrl,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'blocked',
+                licenseStatus: 'blocked',
+                releasePacket,
+                blockers: [`venom_release_url_${urlStatus.status}`],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: urlStatus.status,
+        };
+    }
+
+    try {
+        const response = await input.fetchImpl(releaseUrl, { cache: 'no-store' });
+        if (!response.ok) {
+            return {
+                releaseRows: [],
+                nodeRows: [],
+                relationshipRows: [],
+                skippedReason: `venom_fetch_failed_${response.status}`,
+            };
+        }
+        const contentType = response.headers?.get('content-type')?.toLowerCase() ?? '';
+        const payloadText = await readReleasePayloadText({
+            response,
+            sourceUrl: releaseUrl,
+            contentType,
+            mode: 'generic_dictionary',
+        });
+        const parsed = parseVenomReleasePopulation({
+            provider: input.provider,
+            payloadText,
+            contentType,
+            sourceUrl: releaseUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            maxNodes: input.maxNodes,
+            maxRelationships: input.maxRelationships,
+        });
+        return {
+            releaseRows: [parsed.releaseRow],
+            nodeRows: parsed.nodeRows,
+            relationshipRows: parsed.relationshipRows,
+            skippedReason: null,
+        };
+    } catch (error) {
+        return {
+            releaseRows: [],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: error instanceof Error ? error.message : 'unknown_venom_import_error',
         };
     }
 }
@@ -1231,6 +1468,294 @@ function buildCdcNodeFromRecord(input: {
     });
 }
 
+function parseSnomedCtReleasePopulation(input: {
+    provider: OfficialOntologyProvider;
+    payloadText: string;
+    contentType: string;
+    sourceUrl: string;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+    maxRelationships: number;
+}) {
+    const payloadHash = createHash('sha256').update(input.payloadText).digest('hex');
+    const parsed = parseSnomedPayload(input.payloadText, input.contentType);
+    const activeConceptIds = new Set(parsed.concepts
+        .filter((record) => isActiveRecord(record))
+        .map(readSnomedConceptId)
+        .filter((value): value is string => Boolean(value)));
+    const activeDescriptions = parsed.descriptions.filter((record) => {
+        const conceptId = readSnomedDescriptionConceptId(record);
+        return isActiveRecord(record) && Boolean(conceptId);
+    });
+    for (const description of activeDescriptions) {
+        const conceptId = readSnomedDescriptionConceptId(description);
+        if (conceptId) activeConceptIds.add(conceptId);
+    }
+
+    const labelByConcept = buildSnomedLabelMap(activeDescriptions);
+    const limitedConceptIds = Array.from(activeConceptIds).slice(0, input.maxNodes);
+    const nodeRows = limitedConceptIds.map((conceptId, index) => {
+        const label = labelByConcept.get(conceptId) ?? `SNOMED CT concept ${conceptId}`;
+        return buildGenericNodeRow({
+            provider: input.provider,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            externalCode: `SNOMEDCT:${conceptId}`,
+            canonicalLabel: label,
+            sourceIri: `http://snomed.info/id/${conceptId}`,
+            nodeKind: 'terminology_concept',
+            nodePacket: {
+                provider_key: input.provider.provider_key,
+                source_key: input.provider.source_key,
+                concept_id: conceptId,
+                term: label,
+                description_count: activeDescriptions.filter((record) => readSnomedDescriptionConceptId(record) === conceptId).length,
+                source_index: index,
+                clinical_boundary: 'SNOMED CT terminology node imported from licensed release; reviewer verification is required before scoring use.',
+            },
+        });
+    });
+
+    const relationshipRows = parsed.relationships
+        .filter((record) => isActiveRecord(record))
+        .slice(0, input.maxRelationships)
+        .map((record) => buildSnomedRelationshipRow({
+            provider: input.provider,
+            record,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+        }))
+        .filter(isRecordRow) as Record<string, unknown>[];
+    const skippedRows = Math.max(0, activeConceptIds.size - nodeRows.length)
+        + Math.max(0, parsed.relationships.length - relationshipRows.length);
+    const parser = input.contentType.includes('json') || looksLikeJson(input.payloadText.trim())
+        ? 'snomed_ct_rf2_manifest_json_v1'
+        : 'snomed_ct_rf2_delimited_v1';
+    const releasePacket = {
+        provider_name: input.provider.name,
+        parser,
+        source_url: input.sourceUrl,
+        source_hash: payloadHash,
+        concept_rows: parsed.concepts.length,
+        description_rows: parsed.descriptions.length,
+        relationship_rows: parsed.relationships.length,
+        active_concepts: activeConceptIds.size,
+        imported_nodes: nodeRows.length,
+        imported_relationships: relationshipRows.length,
+        skipped_rows: skippedRows,
+        truncated_nodes: Math.max(0, activeConceptIds.size - nodeRows.length),
+        truncated_relationships: Math.max(0, parsed.relationships.length - relationshipRows.length),
+        accepted_payload_shapes: [
+            'RF2 concept/description/relationship TSV text',
+            'JSON manifest with concepts/descriptions/relationships arrays or delimited text fields',
+        ],
+        clinical_boundary: 'SNOMED CT is a licensed terminology bridge. Imported concepts are not patient-level truth and require mapping review before active scoring.',
+    };
+
+    const blockers = nodeRows.length === 0
+        ? ['snomed_ct_release_has_no_importable_active_concepts']
+        : [];
+    return {
+        releaseRow: buildGenericReleaseRow({
+            provider: input.provider,
+            sourceUrl: input.sourceUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            payloadHash,
+            nodeCount: activeConceptIds.size,
+            importedNodeCount: nodeRows.length,
+            relationshipCount: parsed.relationships.length,
+            importedRelationshipCount: relationshipRows.length,
+            releaseStatus: blockers.length > 0 ? 'partial' : skippedRows > 0 ? 'partial' : 'imported',
+            licenseStatus: 'licensed',
+            releasePacket,
+            blockers,
+        }),
+        nodeRows,
+        relationshipRows,
+    };
+}
+
+function parseVenomReleasePopulation(input: {
+    provider: OfficialOntologyProvider;
+    payloadText: string;
+    contentType: string;
+    sourceUrl: string;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+    maxRelationships: number;
+}) {
+    const trimmed = input.payloadText.trim();
+    const payloadHash = createHash('sha256').update(input.payloadText).digest('hex');
+    const records = looksLikeJson(trimmed) || input.contentType.includes('json')
+        ? extractGenericRecords(JSON.parse(trimmed || '[]'))
+        : parseDelimitedText(trimmed);
+    const importableRecords = records.filter((record) => isVenomActive(record));
+    const limitedRecords = importableRecords.slice(0, input.maxNodes);
+    const nodeRows = limitedRecords
+        .map((record, index) => buildVenomNodeFromRecord({
+            provider: input.provider,
+            record,
+            index,
+            sourceUrl: input.sourceUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+        }))
+        .filter(isRecordRow) as Record<string, unknown>[];
+    const relationshipRows = limitedRecords
+        .slice(0, input.maxRelationships)
+        .map((record) => buildVenomRelationshipFromRecord({
+            provider: input.provider,
+            record,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+        }))
+        .filter(isRecordRow) as Record<string, unknown>[];
+    const skippedRows = Math.max(0, records.length - nodeRows.length);
+    const parser = input.contentType.includes('json') || looksLikeJson(trimmed)
+        ? 'venom_release_json_v1'
+        : 'venom_release_delimited_v1';
+    const releasePacket = {
+        provider_name: input.provider.name,
+        parser,
+        source_url: input.sourceUrl,
+        source_hash: payloadHash,
+        raw_rows: records.length,
+        active_rows: importableRecords.length,
+        imported_rows: nodeRows.length,
+        relationship_rows: relationshipRows.length,
+        skipped_rows: skippedRows,
+        truncated_rows: Math.max(0, importableRecords.length - limitedRecords.length),
+        accepted_payload_shapes: [
+            'VeNom CSV/TSV export with id/code and term/name columns',
+            'JSON export with records/items/data/results arrays',
+        ],
+        clinical_boundary: 'VeNom terms are veterinary nomenclature nodes. They require source-mapping review before outcome-learning or scoring use.',
+    };
+    const blockers = nodeRows.length === 0
+        ? ['venom_release_has_no_importable_terms']
+        : [];
+
+    return {
+        releaseRow: buildGenericReleaseRow({
+            provider: input.provider,
+            sourceUrl: input.sourceUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            payloadHash,
+            nodeCount: records.length,
+            importedNodeCount: nodeRows.length,
+            relationshipCount: relationshipRows.length,
+            importedRelationshipCount: relationshipRows.length,
+            releaseStatus: blockers.length > 0 ? 'partial' : skippedRows > 0 ? 'partial' : 'imported',
+            licenseStatus: 'licensed',
+            releasePacket,
+            blockers,
+        }),
+        nodeRows,
+        relationshipRows,
+    };
+}
+
+function buildVenomNodeFromRecord(input: {
+    provider: OfficialOntologyProvider;
+    record: Record<string, unknown>;
+    index: number;
+    sourceUrl: string;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+}) {
+    const termId = readFirstString(input.record, [
+        'venom_id',
+        'venomid',
+        'VeNom ID',
+        'VeNomID',
+        'id',
+        'ID',
+        'code',
+        'Code',
+    ]);
+    const term = readFirstString(input.record, [
+        'term',
+        'Term',
+        'name',
+        'Name',
+        'label',
+        'Label',
+        'display_name',
+        'Display Name',
+        'preferred_term',
+        'Preferred Term',
+    ]);
+    if (!termId || !term) return null;
+    const externalCode = `VeNom:${sanitizeCode(termId)}`;
+    return buildGenericNodeRow({
+        provider: input.provider,
+        tenantId: input.tenantId,
+        requestId: input.requestId,
+        observedAt: input.observedAt,
+        externalCode,
+        canonicalLabel: term,
+        sourceIri: readFirstString(input.record, ['url', 'source_url', 'source_iri']) ?? input.sourceUrl,
+        nodeKind: 'veterinary_nomenclature',
+        nodePacket: {
+            provider_key: input.provider.provider_key,
+            source_key: input.provider.source_key,
+            venom_id: termId,
+            term,
+            term_type: readFirstString(input.record, ['type', 'Type', 'category', 'Category', 'label_type', 'Label Type']),
+            top_level_model: readFirstString(input.record, ['top_level_model', 'Top Level Model', 'model', 'Model']),
+            body_system: readFirstString(input.record, ['body_system', 'Body System', 'system', 'System']),
+            container: readFirstString(input.record, ['container', 'Container']),
+            parent_id: readFirstString(input.record, ['parent_id', 'Parent ID', 'parent', 'Parent']),
+            source_index: input.index,
+            raw_record_keys: Object.keys(input.record).sort(),
+            record_digest: sha256(input.record),
+            clinical_boundary: 'Imported licensed VeNom vocabulary term; reviewer verification is required before active candidate expansion.',
+        },
+    });
+}
+
+function buildVenomRelationshipFromRecord(input: {
+    provider: OfficialOntologyProvider;
+    record: Record<string, unknown>;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+}) {
+    const termId = readFirstString(input.record, ['venom_id', 'venomid', 'VeNom ID', 'VeNomID', 'id', 'ID', 'code', 'Code']);
+    const parentId = readFirstString(input.record, ['parent_id', 'Parent ID', 'parent', 'Parent', 'container_id', 'Container ID']);
+    if (!termId || !parentId || parentId === termId) return null;
+    return buildGenericRelationshipRow({
+        provider: input.provider,
+        tenantId: input.tenantId,
+        requestId: input.requestId,
+        observedAt: input.observedAt,
+        subjectCode: `VeNom:${sanitizeCode(termId)}`,
+        predicate: 'broader_than',
+        objectCode: `VeNom:${sanitizeCode(parentId)}`,
+        relationshipKind: 'terminology_hierarchy',
+        packet: {
+            provider_key: input.provider.provider_key,
+            source_key: input.provider.source_key,
+            subject_venom_id: termId,
+            parent_venom_id: parentId,
+            record_digest: sha256(input.record),
+        },
+    });
+}
+
 function buildGenericNodeFromRecord(input: {
     provider: OfficialOntologyProvider;
     record: Record<string, unknown>;
@@ -1317,6 +1842,186 @@ function buildGenericNodeRow(input: {
         node_hash: sha256(nodePacket),
         observed_at: input.observedAt,
     };
+}
+
+function buildGenericRelationshipRow(input: {
+    provider: OfficialOntologyProvider;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    subjectCode: string;
+    predicate: string;
+    objectCode: string;
+    relationshipKind: string;
+    packet: Record<string, unknown>;
+}) {
+    const packet = {
+        ...input.packet,
+        subject_code: input.subjectCode,
+        predicate: input.predicate,
+        object_code: input.objectCode,
+    };
+    return {
+        tenant_id: input.tenantId,
+        request_id: input.requestId,
+        provider_key: input.provider.provider_key,
+        source_key: input.provider.source_key,
+        code_system: input.provider.code_system,
+        subject_code: input.subjectCode,
+        predicate: input.predicate,
+        object_code: input.objectCode,
+        relationship_kind: input.relationshipKind,
+        relationship_packet: packet,
+        relationship_hash: sha256(packet),
+        observed_at: input.observedAt,
+    };
+}
+
+function parseSnomedPayload(payloadText: string, contentType: string): {
+    concepts: Array<Record<string, unknown>>;
+    descriptions: Array<Record<string, unknown>>;
+    relationships: Array<Record<string, unknown>>;
+} {
+    const trimmed = payloadText.trim();
+    if (looksLikeJson(trimmed) || contentType.includes('json')) {
+        const payload = asRecord(JSON.parse(trimmed || '{}'));
+        const concepts = readReleaseRecords(payload, ['concepts', 'concept', 'conceptRows', 'rf2_concepts', 'concepts_tsv', 'concepts_csv']);
+        const descriptions = readReleaseRecords(payload, ['descriptions', 'description', 'descriptionRows', 'rf2_descriptions', 'descriptions_tsv', 'descriptions_csv']);
+        const relationships = readReleaseRecords(payload, ['relationships', 'relationship', 'relationshipRows', 'rf2_relationships', 'relationships_tsv', 'relationships_csv']);
+        const fallbackRecords = extractGenericRecords(payload);
+        return {
+            concepts: concepts.length > 0 ? concepts : fallbackRecords.filter(looksLikeSnomedConceptRecord),
+            descriptions: descriptions.length > 0 ? descriptions : fallbackRecords.filter(looksLikeSnomedDescriptionRecord),
+            relationships: relationships.length > 0 ? relationships : fallbackRecords.filter(looksLikeSnomedRelationshipRecord),
+        };
+    }
+
+    const records = parseDelimitedText(trimmed);
+    return {
+        concepts: records.filter(looksLikeSnomedConceptRecord),
+        descriptions: records.filter(looksLikeSnomedDescriptionRecord),
+        relationships: records.filter(looksLikeSnomedRelationshipRecord),
+    };
+}
+
+function readReleaseRecords(payload: Record<string, unknown>, keys: string[]) {
+    for (const key of keys) {
+        const value = payload[key];
+        if (Array.isArray(value)) return value.map(asRecord).filter(isRecordRow);
+        if (typeof value === 'string') {
+            const records = parseDelimitedText(value.trim());
+            if (records.length > 0) return records;
+        }
+    }
+    return [] as Array<Record<string, unknown>>;
+}
+
+function looksLikeSnomedConceptRecord(record: Record<string, unknown>) {
+    return Boolean(readSnomedConceptId(record))
+        && hasAnyKey(record, ['definitionStatusId', 'definition_status_id', 'moduleId', 'module_id'])
+        && !hasAnyKey(record, ['term', 'sourceId', 'destinationId']);
+}
+
+function looksLikeSnomedDescriptionRecord(record: Record<string, unknown>) {
+    return Boolean(readSnomedDescriptionConceptId(record))
+        && Boolean(readFirstString(record, ['term', 'Term']));
+}
+
+function looksLikeSnomedRelationshipRecord(record: Record<string, unknown>) {
+    return Boolean(readFirstString(record, ['sourceId', 'source_id', 'source']))
+        && Boolean(readFirstString(record, ['destinationId', 'destination_id', 'destination']))
+        && Boolean(readFirstString(record, ['typeId', 'type_id', 'relationshipType']));
+}
+
+function hasAnyKey(record: Record<string, unknown>, keys: string[]) {
+    return keys.some((key) => Object.prototype.hasOwnProperty.call(record, key));
+}
+
+function readSnomedConceptId(record: Record<string, unknown>) {
+    return readFirstString(record, ['conceptId', 'concept_id', 'Concept ID'])
+        ?? (
+            looksLikeSnomedRelationshipRecord(record)
+                ? null
+                : readFirstString(record, ['id', 'ID'])
+        );
+}
+
+function readSnomedDescriptionConceptId(record: Record<string, unknown>) {
+    return readFirstString(record, ['conceptId', 'concept_id', 'Concept ID']);
+}
+
+function buildSnomedLabelMap(descriptions: Array<Record<string, unknown>>) {
+    const labels = new Map<string, string>();
+    const synonyms = new Map<string, string>();
+    for (const description of descriptions) {
+        const conceptId = readSnomedDescriptionConceptId(description);
+        const term = readFirstString(description, ['term', 'Term']);
+        if (!conceptId || !term) continue;
+        const typeId = readFirstString(description, ['typeId', 'type_id', 'descriptionTypeId']);
+        if (typeId === '900000000000013009' && !synonyms.has(conceptId)) synonyms.set(conceptId, term);
+        if (!labels.has(conceptId)) labels.set(conceptId, term);
+    }
+    for (const [conceptId, term] of synonyms) {
+        labels.set(conceptId, term);
+    }
+    return labels;
+}
+
+function buildSnomedRelationshipRow(input: {
+    provider: OfficialOntologyProvider;
+    record: Record<string, unknown>;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+}) {
+    const sourceId = readFirstString(input.record, ['sourceId', 'source_id', 'source']);
+    const destinationId = readFirstString(input.record, ['destinationId', 'destination_id', 'destination']);
+    const typeId = readFirstString(input.record, ['typeId', 'type_id', 'relationshipType']);
+    if (!sourceId || !destinationId || !typeId) return null;
+    return buildGenericRelationshipRow({
+        provider: input.provider,
+        tenantId: input.tenantId,
+        requestId: input.requestId,
+        observedAt: input.observedAt,
+        subjectCode: `SNOMEDCT:${sourceId}`,
+        predicate: `SNOMEDCT:${typeId}`,
+        objectCode: `SNOMEDCT:${destinationId}`,
+        relationshipKind: typeId === '116680003' ? 'is_a' : 'snomed_relationship',
+        packet: {
+            provider_key: input.provider.provider_key,
+            source_key: input.provider.source_key,
+            source_id: sourceId,
+            destination_id: destinationId,
+            type_id: typeId,
+            characteristic_type_id: readFirstString(input.record, ['characteristicTypeId', 'characteristic_type_id']),
+            modifier_id: readFirstString(input.record, ['modifierId', 'modifier_id']),
+            record_digest: sha256(input.record),
+        },
+    });
+}
+
+function isActiveRecord(record: Record<string, unknown>) {
+    const active = record.active ?? record.Active ?? record.is_active ?? record.status ?? record.Status;
+    if (typeof active === 'boolean') return active;
+    if (typeof active === 'number') return active === 1;
+    if (typeof active === 'string') {
+        const normalized = active.trim().toLowerCase();
+        return normalized === '1' || normalized === 'true' || normalized === 'active' || normalized === 'yes';
+    }
+    return true;
+}
+
+function isVenomActive(record: Record<string, unknown>) {
+    const active = record.active ?? record.Active ?? record.is_active ?? record.status ?? record.Status;
+    if (typeof active === 'undefined' || active === null) return true;
+    if (typeof active === 'boolean') return active;
+    if (typeof active === 'number') return active === 1;
+    if (typeof active === 'string') {
+        const normalized = active.trim().toLowerCase();
+        return ['1', 'true', 'active', 'current', 'yes', 'y'].includes(normalized)
+            && !['inactive', 'retired', 'obsolete', 'deprecated'].includes(normalized);
+    }
+    return true;
 }
 
 function buildGenericReleaseRow(input: {
@@ -1785,6 +2490,152 @@ function buildCdcFetchUrl(value: string, maxNodes: number): string {
         parsed.searchParams.set('$limit', String(Math.min(Math.max(maxNodes, 1), 50000)));
     }
     return parsed.toString();
+}
+
+function classifyWahisExportUrl(value: string): { status: 'ready' | 'invalid_url' | 'portal_url_not_export_file' } {
+    let parsed: URL;
+    try {
+        parsed = new URL(value);
+    } catch {
+        return { status: 'invalid_url' };
+    }
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const isPortalRoot = host === 'wahis.woah.org' && (path === '/' || path === '');
+    if (isPortalRoot) return { status: 'portal_url_not_export_file' };
+    if (isSupportedReleaseArtifactPath(path)) return { status: 'ready' };
+    if (host.includes('supabase') && path.includes('wahis')) return { status: 'ready' };
+    return { status: 'portal_url_not_export_file' };
+}
+
+function classifyLicensedReleaseUrl(
+    value: string,
+    portalUrl: string,
+): { status: 'ready' | 'invalid_url' | 'portal_url_not_release_file' | 'unsupported_release_artifact' } {
+    let parsed: URL;
+    let portal: URL;
+    try {
+        parsed = new URL(value);
+        portal = new URL(portalUrl);
+    } catch {
+        return { status: 'invalid_url' };
+    }
+    const path = parsed.pathname.toLowerCase();
+    const portalRoot = parsed.hostname.toLowerCase() === portal.hostname.toLowerCase()
+        && (path === '/' || path === '');
+    if (portalRoot) return { status: 'portal_url_not_release_file' };
+    if (isSupportedReleaseArtifactPath(path)) return { status: 'ready' };
+    if (path.includes('/storage/') || parsed.hostname.toLowerCase().includes('supabase')) return { status: 'ready' };
+    return { status: 'unsupported_release_artifact' };
+}
+
+function isSupportedReleaseArtifactPath(path: string) {
+    return /\.(json|csv|tsv|txt|zip)(\?.*)?$/.test(path);
+}
+
+async function readReleasePayloadText(input: {
+    response: Awaited<ReturnType<OfficialFetch>>;
+    sourceUrl: string;
+    contentType: string;
+    mode: 'snomed_rf2' | 'generic_dictionary';
+}) {
+    if (isZipPayload(input.sourceUrl, input.contentType)) {
+        if (!input.response.arrayBuffer) {
+            throw new Error('zip_release_requires_array_buffer');
+        }
+        const buffer = Buffer.from(await input.response.arrayBuffer());
+        const entries = extractZipTextEntries(buffer);
+        if (input.mode === 'snomed_rf2') {
+            return buildSnomedRf2ManifestFromZip(entries);
+        }
+        return selectDictionaryTextFromZip(entries);
+    }
+    return input.response.text
+        ? await input.response.text()
+        : stableStringify(await input.response.json());
+}
+
+function isZipPayload(sourceUrl: string, contentType: string) {
+    return contentType.includes('zip') || sourceUrl.toLowerCase().split('?')[0].endsWith('.zip');
+}
+
+type ZipTextEntry = {
+    name: string;
+    text: string;
+};
+
+function extractZipTextEntries(buffer: Buffer): ZipTextEntry[] {
+    const entries: ZipTextEntry[] = [];
+    const eocdOffset = findEndOfCentralDirectory(buffer);
+    if (eocdOffset < 0) throw new Error('zip_end_of_central_directory_not_found');
+    const totalEntries = buffer.readUInt16LE(eocdOffset + 10);
+    let centralOffset = buffer.readUInt32LE(eocdOffset + 16);
+    for (let index = 0; index < totalEntries; index += 1) {
+        if (buffer.readUInt32LE(centralOffset) !== 0x02014b50) break;
+        const method = buffer.readUInt16LE(centralOffset + 10);
+        const compressedSize = buffer.readUInt32LE(centralOffset + 20);
+        const fileNameLength = buffer.readUInt16LE(centralOffset + 28);
+        const extraLength = buffer.readUInt16LE(centralOffset + 30);
+        const commentLength = buffer.readUInt16LE(centralOffset + 32);
+        const localOffset = buffer.readUInt32LE(centralOffset + 42);
+        const name = buffer.toString('utf8', centralOffset + 46, centralOffset + 46 + fileNameLength);
+        centralOffset += 46 + fileNameLength + extraLength + commentLength;
+        if (name.endsWith('/') || !/\.(txt|tsv|csv|json)$/i.test(name)) continue;
+        if (buffer.readUInt32LE(localOffset) !== 0x04034b50) continue;
+        const localNameLength = buffer.readUInt16LE(localOffset + 26);
+        const localExtraLength = buffer.readUInt16LE(localOffset + 28);
+        const dataStart = localOffset + 30 + localNameLength + localExtraLength;
+        const compressed = buffer.subarray(dataStart, dataStart + compressedSize);
+        const data = method === 0
+            ? compressed
+            : method === 8
+                ? inflateRawSync(compressed)
+                : null;
+        if (!data) continue;
+        entries.push({ name, text: data.toString('utf8') });
+    }
+    return entries;
+}
+
+function findEndOfCentralDirectory(buffer: Buffer) {
+    const minOffset = Math.max(0, buffer.length - 65_557);
+    for (let offset = buffer.length - 22; offset >= minOffset; offset -= 1) {
+        if (buffer.readUInt32LE(offset) === 0x06054b50) return offset;
+    }
+    return -1;
+}
+
+function buildSnomedRf2ManifestFromZip(entries: ZipTextEntry[]) {
+    const concept = findZipEntryText(entries, /sct2_concept/i)
+        ?? findZipEntryText(entries, /concept/i);
+    const description = findZipEntryText(entries, /sct2_description/i)
+        ?? findZipEntryText(entries, /description/i);
+    const relationship = findZipEntryText(entries, /sct2_relationship/i)
+        ?? findZipEntryText(entries, /relationship/i);
+    if (!concept && !description && !relationship) {
+        throw new Error('zip_has_no_rf2_text_files');
+    }
+    return JSON.stringify({
+        concepts_tsv: concept ?? '',
+        descriptions_tsv: description ?? '',
+        relationships_tsv: relationship ?? '',
+        zip_entries: entries.map((entry) => entry.name),
+    });
+}
+
+function selectDictionaryTextFromZip(entries: ZipTextEntry[]) {
+    const preferred = entries.find((entry) => /venom/i.test(entry.name) && /\.(csv|tsv|txt|json)$/i.test(entry.name))
+        ?? entries.find((entry) => /\.(csv|tsv)$/i.test(entry.name))
+        ?? entries.find((entry) => /\.json$/i.test(entry.name))
+        ?? entries[0];
+    if (!preferred) throw new Error('zip_has_no_supported_dictionary_file');
+    return preferred.text;
+}
+
+function findZipEntryText(entries: ZipTextEntry[], pattern: RegExp) {
+    return entries.find((entry) => pattern.test(entry.name) && /snapshot|full|delta|concept|description|relationship/i.test(entry.name))?.text
+        ?? entries.find((entry) => pattern.test(entry.name))?.text
+        ?? null;
 }
 
 function normalizeOptionalText(value: string | undefined): string | null {
