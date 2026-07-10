@@ -74,6 +74,7 @@ export async function buildGlobalBiomedicalOntologyPopulationRows(
     for (const provider of OFFICIAL_ONTOLOGY_PROVIDERS.filter((entry) => providerKeys.has(entry.provider_key))) {
         const plan = planByKey.get(provider.provider_key);
         const allowBlockedDatasetEvidence = provider.provider_key === 'woah_wahis_official_export'
+            || provider.provider_key === 'woah_disease_reference'
             || provider.provider_key === 'cdc_open_data_surveillance';
         if ((!plan || plan.status !== 'ready') && !allowBlockedDatasetEvidence) {
             skippedProviders.push({
@@ -228,6 +229,10 @@ async function fetchProviderSpecificPopulationRows(input: {
 
     if (input.provider.provider_key === 'woah_wahis_official_export') {
         return fetchWahisAutoIngestionRows(input);
+    }
+
+    if (input.provider.provider_key === 'woah_disease_reference') {
+        return fetchWoahDiseaseReferenceRows(input);
     }
 
     if (input.provider.provider_key === 'cdc_open_data_surveillance') {
@@ -450,6 +455,167 @@ async function fetchWahisAutoIngestionRows(input: {
             nodeRows: [],
             relationshipRows: [],
             skippedReason: error instanceof Error ? error.message : 'unknown_wahis_import_error',
+        };
+    }
+}
+
+async function fetchWoahDiseaseReferenceRows(input: {
+    provider: OfficialOntologyProvider;
+    fetchImpl: OfficialFetch;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+    maxRelationships: number;
+    env?: Record<string, string | undefined>;
+}) {
+    const releaseUrl = normalizeOptionalText(input.env?.WOAH_DISEASE_REFERENCE_URL ?? process.env.WOAH_DISEASE_REFERENCE_URL);
+    if (!releaseUrl) {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: 'missing_reference_url',
+            expected_env: 'WOAH_DISEASE_REFERENCE_URL',
+            expected_storage_path: 'ontology-provider-exports/woah/latest.csv',
+            source_portal: input.provider.url,
+            setup_mode: 'one_time_reference_export_upload',
+            clinical_boundary: 'WOAH disease reference ingestion is blocked until a machine-readable animal disease reference CSV/JSON URL is configured.',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: input.provider.url,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'blocked',
+                licenseStatus: 'blocked',
+                releasePacket,
+                blockers: ['missing_reference_url:WOAH_DISEASE_REFERENCE_URL'],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: 'missing_reference_url',
+        };
+    }
+
+    const urlStatus = classifyWoahDiseaseReferenceUrl(releaseUrl, input.provider.url);
+    if (urlStatus.status !== 'ready') {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: urlStatus.status,
+            source_url: releaseUrl,
+            expected_url_shape: 'A direct WOAH disease reference CSV/JSON export URL or a Supabase Storage woah/latest.csv URL.',
+            source_portal: input.provider.url,
+            clinical_boundary: 'WOAH_DISEASE_REFERENCE_URL must point to a machine-readable export file, not the WOAH disease browser homepage.',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: releaseUrl,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'blocked',
+                licenseStatus: 'blocked',
+                releasePacket,
+                blockers: [`woah_disease_reference_url_${urlStatus.status}`],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: urlStatus.status,
+        };
+    }
+
+    try {
+        const response = await input.fetchImpl(releaseUrl, { cache: 'no-store' });
+        if (!response.ok) {
+            const releasePacket = {
+                provider_name: input.provider.name,
+                provider_status: 'fetch_failed',
+                source_url: releaseUrl,
+                http_status: response.status,
+                http_status_text: response.statusText,
+            };
+            return {
+                releaseRows: [buildGenericReleaseRow({
+                    provider: input.provider,
+                    sourceUrl: releaseUrl,
+                    tenantId: input.tenantId,
+                    requestId: input.requestId,
+                    observedAt: input.observedAt,
+                    payloadHash: sha256(releasePacket),
+                    nodeCount: 0,
+                    importedNodeCount: 0,
+                    relationshipCount: 0,
+                    importedRelationshipCount: 0,
+                    releaseStatus: 'failed',
+                    licenseStatus: 'public_reference',
+                    releasePacket,
+                    blockers: [`woah_reference_fetch_failed_${response.status}`],
+                })],
+                nodeRows: [],
+                relationshipRows: [],
+                skippedReason: `fetch_failed_${response.status}`,
+            };
+        }
+
+        const contentType = response.headers?.get('content-type')?.toLowerCase() ?? '';
+        const payloadText = response.text
+            ? await response.text()
+            : stableStringify(await response.json());
+        const parsed = parseWoahDiseaseReferencePopulation({
+            provider: input.provider,
+            payloadText,
+            contentType,
+            sourceUrl: releaseUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            maxNodes: input.maxNodes,
+        });
+        return {
+            releaseRows: [parsed.releaseRow],
+            nodeRows: parsed.nodeRows,
+            relationshipRows: [],
+            skippedReason: null,
+        };
+    } catch (error) {
+        const releasePacket = {
+            provider_name: input.provider.name,
+            provider_status: 'parse_or_fetch_error',
+            source_url: releaseUrl,
+            error: error instanceof Error ? error.message : 'unknown_woah_reference_import_error',
+        };
+        return {
+            releaseRows: [buildGenericReleaseRow({
+                provider: input.provider,
+                sourceUrl: releaseUrl,
+                tenantId: input.tenantId,
+                requestId: input.requestId,
+                observedAt: input.observedAt,
+                payloadHash: sha256(releasePacket),
+                nodeCount: 0,
+                importedNodeCount: 0,
+                relationshipCount: 0,
+                importedRelationshipCount: 0,
+                releaseStatus: 'failed',
+                licenseStatus: 'public_reference',
+                releasePacket,
+                blockers: ['woah_reference_parse_or_fetch_error'],
+            })],
+            nodeRows: [],
+            relationshipRows: [],
+            skippedReason: error instanceof Error ? error.message : 'unknown_woah_reference_import_error',
         };
     }
 }
@@ -1269,6 +1435,140 @@ function buildWahisNodeFromRecord(input: {
             raw_record_keys: Object.keys(input.record).sort(),
             record_digest: sha256(input.record),
             clinical_boundary: 'Imported WAHIS surveillance record; use for population context and ontology coverage, not individual diagnosis.',
+        },
+    });
+}
+
+function parseWoahDiseaseReferencePopulation(input: {
+    provider: OfficialOntologyProvider;
+    payloadText: string;
+    contentType: string;
+    sourceUrl: string;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+    maxNodes: number;
+}) {
+    const trimmed = input.payloadText.trim();
+    const payloadHash = createHash('sha256').update(input.payloadText).digest('hex');
+    const records = looksLikeJson(trimmed) || input.contentType.includes('json')
+        ? extractGenericRecords(JSON.parse(trimmed || '[]'))
+        : parseDelimitedText(trimmed);
+    const limitedRecords = records.slice(0, input.maxNodes);
+    const nodeRows = limitedRecords
+        .map((record, index) => buildWoahDiseaseReferenceNodeFromRecord({
+            provider: input.provider,
+            record,
+            index,
+            sourceUrl: input.sourceUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+        }))
+        .filter(isRecordRow) as Record<string, unknown>[];
+    const skippedRows = Math.max(0, records.length - nodeRows.length);
+    const parser = input.contentType.includes('json') || looksLikeJson(trimmed)
+        ? 'woah_disease_reference_json_v1'
+        : 'woah_disease_reference_csv_v1';
+    const releasePacket = {
+        provider_name: input.provider.name,
+        provider_status: nodeRows.length > 0 ? 'imported' : 'no_importable_rows',
+        parser,
+        source_url: input.sourceUrl,
+        source_portal: input.provider.url,
+        expected_storage_path: 'ontology-provider-exports/woah/latest.csv',
+        source_hash: payloadHash,
+        raw_rows: records.length,
+        imported_rows: nodeRows.length,
+        skipped_rows: skippedRows,
+        truncated_rows: Math.max(0, records.length - limitedRecords.length),
+        ontology_coverage: {
+            provider_key: input.provider.provider_key,
+            code_system: input.provider.code_system,
+            node_kind: 'reference_condition',
+            imported_reference_conditions: nodeRows.length,
+        },
+        accepted_payload_shapes: [
+            'WOAH disease reference CSV with disease_name and source_url columns',
+            'JSON export with records/items/data/results arrays',
+        ],
+        clinical_boundary: 'WOAH disease reference rows are official disease concepts; they are not outbreak surveillance observations or patient-level outcome truth.',
+    };
+    const blockers = nodeRows.length === 0 ? ['woah_disease_reference_has_no_importable_rows'] : [];
+
+    return {
+        releaseRow: buildGenericReleaseRow({
+            provider: input.provider,
+            sourceUrl: input.sourceUrl,
+            tenantId: input.tenantId,
+            requestId: input.requestId,
+            observedAt: input.observedAt,
+            payloadHash,
+            nodeCount: records.length,
+            importedNodeCount: nodeRows.length,
+            relationshipCount: 0,
+            importedRelationshipCount: 0,
+            releaseStatus: blockers.length > 0 ? 'partial' : skippedRows > 0 ? 'partial' : 'imported',
+            licenseStatus: 'public_reference',
+            releasePacket,
+            blockers,
+        }),
+        nodeRows,
+    };
+}
+
+function buildWoahDiseaseReferenceNodeFromRecord(input: {
+    provider: OfficialOntologyProvider;
+    record: Record<string, unknown>;
+    index: number;
+    sourceUrl: string;
+    tenantId: string | null;
+    requestId: string;
+    observedAt: string | null;
+}) {
+    const diseaseName = readFirstString(input.record, [
+        'disease_name',
+        'disease',
+        'Disease',
+        'Disease name',
+        'Disease Name',
+        'name',
+        'title',
+    ]);
+    if (!diseaseName) return null;
+    if (/^https?:\/\//i.test(diseaseName) || diseaseName === 'animal_disease_reference') return null;
+    const sourceIri = readFirstString(input.record, [
+        'source_url',
+        'url',
+        'source',
+        'Source URL',
+    ]) ?? input.sourceUrl;
+    if (!sourceIri.includes('/disease/')) return null;
+    const codeSeed = readLastPathSegment(sourceIri) ?? diseaseName;
+    const externalCode = `WOAH:${sanitizeCode(codeSeed) || sha256({ diseaseName, index: input.index }).slice(0, 16)}`;
+
+    return buildGenericNodeRow({
+        provider: input.provider,
+        tenantId: input.tenantId,
+        requestId: input.requestId,
+        observedAt: input.observedAt,
+        externalCode,
+        canonicalLabel: diseaseName,
+        sourceIri,
+        nodeKind: 'reference_condition',
+        nodePacket: {
+            provider_key: input.provider.provider_key,
+            source_key: input.provider.source_key,
+            disease_name: diseaseName,
+            source_provider: readFirstString(input.record, ['source_provider', 'provider']) ?? 'WOAH',
+            source_type: readFirstString(input.record, ['source_type', 'type']) ?? 'animal_disease_reference',
+            animal_filter: readFirstString(input.record, ['animal_filter', 'animal', 'species_scope']),
+            alphabet_filter: readFirstString(input.record, ['alphabet_filter', 'letter']),
+            fetched_at: readFirstString(input.record, ['fetched_at', 'observed_at', 'created_at']),
+            raw_record_keys: Object.keys(input.record).sort(),
+            source_index: input.index,
+            record_digest: sha256(input.record),
+            clinical_boundary: 'Imported WOAH disease reference concept. Use for candidate expansion only after source mapping review; it is not WAHIS surveillance data.',
         },
     });
 }
@@ -2436,7 +2736,7 @@ function splitDelimitedLine(line: string, delimiter: string): string[] {
     for (let index = 0; index < line.length; index += 1) {
         const char = line[index];
         const next = line[index + 1];
-        if (char === '"' && next === '"') {
+        if (char === '"' && next === '"' && quoted) {
             current += '"';
             index += 1;
             continue;
@@ -2506,6 +2806,32 @@ function classifyWahisExportUrl(value: string): { status: 'ready' | 'invalid_url
     if (isSupportedReleaseArtifactPath(path)) return { status: 'ready' };
     if (host.includes('supabase') && path.includes('wahis')) return { status: 'ready' };
     return { status: 'portal_url_not_export_file' };
+}
+
+function classifyWoahDiseaseReferenceUrl(
+    value: string,
+    portalUrl: string,
+): { status: 'ready' | 'invalid_url' | 'portal_url_not_reference_file' | 'unsupported_reference_artifact' } {
+    let parsed: URL;
+    let portal: URL;
+    try {
+        parsed = new URL(value);
+        portal = new URL(portalUrl);
+    } catch {
+        return { status: 'invalid_url' };
+    }
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname.toLowerCase();
+    const portalHost = portal.hostname.toLowerCase();
+    const isWoahBrowser = host === portalHost
+        && path.includes('/animal-diseases')
+        && !isSupportedReleaseArtifactPath(path);
+    if (isWoahBrowser || (host === portalHost && (path === '/' || path === ''))) {
+        return { status: 'portal_url_not_reference_file' };
+    }
+    if (isSupportedReleaseArtifactPath(path)) return { status: 'ready' };
+    if (host.includes('supabase') && path.includes('woah')) return { status: 'ready' };
+    return { status: 'unsupported_reference_artifact' };
 }
 
 function classifyLicensedReleaseUrl(

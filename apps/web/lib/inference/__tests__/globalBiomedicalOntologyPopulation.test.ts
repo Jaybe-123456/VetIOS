@@ -224,6 +224,37 @@ describe('global biomedical ontology population importer', () => {
         });
     });
 
+    it('records a blocked WOAH disease reference run when the reference URL is missing', async () => {
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'woah-reference-missing-url-test',
+            providerKeys: ['woah_disease_reference'],
+            env: {},
+            fetchImpl: async () => {
+                throw new Error('fetch should not run without WOAH_DISEASE_REFERENCE_URL');
+            },
+        });
+
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(0);
+        expect(rows.skippedProviders).toEqual([
+            {
+                provider_key: 'woah_disease_reference',
+                reason: 'missing_reference_url',
+            },
+        ]);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'woah_disease_reference',
+            release_status: 'blocked',
+            license_status: 'blocked',
+            imported_node_count: 0,
+            blockers: ['missing_reference_url:WOAH_DISEASE_REFERENCE_URL'],
+        });
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            provider_status: 'missing_reference_url',
+            expected_storage_path: 'ontology-provider-exports/woah/latest.csv',
+        });
+    });
+
     it('blocks provider portal homepages when release/export file URLs are required', async () => {
         const wahis = await buildGlobalBiomedicalOntologyPopulationRows({
             requestId: 'wahis-portal-url-test',
@@ -231,6 +262,16 @@ describe('global biomedical ontology population importer', () => {
             env: { WAHIS_EXPORT_URL: 'https://wahis.woah.org/' },
             fetchImpl: async () => {
                 throw new Error('fetch should not run for WAHIS portal homepage');
+            },
+        });
+        const woahReference = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'woah-reference-portal-url-test',
+            providerKeys: ['woah_disease_reference'],
+            env: {
+                WOAH_DISEASE_REFERENCE_URL: 'https://www.woah.org/en/what-we-do/animal-health-and-welfare/animal-diseases/',
+            },
+            fetchImpl: async () => {
+                throw new Error('fetch should not run for WOAH disease browser homepage');
             },
         });
         const snomed = await buildGlobalBiomedicalOntologyPopulationRows({
@@ -256,6 +297,13 @@ describe('global biomedical ontology population importer', () => {
         expect(wahis.releaseRows[0]).toMatchObject({
             release_status: 'blocked',
             blockers: ['wahis_export_url_portal_url_not_export_file'],
+        });
+        expect(woahReference.skippedProviders).toEqual([
+            { provider_key: 'woah_disease_reference', reason: 'portal_url_not_reference_file' },
+        ]);
+        expect(woahReference.releaseRows[0]).toMatchObject({
+            release_status: 'blocked',
+            blockers: ['woah_disease_reference_url_portal_url_not_reference_file'],
         });
         expect(snomed.skippedProviders).toEqual([
             { provider_key: 'snomed_ct_release', reason: 'portal_url_not_release_file' },
@@ -332,6 +380,70 @@ describe('global biomedical ontology population importer', () => {
             external_code: 'WAHIS:EVT-1',
             canonical_label: 'Rabies · Kenya · Canine',
             node_kind: 'surveillance_record',
+        });
+    });
+
+    it('auto-ingests WOAH disease reference CSV exports as reference condition nodes', async () => {
+        const csv = [
+            'disease_name,source_url,source_provider,source_type,animal_filter,alphabet_filter,fetched_at',
+            '"African horse sickness","https://www.woah.org/en/disease/african-horse-sickness/","WOAH","animal_disease_reference","terrestrials","A","2026-07-10T12:16:10.851Z"',
+            '"Rabies","https://www.woah.org/en/disease/rabies/","WOAH","animal_disease_reference","terrestrials","R","2026-07-10T12:16:10.851Z"',
+            '"","https://www.woah.org/en/disease/missing-label/","WOAH","animal_disease_reference","terrestrials","Z","2026-07-10T12:16:10.851Z"',
+        ].join('\n');
+
+        const rows = await buildGlobalBiomedicalOntologyPopulationRows({
+            requestId: 'woah-reference-csv-test',
+            providerKeys: ['woah_disease_reference'],
+            env: {
+                WOAH_DISEASE_REFERENCE_URL: 'https://example.test/storage/woah/latest.csv',
+            },
+            fetchImpl: async (url) => {
+                expect(url).toBe('https://example.test/storage/woah/latest.csv');
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                        get(name: string) {
+                            return name.toLowerCase() === 'content-type' ? 'text/csv' : null;
+                        },
+                    },
+                    async json() {
+                        throw new Error('WOAH reference CSV should be read as text');
+                    },
+                    async text() {
+                        return csv;
+                    },
+                };
+            },
+        });
+
+        expect(rows.skippedProviders).toHaveLength(0);
+        expect(rows.releaseRows).toHaveLength(1);
+        expect(rows.nodeRows).toHaveLength(2);
+        expect(rows.releaseRows[0]).toMatchObject({
+            provider_key: 'woah_disease_reference',
+            code_system: 'WOAH',
+            access_mode: 'public_dataset',
+            release_status: 'partial',
+            node_count: 3,
+            imported_node_count: 2,
+        });
+        expect(rows.releaseRows[0].source_document_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(rows.releaseRows[0].release_packet).toMatchObject({
+            provider_status: 'imported',
+            parser: 'woah_disease_reference_csv_v1',
+            raw_rows: 3,
+            imported_rows: 2,
+            skipped_rows: 1,
+        });
+        expect(rows.nodeRows[0]).toMatchObject({
+            provider_key: 'woah_disease_reference',
+            source_key: 'woah_disease_reference',
+            code_system: 'WOAH',
+            external_code: 'WOAH:african-horse-sickness',
+            canonical_label: 'African horse sickness',
+            node_kind: 'reference_condition',
         });
     });
 

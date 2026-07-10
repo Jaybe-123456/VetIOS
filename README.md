@@ -279,6 +279,12 @@ Core routes:
 
 The curated catalog covers AVMA, AAHA, WSAVA, ACVIM, AAFP, CAPC, ESCCAP, IRIS, Merck Veterinary Manual, Cornell Feline Health Center, Veterinary Partner VIN, WOAH, CDC, USDA APHIS, FDA Animal Drugs, DailyMed, PubMed, PubMed Central Open Access, NCBI Bookshelf, and explicitly low-trust BioVenic commercial discovery sources. See [`docs/agentic-rag-service.md`](docs/agentic-rag-service.md) for the schema, environment, and safety boundaries, and [`docs/closed-loop-rag-learning-and-self-protection.md`](docs/closed-loop-rag-learning-and-self-protection.md) for the closed-loop and clone-defense model.
 
+### Global One Health Ontology Feeds
+
+The global ontology ingestion layer separates official disease reference concepts from live surveillance data. `WOAH_DISEASE_REFERENCE_URL` should point to a machine-readable WOAH animal disease reference CSV/JSON export, while `WAHIS_EXPORT_URL` is reserved for true WAHIS outbreak/surveillance exports. Both feeds write source hashes, parser evidence, imported/skipped row counts, and coverage snapshots through the ingestion operations console.
+
+Key provider environment variables include `UMLS_API_KEY`, `WHO_ICD_CLIENT_ID`, `WHO_ICD_CLIENT_SECRET`, `NCBI_API_KEY`, `WOAH_DISEASE_REFERENCE_URL`, `WAHIS_EXPORT_URL`, `CDC_OPEN_DATA_URL`, `SNOMED_CT_RELEASE_URL`, and `VENOM_RELEASE_URL`. Do not use portal homepages for release URL variables; use direct API endpoints or downloadable CSV/JSON/ZIP artifacts.
+
 ## Monorepo Map
 
 ```text

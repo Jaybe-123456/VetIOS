@@ -52,17 +52,20 @@ describe('global One Health official ontology ingestion', () => {
         expect(plan.find((provider) => provider.provider_key === 'umls_rest')?.status).toBe('requires_credentials');
         expect(plan.find((provider) => provider.provider_key === 'hpo_obo_json')?.status).toBe('ready');
         expect(plan.find((provider) => provider.provider_key === 'woah_wahis_official_export')?.status).toBe('requires_source_release');
+        expect(plan.find((provider) => provider.provider_key === 'woah_disease_reference')?.status).toBe('requires_source_release');
         expect(plan.find((provider) => provider.provider_key === 'snomed_ct_release')?.status).toBe('license_gated');
     });
 
     it('marks official release providers ready only when the release URL is configured', () => {
         const plan = buildOfficialOntologyIngestionPlan({
             WAHIS_EXPORT_URL: 'https://example.test/wahis.json',
+            WOAH_DISEASE_REFERENCE_URL: 'https://example.test/woah-diseases.csv',
             SNOMED_CT_RELEASE_URL: 'https://example.test/snomed.json',
             VENOM_RELEASE_URL: 'https://example.test/venom.json',
         });
 
         expect(plan.find((provider) => provider.provider_key === 'woah_wahis_official_export')?.status).toBe('ready');
+        expect(plan.find((provider) => provider.provider_key === 'woah_disease_reference')?.status).toBe('ready');
         expect(plan.find((provider) => provider.provider_key === 'snomed_ct_release')?.status).toBe('ready');
         expect(plan.find((provider) => provider.provider_key === 'venom_release')?.status).toBe('ready');
     });
@@ -149,6 +152,52 @@ describe('global One Health official ontology ingestion', () => {
             code_system: 'UMLS',
             external_code: 'C0034494',
             match_basis: 'api_search',
+        });
+    });
+
+    it('maps WOAH disease reference CSV rows as source-attested condition codes, separate from WAHIS', async () => {
+        const csv = [
+            'disease_name,source_url,source_provider,source_type,animal_filter,alphabet_filter,fetched_at',
+            '"Rabies","https://www.woah.org/en/disease/rabies/","WOAH","animal_disease_reference","terrestrials","R","2026-07-10T12:16:10.851Z"',
+            '"Anthrax","https://www.woah.org/en/disease/anthrax/","WOAH","animal_disease_reference","terrestrials","A","2026-07-10T12:16:10.851Z"',
+        ].join('\n');
+
+        const ingestion = await fetchOfficialOntologyMatches({
+            providerKeys: ['woah_disease_reference'],
+            conditionKeys: ['rabies'],
+            env: {
+                WOAH_DISEASE_REFERENCE_URL: 'https://example.test/woah/latest.csv',
+            },
+            fetchImpl: async (url) => {
+                expect(url).toBe('https://example.test/woah/latest.csv');
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    headers: {
+                        get(name: string) {
+                            return name.toLowerCase() === 'content-type' ? 'text/csv' : null;
+                        },
+                    },
+                    async json() {
+                        throw new Error('WOAH CSV should be read as text');
+                    },
+                    async text() {
+                        return csv;
+                    },
+                };
+            },
+        });
+
+        expect(ingestion.skipped_providers).toEqual([]);
+        expect(ingestion.matches).toHaveLength(1);
+        expect(ingestion.matches[0]).toMatchObject({
+            condition_key: 'rabies',
+            source_key: 'woah_disease_reference',
+            code_system: 'WOAH',
+            external_code: 'WOAH:rabies',
+            provider_key: 'woah_disease_reference',
+            match_basis: 'label',
         });
     });
 });

@@ -11,6 +11,9 @@ type OfficialFetch = (input: string, init?: RequestInit) => Promise<{
     statusText: string;
     json: () => Promise<unknown>;
     text?: () => Promise<string>;
+    headers?: {
+        get: (name: string) => string | null;
+    };
 }>;
 
 type OfficialIngestionSupabaseClient = {
@@ -133,6 +136,16 @@ export const OFFICIAL_ONTOLOGY_PROVIDERS: OfficialOntologyProvider[] = [
         role: 'surveillance_signal',
         url: 'https://wahis.woah.org/',
         release_url_env: 'WAHIS_EXPORT_URL',
+    },
+    {
+        provider_key: 'woah_disease_reference',
+        source_key: 'woah_disease_reference',
+        code_system: 'WOAH',
+        name: 'WOAH animal disease reference export',
+        access: 'public_dataset',
+        role: 'condition_code',
+        url: 'https://www.woah.org/en/what-we-do/animal-health-and-welfare/animal-diseases/',
+        release_url_env: 'WOAH_DISEASE_REFERENCE_URL',
     },
     {
         provider_key: 'cdc_open_data_surveillance',
@@ -265,6 +278,31 @@ export async function fetchOfficialOntologyMatches(input: {
             continue;
         }
 
+        if (provider.provider_key === 'woah_disease_reference') {
+            const releaseUrl = input.env?.WOAH_DISEASE_REFERENCE_URL ?? process.env.WOAH_DISEASE_REFERENCE_URL;
+            if (!releaseUrl) {
+                skippedProviders.push({
+                    provider_key: provider.provider_key,
+                    reason: 'missing_woah_disease_reference_url',
+                });
+                continue;
+            }
+            try {
+                matches.push(...await fetchWoahDiseaseReferenceMatches({
+                    provider,
+                    fetchImpl,
+                    conditionKeys,
+                    releaseUrl,
+                }));
+            } catch (error) {
+                errors.push({
+                    provider_key: provider.provider_key,
+                    error: error instanceof Error ? error.message : 'unknown_woah_reference_error',
+                });
+            }
+            continue;
+        }
+
         if (provider.role !== 'condition_code') {
             skippedProviders.push({
                 provider_key: provider.provider_key,
@@ -351,6 +389,57 @@ export function extractOboJsonMatches(input: {
                 matches.push(buildMatch(input.provider, seed, code, xrefTerm, xrefTerm, 'xref', sourceDocumentHash, 0.82));
                 break;
             }
+        }
+    }
+
+    return dedupeMatches(matches);
+}
+
+async function fetchWoahDiseaseReferenceMatches(input: {
+    provider: OfficialOntologyProvider;
+    fetchImpl: OfficialFetch;
+    conditionKeys: Set<string>;
+    releaseUrl: string;
+}): Promise<OfficialOntologyMatch[]> {
+    const response = await input.fetchImpl(input.releaseUrl, { cache: 'no-store' });
+    if (!response.ok) return [];
+
+    const contentType = response.headers?.get('content-type')?.toLowerCase() ?? '';
+    const payloadText = response.text
+        ? await response.text()
+        : stableStringify(await response.json());
+    const sourceDocumentHash = createHash('sha256').update(payloadText).digest('hex');
+    const records = parseOfficialDatasetRecords(payloadText, contentType);
+    const matches: OfficialOntologyMatch[] = [];
+
+    for (const seed of GLOBAL_ONE_HEALTH_CONDITION_SEEDS.filter((entry) => input.conditionKeys.has(entry.condition_key))) {
+        const seedTerms = buildSeedTerms(seed);
+        for (const record of records) {
+            const diseaseName = readFirstString(record, [
+                'disease_name',
+                'disease',
+                'Disease',
+                'Disease name',
+                'Disease Name',
+                'name',
+                'title',
+            ]);
+            if (!diseaseName) continue;
+            const exactLabelTerm = findExactTerm(diseaseName, seedTerms);
+            if (!exactLabelTerm) continue;
+            const sourceUrl = readFirstString(record, ['source_url', 'url', 'source', 'Source URL']) ?? input.releaseUrl;
+            const externalCode = `WOAH:${sanitizeCode(readLastPathSegment(sourceUrl) ?? diseaseName)}`;
+            matches.push(buildMatch(
+                input.provider,
+                seed,
+                externalCode,
+                diseaseName,
+                exactLabelTerm,
+                'label',
+                sourceDocumentHash,
+                0.91,
+            ));
+            break;
         }
     }
 
@@ -581,6 +670,109 @@ function stableStringify(value: unknown): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {};
+}
+
+function parseOfficialDatasetRecords(payloadText: string, contentType: string): Array<Record<string, unknown>> {
+    const trimmed = payloadText.trim();
+    if (!trimmed) return [];
+    if (contentType.includes('json') || trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        return extractGenericRecords(JSON.parse(trimmed));
+    }
+    return parseDelimitedText(trimmed);
+}
+
+function extractGenericRecords(payload: unknown): Array<Record<string, unknown>> {
+    if (Array.isArray(payload)) return payload.map(asRecord).filter(isRecordRow);
+    const record = asRecord(payload);
+    for (const key of ['records', 'items', 'data', 'results', 'features']) {
+        const rows = Array.isArray(record[key])
+            ? (record[key] as unknown[]).map(asRecord).filter(isRecordRow)
+            : [];
+        if (rows.length > 0) return rows;
+    }
+    return Object.keys(record).length > 0 ? [record] : [];
+}
+
+function parseDelimitedText(value: string): Array<Record<string, unknown>> {
+    const lines = value
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+    if (lines.length < 2) return [];
+    const delimiter = inferDelimiter(lines[0]);
+    const headers = splitDelimitedLine(lines[0], delimiter)
+        .map((header) => header.trim())
+        .filter(Boolean);
+    return lines.slice(1)
+        .map((line) => {
+            const cells = splitDelimitedLine(line, delimiter);
+            return headers.reduce<Record<string, unknown>>((row, header, index) => {
+                const value = cells[index]?.trim();
+                if (value) row[header] = value;
+                return row;
+            }, {});
+        })
+        .filter((row) => Object.keys(row).length > 0);
+}
+
+function splitDelimitedLine(line: string, delimiter: string): string[] {
+    const cells: string[] = [];
+    let current = '';
+    let quoted = false;
+    for (let index = 0; index < line.length; index += 1) {
+        const char = line[index];
+        const next = line[index + 1];
+        if (char === '"' && next === '"' && quoted) {
+            current += '"';
+            index += 1;
+            continue;
+        }
+        if (char === '"') {
+            quoted = !quoted;
+            continue;
+        }
+        if (char === delimiter && !quoted) {
+            cells.push(current);
+            current = '';
+            continue;
+        }
+        current += char;
+    }
+    cells.push(current);
+    return cells;
+}
+
+function inferDelimiter(headerLine: string): string {
+    return [',', ';', '\t']
+        .map((delimiter) => ({ delimiter, columns: splitDelimitedLine(headerLine, delimiter).length }))
+        .sort((a, b) => b.columns - a.columns)[0]?.delimiter ?? ',';
+}
+
+function isRecordRow(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+function readFirstString(record: Record<string, unknown>, keys: string[]): string | null {
+    for (const key of keys) {
+        const value = readString(record[key]);
+        if (value && value.trim().length > 0) return value.trim();
+    }
+    return null;
+}
+
+function readLastPathSegment(value: string | null): string | null {
+    if (!value) return null;
+    const path = value.split('?')[0] ?? value;
+    const parts = path.split('/').filter(Boolean);
+    return parts[parts.length - 1] ?? null;
+}
+
+function sanitizeCode(value: string): string {
+    return value
+        .trim()
+        .replace(/\s+/g, '_')
+        .replace(/[^A-Za-z0-9:._-]/g, '')
+        .slice(0, 96);
 }
 
 function readString(value: unknown): string | null {
