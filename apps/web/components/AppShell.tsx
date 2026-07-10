@@ -27,7 +27,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         return (
             <div
                 data-shellless-scroll="true"
-                className="flex-1 flex flex-col h-full overflow-auto scroll-smooth bg-background"
+                className="flex-1 flex flex-col h-[100dvh] min-h-[100svh] overflow-y-auto overflow-x-hidden overscroll-y-contain scroll-smooth scroll-touch bg-background"
             >
                 {children}
             </div>
@@ -66,7 +66,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             )}
 
             {/* ── Main Content Area ── */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+            <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden relative">
 
                 {/* ── UPGRADED Topbar ── */}
                 <header className="

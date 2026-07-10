@@ -162,12 +162,14 @@
     font-family: var(--font-mono);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    min-height: 100%;
   }
 
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
     font-family: var(--font-mono);
+    min-height: 100svh;
   }
 
   ::selection {
@@ -681,8 +683,27 @@ html, body {
 
 /* ── Full-height mobile layout fix ─────────────────────────────────────── */
 .mobile-full-height {
+  min-height: 100svh;
   height: 100dvh;
-  height: -webkit-fill-available;
+}
+
+@supports (-webkit-touch-callout: none) {
+  .mobile-full-height {
+    height: -webkit-fill-available;
+  }
+}
+
+.safe-mobile-drawer {
+  max-height: 100dvh;
+  padding-top: max(1.25rem, env(safe-area-inset-top, 0px));
+  padding-bottom: max(1.25rem, env(safe-area-inset-bottom, 0px));
+  -webkit-overflow-scrolling: touch;
+}
+
+@supports not (height: 100dvh) {
+  .safe-mobile-drawer {
+    max-height: 100vh;
+  }
 }
 
 /* Ask VetIOS command dock: visual-viewport aware mobile keyboard handling. */
@@ -863,7 +884,7 @@ html, body {
 /* ── Mobile touch overrides ───────────────────────────────────────────────── */
 
 @media (max-width: 640px) {
-  input, textarea, select, button {
+  input, textarea, select {
     font-size: 16px !important;
   }
 }

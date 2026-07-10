@@ -83,7 +83,7 @@ export default function VideoSection() {
                                         href={YOUTUBE_WATCH_URL}
                                         target="_blank"
                                         rel="noreferrer"
-                                        className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#B9FFF0] transition-colors hover:text-white"
+                                        className="inline-flex min-h-[44px] items-center gap-1.5 text-[10px] uppercase tracking-[0.16em] text-[#B9FFF0] transition-colors hover:text-white sm:min-h-0"
                                     >
                                         source
                                         <ExternalLink className="h-3.5 w-3.5" />

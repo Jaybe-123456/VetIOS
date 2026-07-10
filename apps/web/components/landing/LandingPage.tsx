@@ -39,17 +39,25 @@ export default function LandingPage({ evidenceSnapshot }: { evidenceSnapshot: Pu
 
     useEffect(() => {
         const previousOverflow = document.documentElement.style.overflow;
+        const scrollElement = document.querySelector<HTMLElement>('[data-shellless-scroll="true"]');
+        const previousShellOverflow = scrollElement?.style.overflow;
         if (menuOpen) {
             document.documentElement.style.overflow = 'hidden';
+            if (scrollElement) {
+                scrollElement.style.overflow = 'hidden';
+            }
         }
 
         return () => {
             document.documentElement.style.overflow = previousOverflow;
+            if (scrollElement) {
+                scrollElement.style.overflow = previousShellOverflow ?? '';
+            }
         };
     }, [menuOpen]);
 
     return (
-        <div className="relative min-h-full overflow-x-clip bg-[#0B0F14] text-[#E8EDF2]">
+        <div className="relative min-h-[100svh] min-h-[100dvh] overflow-x-clip bg-[#0B0F14] text-[#E8EDF2]">
             <div className="pointer-events-none fixed inset-0 overflow-hidden">
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(21,230,195,0.14),transparent_30%),radial-gradient(circle_at_80%_12%,rgba(124,255,78,0.12),transparent_28%),linear-gradient(180deg,rgba(255,255,255,0.04),transparent_45%)]" />
                 <div className="landing-grid absolute inset-0 opacity-[0.08]" />

@@ -22,17 +22,26 @@ export default function GlobalNetworkSection() {
                     <div className="relative grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
                         <div className="relative min-h-[280px] overflow-hidden rounded-[28px] border border-white/8 bg-[#0C1117] sm:min-h-[320px]">
                             <div className="landing-grid absolute inset-0 opacity-[0.16]" />
-                            <div className="absolute inset-0 grid grid-cols-2 gap-3 p-4 sm:hidden">
+                            <div className="absolute inset-0 grid grid-cols-2 gap-3 overflow-y-auto p-4 sm:hidden">
                                 {networkPoints.map((point) => (
-                                    <div
+                                    <button
+                                        type="button"
                                         key={point.label}
-                                        className="rounded-[18px] border border-white/8 bg-[#0F151D]/80 px-3 py-3"
+                                        onClick={() => setHoveredNode(hoveredNode === point.label ? null : point.label)}
+                                        className="min-h-[44px] rounded-[18px] border border-white/8 bg-[#0F151D]/80 px-3 py-3 text-left transition-colors hover:border-[#38DCC6]/24"
                                     >
                                         <div className="flex items-center gap-2">
                                             <span className="h-2.5 w-2.5 rounded-full bg-[#6BF7CF] shadow-[0_0_16px_rgba(21,230,195,0.95)]" />
                                             <span className="text-[10px] uppercase tracking-[0.16em] text-white/68">{point.label}</span>
                                         </div>
-                                    </div>
+                                        {hoveredNode === point.label && (
+                                            <div className="mt-3 grid gap-1.5 text-[11px] text-white/58">
+                                                <div className="flex justify-between gap-2"><span>latency</span><span className="text-white">{point.latency}</span></div>
+                                                <div className="flex justify-between gap-2"><span>CPU</span><span className="text-white">{point.load}</span></div>
+                                                <div className="flex justify-between gap-2"><span>models</span><span className="text-white">{point.models}</span></div>
+                                            </div>
+                                        )}
+                                    </button>
                                 ))}
                             </div>
                             <svg viewBox="0 0 1200 460" className="absolute inset-0 hidden h-full w-full opacity-85 sm:block">

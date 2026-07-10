@@ -32,7 +32,7 @@ export default function HeroSection() {
 
     return (
         <section className="landing-section relative pt-24 sm:pt-28">
-            <div className="flex min-h-[calc(100vh-7rem)] flex-col justify-center pb-14">
+            <div className="flex min-h-[calc(100svh-7rem)] flex-col justify-center pb-14 md:min-h-[calc(100dvh-7rem)]">
                 <motion.div
                     className="max-w-3xl"
                     initial="hidden"
@@ -118,7 +118,7 @@ export default function HeroSection() {
                                         type="button"
                                         onClick={() => setActiveCaseIndex(index)}
                                         className={joinClasses(
-                                            'rounded-full border px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] transition-all sm:text-[11px]',
+                                            'min-h-[44px] rounded-full border px-3 py-2 text-left text-[10px] uppercase tracking-[0.14em] transition-all sm:text-[11px]',
                                             index === activeCaseIndex
                                                 ? 'border-[#7CFF4E]/35 bg-[#7CFF4E]/12 text-[#D8FFC9]'
                                                 : 'border-white/10 bg-white/[0.03] text-white/50 hover:border-white/18 hover:text-white/78',

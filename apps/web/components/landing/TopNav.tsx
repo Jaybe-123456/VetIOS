@@ -87,7 +87,7 @@ export default function TopNav({
                         />
 
                         <motion.div
-                            className="glass-card fixed bottom-0 right-0 top-0 z-50 flex w-full max-w-none flex-col overflow-y-auto border-l border-white/10 bg-[#0A0E13]/96 p-5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] sm:w-[86vw] sm:max-w-sm sm:p-6 lg:hidden"
+                            className="glass-card safe-mobile-drawer fixed bottom-0 right-0 top-0 z-50 flex w-full max-w-none flex-col overflow-y-auto overscroll-contain border-l border-white/10 bg-[#0A0E13]/96 p-5 shadow-[0_24px_64px_rgba(0,0,0,0.45)] sm:w-[86vw] sm:max-w-sm sm:p-6 lg:hidden"
                             initial={{ x: '100%', opacity: 0.8 }}
                             animate={{ x: 0, opacity: 1 }}
                             exit={{ x: '100%', opacity: 0.8 }}

@@ -54,7 +54,7 @@ export default function InterfacePreviewSection() {
                                             key={tab.id}
                                             onClick={() => setActiveTab(tab.id)}
                                             className={joinClasses(
-                                                'shrink-0 rounded-full border px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] transition-all sm:text-[11px] sm:tracking-[0.18em]',
+                                                'min-h-[44px] shrink-0 rounded-full border px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] transition-all sm:min-h-0 sm:text-[11px] sm:tracking-[0.18em]',
                                                 activeTab === tab.id
                                                     ? 'border-[#38DCC6]/28 bg-[#38DCC6]/10 text-[#B9FFF0]'
                                                     : 'border-white/10 bg-white/[0.03] text-white/46 hover:border-white/18 hover:text-white/70',

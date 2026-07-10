@@ -127,7 +127,7 @@ export function EndpointCard(props: {
                         type="button"
                         onClick={() => setActiveLanguage(language)}
                         className={joinClasses(
-                            'rounded-full border px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] transition-all',
+                            'min-h-[44px] rounded-full border px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] transition-all sm:min-h-0',
                             activeLanguage === language
                                 ? 'border-[#7CFF4E]/35 bg-[#7CFF4E]/12 text-[#D8FFC9]'
                                 : 'border-white/10 bg-white/[0.03] text-white/48 hover:border-white/18 hover:text-white/72',
@@ -188,7 +188,7 @@ function CodeBlock(props: {
                 <button
                     type="button"
                     onClick={props.onCopy}
-                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[10px] uppercase tracking-[0.12em] text-white/52 transition-colors hover:border-[#38DCC6]/24 hover:text-white"
+                    className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 text-[10px] uppercase tracking-[0.12em] text-white/52 transition-colors hover:border-[#38DCC6]/24 hover:text-white sm:h-8 sm:min-h-0"
                 >
                     {props.copied ? <Check className="h-3.5 w-3.5 text-[#7CFF4E]" /> : <Copy className="h-3.5 w-3.5" />}
                     {props.copied ? 'copied' : 'copy'}

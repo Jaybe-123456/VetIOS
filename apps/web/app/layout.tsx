@@ -19,7 +19,7 @@ export const viewport = {
   maximumScale: 5,
   themeColor: '#0a0a0a',
   colorScheme: 'dark',
-  interactiveWidget: 'resizes-visual',
+  interactiveWidget: 'resizes-content',
 };
 
 export const metadata: Metadata = {
@@ -83,7 +83,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     // "dark" class is hardcoded here so SSR and client agree from frame 1.
     // AppProviders uses forcedTheme="dark" so next-themes never overrides it.
     <html lang="en" className="dark font-mono" suppressHydrationWarning>
-      <body className="h-screen w-screen overflow-hidden flex bg-background text-foreground">
+      <body className="h-[100dvh] min-h-[100svh] w-full overflow-hidden flex bg-background text-foreground">
         <AppProviders>
           <AppShell>{children}</AppShell>
         </AppProviders>
