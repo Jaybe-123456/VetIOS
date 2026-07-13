@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+    evaluateApiCredentialUsePolicy,
     normalizeMachineCredentialScopes,
     validateConnectorInstallationAccess,
+    type ApiCredentialRecord,
     type ClinicalApiActor,
     type ConnectorInstallationRecord,
 } from '../machineAuth';
@@ -66,6 +68,55 @@ describe('connector installation authorization', () => {
     });
 });
 
+describe('API credential binding controls', () => {
+    it('allows a credential when environment, origin, and CIDR bindings match', () => {
+        const decision = evaluateApiCredentialUsePolicy(
+            apiCredential({
+                deployment_environment: 'production',
+                allowed_origins: ['https://partner.example'],
+                allowed_ip_cidrs: ['203.0.113.0/24'],
+            }),
+            new Request('https://vetios.test/api/signals/ingest', {
+                headers: {
+                    origin: 'https://partner.example',
+                    'x-forwarded-for': '203.0.113.42',
+                },
+            }),
+            'production',
+        );
+
+        expect(decision.allowed).toBe(true);
+        expect(decision.blockers).toEqual([]);
+    });
+
+    it('blocks credential use when binding controls are violated', () => {
+        const decision = evaluateApiCredentialUsePolicy(
+            apiCredential({
+                deployment_environment: 'production',
+                allowed_origins: ['https://partner.example'],
+                allowed_ip_cidrs: ['203.0.113.10'],
+                rotation_due_at: '2020-01-01T00:00:00.000Z',
+            }),
+            new Request('https://vetios.test/api/signals/ingest', {
+                headers: {
+                    origin: 'https://unexpected.example',
+                    'x-forwarded-for': '198.51.100.4',
+                },
+            }),
+            'staging',
+        );
+
+        expect(decision.allowed).toBe(false);
+        expect(decision.riskLevel).toBe('critical');
+        expect(decision.blockers).toEqual([
+            'credential_environment_mismatch',
+            'credential_origin_not_allowed',
+            'credential_ip_not_allowed',
+            'credential_rotation_overdue',
+        ]);
+    });
+});
+
 function createConnectorActor(
     patch: Partial<ConnectorInstallationRecord>,
 ): ClinicalApiActor {
@@ -94,5 +145,34 @@ function createConnectorActor(
         principalLabel: installation.installation_name,
         serviceAccountId: null,
         connectorInstallation: installation,
+    };
+}
+
+function apiCredential(patch: Partial<ApiCredentialRecord>): ApiCredentialRecord {
+    return {
+        id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        tenant_id: 'tenant_1',
+        principal_type: 'service_account',
+        service_account_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        connector_installation_id: null,
+        label: 'Partner credential',
+        key_prefix: 'vetios_sa_deadbeef',
+        key_hash: 'a'.repeat(64),
+        scopes: ['signals:ingest'],
+        status: 'active',
+        expires_at: null,
+        deployment_environment: null,
+        allowed_origins: [],
+        allowed_ip_cidrs: [],
+        rotation_due_at: null,
+        risk_score: 0,
+        last_risk_event_at: null,
+        metadata: {},
+        created_by: null,
+        revoked_by: null,
+        last_used_at: null,
+        created_at: '2026-07-12T00:00:00.000Z',
+        revoked_at: null,
+        ...patch,
     };
 }

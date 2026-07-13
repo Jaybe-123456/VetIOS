@@ -300,6 +300,12 @@ function sanitizeCredentialRecord(record: {
     scopes: readonly string[];
     status: string;
     expires_at: string | null;
+    deployment_environment?: string | null;
+    allowed_origins?: string[];
+    allowed_ip_cidrs?: string[];
+    rotation_due_at?: string | null;
+    risk_score?: number;
+    last_risk_event_at?: string | null;
     metadata: Record<string, unknown>;
     created_by: string | null;
     revoked_by: string | null;
@@ -318,6 +324,12 @@ function sanitizeCredentialRecord(record: {
         scopes: record.scopes,
         status: record.status,
         expires_at: record.expires_at,
+        deployment_environment: record.deployment_environment ?? null,
+        allowed_origins: record.allowed_origins ?? [],
+        allowed_ip_cidrs: record.allowed_ip_cidrs ?? [],
+        rotation_due_at: record.rotation_due_at ?? null,
+        risk_score: record.risk_score ?? 0,
+        last_risk_event_at: record.last_risk_event_at ?? null,
         metadata: record.metadata,
         created_by: record.created_by,
         revoked_by: record.revoked_by,

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
+import { isIP } from 'net';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { hashTrustSurfaceValue } from '@/lib/auth/authTrustFabric';
+import { hashTrustSurfaceValue, type AuthTrustEnvironment } from '@/lib/auth/authTrustFabric';
 import { resolveOAuthClientCredentialsPrincipal } from '@/lib/auth/oauthClientCredentials';
 import { API_CREDENTIALS, CONNECTOR_INSTALLATIONS, SERVICE_ACCOUNTS } from '@/lib/db/schemaContracts';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
@@ -72,6 +73,12 @@ export interface ApiCredentialRecord {
     scopes: MachineCredentialScope[];
     status: 'active' | 'revoked';
     expires_at: string | null;
+    deployment_environment: AuthTrustEnvironment | null;
+    allowed_origins: string[];
+    allowed_ip_cidrs: string[];
+    rotation_due_at: string | null;
+    risk_score: number;
+    last_risk_event_at: string | null;
     metadata: Record<string, unknown>;
     created_by: string | null;
     revoked_by: string | null;
@@ -418,6 +425,69 @@ export async function revokeApiCredential(input: {
     return credential;
 }
 
+export interface ApiCredentialUsePolicyDecision {
+    allowed: boolean;
+    riskScore: number;
+    riskLevel: 'low' | 'medium' | 'high' | 'critical';
+    blockers: string[];
+    warnings: string[];
+    evidence: Record<string, unknown>;
+}
+
+export function evaluateApiCredentialUsePolicy(
+    credential: ApiCredentialRecord,
+    req: Request,
+    environment: AuthTrustEnvironment = resolveDeploymentEnvironment(),
+): ApiCredentialUsePolicyDecision {
+    const blockers: string[] = [];
+    const warnings: string[] = [];
+    let riskScore = 0;
+
+    if (credential.deployment_environment && credential.deployment_environment !== environment) {
+        blockers.push('credential_environment_mismatch');
+        riskScore += 40;
+    }
+
+    const origin = req.headers.get('origin')?.trim() ?? null;
+    if (credential.allowed_origins.length > 0 && (!origin || !credential.allowed_origins.includes(origin))) {
+        blockers.push('credential_origin_not_allowed');
+        riskScore += 30;
+    }
+
+    const requestIp = resolveRequestIp(req);
+    if (credential.allowed_ip_cidrs.length > 0 && (!requestIp || !isIpAllowed(requestIp, credential.allowed_ip_cidrs))) {
+        blockers.push('credential_ip_not_allowed');
+        riskScore += 40;
+    }
+
+    if (credential.rotation_due_at && Date.parse(credential.rotation_due_at) <= Date.now()) {
+        blockers.push('credential_rotation_overdue');
+        riskScore += 35;
+    } else if (credential.rotation_due_at && Date.parse(credential.rotation_due_at) - Date.now() <= 7 * 24 * 60 * 60_000) {
+        warnings.push('credential_rotation_due_soon');
+        riskScore += 10;
+    }
+
+    riskScore = Math.min(100, Math.max(credential.risk_score, riskScore));
+    return {
+        allowed: blockers.length === 0,
+        riskScore,
+        riskLevel: riskScore >= 80 ? 'critical' : riskScore >= 50 ? 'high' : riskScore >= 20 ? 'medium' : 'low',
+        blockers,
+        warnings,
+        evidence: {
+            policy_version: 'api_credential_binding_controls_v1',
+            deployment_environment: environment,
+            credential_environment: credential.deployment_environment,
+            origin_hash: hashTrustSurfaceValue(origin),
+            ip_hash: hashTrustSurfaceValue(requestIp),
+            allowed_origins_count: credential.allowed_origins.length,
+            allowed_ip_cidrs_count: credential.allowed_ip_cidrs.length,
+            rotation_due_at: credential.rotation_due_at,
+        },
+    };
+}
+
 export async function resolveClinicalApiActor(
     req: Request,
     options: {
@@ -621,6 +691,15 @@ async function resolveMachineApiPrincipal(
         };
     }
 
+    const usePolicy = evaluateApiCredentialUsePolicy(credential, req);
+    if (!usePolicy.allowed) {
+        await recordCredentialUsePolicyDecision(client, credential, req, usePolicy);
+        return {
+            principal: null,
+            error: { status: 403, message: 'API credential is blocked by binding controls.' },
+        };
+    }
+
     const requiredScopes = options.requiredScopes ?? [];
     if (!hasAllRequiredScopes(credential.scopes, requiredScopes)) {
         return {
@@ -746,6 +825,11 @@ async function issueApiCredential(
             [C.scopes]: scopes,
             [C.status]: 'active',
             [C.expires_at]: input.expiresAt,
+            [C.deployment_environment]: readCredentialBoundEnvironment(input.metadata),
+            [C.allowed_origins]: readCredentialStringArray(input.metadata, 'allowed_origins'),
+            [C.allowed_ip_cidrs]: readCredentialStringArray(input.metadata, 'allowed_ip_cidrs', 'allowed_ips'),
+            [C.rotation_due_at]: normalizeOptionalText(input.metadata.rotation_due_at),
+            [C.risk_score]: 0,
             [C.metadata]: input.metadata,
             [C.created_by]: input.actor,
         })
@@ -895,6 +979,45 @@ async function markCredentialUsage(
     });
 }
 
+async function recordCredentialUsePolicyDecision(
+    client: SupabaseClient,
+    credential: ApiCredentialRecord,
+    req: Request,
+    decision: ApiCredentialUsePolicyDecision,
+): Promise<void> {
+    const now = new Date().toISOString();
+    const C = API_CREDENTIALS.COLUMNS;
+    await Promise.all([
+        client
+            .from(API_CREDENTIALS.TABLE)
+            .update({
+                [C.risk_score]: decision.riskScore,
+                [C.last_risk_event_at]: now,
+            })
+            .eq(C.id, credential.id),
+        writeApiCredentialLifecycleEvent(client, {
+            tenantId: credential.tenant_id,
+            requestId: `api_credential_blocked:${credential.id}:${Date.now()}`,
+            credential: {
+                ...credential,
+                risk_score: decision.riskScore,
+                last_risk_event_at: now,
+            },
+            actor: null,
+            lifecycleEvent: decision.allowed ? 'anomaly_detected' : 'blocked',
+            riskLevel: decision.riskLevel,
+            req,
+            evidence: {
+                blockers: decision.blockers,
+                warnings: decision.warnings,
+                use_policy: decision.evidence,
+            },
+        }),
+    ]).catch(() => {
+        // Best-effort trust telemetry; blocked auth should still return the policy denial.
+    });
+}
+
 async function writeApiCredentialLifecycleEvent(
     client: SupabaseClient,
     input: {
@@ -902,9 +1025,10 @@ async function writeApiCredentialLifecycleEvent(
         requestId: string;
         credential: ApiCredentialRecord;
         actor: string | null;
-        lifecycleEvent: 'issued' | 'revoked' | 'used';
+        lifecycleEvent: 'issued' | 'revoked' | 'used' | 'blocked' | 'anomaly_detected';
         riskLevel: 'low' | 'medium' | 'high' | 'critical';
         req?: Request | null;
+        evidence?: Record<string, unknown>;
     },
 ): Promise<void> {
     try {
@@ -922,7 +1046,7 @@ async function writeApiCredentialLifecycleEvent(
                 auth_protocol: 'api_key',
                 key_prefix: input.credential.key_prefix,
                 scopes: input.credential.scopes,
-                deployment_environment: readCredentialEnvironment(input.credential.metadata),
+                deployment_environment: readCredentialEventEnvironment(input.credential),
                 ip_hash: hashTrustSurfaceValue(resolveRequestIp(input.req ?? null)),
                 user_agent_hash: hashTrustSurfaceValue(input.req?.headers.get('user-agent') ?? null),
                 risk_level: input.riskLevel,
@@ -935,6 +1059,7 @@ async function writeApiCredentialLifecycleEvent(
                     method: input.req?.method ?? null,
                     origin_hash: hashTrustSurfaceValue(input.req?.headers.get('origin') ?? null),
                     forwarded_host_hash: hashTrustSurfaceValue(input.req?.headers.get('x-forwarded-host') ?? null),
+                    ...input.evidence,
                 },
             });
     } catch {
@@ -958,6 +1083,35 @@ function resolveRequestPath(req: Request | null): string | null {
     } catch {
         return null;
     }
+}
+
+function isIpAllowed(ip: string, allowedEntries: readonly string[]): boolean {
+    return allowedEntries.some((entry) => {
+        const normalized = entry.trim();
+        if (!normalized) return false;
+        if (!normalized.includes('/')) {
+            return normalized === ip;
+        }
+        return isIpv4CidrMatch(ip, normalized);
+    });
+}
+
+function isIpv4CidrMatch(ip: string, cidr: string): boolean {
+    const [range, prefixText] = cidr.split('/');
+    const prefix = Number(prefixText);
+    if (isIP(ip) !== 4 || isIP(range) !== 4 || !Number.isInteger(prefix) || prefix < 0 || prefix > 32) {
+        return false;
+    }
+    const ipNumber = ipv4ToNumber(ip);
+    const rangeNumber = ipv4ToNumber(range);
+    const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+    return (ipNumber & mask) === (rangeNumber & mask);
+}
+
+function ipv4ToNumber(value: string): number {
+    return value
+        .split('.')
+        .reduce((acc, octet) => ((acc << 8) + Number(octet)) >>> 0, 0);
 }
 
 function extractPresentedApiKey(req: Request): string | null {
@@ -1030,6 +1184,12 @@ function mapApiCredential(row: Record<string, unknown>): ApiCredentialRecord {
         scopes: normalizeMachineCredentialScopes(asStringArray(row.scopes)),
         status: normalizeCredentialStatus(row.status),
         expires_at: normalizeOptionalText(row.expires_at),
+        deployment_environment: normalizeDeploymentEnvironment(row.deployment_environment),
+        allowed_origins: asStringArray(row.allowed_origins),
+        allowed_ip_cidrs: asStringArray(row.allowed_ip_cidrs),
+        rotation_due_at: normalizeOptionalText(row.rotation_due_at),
+        risk_score: normalizeRiskScore(row.risk_score),
+        last_risk_event_at: normalizeOptionalText(row.last_risk_event_at),
         metadata: asRecord(row.metadata),
         created_by: normalizeOptionalText(row.created_by),
         revoked_by: normalizeOptionalText(row.revoked_by),
@@ -1056,12 +1216,50 @@ function coerceUuidOrNull(value: string | null): string | null {
     return normalized && UUID_PATTERN.test(normalized) ? normalized : null;
 }
 
-function readCredentialEnvironment(metadata: Record<string, unknown>): 'sandbox' | 'staging' | 'production' {
+function readCredentialBoundEnvironment(metadata: Record<string, unknown>): AuthTrustEnvironment | null {
     const value = normalizeOptionalText(metadata.deployment_environment)
         ?? normalizeOptionalText(metadata.environment);
     return value === 'sandbox' || value === 'staging' || value === 'production'
         ? value
-        : 'production';
+        : null;
+}
+
+function resolveDeploymentEnvironment(): AuthTrustEnvironment {
+    const value = process.env.VETIOS_DEPLOYMENT_ENVIRONMENT
+        ?? process.env.VERCEL_ENV
+        ?? process.env.NODE_ENV;
+    if (value === 'sandbox' || value === 'staging' || value === 'production') {
+        return value;
+    }
+    if (value === 'preview' || value === 'development' || value === 'test') {
+        return 'staging';
+    }
+    return 'production';
+}
+
+function readCredentialEventEnvironment(credential: ApiCredentialRecord): AuthTrustEnvironment {
+    return credential.deployment_environment ?? resolveDeploymentEnvironment();
+}
+
+function normalizeDeploymentEnvironment(value: unknown): AuthTrustEnvironment | null {
+    return value === 'sandbox' || value === 'staging' || value === 'production' ? value : null;
+}
+
+function readCredentialStringArray(metadata: Record<string, unknown>, key: string, fallbackKey?: string): string[] {
+    const primary = metadata[key];
+    const fallback = fallbackKey ? metadata[fallbackKey] : undefined;
+    return asStringArray(primary).length > 0
+        ? normalizeStringArray(asStringArray(primary))
+        : normalizeStringArray(asStringArray(fallback));
+}
+
+function normalizeStringArray(value: readonly string[]): string[] {
+    return [...new Set(value.map((entry) => entry.trim()).filter(Boolean))];
+}
+
+function normalizeRiskScore(value: unknown): number {
+    const numeric = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numeric) ? Math.min(100, Math.max(0, Math.round(numeric))) : 0;
 }
 
 function normalizePrincipalType(value: unknown): MachineCredentialPrincipalType {
