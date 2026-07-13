@@ -30,6 +30,7 @@ Public links:
 - [CIRE Open Standard](#cire-open-standard)
 - [Architecture](#architecture)
 - [Decision Rails](#decision-rails)
+- [Strategic Infrastructure Rails](#strategic-infrastructure-rails)
 - [Data Flywheel](#data-flywheel)
 - [Federated Learning Moat](#federated-learning-moat)
 - [Core API](#core-api)
@@ -122,6 +123,25 @@ The packet answers four operational questions:
 - Should compute use cached replay, deterministic routing, high-reasoning escalation, or human review first?
 
 Decision Rails does not replace the underlying ledgers and does not mutate clinical records. It is the orchestration layer for dashboards, service accounts, and future compute-routing markets where cost, latency, reviewability, and evidence quality need to be visible before execution.
+
+## Strategic Infrastructure Rails
+
+VetIOS should become the veterinary and One Health infrastructure substrate, not another AI chat surface. The durable wedge is the control plane that clinics, labs, partner nodes, reviewers, regulators, and compute-routing policies depend on every day.
+
+`GET /api/infrastructure/strategic-rails` returns a protected, read-only rail map that connects the current modules to the operating thesis:
+
+- daily clinical workflow embed;
+- clinical inference and CIRE reliability;
+- outcome-confirmed learning;
+- global One Health ontology;
+- retrieval and citation quality;
+- partner-node federation and secure aggregation;
+- AMR and One Health surveillance;
+- regulatory, security, and claims discipline;
+- compute routing and cost policy;
+- moat evidence control plane.
+
+The packet is intentionally strict. It separates what is built from what is still missing, then orders the next builds by proof: real workflow connectors, outcome closure, verified ontology population, production secure aggregation, compute metering, and external validation.
 
 ## Data Flywheel
 
@@ -298,6 +318,8 @@ The curated catalog covers AVMA, AAHA, WSAVA, ACVIM, AAFP, CAPC, ESCCAP, IRIS, M
 The global ontology ingestion layer separates official disease reference concepts from live surveillance data. `WOAH_DISEASE_REFERENCE_URL` should point to a machine-readable WOAH animal disease reference CSV/JSON export, while `WAHIS_EXPORT_URL` is reserved for true WAHIS outbreak/surveillance exports. Both feeds write source hashes, parser evidence, imported/skipped row counts, and coverage snapshots through the ingestion operations console.
 
 Key provider environment variables include `UMLS_API_KEY`, `WHO_ICD_CLIENT_ID`, `WHO_ICD_CLIENT_SECRET`, `NCBI_API_KEY`, `WOAH_DISEASE_REFERENCE_URL`, `WAHIS_EXPORT_URL`, `CDC_OPEN_DATA_URL`, `SNOMED_CT_RELEASE_URL`, and `VENOM_RELEASE_URL`. Do not use portal homepages for release URL variables; use direct API endpoints or downloadable CSV/JSON/ZIP artifacts.
+
+Licensed/credentialed terminology operations can be verified through `GET|POST /api/ontology/global-one-health/licensed-provider-verification`. The verifier exercises the real provider fetch/parser path for UMLS REST, WHO ICD-11, SNOMED CT release files, and VeNom release files, then reports configured state, parser version, source hash, imported node/relationship counts, blockers, and whether the provider may enter shadow inference expansion. Active probability scoring remains blocked until mappings are reviewer-verified, externally validated, outcome-confirmed, and represented in live coverage snapshots.
 
 ## Monorepo Map
 

@@ -360,7 +360,11 @@ function OntologyCoverageCard({ payload }: { payload: Record<string, unknown> | 
     const coverageScore = readNumberValue(coverage?.score);
     const coverageStatus = readDisplayString(coverage?.status, 'unknown');
     const openWorldStatus = readDisplayString(coverage?.open_world_candidate_generation, 'missing');
+    const expansionMode = readDisplayString(expansion?.expansion_mode, 'blocked');
+    const scoringAllowed = expansion?.scoring_allowed === true;
     const verifiedMappingCount = readNumberValue(expansion?.verified_mapping_count) ?? 0;
+    const reviewerVerifiedMappingCount = readNumberValue(expansion?.reviewer_verified_mapping_count) ?? 0;
+    const externallyVerifiedMappingCount = readNumberValue(expansion?.externally_verified_mapping_count) ?? 0;
     const graphCandidateCount = readNumberValue(expansion?.graph_candidate_count) ?? 0;
     const graphRelationshipCount = readNumberValue(expansion?.graph_relationship_count) ?? 0;
     const blockers = readDisplayStringArray(expansion?.blockers).concat(readDisplayStringArray(coverage?.blockers)).slice(0, 4);
@@ -385,9 +389,12 @@ function OntologyCoverageCard({ payload }: { payload: Record<string, unknown> | 
                     </div>
                 </div>
                 <DataRow label="Coverage State" value={coverageStatus.toUpperCase()} />
+                <DataRow label="Expansion Mode" value={expansionMode.toUpperCase()} tone={expansionMode === 'active' ? 'accent' : 'warning'} />
                 <DataRow label="Verified Mappings" value={String(verifiedMappingCount)} />
+                <DataRow label="Reviewer Verified" value={String(reviewerVerifiedMappingCount)} />
+                <DataRow label="Externally Verified" value={String(externallyVerifiedMappingCount)} />
                 <DataRow label="Graph Candidates" value={`${graphCandidateCount} / ${graphRelationshipCount} edges`} />
-                <DataRow label="Scoring State" value="BLOCKED PENDING REVIEW" />
+                <DataRow label="Scoring State" value={scoringAllowed ? 'ACTIVE' : 'BLOCKED PENDING REVIEW'} tone={scoringAllowed ? 'accent' : 'warning'} />
 
                 {verifiedMappings.length > 0 ? (
                     <div className="space-y-2">

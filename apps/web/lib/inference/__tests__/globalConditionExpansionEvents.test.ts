@@ -27,8 +27,13 @@ describe('global condition expansion event writer', () => {
 
         const expansion: GlobalConditionExpansionReport = {
             status: 'verified_candidates_available',
+            expansion_mode: 'shadow',
+            scoring_allowed: false,
             candidate_count: 1,
             verified_mapping_count: 1,
+            source_attested_mapping_count: 1,
+            reviewer_verified_mapping_count: 0,
+            externally_verified_mapping_count: 0,
             graph_candidate_count: 0,
             graph_relationship_count: 0,
             candidate_keys: ['rabies'],
@@ -49,6 +54,12 @@ describe('global condition expansion event writer', () => {
             graph_candidates: [],
             blockers: ['reviewer_verification_required_before_probability_scoring'],
             warnings: ['Expansion does not alter probabilities.'],
+            active_expansion_required_evidence: [
+                'reviewer_verified_source_mapping',
+                'external_mapping_validation',
+                'outcome_confirmed_case_evidence',
+                'calibrated_candidate_expansion_audit',
+            ],
             recommended_next_action: 'Show for clinician review.',
         };
 
@@ -66,6 +77,11 @@ describe('global condition expansion event writer', () => {
             reviewer_gate_status: 'required',
             verified_condition_keys: ['rabies'],
             verified_code_systems: ['MONDO'],
+        });
+        expect(inserted?.expansion_packet).toMatchObject({
+            expansion_mode: 'shadow',
+            scoring_allowed: false,
+            source_attested_mapping_count: 1,
         });
         expect(inserted?.source_manifest_hash).toMatch(/^[a-f0-9]{64}$/);
     });

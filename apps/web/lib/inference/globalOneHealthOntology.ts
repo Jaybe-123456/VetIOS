@@ -5,6 +5,7 @@ import type {
     GlobalConditionCandidateHint,
     GlobalConditionCoverageReport,
     GlobalConditionCoverageStatus,
+    GlobalConditionExpansionReport,
     GlobalConditionSourceExpansionHint,
     InferenceRequest,
     Species,
@@ -197,6 +198,72 @@ export function buildGlobalConditionCandidateHints(
     caseText: string,
 ): GlobalConditionCandidateHint[] {
     return selectGlobalOneHealthConditionCandidates(species, caseText);
+}
+
+export function applyGlobalConditionExpansionState(
+    coverage: GlobalConditionCoverageReport | null | undefined,
+    expansion: GlobalConditionExpansionReport | null | undefined,
+): GlobalConditionCoverageReport | null {
+    if (!coverage) return null;
+    if (!expansion) return coverage;
+
+    const candidateExpansionStatus = resolveCandidateExpansionStatus(expansion);
+    const openWorldCandidateGeneration = expansion.expansion_mode === 'active'
+        ? 'active'
+        : expansion.expansion_mode === 'shadow'
+            ? 'shadow'
+            : 'blocked';
+    const blockers = openWorldCandidateGeneration === 'active'
+        ? coverage.blockers.filter((blocker) => blocker !== 'open_world_candidate_generation_missing')
+        : dedupe([
+            ...coverage.blockers.filter((blocker) =>
+                blocker !== 'open_world_candidate_generation_missing'
+                || expansion.status === 'no_candidate_hints'
+                || expansion.status === 'no_verified_mappings',
+            ),
+            ...expansion.blockers,
+        ]);
+    const warnings = dedupe([
+        ...coverage.warnings,
+        ...expansion.warnings,
+    ]);
+
+    return {
+        ...coverage,
+        score: scoreWithExpansion(coverage, expansion),
+        one_health_review_required: expansion.expansion_mode !== 'active' || coverage.one_health_review_required,
+        open_world_candidate_generation: openWorldCandidateGeneration,
+        candidate_expansion_status: candidateExpansionStatus,
+        blockers,
+        warnings,
+        recommended_next_action: expansion.recommended_next_action,
+    };
+}
+
+function resolveCandidateExpansionStatus(
+    expansion: GlobalConditionExpansionReport,
+): GlobalConditionCoverageReport['candidate_expansion_status'] {
+    if (expansion.expansion_mode === 'active') return 'outcome_validated_active';
+    if (expansion.expansion_mode === 'blocked') return 'blocked';
+    if (expansion.externally_verified_mapping_count > 0) return 'externally_verified_shadow';
+    if (expansion.reviewer_verified_mapping_count > 0) return 'reviewer_verified_shadow';
+    if (expansion.source_attested_mapping_count > 0) return 'source_attested_shadow';
+    return 'source_hints_only';
+}
+
+function scoreWithExpansion(
+    coverage: GlobalConditionCoverageReport,
+    expansion: GlobalConditionExpansionReport,
+) {
+    if (expansion.expansion_mode === 'active') return Number(Math.max(coverage.score, 0.86).toFixed(4));
+    if (expansion.externally_verified_mapping_count > 0) return Number(Math.max(coverage.score, 0.76).toFixed(4));
+    if (expansion.reviewer_verified_mapping_count > 0) return Number(Math.max(coverage.score, 0.68).toFixed(4));
+    if (expansion.source_attested_mapping_count > 0) return Number(Math.max(coverage.score, 0.58).toFixed(4));
+    return coverage.score;
+}
+
+function dedupe(values: string[]) {
+    return [...new Set(values.filter(Boolean))];
 }
 
 function speciesMatches(entry: string, species: Species) {

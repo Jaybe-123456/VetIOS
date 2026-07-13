@@ -63,8 +63,13 @@ describe('global One Health verified expansion', () => {
         });
 
         expect(report.status).toBe('verified_candidates_available');
+        expect(report.expansion_mode).toBe('shadow');
+        expect(report.scoring_allowed).toBe(false);
         expect(report.candidate_count).toBe(1);
         expect(report.verified_mapping_count).toBe(1);
+        expect(report.source_attested_mapping_count).toBe(1);
+        expect(report.reviewer_verified_mapping_count).toBe(0);
+        expect(report.externally_verified_mapping_count).toBe(0);
         expect(report.verified_mappings[0]).toMatchObject({
             condition_key: 'rabies',
             external_code_system: 'MONDO',
@@ -120,12 +125,49 @@ describe('global One Health verified expansion', () => {
         expect(report.status).toBe('graph_candidates_available');
         expect(report.graph_relationship_count).toBe(1);
         expect(report.graph_candidate_count).toBe(1);
+        expect(report.expansion_mode).toBe('shadow');
+        expect(report.scoring_allowed).toBe(false);
+        expect(report.reviewer_verified_mapping_count).toBe(1);
         expect(report.graph_candidates[0]).toMatchObject({
             source_condition_key: 'rabies',
             candidate_external_code: 'MONDO:0000001',
             candidate_label: 'infectious disease',
         });
-        expect(report.blockers).toContain('reviewer_verification_required_before_probability_scoring');
+        expect(report.blockers).toContain('external_validation_required_before_active_expansion');
+    });
+
+    it('allows active expansion only when mappings are externally verified and coverage is outcome active', async () => {
+        const report = await expandGlobalConditionCandidatesFromVerifiedMappings({
+            client: buildClient({
+                mappings: [
+                    {
+                        condition_key: 'rabies',
+                        source_key: 'mondo_disease_ontology',
+                        source_authority: 'institutional',
+                        source_type: 'dataset',
+                        external_code_system: 'MONDO',
+                        external_code: 'MONDO:0005091',
+                        mapping_status: 'externally_verified',
+                        mapping_confidence: 0.99,
+                        source_version: null,
+                        created_at: '2026-07-06T00:00:00.000Z',
+                    },
+                ],
+            }),
+            tenantId: '00000000-0000-4000-8000-000000000001',
+            coverage: {
+                ...coverage,
+                open_world_candidate_generation: 'active',
+                candidate_expansion_status: 'outcome_validated_active',
+            },
+        });
+
+        expect(report.status).toBe('verified_candidates_available');
+        expect(report.expansion_mode).toBe('active');
+        expect(report.scoring_allowed).toBe(true);
+        expect(report.externally_verified_mapping_count).toBe(1);
+        expect(report.blockers).toEqual([]);
+        expect(report.active_expansion_required_evidence).toEqual([]);
     });
 
     it('reports no candidate hints when the inference has no source-seeded candidates', async () => {
@@ -140,6 +182,8 @@ describe('global One Health verified expansion', () => {
         });
 
         expect(report.status).toBe('no_candidate_hints');
+        expect(report.expansion_mode).toBe('blocked');
+        expect(report.scoring_allowed).toBe(false);
         expect(report.verified_mapping_count).toBe(0);
         expect(report.blockers).toContain('no_source_seeded_condition_candidates');
     });

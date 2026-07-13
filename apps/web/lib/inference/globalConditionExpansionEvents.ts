@@ -27,6 +27,8 @@ export async function recordGlobalConditionExpansionEvent(
     const verifiedCodeSystems = [...new Set(input.expansion.verified_mappings.map((mapping) => mapping.external_code_system))];
     const packet = {
         status: input.expansion.status,
+        expansion_mode: input.expansion.expansion_mode,
+        scoring_allowed: input.expansion.scoring_allowed,
         candidate_keys: input.expansion.candidate_keys,
         verified_mappings: input.expansion.verified_mappings.map((mapping) => ({
             condition_key: mapping.condition_key,
@@ -48,6 +50,10 @@ export async function recordGlobalConditionExpansionEvent(
         })),
         graph_candidate_count: input.expansion.graph_candidate_count,
         graph_relationship_count: input.expansion.graph_relationship_count,
+        source_attested_mapping_count: input.expansion.source_attested_mapping_count,
+        reviewer_verified_mapping_count: input.expansion.reviewer_verified_mapping_count,
+        externally_verified_mapping_count: input.expansion.externally_verified_mapping_count,
+        active_expansion_required_evidence: input.expansion.active_expansion_required_evidence,
         recommended_next_action: input.expansion.recommended_next_action,
         clinical_boundary: 'Verified ontology expansion is review-gated and does not alter probability scoring.',
     };
@@ -63,8 +69,10 @@ export async function recordGlobalConditionExpansionEvent(
         candidate_keys: input.expansion.candidate_keys,
         verified_condition_keys: verifiedConditionKeys,
         verified_code_systems: verifiedCodeSystems,
-        probability_scoring_status: 'blocked_pending_review',
-        reviewer_gate_status: input.expansion.verified_mapping_count > 0 ? 'required' : 'not_required',
+        probability_scoring_status: input.expansion.scoring_allowed ? 'outcome_validated' : 'blocked_pending_review',
+        reviewer_gate_status: input.expansion.scoring_allowed
+            ? 'approved'
+            : input.expansion.verified_mapping_count > 0 ? 'required' : 'not_required',
         expansion_packet: packet,
         source_manifest_hash: sha256(packet),
         blockers: input.expansion.blockers,

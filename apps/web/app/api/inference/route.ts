@@ -45,6 +45,7 @@ import {
 import { recordInferenceReliabilityPacket } from '@/lib/inference/reliabilityOrchestrator';
 import { recordConditionCoverageSnapshotEvent } from '@/lib/inference/conditionCoverageSnapshot';
 import { expandGlobalConditionCandidatesFromVerifiedMappings } from '@/lib/inference/globalOneHealthExpansion';
+import { applyGlobalConditionExpansionState } from '@/lib/inference/globalOneHealthOntology';
 import { recordGlobalConditionExpansionEvent } from '@/lib/inference/globalConditionExpansionEvents';
 import type { GlobalConditionCoverageReport, GlobalConditionExpansionReport } from '@/lib/inference/types';
 
@@ -332,8 +333,13 @@ export async function POST(req: Request) {
                 candidate_count: globalConditionCoverage?.condition_candidate_hints.length ?? 0,
             },
         );
+        const expandedGlobalConditionCoverage = applyGlobalConditionExpansionState(
+            globalConditionCoverage,
+            globalConditionExpansion,
+        );
         const responseOutputPayload = {
             ...result.output_payload,
+            global_condition_coverage: expandedGlobalConditionCoverage ?? globalConditionCoverage,
             global_condition_expansion: globalConditionExpansion,
         };
         trace.recordCompleted('response_build', 'Inference response built', {

@@ -733,8 +733,13 @@ export interface GlobalConditionExpansionReport {
         | 'no_candidate_hints'
         | 'no_verified_mappings'
         | 'query_failed';
+    expansion_mode: 'blocked' | 'shadow' | 'active';
+    scoring_allowed: boolean;
     candidate_count: number;
     verified_mapping_count: number;
+    source_attested_mapping_count: number;
+    reviewer_verified_mapping_count: number;
+    externally_verified_mapping_count: number;
     graph_candidate_count: number;
     graph_relationship_count: number;
     candidate_keys: string[];
@@ -742,6 +747,7 @@ export interface GlobalConditionExpansionReport {
     graph_candidates: GlobalConditionGraphCandidate[];
     blockers: string[];
     warnings: string[];
+    active_expansion_required_evidence: string[];
     recommended_next_action: string;
 }
 
@@ -757,7 +763,13 @@ export interface GlobalConditionCoverageReport {
     human_correlation_requested: boolean;
     one_health_review_required: boolean;
     open_world_candidate_generation: 'missing' | 'shadow' | 'active' | 'blocked';
-    candidate_expansion_status: 'source_hints_only';
+    candidate_expansion_status:
+        | 'source_hints_only'
+        | 'source_attested_shadow'
+        | 'reviewer_verified_shadow'
+        | 'externally_verified_shadow'
+        | 'outcome_validated_active'
+        | 'blocked';
     candidate_expansion_hints: GlobalConditionSourceExpansionHint[];
     condition_candidate_status: 'seeded_source_candidates' | 'none';
     condition_candidate_hints: GlobalConditionCandidateHint[];

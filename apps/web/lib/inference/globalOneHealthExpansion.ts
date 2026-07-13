@@ -10,6 +10,12 @@ type ExpansionSupabaseClient = {
 };
 
 const VERIFIED_MAPPING_STATUSES = ['source_attested', 'reviewer_verified', 'externally_verified'];
+const ACTIVE_EXPANSION_REQUIRED_EVIDENCE = [
+    'reviewer_verified_source_mapping',
+    'external_mapping_validation',
+    'outcome_confirmed_case_evidence',
+    'calibrated_candidate_expansion_audit',
+];
 
 export async function expandGlobalConditionCandidatesFromVerifiedMappings(input: {
     client: ExpansionSupabaseClient;
@@ -20,8 +26,13 @@ export async function expandGlobalConditionCandidatesFromVerifiedMappings(input:
     if (candidateKeys.length === 0) {
         return {
             status: 'no_candidate_hints',
+            expansion_mode: 'blocked',
+            scoring_allowed: false,
             candidate_count: 0,
             verified_mapping_count: 0,
+            source_attested_mapping_count: 0,
+            reviewer_verified_mapping_count: 0,
+            externally_verified_mapping_count: 0,
             graph_candidate_count: 0,
             graph_relationship_count: 0,
             candidate_keys: [],
@@ -29,6 +40,7 @@ export async function expandGlobalConditionCandidatesFromVerifiedMappings(input:
             graph_candidates: [],
             blockers: ['no_source_seeded_condition_candidates'],
             warnings: [],
+            active_expansion_required_evidence: ACTIVE_EXPANSION_REQUIRED_EVIDENCE,
             recommended_next_action: 'Materialize source-seeded One Health candidates before enabling verified expansion.',
         };
     }
@@ -39,8 +51,13 @@ export async function expandGlobalConditionCandidatesFromVerifiedMappings(input:
         if (error) {
             return {
                 status: 'query_failed',
+                expansion_mode: 'blocked',
+                scoring_allowed: false,
                 candidate_count: candidateKeys.length,
                 verified_mapping_count: 0,
+                source_attested_mapping_count: 0,
+                reviewer_verified_mapping_count: 0,
+                externally_verified_mapping_count: 0,
                 graph_candidate_count: 0,
                 graph_relationship_count: 0,
                 candidate_keys: candidateKeys,
@@ -48,6 +65,7 @@ export async function expandGlobalConditionCandidatesFromVerifiedMappings(input:
                 graph_candidates: [],
                 blockers: ['verified_mapping_query_failed'],
                 warnings: [error.message ?? 'Unknown verified mapping query error.'],
+                active_expansion_required_evidence: ACTIVE_EXPANSION_REQUIRED_EVIDENCE,
                 recommended_next_action: 'Check ontology mapping table availability, RLS, and service credentials before enabling active expansion.',
             };
         }
@@ -58,6 +76,12 @@ export async function expandGlobalConditionCandidatesFromVerifiedMappings(input:
             .filter((row) => VERIFIED_MAPPING_STATUSES.includes(row.mapping_status));
         const graphExpansion = await loadGraphCandidates(input.client, input.tenantId, verifiedMappings);
         const hasGraphCandidates = graphExpansion.graphCandidates.length > 0;
+        const maturity = classifyExpansionMaturity({
+            mappings: verifiedMappings,
+            coverage: input.coverage,
+            hasGraphCandidates,
+        });
+        const mappingCounts = countMappingsByStatus(verifiedMappings);
 
         return {
             status: hasGraphCandidates
@@ -65,31 +89,36 @@ export async function expandGlobalConditionCandidatesFromVerifiedMappings(input:
                 : verifiedMappings.length > 0
                     ? 'verified_candidates_available'
                     : 'no_verified_mappings',
+            expansion_mode: maturity.expansionMode,
+            scoring_allowed: maturity.scoringAllowed,
             candidate_count: candidateKeys.length,
             verified_mapping_count: verifiedMappings.length,
+            source_attested_mapping_count: mappingCounts.source_attested,
+            reviewer_verified_mapping_count: mappingCounts.reviewer_verified,
+            externally_verified_mapping_count: mappingCounts.externally_verified,
             graph_candidate_count: graphExpansion.graphCandidates.length,
             graph_relationship_count: graphExpansion.relationshipCount,
             candidate_keys: candidateKeys,
             verified_mappings: verifiedMappings,
             graph_candidates: graphExpansion.graphCandidates,
-            blockers: verifiedMappings.length > 0
-                ? ['reviewer_verification_required_before_probability_scoring']
-                : ['official_external_codes_not_materialized_for_candidates'],
+            blockers: maturity.blockers,
             warnings: [
-                'Verified ontology mappings expand candidate awareness only; they do not alter diagnostic probabilities until reviewer and outcome evidence exist.',
+                maturity.warning,
                 ...graphExpansion.warnings,
-            ],
-            recommended_next_action: hasGraphCandidates
-                ? 'Queue graph-backed candidates for mapping review; keep scoring blocked until reviewer verification and outcome evidence exist.'
-                : verifiedMappings.length > 0
-                ? 'Show verified global condition candidates for clinician review, then promote reviewer-verified mappings into active differential expansion.'
-                : 'Run official ontology ingestion and reviewer verification for the current candidate keys.',
+            ].filter(Boolean),
+            active_expansion_required_evidence: maturity.requiredEvidence,
+            recommended_next_action: maturity.recommendedNextAction,
         };
     } catch (error) {
         return {
             status: 'query_failed',
+            expansion_mode: 'blocked',
+            scoring_allowed: false,
             candidate_count: candidateKeys.length,
             verified_mapping_count: 0,
+            source_attested_mapping_count: 0,
+            reviewer_verified_mapping_count: 0,
+            externally_verified_mapping_count: 0,
             graph_candidate_count: 0,
             graph_relationship_count: 0,
             candidate_keys: candidateKeys,
@@ -97,9 +126,90 @@ export async function expandGlobalConditionCandidatesFromVerifiedMappings(input:
             graph_candidates: [],
             blockers: ['verified_mapping_query_exception'],
             warnings: [error instanceof Error ? error.message : 'Unknown verified mapping query exception.'],
+            active_expansion_required_evidence: ACTIVE_EXPANSION_REQUIRED_EVIDENCE,
             recommended_next_action: 'Repair the verified mapping expansion query before enabling active global candidate expansion.',
         };
     }
+}
+
+function countMappingsByStatus(mappings: GlobalConditionVerifiedMapping[]) {
+    return mappings.reduce((counts, mapping) => {
+        counts[mapping.mapping_status] += 1;
+        return counts;
+    }, {
+        source_attested: 0,
+        reviewer_verified: 0,
+        externally_verified: 0,
+    } satisfies Record<GlobalConditionVerifiedMapping['mapping_status'], number>);
+}
+
+function classifyExpansionMaturity(input: {
+    mappings: GlobalConditionVerifiedMapping[];
+    coverage: GlobalConditionCoverageReport | null | undefined;
+    hasGraphCandidates: boolean;
+}) {
+    const counts = countMappingsByStatus(input.mappings);
+    const hasReviewerVerified = counts.reviewer_verified > 0 || counts.externally_verified > 0;
+    const hasExternalVerified = counts.externally_verified > 0;
+    const activeCoverage = input.coverage?.open_world_candidate_generation === 'active'
+        && input.coverage.candidate_expansion_status === 'outcome_validated_active';
+
+    if (input.mappings.length === 0) {
+        return {
+            expansionMode: 'blocked' as const,
+            scoringAllowed: false,
+            blockers: ['official_external_codes_not_materialized_for_candidates'],
+            warning: 'No source-attested official mappings exist for the source-seeded condition candidates.',
+            requiredEvidence: ACTIVE_EXPANSION_REQUIRED_EVIDENCE,
+            recommendedNextAction: 'Run official ontology ingestion and reviewer verification for the current candidate keys.',
+        };
+    }
+
+    if (!hasReviewerVerified) {
+        return {
+            expansionMode: 'shadow' as const,
+            scoringAllowed: false,
+            blockers: ['reviewer_verification_required_before_probability_scoring'],
+            warning: 'Source-attested mappings may expand awareness only; reviewer verification is required before score-bearing use.',
+            requiredEvidence: ACTIVE_EXPANSION_REQUIRED_EVIDENCE,
+            recommendedNextAction: 'Promote source-attested mappings through reviewer verification before enabling graph-backed differential expansion.',
+        };
+    }
+
+    if (!hasExternalVerified) {
+        return {
+            expansionMode: 'shadow' as const,
+            scoringAllowed: false,
+            blockers: ['external_validation_required_before_active_expansion'],
+            warning: 'Reviewer-verified mappings remain shadow candidates until external validation and outcome evidence exist.',
+            requiredEvidence: ACTIVE_EXPANSION_REQUIRED_EVIDENCE.filter((entry) => entry !== 'reviewer_verified_source_mapping'),
+            recommendedNextAction: input.hasGraphCandidates
+                ? 'Queue graph-backed candidates for external validation and outcome-linked calibration before active scoring.'
+                : 'Attach external validation evidence to reviewer-verified mappings before active scoring.',
+        };
+    }
+
+    if (!activeCoverage) {
+        return {
+            expansionMode: 'shadow' as const,
+            scoringAllowed: false,
+            blockers: ['outcome_validated_coverage_required_before_active_expansion'],
+            warning: 'Externally verified mappings are ready for shadow expansion, but active scoring still requires outcome-validated coverage.',
+            requiredEvidence: ACTIVE_EXPANSION_REQUIRED_EVIDENCE.filter((entry) =>
+                entry !== 'reviewer_verified_source_mapping' && entry !== 'external_mapping_validation',
+            ),
+            recommendedNextAction: 'Accumulate outcome-confirmed evidence and persist live coverage snapshots before active expansion.',
+        };
+    }
+
+    return {
+        expansionMode: 'active' as const,
+        scoringAllowed: true,
+        blockers: [],
+        warning: 'Externally verified, outcome-validated ontology mappings can participate in active candidate expansion.',
+        requiredEvidence: [],
+        recommendedNextAction: 'Monitor drift, calibration, and clinician overrides for active ontology-expanded candidates.',
+    };
 }
 
 async function queryVerifiedMappings(client: ExpansionSupabaseClient, tenantId: string, candidateKeys: string[]) {
