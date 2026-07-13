@@ -1,9 +1,11 @@
+import { generateKeyPairSync, sign } from 'crypto';
 import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
     createOAuthClient,
     issueOAuthClientCredentialsToken,
     normalizeOAuthScopes,
+    OAUTH_CLIENT_ASSERTION_TYPE,
     resolveOAuthClientCredentialsPrincipal,
     revokeOAuthAccessToken,
     sanitizeOAuthClient,
@@ -111,6 +113,66 @@ describe('oauth client credentials foundation', () => {
 
         expect(resolved.error).toMatchObject({ status: 403 });
         expect(resolved.principal).toBeNull();
+    });
+
+    it('issues tokens using signed private_key_jwt client assertions', async () => {
+        const memory = createMemorySupabase();
+        const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+        const publicJwk = publicKey.export({ format: 'jwk' }) as Record<string, unknown>;
+        const audience = 'https://vetios.test/api/oauth/token';
+
+        const created = await createOAuthClient({
+            client: memory.client,
+            tenantId: 'tenant_1',
+            actor: null,
+            clientName: 'Federation node signer',
+            allowedScopes: ['federation:node', 'secure_aggregation:write'],
+            clientAuthMethods: ['private_key_jwt'],
+            assertionAudiences: [audience],
+            jwks: {
+                keys: [{
+                    ...publicJwk,
+                    kid: 'node-key-1',
+                    alg: 'RS256',
+                    use: 'sig',
+                }],
+            },
+        });
+
+        const clientAssertion = signClientAssertion({
+            clientId: created.oauthClient.client_id,
+            audience,
+            kid: 'node-key-1',
+            privateKey,
+        });
+        const issued = await issueOAuthClientCredentialsToken({
+            client: memory.client,
+            clientAssertionType: OAUTH_CLIENT_ASSERTION_TYPE,
+            clientAssertion,
+            expectedAssertionAudiences: [audience],
+            requestedScopes: 'federation:node',
+        });
+
+        expect(issued.accessToken).toMatch(/^vetios_at_/);
+        expect(issued.oauthClient.client_auth_methods).toEqual(['private_key_jwt']);
+        expect(issued.token.scopes).toEqual(['federation:node']);
+        expect(issued.token.evidence).toMatchObject({
+            client_auth_method: 'private_key_jwt',
+            client_assertion_kid: 'node-key-1',
+        });
+
+        await expect(issueOAuthClientCredentialsToken({
+            client: memory.client,
+            clientAssertionType: OAUTH_CLIENT_ASSERTION_TYPE,
+            clientAssertion: signClientAssertion({
+                clientId: created.oauthClient.client_id,
+                audience: 'https://attacker.test/api/oauth/token',
+                kid: 'node-key-1',
+                privateKey,
+            }),
+            expectedAssertionAudiences: [audience],
+            requestedScopes: 'federation:node',
+        })).rejects.toThrow(/audience/i);
     });
 });
 
@@ -232,4 +294,32 @@ function randomUuid(): string {
         const nibble = char === 'x' ? value : (value & 0x3) | 0x8;
         return nibble.toString(16);
     });
+}
+
+function signClientAssertion(input: {
+    clientId: string;
+    audience: string;
+    kid: string;
+    privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'];
+}): string {
+    const now = Math.floor(Date.now() / 1000);
+    const header = base64UrlJson({ alg: 'RS256', typ: 'JWT', kid: input.kid });
+    const payload = base64UrlJson({
+        iss: input.clientId,
+        sub: input.clientId,
+        aud: input.audience,
+        iat: now,
+        exp: now + 240,
+        jti: randomUuid(),
+    });
+    const signature = sign(
+        'RSA-SHA256',
+        Buffer.from(`${header}.${payload}`),
+        input.privateKey,
+    ).toString('base64url');
+    return `${header}.${payload}.${signature}`;
+}
+
+function base64UrlJson(value: Record<string, unknown>): string {
+    return Buffer.from(JSON.stringify(value)).toString('base64url');
 }

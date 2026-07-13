@@ -33,11 +33,11 @@ export async function POST(req: Request) {
     const basic = parseBasicClientAuth(req.headers.get('authorization'));
     const clientId = basic?.clientId ?? body.client_id;
     const clientSecret = basic?.clientSecret ?? body.client_secret;
-    if (!clientId || !clientSecret) {
+    if (!body.client_assertion && (!clientId || !clientSecret)) {
         return withHeaders(
             NextResponse.json({
                 error: 'invalid_client',
-                error_description: 'client_id and client_secret are required.',
+                error_description: 'client credentials or a signed client assertion are required.',
                 request_id: requestId,
             }, { status: 401 }),
             requestId,
@@ -50,6 +50,9 @@ export async function POST(req: Request) {
             client: getSupabaseServer(),
             clientId,
             clientSecret,
+            clientAssertionType: body.client_assertion_type,
+            clientAssertion: body.client_assertion,
+            expectedAssertionAudiences: buildExpectedOAuthAudiences(req),
             requestedScopes: body.scope,
             audience: body.audience,
             req,
@@ -100,6 +103,8 @@ function mapOAuthRequestRecord(value: unknown): Record<string, string | null> {
         grant_type: readText(record.grant_type),
         client_id: readText(record.client_id),
         client_secret: readText(record.client_secret),
+        client_assertion_type: readText(record.client_assertion_type),
+        client_assertion: readText(record.client_assertion),
         scope: readText(record.scope),
         audience: readText(record.audience),
     };
@@ -123,6 +128,15 @@ function parseBasicClientAuth(value: string | null): { clientId: string; clientS
 
 function readText(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function buildExpectedOAuthAudiences(req: Request): string[] {
+    const url = new URL(req.url);
+    return [
+        url.toString(),
+        `${url.origin}${url.pathname}`,
+        url.origin,
+    ];
 }
 
 function withHeaders(response: NextResponse, requestId: string, startTime: number): NextResponse {

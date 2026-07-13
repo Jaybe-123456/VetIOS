@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateOAuthClient, revokeOAuthAccessToken } from '@/lib/auth/oauthClientCredentials';
+import { authenticateOAuthClientRequest, revokeOAuthAccessToken } from '@/lib/auth/oauthClientCredentials';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { getSupabaseServer } from '@/lib/supabaseServer';
@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     const basic = parseBasicClientAuth(req.headers.get('authorization'));
     const clientId = basic?.clientId ?? body.client_id;
     const clientSecret = basic?.clientSecret ?? body.client_secret;
-    if (!clientId || !clientSecret || !body.token) {
+    if ((!body.client_assertion && (!clientId || !clientSecret)) || !body.token) {
         return withHeaders(
             NextResponse.json({ error: 'invalid_client', request_id: requestId }, { status: 401 }),
             requestId,
@@ -31,11 +31,18 @@ export async function POST(req: Request) {
 
     const client = getSupabaseServer();
     try {
-        const authenticated = await authenticateOAuthClient({ client, clientId, clientSecret });
+        const authenticated = await authenticateOAuthClientRequest({
+            client,
+            clientId,
+            clientSecret,
+            clientAssertionType: body.client_assertion_type,
+            clientAssertion: body.client_assertion,
+            expectedAssertionAudiences: buildExpectedOAuthAudiences(req),
+        });
         const result = await revokeOAuthAccessToken({
             client,
             token: body.token,
-            authenticatedClientId: authenticated.client_id,
+            authenticatedClientId: authenticated.oauthClient.client_id,
             req,
         });
         return withHeaders(
@@ -78,6 +85,8 @@ function mapRecord(value: unknown): Record<string, string | null> {
         token: readText(record.token),
         client_id: readText(record.client_id),
         client_secret: readText(record.client_secret),
+        client_assertion_type: readText(record.client_assertion_type),
+        client_assertion: readText(record.client_assertion),
     };
 }
 
@@ -99,6 +108,15 @@ function parseBasicClientAuth(value: string | null): { clientId: string; clientS
 
 function readText(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function buildExpectedOAuthAudiences(req: Request): string[] {
+    const url = new URL(req.url);
+    return [
+        url.toString(),
+        `${url.origin}${url.pathname}`,
+        url.origin,
+    ];
 }
 
 function withHeaders(response: NextResponse, requestId: string, startTime: number): NextResponse {

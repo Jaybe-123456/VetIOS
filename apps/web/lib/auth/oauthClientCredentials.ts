@@ -1,4 +1,5 @@
-import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { createHash, createPublicKey, randomBytes, timingSafeEqual, verify } from 'crypto';
+import type { JsonWebKey } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { hashTrustSurfaceValue } from '@/lib/auth/authTrustFabric';
 import {
@@ -14,6 +15,7 @@ const UUID_PATTERN =
 export const OAUTH_ACCESS_TOKEN_PREFIX = 'vetios_at_';
 export const OAUTH_CLIENT_ID_PREFIX = 'vetios_oauth_';
 export const OAUTH_CLIENT_SECRET_PREFIX = 'vetios_cs_';
+export const OAUTH_CLIENT_ASSERTION_TYPE = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer';
 
 export const OAUTH_CLIENT_CREDENTIAL_SCOPES = [
     'inference:write',
@@ -37,6 +39,8 @@ export const OAUTH_CLIENT_CREDENTIAL_SCOPES = [
 export type OAuthClientCredentialScope = typeof OAUTH_CLIENT_CREDENTIAL_SCOPES[number];
 export type OAuthClientStatus = 'active' | 'disabled' | 'revoked';
 export type OAuthTokenStatus = 'active' | 'revoked' | 'expired';
+export type OAuthClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt';
+export type OAuthClientAssertionAlgorithm = 'RS256';
 
 export interface OAuthClientRecord {
     id: string;
@@ -50,6 +54,10 @@ export interface OAuthClientRecord {
     allowed_origins: string[];
     allowed_ip_cidrs: string[];
     jwks: Record<string, unknown>;
+    client_auth_methods: OAuthClientAuthMethod[];
+    assertion_algorithms: OAuthClientAssertionAlgorithm[];
+    assertion_audiences: string[];
+    assertion_max_ttl_seconds: number;
     metadata: Record<string, unknown>;
     created_by: string | null;
     revoked_by: string | null;
@@ -86,6 +94,13 @@ export interface OAuthResolvedPrincipal {
     clientName: string;
     scopes: OAuthClientCredentialScope[];
     tokenId: string;
+}
+
+interface JwtClientAssertionParts {
+    header: Record<string, unknown>;
+    payload: Record<string, unknown>;
+    signingInput: string;
+    signature: Buffer;
 }
 
 export function normalizeOAuthScopes(scopes: readonly string[] | string | null | undefined): OAuthClientCredentialScope[] {
@@ -128,6 +143,11 @@ export async function createOAuthClient(input: {
     tokenTtlSeconds?: number | null;
     allowedOrigins?: readonly string[] | null;
     allowedIpCidrs?: readonly string[] | null;
+    jwks?: Record<string, unknown> | null;
+    clientAuthMethods?: readonly string[] | null;
+    assertionAlgorithms?: readonly string[] | null;
+    assertionAudiences?: readonly string[] | null;
+    assertionMaxTtlSeconds?: number | null;
     metadata?: Record<string, unknown>;
 }): Promise<{ oauthClient: OAuthClientRecord; clientSecret: string }> {
     const clientId = `${OAUTH_CLIENT_ID_PREFIX}${randomBytes(12).toString('hex')}`;
@@ -135,6 +155,14 @@ export async function createOAuthClient(input: {
     const scopes = normalizeOAuthScopes(input.allowedScopes);
     if (scopes.length === 0) {
         throw new Error('At least one valid OAuth scope is required.');
+    }
+    const clientAuthMethods = normalizeOAuthClientAuthMethods(input.clientAuthMethods);
+    const assertionAlgorithms = normalizeOAuthClientAssertionAlgorithms(input.assertionAlgorithms);
+    const assertionAudiences = normalizeTextArray(input.assertionAudiences);
+    const assertionMaxTtlSeconds = normalizeAssertionMaxTtl(input.assertionMaxTtlSeconds);
+    const jwks = normalizeJwks(input.jwks);
+    if (clientAuthMethods.includes('private_key_jwt') && getJwksKeys(jwks).length === 0) {
+        throw new Error('private_key_jwt clients require at least one public JWK.');
     }
 
     const C = OAUTH_CLIENTS.COLUMNS;
@@ -150,6 +178,11 @@ export async function createOAuthClient(input: {
             [C.token_ttl_seconds]: normalizeTokenTtl(input.tokenTtlSeconds),
             [C.allowed_origins]: normalizeTextArray(input.allowedOrigins),
             [C.allowed_ip_cidrs]: normalizeTextArray(input.allowedIpCidrs),
+            [C.jwks]: jwks,
+            [C.client_auth_methods]: clientAuthMethods,
+            [C.assertion_algorithms]: assertionAlgorithms,
+            [C.assertion_audiences]: assertionAudiences,
+            [C.assertion_max_ttl_seconds]: assertionMaxTtlSeconds,
             [C.metadata]: input.metadata ?? {},
             [C.created_by]: input.actor,
         })
@@ -171,6 +204,10 @@ export async function createOAuthClient(input: {
         evidence: {
             allowed_origins_count: oauthClient.allowed_origins.length,
             allowed_ip_cidrs_count: oauthClient.allowed_ip_cidrs.length,
+            client_auth_methods: oauthClient.client_auth_methods,
+            assertion_algorithms: oauthClient.assertion_algorithms,
+            assertion_audiences_count: oauthClient.assertion_audiences.length,
+            jwks_key_count: getJwksKeys(oauthClient.jwks).length,
         },
     });
 
@@ -261,16 +298,104 @@ export async function authenticateOAuthClient(input: {
     if (oauthClient.status !== 'active') {
         throw new Error('OAuth client is not active.');
     }
+    if (!oauthClient.client_auth_methods.some((method) =>
+        method === 'client_secret_basic' || method === 'client_secret_post')) {
+        throw new Error('OAuth client does not allow shared-secret authentication.');
+    }
     if (!verifySecret(input.clientSecret, oauthClient.client_secret_hash)) {
         throw new Error('OAuth client credentials are invalid.');
     }
     return oauthClient;
 }
 
+export async function authenticateOAuthClientRequest(input: {
+    client: SupabaseClient;
+    clientId?: string | null;
+    clientSecret?: string | null;
+    clientAssertionType?: string | null;
+    clientAssertion?: string | null;
+    expectedAssertionAudiences?: readonly string[] | null;
+}): Promise<{
+    oauthClient: OAuthClientRecord;
+    authMethod: 'client_secret' | 'private_key_jwt';
+    assertionKid?: string | null;
+}> {
+    if (input.clientAssertion) {
+        if (input.clientAssertionType !== OAUTH_CLIENT_ASSERTION_TYPE) {
+            throw new Error('Unsupported OAuth client assertion type.');
+        }
+        return authenticateOAuthClientAssertion({
+            client: input.client,
+            clientId: input.clientId ?? null,
+            clientAssertion: input.clientAssertion,
+            expectedAudiences: input.expectedAssertionAudiences ?? [],
+        });
+    }
+
+    if (!input.clientId || !input.clientSecret) {
+        throw new Error('client_id and client_secret are required.');
+    }
+    const oauthClient = await authenticateOAuthClient({
+        client: input.client,
+        clientId: input.clientId,
+        clientSecret: input.clientSecret,
+    });
+    return { oauthClient, authMethod: 'client_secret' };
+}
+
+export async function authenticateOAuthClientAssertion(input: {
+    client: SupabaseClient;
+    clientId?: string | null;
+    clientAssertion: string;
+    expectedAudiences: readonly string[];
+}): Promise<{
+    oauthClient: OAuthClientRecord;
+    authMethod: 'private_key_jwt';
+    assertionKid: string | null;
+}> {
+    const decoded = decodeJwtClientAssertion(input.clientAssertion);
+    const assertionClientId = readString(decoded.payload.iss);
+    const assertionSubject = readString(decoded.payload.sub);
+    const requestedClientId = normalizeOptionalText(input.clientId);
+    if (!assertionClientId || !assertionSubject || assertionClientId !== assertionSubject) {
+        throw new Error('OAuth client assertion must use matching iss and sub client identifiers.');
+    }
+    if (requestedClientId && requestedClientId !== assertionClientId) {
+        throw new Error('OAuth client assertion does not match client_id.');
+    }
+
+    const oauthClient = await getOAuthClientByClientId(input.client, assertionClientId);
+    if (!oauthClient) {
+        throw new Error('OAuth client was not found.');
+    }
+    if (oauthClient.status !== 'active') {
+        throw new Error('OAuth client is not active.');
+    }
+    if (!oauthClient.client_auth_methods.includes('private_key_jwt')) {
+        throw new Error('OAuth client does not allow private_key_jwt authentication.');
+    }
+
+    validateJwtClientAssertionClaims({
+        oauthClient,
+        payload: decoded.payload,
+        expectedAudiences: input.expectedAudiences,
+    });
+    verifyJwtClientAssertionSignature(oauthClient, decoded);
+
+    return {
+        oauthClient,
+        authMethod: 'private_key_jwt',
+        assertionKid: readString(decoded.header.kid),
+    };
+}
+
 export async function issueOAuthClientCredentialsToken(input: {
     client: SupabaseClient;
-    clientId: string;
-    clientSecret: string;
+    clientId?: string | null;
+    clientSecret?: string | null;
+    clientAssertionType?: string | null;
+    clientAssertion?: string | null;
+    expectedAssertionAudiences?: readonly string[] | null;
     requestedScopes?: readonly string[] | string | null;
     audience?: string | null;
     req?: Request | null;
@@ -280,7 +405,8 @@ export async function issueOAuthClientCredentialsToken(input: {
     accessToken: string;
     expiresIn: number;
 }> {
-    const oauthClient = await authenticateOAuthClient(input);
+    const authentication = await authenticateOAuthClientRequest(input);
+    const oauthClient = authentication.oauthClient;
     const scopes = resolveGrantedScopes(oauthClient, input.requestedScopes);
     const now = new Date();
     const expiresAt = new Date(now.getTime() + oauthClient.token_ttl_seconds * 1000);
@@ -304,6 +430,8 @@ export async function issueOAuthClientCredentialsToken(input: {
             [C.user_agent_hash]: hashTrustSurfaceValue(input.req?.headers.get('user-agent') ?? null),
             [C.evidence]: {
                 grant_type: 'client_credentials',
+                client_auth_method: authentication.authMethod,
+                client_assertion_kid: authentication.assertionKid ?? null,
                 route: resolveRequestPath(input.req ?? null),
                 origin_hash: hashTrustSurfaceValue(input.req?.headers.get('origin') ?? null),
             },
@@ -329,6 +457,10 @@ export async function issueOAuthClientCredentialsToken(input: {
             lifecycleEvent: 'issued',
             riskLevel: 'low',
             req: input.req ?? null,
+            evidence: {
+                client_auth_method: authentication.authMethod,
+                client_assertion_kid: authentication.assertionKid ?? null,
+            },
         }),
     ]).catch(() => {
         // Token issuance should not fail on best-effort last-used/event telemetry.
@@ -644,6 +776,97 @@ function verifySecret(candidate: string, expectedHash: string): boolean {
     return candidateHash.length === expected.length && timingSafeEqual(candidateHash, expected);
 }
 
+function decodeJwtClientAssertion(jwt: string): JwtClientAssertionParts {
+    const parts = jwt.split('.');
+    if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
+        throw new Error('OAuth client assertion must be a compact JWT.');
+    }
+
+    const [encodedHeader, encodedPayload, encodedSignature] = parts;
+    const header = parseBase64UrlJson(encodedHeader, 'JWT header');
+    const payload = parseBase64UrlJson(encodedPayload, 'JWT payload');
+    const alg = readString(header.alg);
+    if (!alg || alg === 'none') {
+        throw new Error('OAuth client assertion must be signed.');
+    }
+
+    return {
+        header,
+        payload,
+        signingInput: `${encodedHeader}.${encodedPayload}`,
+        signature: base64UrlDecode(encodedSignature),
+    };
+}
+
+function validateJwtClientAssertionClaims(input: {
+    oauthClient: OAuthClientRecord;
+    payload: Record<string, unknown>;
+    expectedAudiences: readonly string[];
+}): void {
+    const now = Math.floor(Date.now() / 1000);
+    const exp = readNumber(input.payload.exp);
+    const iat = readNumber(input.payload.iat);
+    const nbf = readNumber(input.payload.nbf);
+    if (!exp || exp <= now) {
+        throw new Error('OAuth client assertion is expired.');
+    }
+    if (nbf && nbf > now + 60) {
+        throw new Error('OAuth client assertion is not valid yet.');
+    }
+    if (iat && iat > now + 60) {
+        throw new Error('OAuth client assertion was issued in the future.');
+    }
+    if (exp - (iat ?? now) > input.oauthClient.assertion_max_ttl_seconds) {
+        throw new Error('OAuth client assertion lifetime exceeds client policy.');
+    }
+
+    const assertionAudiences = readAudienceValues(input.payload.aud);
+    const acceptedAudiences = input.oauthClient.assertion_audiences.length > 0
+        ? input.oauthClient.assertion_audiences
+        : [...input.expectedAudiences];
+    if (acceptedAudiences.length === 0) {
+        throw new Error('OAuth client assertion audience policy is not configured.');
+    }
+    if (!assertionAudiences.some((audience) => acceptedAudiences.includes(audience))) {
+        throw new Error('OAuth client assertion audience is not accepted.');
+    }
+}
+
+function verifyJwtClientAssertionSignature(oauthClient: OAuthClientRecord, jwt: JwtClientAssertionParts): void {
+    const alg = readString(jwt.header.alg);
+    if (alg !== 'RS256' || !oauthClient.assertion_algorithms.includes('RS256')) {
+        throw new Error('OAuth client assertion algorithm is not accepted.');
+    }
+
+    const key = selectJwkForAssertion(oauthClient.jwks, readString(jwt.header.kid));
+    if (!key) {
+        throw new Error('OAuth client assertion signing key was not found.');
+    }
+
+    const publicKey = createPublicKey({
+        key: key as JsonWebKey,
+        format: 'jwk',
+    });
+    const ok = verify(
+        'RSA-SHA256',
+        Buffer.from(jwt.signingInput),
+        publicKey,
+        jwt.signature,
+    );
+    if (!ok) {
+        throw new Error('OAuth client assertion signature is invalid.');
+    }
+}
+
+function selectJwkForAssertion(jwks: Record<string, unknown>, kid: string | null): Record<string, unknown> | null {
+    const keys = getJwksKeys(jwks).filter((key) => readString(key.kty) === 'RSA');
+    if (keys.length === 0) return null;
+    if (kid) {
+        return keys.find((key) => readString(key.kid) === kid) ?? null;
+    }
+    return keys.length === 1 ? keys[0] : null;
+}
+
 function sha256Hex(value: string): string {
     return createHash('sha256').update(value).digest('hex');
 }
@@ -661,6 +884,10 @@ function mapOAuthClient(row: Record<string, unknown>): OAuthClientRecord {
         allowed_origins: asStringArray(row.allowed_origins),
         allowed_ip_cidrs: asStringArray(row.allowed_ip_cidrs),
         jwks: asRecord(row.jwks),
+        client_auth_methods: normalizeOAuthClientAuthMethods(asStringArray(row.client_auth_methods)),
+        assertion_algorithms: normalizeOAuthClientAssertionAlgorithms(asStringArray(row.assertion_algorithms)),
+        assertion_audiences: asStringArray(row.assertion_audiences),
+        assertion_max_ttl_seconds: normalizeAssertionMaxTtl(Number(row.assertion_max_ttl_seconds)),
         metadata: asRecord(row.metadata),
         created_by: normalizeOptionalText(row.created_by),
         revoked_by: normalizeOptionalText(row.revoked_by),
@@ -701,9 +928,39 @@ function normalizeOAuthTokenStatus(value: unknown): OAuthTokenStatus {
     return value === 'revoked' || value === 'expired' ? value : 'active';
 }
 
+function normalizeOAuthClientAuthMethods(value: readonly string[] | null | undefined): OAuthClientAuthMethod[] {
+    const supported = new Set<OAuthClientAuthMethod>([
+        'client_secret_basic',
+        'client_secret_post',
+        'private_key_jwt',
+    ]);
+    const normalized = Array.isArray(value)
+        ? [...new Set(value.filter((entry): entry is OAuthClientAuthMethod => supported.has(entry as OAuthClientAuthMethod)))]
+        : [];
+    return normalized.length > 0
+        ? normalized
+        : ['client_secret_basic', 'client_secret_post'];
+}
+
+function normalizeOAuthClientAssertionAlgorithms(
+    value: readonly string[] | null | undefined,
+): OAuthClientAssertionAlgorithm[] {
+    const supported = new Set<OAuthClientAssertionAlgorithm>(['RS256']);
+    const normalized = Array.isArray(value)
+        ? [...new Set(value.filter((entry): entry is OAuthClientAssertionAlgorithm =>
+            supported.has(entry as OAuthClientAssertionAlgorithm)))]
+        : [];
+    return normalized.length > 0 ? normalized : ['RS256'];
+}
+
 function normalizeTokenTtl(value: number | null | undefined): number {
     const numeric = Number.isFinite(value) ? Number(value) : 900;
     return Math.min(3600, Math.max(60, Math.floor(numeric)));
+}
+
+function normalizeAssertionMaxTtl(value: number | null | undefined): number {
+    const numeric = Number.isFinite(value) ? Number(value) : 300;
+    return Math.min(600, Math.max(60, Math.floor(numeric)));
 }
 
 function normalizeRequiredText(value: unknown, field: string): string {
@@ -724,6 +981,19 @@ function normalizeTextArray(value: readonly string[] | null | undefined): string
         : [];
 }
 
+function normalizeJwks(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
+    const record = asRecord(value);
+    const keys = getJwksKeys(record);
+    return keys.length > 0 ? { ...record, keys } : {};
+}
+
+function getJwksKeys(jwks: Record<string, unknown>): Record<string, unknown>[] {
+    return Array.isArray(jwks.keys)
+        ? jwks.keys.filter((entry): entry is Record<string, unknown> =>
+            typeof entry === 'object' && entry !== null && !Array.isArray(entry))
+        : [];
+}
+
 function asStringArray(value: unknown): string[] {
     return Array.isArray(value)
         ? value.filter((entry): entry is string => typeof entry === 'string')
@@ -734,6 +1004,38 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function readString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readNumber(value: unknown): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readAudienceValues(value: unknown): string[] {
+    if (typeof value === 'string' && value.trim().length > 0) {
+        return [value.trim()];
+    }
+    if (Array.isArray(value)) {
+        return normalizeTextArray(value.filter((entry): entry is string => typeof entry === 'string'));
+    }
+    return [];
+}
+
+function parseBase64UrlJson(value: string, label: string): Record<string, unknown> {
+    try {
+        const parsed = JSON.parse(base64UrlDecode(value).toString('utf8'));
+        return asRecord(parsed);
+    } catch {
+        throw new Error(`OAuth client assertion ${label} is invalid.`);
+    }
+}
+
+function base64UrlDecode(value: string): Buffer {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
+    return Buffer.from(padded, 'base64');
 }
 
 function coerceUuidOrNull(value: string | null): string | null {

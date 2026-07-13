@@ -25,6 +25,11 @@ type OAuthClientAction =
         token_ttl_seconds?: number | null;
         allowed_origins?: string[];
         allowed_ip_cidrs?: string[];
+        jwks?: Record<string, unknown>;
+        client_auth_methods?: string[];
+        assertion_algorithms?: string[];
+        assertion_audiences?: string[];
+        assertion_max_ttl_seconds?: number | null;
         metadata?: Record<string, unknown>;
     }
     | {
@@ -130,6 +135,11 @@ export async function POST(req: Request) {
                 tokenTtlSeconds: parsed.data.token_ttl_seconds ?? null,
                 allowedOrigins: parsed.data.allowed_origins ?? [],
                 allowedIpCidrs: parsed.data.allowed_ip_cidrs ?? [],
+                jwks: asRecord(parsed.data.jwks),
+                clientAuthMethods: parsed.data.client_auth_methods ?? null,
+                assertionAlgorithms: parsed.data.assertion_algorithms ?? null,
+                assertionAudiences: parsed.data.assertion_audiences ?? null,
+                assertionMaxTtlSeconds: parsed.data.assertion_max_ttl_seconds ?? null,
                 metadata: asRecord(parsed.data.metadata),
             });
             result = {
