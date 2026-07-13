@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import { buildForbiddenRouteResponse, buildRouteAuthorizationContext } from '@/lib/auth/authorization';
 import {
+    enforceVetiosHighRiskRouteGate,
+    mapMachineAuthActionToAuthTrustAction,
+} from '@/lib/auth/authTrustRouteGate';
+import {
     createConnectorInstallationWithCredential,
     createServiceAccountWithCredential,
     issueConnectorInstallationCredential,
@@ -130,6 +134,28 @@ export async function POST(req: Request) {
     const auth = buildMachineAuthAdminActor(authorizationContext);
 
     const payload = parsed.data;
+    const trustAction = mapMachineAuthActionToAuthTrustAction(payload.action);
+    if (trustAction) {
+        const trustGate = await enforceVetiosHighRiskRouteGate({
+            client: adminClient,
+            requestId,
+            context: authorizationContext,
+            actionKey: trustAction,
+            resource: {
+                type: 'api_credential',
+                id: resolveMachineAuthResourceId(payload),
+                tenantId: authorizationContext.tenantId,
+            },
+            evidence: {
+                route: 'api/platform/machine-auth',
+                requested_action: payload.action,
+            },
+        });
+        if (!trustGate.ok) {
+            withRequestHeaders(trustGate.response.headers, requestId, startTime);
+            return trustGate.response;
+        }
+    }
 
     try {
         let actionResult: Record<string, unknown>;
@@ -317,4 +343,11 @@ function asRecord(value: unknown): Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value)
         ? value as Record<string, unknown>
         : {};
+}
+
+function resolveMachineAuthResourceId(payload: MachineAuthAction): string | null {
+    if (payload.action === 'revoke_api_credential') return payload.credential_id ?? null;
+    if (payload.action === 'issue_service_account_credential') return payload.service_account_id ?? null;
+    if (payload.action === 'issue_connector_installation_credential') return payload.connector_installation_id ?? null;
+    return null;
 }

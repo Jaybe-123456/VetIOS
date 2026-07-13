@@ -5,6 +5,10 @@ import {
     isRouteAuthorizationGranted,
     type RouteAuthorizationContext,
 } from '@/lib/auth/authorization';
+import {
+    enforceVetiosHighRiskRouteGate,
+    mapFederationActionToAuthTrustAction,
+} from '@/lib/auth/authTrustRouteGate';
 import { resolveExperimentApiActor } from '@/lib/auth/internalApi';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
@@ -305,9 +309,28 @@ export async function POST(req: Request) {
             requirement: 'admin',
         });
     }
+    const action = body.data.action ?? 'upsert_membership';
+    const trustGate = await enforceVetiosHighRiskRouteGate({
+        client: adminClient,
+        requestId,
+        context: authContext,
+        actionKey: mapFederationActionToAuthTrustAction(action),
+        resource: {
+            type: resolveFederationTrustResourceType(action),
+            id: resolveFederationTrustResourceId(body.data),
+            tenantId: authContext.tenantId,
+        },
+        evidence: {
+            route: 'api/platform/federation',
+            requested_action: action,
+        },
+    });
+    if (!trustGate.ok) {
+        withRequestHeaders(trustGate.response.headers, requestId, startTime);
+        return trustGate.response;
+    }
 
     try {
-        const action = body.data.action ?? 'upsert_membership';
         const federationKey = normalizeRequiredFederationKey(body.data.federation_key);
         let result: Record<string, unknown>;
 
@@ -636,6 +659,44 @@ async function resolveFederationAuthorizationContext(
         authMode: process.env.VETIOS_DEV_BYPASS === 'true' ? 'dev_bypass' : 'session',
         user: null,
     });
+}
+
+function resolveFederationTrustResourceType(action: string): string {
+    if (
+        action === 'run_round'
+        || action === 'issue_round_node_tasks'
+        || action === 'finalize_secure_aggregation'
+        || action === 'build_federated_aggregate_artifacts'
+        || action === 'run_federated_promotion_automation'
+        || action === 'generate_federated_external_validation'
+        || action === 'run_federated_champion_surveillance'
+    ) {
+        return 'federation_round';
+    }
+    if (action === 'register_federated_candidate' || action === 'generate_federated_candidate_evidence') {
+        return 'model_registry_entry';
+    }
+    if (action === 'record_federation_node_attestation') {
+        return 'federation_node';
+    }
+    if (action === 'review_update_submission') {
+        return 'federated_update_submission';
+    }
+    return 'federation';
+}
+
+function resolveFederationTrustResourceId(payload: FederationAction): string | null {
+    return readRecordText(payload, 'federation_round_id')
+        ?? readRecordText(payload, 'submission_id')
+        ?? readRecordText(payload, 'model_registry_id')
+        ?? readRecordText(payload, 'node_ref')
+        ?? readRecordText(payload, 'federation_key');
+}
+
+function readRecordText(value: unknown, key: string): string | null {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+    const entry = (value as Record<string, unknown>)[key];
+    return typeof entry === 'string' && entry.trim().length > 0 ? entry.trim() : null;
 }
 
 function normalizeFederationKey(value: unknown): string | null {

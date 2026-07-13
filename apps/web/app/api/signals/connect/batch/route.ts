@@ -396,7 +396,7 @@ function mergeBatchConnectorEvent(
 }
 
 function shouldDeferSignalReconcile(
-    authMode: 'session' | 'dev_bypass' | 'service_account' | 'connector_installation' | null,
+    authMode: 'session' | 'dev_bypass' | 'service_account' | 'connector_installation' | 'oauth_client' | null,
     req: Request,
     hasLegacyConnectorAccess: boolean,
 ): boolean {
@@ -407,7 +407,8 @@ function shouldDeferSignalReconcile(
 
     return hasLegacyConnectorAccess
         || authMode === 'service_account'
-        || authMode === 'connector_installation';
+        || authMode === 'connector_installation'
+        || authMode === 'oauth_client';
 }
 
 async function persistWorkflowIntegrationRunEvent(

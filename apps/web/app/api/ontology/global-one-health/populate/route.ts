@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { enforceVetiosClinicalActorGate } from '@/lib/auth/authTrustRouteGate';
 import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
@@ -65,6 +66,28 @@ export async function POST(req: Request) {
     }
 
     const populationRequestId = parsed.data.request_id ?? `global_biomedical_ontology_population:${requestId}`;
+    const trustGate = await enforceVetiosClinicalActorGate({
+        client: supabase as unknown as Parameters<typeof enforceVetiosClinicalActorGate>[0]['client'],
+        requestId,
+        actor: auth.actor,
+        actionKey: 'ontology.provider.ingest',
+        resource: {
+            type: 'global_biomedical_ontology_population',
+            id: normalizeProviderResourceId(parsed.data.provider_keys),
+            tenantId: auth.actor.tenantId,
+        },
+        evidence: {
+            route: 'api/ontology/global-one-health/populate',
+            provider_keys: parsed.data.provider_keys ?? [],
+            max_nodes_per_provider: parsed.data.max_nodes_per_provider ?? null,
+            max_relationships_per_provider: parsed.data.max_relationships_per_provider ?? null,
+            dry_run: parsed.data.dry_run,
+        },
+    });
+    if (!trustGate.ok) {
+        return withHeaders(trustGate.response, requestId, startTime);
+    }
+
     const rows = await buildGlobalBiomedicalOntologyPopulationRows({
         tenantId: auth.actor.tenantId,
         requestId: populationRequestId,
@@ -123,4 +146,10 @@ function withHeaders(response: NextResponse, requestId: string, startTime: numbe
     withRequestHeaders(response.headers, requestId, startTime);
     response.headers.set('Cache-Control', 'no-store');
     return response;
+}
+
+function normalizeProviderResourceId(providerKeys: readonly string[] | undefined): string {
+    return providerKeys?.length
+        ? providerKeys.map((key) => key.trim()).filter(Boolean).sort().join(',')
+        : 'all_configured_providers';
 }

@@ -204,7 +204,7 @@ export async function POST(req: Request) {
 }
 
 function shouldDeferSignalReconcile(
-    authMode: 'session' | 'dev_bypass' | 'service_account' | 'connector_installation',
+    authMode: 'session' | 'dev_bypass' | 'service_account' | 'connector_installation' | 'oauth_client',
     req: Request,
 ): boolean {
     const requestedMode = req.headers.get('x-vetios-event-mode')?.trim().toLowerCase();
@@ -212,5 +212,7 @@ function shouldDeferSignalReconcile(
         return true;
     }
 
-    return authMode === 'service_account' || authMode === 'connector_installation';
+    return authMode === 'service_account'
+        || authMode === 'connector_installation'
+        || authMode === 'oauth_client';
 }

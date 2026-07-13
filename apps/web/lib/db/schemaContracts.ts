@@ -1236,6 +1236,96 @@ export const API_CREDENTIALS = {
     },
 } as const;
 
+export const OAUTH_CLIENTS = {
+    TABLE: 'oauth_clients',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        client_id: 'client_id',
+        client_secret_hash: 'client_secret_hash',
+        client_name: 'client_name',
+        status: 'status',
+        allowed_scopes: 'allowed_scopes',
+        token_ttl_seconds: 'token_ttl_seconds',
+        allowed_origins: 'allowed_origins',
+        allowed_ip_cidrs: 'allowed_ip_cidrs',
+        jwks: 'jwks',
+        metadata: 'metadata',
+        created_by: 'created_by',
+        revoked_by: 'revoked_by',
+        last_used_at: 'last_used_at',
+        rotated_at: 'rotated_at',
+        revoked_at: 'revoked_at',
+        created_at: 'created_at',
+        updated_at: 'updated_at',
+    },
+} as const;
+
+export const OAUTH_ACCESS_TOKENS = {
+    TABLE: 'oauth_access_tokens',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        oauth_client_id: 'oauth_client_id',
+        token_hash: 'token_hash',
+        token_prefix: 'token_prefix',
+        scopes: 'scopes',
+        audience: 'audience',
+        status: 'status',
+        issued_at: 'issued_at',
+        expires_at: 'expires_at',
+        revoked_at: 'revoked_at',
+        last_introspected_at: 'last_introspected_at',
+        ip_hash: 'ip_hash',
+        user_agent_hash: 'user_agent_hash',
+        evidence: 'evidence',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const OAUTH_CLIENT_EVENTS = {
+    TABLE: 'oauth_client_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        request_id: 'request_id',
+        oauth_client_id: 'oauth_client_id',
+        client_id: 'client_id',
+        actor_user_id: 'actor_user_id',
+        lifecycle_event: 'lifecycle_event',
+        status: 'status',
+        allowed_scopes: 'allowed_scopes',
+        token_ttl_seconds: 'token_ttl_seconds',
+        risk_level: 'risk_level',
+        evidence: 'evidence',
+        observed_at: 'observed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
+export const OAUTH_TOKEN_EVENTS = {
+    TABLE: 'oauth_token_events',
+    COLUMNS: {
+        id: 'id',
+        tenant_id: 'tenant_id',
+        request_id: 'request_id',
+        oauth_client_id: 'oauth_client_id',
+        oauth_access_token_id: 'oauth_access_token_id',
+        token_prefix: 'token_prefix',
+        lifecycle_event: 'lifecycle_event',
+        token_status: 'token_status',
+        scopes: 'scopes',
+        audience: 'audience',
+        expires_at: 'expires_at',
+        ip_hash: 'ip_hash',
+        user_agent_hash: 'user_agent_hash',
+        risk_level: 'risk_level',
+        evidence: 'evidence',
+        observed_at: 'observed_at',
+        created_at: 'created_at',
+    },
+} as const;
+
 export const OUTBOX_EVENTS = {
     TABLE: 'outbox_events',
     COLUMNS: {

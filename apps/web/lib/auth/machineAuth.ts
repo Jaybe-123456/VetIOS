@@ -1,5 +1,7 @@
 import { createHash, randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { hashTrustSurfaceValue } from '@/lib/auth/authTrustFabric';
+import { resolveOAuthClientCredentialsPrincipal } from '@/lib/auth/oauthClientCredentials';
 import { API_CREDENTIALS, CONNECTOR_INSTALLATIONS, SERVICE_ACCOUNTS } from '@/lib/db/schemaContracts';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { resolveSessionTenant } from '@/lib/supabaseServer';
@@ -28,7 +30,7 @@ export const MACHINE_CREDENTIAL_SCOPES = [
 
 export type MachineCredentialScope = typeof MACHINE_CREDENTIAL_SCOPES[number];
 export type MachineCredentialPrincipalType = 'service_account' | 'connector_installation';
-export type ClinicalApiAuthMode = 'session' | 'dev_bypass' | 'service_account' | 'connector_installation';
+export type ClinicalApiAuthMode = 'session' | 'dev_bypass' | 'service_account' | 'connector_installation' | 'oauth_client';
 
 export interface ServiceAccountRecord {
     id: string;
@@ -97,6 +99,7 @@ export interface ClinicalApiActor {
     credentialId: string | null;
     principalLabel: string | null;
     serviceAccountId: string | null;
+    oauthClientId?: string | null;
     connectorInstallation: ConnectorInstallationRecord | null;
 }
 
@@ -434,6 +437,30 @@ export async function resolveClinicalApiActor(
                 credentialId: null,
                 principalLabel: null,
                 serviceAccountId: null,
+                oauthClientId: null,
+                connectorInstallation: null,
+            },
+            error: null,
+        };
+    }
+
+    const oauth = await resolveOAuthClientCredentialsPrincipal(options.client, req, {
+        requiredScopes: options.requiredScopes,
+    });
+    if (oauth.error) {
+        return { actor: null, error: oauth.error };
+    }
+    if (oauth.principal) {
+        return {
+            actor: {
+                tenantId: oauth.principal.tenantId,
+                userId: null,
+                authMode: 'oauth_client',
+                scopes: normalizeMachineCredentialScopes(oauth.principal.scopes),
+                credentialId: null,
+                principalLabel: oauth.principal.clientName,
+                serviceAccountId: null,
+                oauthClientId: oauth.principal.oauthClientId,
                 connectorInstallation: null,
             },
             error: null,
@@ -456,6 +483,7 @@ export async function resolveClinicalApiActor(
                 credentialId: machine.principal.credential.id,
                 principalLabel: machine.principal.principalLabel,
                 serviceAccountId: machine.principal.serviceAccount?.id ?? null,
+                oauthClientId: null,
                 connectorInstallation: machine.principal.connectorInstallation,
             },
             error: null,
@@ -472,6 +500,7 @@ export async function resolveClinicalApiActor(
                 credentialId: null,
                 principalLabel: 'dev_bypass',
                 serviceAccountId: null,
+                oauthClientId: null,
                 connectorInstallation: null,
             },
             error: null,
@@ -600,7 +629,7 @@ async function resolveMachineApiPrincipal(
         };
     }
 
-    await markCredentialUsage(client, credential, serviceAccount, connectorInstallation);
+    await markCredentialUsage(client, credential, serviceAccount, connectorInstallation, req);
 
     return {
         principal: {
@@ -824,6 +853,7 @@ async function markCredentialUsage(
     credential: ApiCredentialRecord,
     serviceAccount: ServiceAccountRecord | null,
     connectorInstallation: ConnectorInstallationRecord | null,
+    req: Request,
 ): Promise<void> {
     const now = new Date().toISOString();
     const credentialColumns = API_CREDENTIALS.COLUMNS;
@@ -858,6 +888,7 @@ async function markCredentialUsage(
             actor: null,
             lifecycleEvent: 'used',
             riskLevel: 'low',
+            req,
         }),
     ]).catch(() => {
         // Best-effort usage tracking; auth success should not fail on telemetry updates.
@@ -873,6 +904,7 @@ async function writeApiCredentialLifecycleEvent(
         actor: string | null;
         lifecycleEvent: 'issued' | 'revoked' | 'used';
         riskLevel: 'low' | 'medium' | 'high' | 'critical';
+        req?: Request | null;
     },
 ): Promise<void> {
     try {
@@ -891,16 +923,40 @@ async function writeApiCredentialLifecycleEvent(
                 key_prefix: input.credential.key_prefix,
                 scopes: input.credential.scopes,
                 deployment_environment: readCredentialEnvironment(input.credential.metadata),
+                ip_hash: hashTrustSurfaceValue(resolveRequestIp(input.req ?? null)),
+                user_agent_hash: hashTrustSurfaceValue(input.req?.headers.get('user-agent') ?? null),
                 risk_level: input.riskLevel,
                 evidence: {
                     label: input.credential.label,
                     expires_at: input.credential.expires_at,
                     status: input.credential.status,
                     telemetry_source: 'machineAuth',
+                    route: resolveRequestPath(input.req ?? null),
+                    method: input.req?.method ?? null,
+                    origin_hash: hashTrustSurfaceValue(input.req?.headers.get('origin') ?? null),
+                    forwarded_host_hash: hashTrustSurfaceValue(input.req?.headers.get('x-forwarded-host') ?? null),
                 },
             });
     } catch {
         // Best-effort trust telemetry; credential operations should not fail on audit persistence.
+    }
+}
+
+function resolveRequestIp(req: Request | null): string | null {
+    if (!req) return null;
+    const forwardedFor = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null;
+    return forwardedFor
+        ?? req.headers.get('cf-connecting-ip')?.trim()
+        ?? req.headers.get('x-real-ip')?.trim()
+        ?? null;
+}
+
+function resolveRequestPath(req: Request | null): string | null {
+    if (!req) return null;
+    try {
+        return new URL(req.url).pathname;
+    } catch {
+        return null;
     }
 }
 

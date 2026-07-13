@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { buildForbiddenRouteResponse, buildRouteAuthorizationContext } from '@/lib/auth/authorization';
+import {
+    enforceVetiosHighRiskRouteGate,
+    mapDeveloperPlatformActionToAuthTrustAction,
+} from '@/lib/auth/authTrustRouteGate';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import {
     approvePartnerOnboardingRequest,
@@ -108,6 +112,36 @@ export async function POST(req: Request) {
             route: `api/platform/developer-platform:${parsed.data.action ?? 'unknown'}`,
             requirement: 'admin',
         });
+    }
+    const trustAction = mapDeveloperPlatformActionToAuthTrustAction(parsed.data.action);
+    if (trustAction) {
+        const trustGate = await enforceVetiosHighRiskRouteGate({
+            client,
+            requestId,
+            context,
+            actionKey: trustAction,
+            resource: {
+                type: parsed.data.action === 'approve_onboarding_request'
+                    ? 'partner_onboarding_request'
+                    : 'partner_api_product',
+                id: parsed.data.action === 'approve_onboarding_request'
+                    ? parsed.data.request_id ?? null
+                    : parsed.data.action === 'create_api_product'
+                        ? parsed.data.product_key ?? null
+                        : null,
+                tenantId: context.tenantId,
+            },
+            evidence: {
+                route: 'api/platform/developer-platform',
+                requested_action: parsed.data.action,
+                partner_tier: 'partner_tier' in parsed.data ? parsed.data.partner_tier ?? null : null,
+                environment: 'environment' in parsed.data ? parsed.data.environment ?? null : null,
+            },
+        });
+        if (!trustGate.ok) {
+            withRequestHeaders(trustGate.response.headers, requestId, startTime);
+            return trustGate.response;
+        }
     }
 
     try {

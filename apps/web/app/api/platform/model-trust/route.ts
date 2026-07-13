@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { buildForbiddenRouteResponse, buildRouteAuthorizationContext } from '@/lib/auth/authorization';
+import {
+    enforceVetiosHighRiskRouteGate,
+    mapModelTrustActionToAuthTrustAction,
+} from '@/lib/auth/authTrustRouteGate';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import {
     createModelAttestation,
@@ -110,6 +114,25 @@ export async function POST(req: Request) {
             route: `api/platform/model-trust:${parsed.data.action ?? 'unknown'}`,
             requirement: 'admin',
         });
+    }
+    const trustGate = await enforceVetiosHighRiskRouteGate({
+        client,
+        requestId,
+        context,
+        actionKey: mapModelTrustActionToAuthTrustAction(parsed.data.action),
+        resource: {
+            type: 'model_registry_entry',
+            id: parsed.data.registry_id ?? null,
+            tenantId: context.tenantId,
+        },
+        evidence: {
+            route: 'api/platform/model-trust',
+            requested_action: parsed.data.action,
+        },
+    });
+    if (!trustGate.ok) {
+        withRequestHeaders(trustGate.response.headers, requestId, startTime);
+        return trustGate.response;
     }
 
     try {

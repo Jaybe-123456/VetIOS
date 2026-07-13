@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { buildForbiddenRouteResponse, buildRouteAuthorizationContext } from '@/lib/auth/authorization';
+import {
+    enforceVetiosHighRiskRouteGate,
+    mapSettingsControlPlaneActionToAuthTrustAction,
+} from '@/lib/auth/authTrustRouteGate';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { RegistryControlPlaneError } from '@/lib/experiments/service';
 import { apiGuard } from '@/lib/http/apiGuard';
@@ -267,6 +271,29 @@ export async function POST(req: Request) {
                     requested_action: payload.action,
                 },
             });
+        }
+        const trustAction = mapSettingsControlPlaneActionToAuthTrustAction(payload.action);
+        if (trustAction) {
+            const trustGate = await enforceVetiosHighRiskRouteGate({
+                client: adminClient,
+                requestId,
+                context: authContext,
+                actionKey: trustAction,
+                resource: {
+                    type: resolveTargetType(payload) ?? 'control_plane',
+                    id: resolveTargetId(payload),
+                    tenantId: actor.tenantId,
+                },
+                evidence: {
+                    route: 'api/settings/control-plane',
+                    requested_action: payload.action,
+                    registry_action: payload.action === 'registry_action' ? payload.registry_action ?? null : null,
+                },
+            });
+            if (!trustGate.ok) {
+                withRequestHeaders(trustGate.response.headers, requestId, startTime);
+                return trustGate.response;
+            }
         }
 
         if (payload.action === 'update_profile') {
