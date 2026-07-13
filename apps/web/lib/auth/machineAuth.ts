@@ -4,6 +4,9 @@ import { API_CREDENTIALS, CONNECTOR_INSTALLATIONS, SERVICE_ACCOUNTS } from '@/li
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { resolveSessionTenant } from '@/lib/supabaseServer';
 
+const UUID_PATTERN =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export const MACHINE_CREDENTIAL_SCOPES = [
     'inference:write',
     'outcome:write',
@@ -399,7 +402,17 @@ export async function revokeApiCredential(input: {
         throw new Error(`Failed to revoke API credential: ${error?.message ?? 'Unknown error'}`);
     }
 
-    return mapApiCredential(data as Record<string, unknown>);
+    const credential = mapApiCredential(data as Record<string, unknown>);
+    await writeApiCredentialLifecycleEvent(input.client, {
+        tenantId: input.tenantId,
+        requestId: `api_credential_revoke:${credential.id}:${Date.now()}`,
+        credential,
+        actor: input.actor,
+        lifecycleEvent: 'revoked',
+        riskLevel: 'high',
+    });
+
+    return credential;
 }
 
 export async function resolveClinicalApiActor(
@@ -714,8 +727,18 @@ async function issueApiCredential(
         throw new Error(`Failed to issue API credential: ${error?.message ?? 'Unknown error'}`);
     }
 
+    const credential = mapApiCredential(data as Record<string, unknown>);
+    await writeApiCredentialLifecycleEvent(client, {
+        tenantId: input.tenantId,
+        requestId: `api_credential_issue:${credential.id}:${Date.now()}`,
+        credential,
+        actor: input.actor,
+        lifecycleEvent: 'issued',
+        riskLevel: 'high',
+    });
+
     return {
-        credential: mapApiCredential(data as Record<string, unknown>),
+        credential,
         apiKey: secret.plainKey,
     };
 }
@@ -828,9 +851,57 @@ async function markCredentialUsage(
                 })
                 .eq(CONNECTOR_INSTALLATIONS.COLUMNS.id, connectorInstallation.id)
             : Promise.resolve(),
+        writeApiCredentialLifecycleEvent(client, {
+            tenantId: credential.tenant_id,
+            requestId: `api_credential_used:${credential.id}:${Date.now()}`,
+            credential,
+            actor: null,
+            lifecycleEvent: 'used',
+            riskLevel: 'low',
+        }),
     ]).catch(() => {
         // Best-effort usage tracking; auth success should not fail on telemetry updates.
     });
+}
+
+async function writeApiCredentialLifecycleEvent(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        requestId: string;
+        credential: ApiCredentialRecord;
+        actor: string | null;
+        lifecycleEvent: 'issued' | 'revoked' | 'used';
+        riskLevel: 'low' | 'medium' | 'high' | 'critical';
+    },
+): Promise<void> {
+    try {
+        await client
+            .from('api_credential_lifecycle_events')
+            .insert({
+                tenant_id: input.tenantId,
+                request_id: input.requestId,
+                credential_id: input.credential.id,
+                service_account_id: input.credential.service_account_id,
+                connector_installation_id: input.credential.connector_installation_id,
+                actor_user_id: coerceUuidOrNull(input.actor),
+                lifecycle_event: input.lifecycleEvent,
+                principal_type: input.credential.principal_type,
+                auth_protocol: 'api_key',
+                key_prefix: input.credential.key_prefix,
+                scopes: input.credential.scopes,
+                deployment_environment: readCredentialEnvironment(input.credential.metadata),
+                risk_level: input.riskLevel,
+                evidence: {
+                    label: input.credential.label,
+                    expires_at: input.credential.expires_at,
+                    status: input.credential.status,
+                    telemetry_source: 'machineAuth',
+                },
+            });
+    } catch {
+        // Best-effort trust telemetry; credential operations should not fail on audit persistence.
+    }
 }
 
 function extractPresentedApiKey(req: Request): string | null {
@@ -922,6 +993,19 @@ function normalizeRequiredText(value: unknown, field: string): string {
 
 function normalizeOptionalText(value: unknown): string | null {
     return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function coerceUuidOrNull(value: string | null): string | null {
+    const normalized = normalizeOptionalText(value);
+    return normalized && UUID_PATTERN.test(normalized) ? normalized : null;
+}
+
+function readCredentialEnvironment(metadata: Record<string, unknown>): 'sandbox' | 'staging' | 'production' {
+    const value = normalizeOptionalText(metadata.deployment_environment)
+        ?? normalizeOptionalText(metadata.environment);
+    return value === 'sandbox' || value === 'staging' || value === 'production'
+        ? value
+        : 'production';
 }
 
 function normalizePrincipalType(value: unknown): MachineCredentialPrincipalType {
