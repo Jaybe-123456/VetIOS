@@ -55,7 +55,9 @@ export async function POST(req: Request) {
                     ? Math.floor(Date.parse(result.tokenRecord.expires_at) / 1000)
                     : undefined,
                 aud: result.active ? result.tokenRecord?.audience ?? undefined : undefined,
-                token_type: result.active ? 'Bearer' : undefined,
+                token_type: result.active
+                    ? result.tokenRecord?.token_binding_method === 'dpop' ? 'DPoP' : 'Bearer'
+                    : undefined,
                 reason: result.active ? undefined : result.reason,
                 request_id: requestId,
             }),

@@ -1,4 +1,4 @@
-import { generateKeyPairSync, sign } from 'crypto';
+import { createHash, generateKeyPairSync, sign } from 'crypto';
 import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
@@ -174,6 +174,80 @@ describe('oauth client credentials foundation', () => {
             requestedScopes: 'federation:node',
         })).rejects.toThrow(/audience/i);
     });
+
+    it('binds DPoP access tokens to a proof key and requires proof on resource access', async () => {
+        const memory = createMemorySupabase();
+        const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+        const publicJwk = {
+            ...(publicKey.export({ format: 'jwk' }) as Record<string, unknown>),
+            kid: 'dpop-key-1',
+            alg: 'RS256',
+            use: 'sig',
+        };
+        const created = await createOAuthClient({
+            client: memory.client,
+            tenantId: 'tenant_1',
+            actor: null,
+            clientName: 'DPoP partner client',
+            allowedScopes: ['rag:write'],
+        });
+
+        const tokenUrl = 'https://vetios.test/api/oauth/token?ignored=query';
+        const issued = await issueOAuthClientCredentialsToken({
+            client: memory.client,
+            clientId: created.oauthClient.client_id,
+            clientSecret: created.clientSecret,
+            requestedScopes: 'rag:write',
+            req: new Request(tokenUrl, {
+                method: 'POST',
+                headers: {
+                    dpop: signDpopProof({
+                        privateKey,
+                        publicJwk,
+                        method: 'POST',
+                        uri: 'https://vetios.test/api/oauth/token',
+                    }),
+                },
+            }),
+        });
+
+        expect(issued.tokenType).toBe('DPoP');
+        expect(issued.token.token_binding_method).toBe('dpop');
+        expect(issued.token.dpop_jwk_thumbprint).toHaveLength(43);
+        expect(memory.rows.oauth_dpop_proof_events).toHaveLength(1);
+
+        const rejectedWithoutProof = await resolveOAuthClientCredentialsPrincipal(
+            memory.client,
+            new Request('https://vetios.test/api/ontology/global-one-health/populate', {
+                headers: { authorization: `DPoP ${issued.accessToken}` },
+            }),
+            { requiredScopes: ['rag:write'] },
+        );
+        expect(rejectedWithoutProof.error).toMatchObject({ status: 401 });
+
+        const resourceUrl = 'https://vetios.test/api/ontology/global-one-health/populate?x=1';
+        const resolved = await resolveOAuthClientCredentialsPrincipal(
+            memory.client,
+            new Request(resourceUrl, {
+                method: 'POST',
+                headers: {
+                    authorization: `DPoP ${issued.accessToken}`,
+                    dpop: signDpopProof({
+                        privateKey,
+                        publicJwk,
+                        method: 'POST',
+                        uri: 'https://vetios.test/api/ontology/global-one-health/populate',
+                        accessToken: issued.accessToken,
+                    }),
+                },
+            }),
+            { requiredScopes: ['rag:write'] },
+        );
+
+        expect(resolved.error).toBeNull();
+        expect(resolved.principal?.clientName).toBe('DPoP partner client');
+        expect(memory.rows.oauth_dpop_proof_events).toHaveLength(2);
+    });
 });
 
 function createMemorySupabase(): {
@@ -185,6 +259,7 @@ function createMemorySupabase(): {
         oauth_access_tokens: [],
         oauth_client_events: [],
         oauth_token_events: [],
+        oauth_dpop_proof_events: [],
     };
 
     const client = {
@@ -318,6 +393,40 @@ function signClientAssertion(input: {
         input.privateKey,
     ).toString('base64url');
     return `${header}.${payload}.${signature}`;
+}
+
+function signDpopProof(input: {
+    privateKey: ReturnType<typeof generateKeyPairSync>['privateKey'];
+    publicJwk: Record<string, unknown>;
+    method: string;
+    uri: string;
+    accessToken?: string;
+}): string {
+    const now = Math.floor(Date.now() / 1000);
+    const header = base64UrlJson({
+        alg: 'RS256',
+        typ: 'dpop+jwt',
+        jwk: input.publicJwk,
+    });
+    const payload = base64UrlJson({
+        htm: input.method.toUpperCase(),
+        htu: input.uri,
+        iat: now,
+        jti: randomUuid(),
+        ...(input.accessToken ? { ath: hashDpopAccessToken(input.accessToken) } : {}),
+    });
+    const signature = sign(
+        'RSA-SHA256',
+        Buffer.from(`${header}.${payload}`),
+        input.privateKey,
+    ).toString('base64url');
+    return `${header}.${payload}.${signature}`;
+}
+
+function hashDpopAccessToken(value: string): string {
+    return Buffer.from(
+        createHash('sha256').update(value).digest(),
+    ).toString('base64url');
 }
 
 function base64UrlJson(value: Record<string, unknown>): string {

@@ -6,6 +6,7 @@ import {
     OAUTH_ACCESS_TOKENS,
     OAUTH_CLIENT_EVENTS,
     OAUTH_CLIENTS,
+    OAUTH_DPOP_PROOF_EVENTS,
     OAUTH_TOKEN_EVENTS,
 } from '@/lib/db/schemaContracts';
 
@@ -41,6 +42,7 @@ export type OAuthClientStatus = 'active' | 'disabled' | 'revoked';
 export type OAuthTokenStatus = 'active' | 'revoked' | 'expired';
 export type OAuthClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt';
 export type OAuthClientAssertionAlgorithm = 'RS256';
+export type OAuthTokenBindingMethod = 'bearer' | 'dpop';
 
 export interface OAuthClientRecord {
     id: string;
@@ -83,6 +85,11 @@ export interface OAuthAccessTokenRecord {
     last_introspected_at: string | null;
     ip_hash: string | null;
     user_agent_hash: string | null;
+    token_binding_method: OAuthTokenBindingMethod;
+    dpop_jwk_thumbprint: string | null;
+    dpop_public_jwk: Record<string, unknown>;
+    dpop_bound_at: string | null;
+    dpop_last_seen_at: string | null;
     evidence: Record<string, unknown>;
     created_at: string;
 }
@@ -101,6 +108,13 @@ interface JwtClientAssertionParts {
     payload: Record<string, unknown>;
     signingInput: string;
     signature: Buffer;
+}
+
+interface DpopProofVerification {
+    jwkThumbprint: string;
+    publicJwk: Record<string, unknown>;
+    proofJti: string;
+    proofIat: string | null;
 }
 
 export function normalizeOAuthScopes(scopes: readonly string[] | string | null | undefined): OAuthClientCredentialScope[] {
@@ -404,6 +418,7 @@ export async function issueOAuthClientCredentialsToken(input: {
     token: OAuthAccessTokenRecord;
     accessToken: string;
     expiresIn: number;
+    tokenType: 'Bearer' | 'DPoP';
 }> {
     const authentication = await authenticateOAuthClientRequest(input);
     const oauthClient = authentication.oauthClient;
@@ -413,6 +428,16 @@ export async function issueOAuthClientCredentialsToken(input: {
     const accessToken = `${OAUTH_ACCESS_TOKEN_PREFIX}${randomBytes(32).toString('hex')}`;
     const tokenHash = sha256Hex(accessToken);
     const C = OAUTH_ACCESS_TOKENS.COLUMNS;
+    const dpopProof = input.req?.headers.get('dpop')
+        ? await verifyDpopProof({
+            client: input.client,
+            tenantId: oauthClient.tenant_id,
+            oauthClientId: oauthClient.id,
+            req: input.req,
+            proofUse: 'token_request',
+            expectedAccessToken: null,
+        })
+        : null;
 
     const { data, error } = await input.client
         .from(OAUTH_ACCESS_TOKENS.TABLE)
@@ -428,10 +453,16 @@ export async function issueOAuthClientCredentialsToken(input: {
             [C.expires_at]: expiresAt.toISOString(),
             [C.ip_hash]: hashTrustSurfaceValue(resolveRequestIp(input.req ?? null)),
             [C.user_agent_hash]: hashTrustSurfaceValue(input.req?.headers.get('user-agent') ?? null),
+            [C.token_binding_method]: dpopProof ? 'dpop' : 'bearer',
+            [C.dpop_jwk_thumbprint]: dpopProof?.jwkThumbprint ?? null,
+            [C.dpop_public_jwk]: dpopProof?.publicJwk ?? {},
+            [C.dpop_bound_at]: dpopProof ? now.toISOString() : null,
             [C.evidence]: {
                 grant_type: 'client_credentials',
                 client_auth_method: authentication.authMethod,
                 client_assertion_kid: authentication.assertionKid ?? null,
+                token_binding_method: dpopProof ? 'dpop' : 'bearer',
+                dpop_jwk_thumbprint: dpopProof?.jwkThumbprint ?? null,
                 route: resolveRequestPath(input.req ?? null),
                 origin_hash: hashTrustSurfaceValue(input.req?.headers.get('origin') ?? null),
             },
@@ -460,6 +491,8 @@ export async function issueOAuthClientCredentialsToken(input: {
             evidence: {
                 client_auth_method: authentication.authMethod,
                 client_assertion_kid: authentication.assertionKid ?? null,
+                token_binding_method: token.token_binding_method,
+                dpop_jwk_thumbprint: token.dpop_jwk_thumbprint,
             },
         }),
     ]).catch(() => {
@@ -471,6 +504,7 @@ export async function issueOAuthClientCredentialsToken(input: {
         token,
         accessToken,
         expiresIn: oauthClient.token_ttl_seconds,
+        tokenType: token.token_binding_method === 'dpop' ? 'DPoP' : 'Bearer',
     };
 }
 
@@ -478,6 +512,7 @@ export async function introspectOAuthAccessToken(input: {
     client: SupabaseClient;
     token: string;
     authenticatedClientId?: string | null;
+    enforceDpopProof?: boolean;
     req?: Request | null;
 }): Promise<{
     active: boolean;
@@ -499,7 +534,29 @@ export async function introspectOAuthAccessToken(input: {
     }
 
     const expired = Date.parse(tokenRecord.expires_at) <= Date.now();
-    const active = oauthClient.status === 'active' && tokenRecord.status === 'active' && !expired;
+    let active = oauthClient.status === 'active' && tokenRecord.status === 'active' && !expired;
+    let inactiveReason = expired ? 'token_expired' : 'token_or_client_inactive';
+    if (active && input.enforceDpopProof && tokenRecord.token_binding_method === 'dpop') {
+        try {
+            await verifyDpopProof({
+                client: input.client,
+                tenantId: tokenRecord.tenant_id,
+                oauthClientId: oauthClient.id,
+                oauthAccessTokenId: tokenRecord.id,
+                req: input.req ?? null,
+                proofUse: 'resource_request',
+                expectedAccessToken: input.token,
+                expectedJwkThumbprint: tokenRecord.dpop_jwk_thumbprint,
+            });
+            await input.client
+                .from(OAUTH_ACCESS_TOKENS.TABLE)
+                .update({ [OAUTH_ACCESS_TOKENS.COLUMNS.dpop_last_seen_at]: new Date().toISOString() })
+                .eq(OAUTH_ACCESS_TOKENS.COLUMNS.id, tokenRecord.id);
+        } catch (error) {
+            active = false;
+            inactiveReason = error instanceof Error ? error.message : 'dpop_proof_invalid';
+        }
+    }
     const status: OAuthTokenStatus = active ? tokenRecord.status : expired ? 'expired' : tokenRecord.status;
 
     await Promise.all([
@@ -523,7 +580,9 @@ export async function introspectOAuthAccessToken(input: {
             req: input.req ?? null,
             evidence: {
                 active,
-                reason: active ? null : expired ? 'token_expired' : 'token_or_client_inactive',
+                reason: active ? null : inactiveReason,
+                token_binding_method: tokenRecord.token_binding_method,
+                dpop_jwk_thumbprint: tokenRecord.dpop_jwk_thumbprint,
             },
         }),
     ]).catch(() => {
@@ -534,7 +593,7 @@ export async function introspectOAuthAccessToken(input: {
         active,
         oauthClient,
         tokenRecord: expired ? { ...tokenRecord, status: 'expired' } : tokenRecord,
-        reason: active ? undefined : expired ? 'token_expired' : 'token_or_client_inactive',
+        reason: active ? undefined : inactiveReason,
     };
 }
 
@@ -593,7 +652,7 @@ export async function resolveOAuthClientCredentialsPrincipal(
         return { principal: null, error: null };
     }
 
-    const introspection = await introspectOAuthAccessToken({ client, token, req });
+    const introspection = await introspectOAuthAccessToken({ client, token, req, enforceDpopProof: true });
     if (!introspection.active || !introspection.oauthClient || !introspection.tokenRecord) {
         return {
             principal: null,
@@ -624,7 +683,7 @@ export async function resolveOAuthClientCredentialsPrincipal(
 
 export function extractOAuthBearerToken(req: Request): string | null {
     const authorization = req.headers.get('authorization');
-    const token = authorization?.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() ?? null;
+    const token = authorization?.match(/^(?:Bearer|DPoP)\s+(.+)$/i)?.[1]?.trim() ?? null;
     return token?.startsWith(OAUTH_ACCESS_TOKEN_PREFIX) ? token : null;
 }
 
@@ -748,6 +807,44 @@ async function writeOAuthTokenEvent(
     });
 }
 
+async function writeDpopProofEvent(
+    client: SupabaseClient,
+    input: {
+        tenantId: string;
+        oauthClientId: string;
+        oauthAccessTokenId: string | null;
+        proofUse: 'token_request' | 'resource_request';
+        proofJti: string;
+        jwkThumbprint: string;
+        req: Request;
+        accessToken: string | null;
+        proofIat: string | null;
+    },
+): Promise<void> {
+    const { error } = await client.from(OAUTH_DPOP_PROOF_EVENTS.TABLE).insert({
+        tenant_id: input.tenantId,
+        request_id: `oauth_dpop_proof:${input.proofUse}:${input.jwkThumbprint}:${input.proofJti}`,
+        oauth_client_id: input.oauthClientId,
+        oauth_access_token_id: input.oauthAccessTokenId,
+        proof_use: input.proofUse,
+        proof_jti: input.proofJti,
+        jwk_thumbprint: input.jwkThumbprint,
+        http_method: input.req.method.toUpperCase(),
+        http_uri_hash: sha256Hex(resolveDpopHttpUri(input.req)),
+        access_token_hash: input.accessToken ? sha256Hex(input.accessToken) : null,
+        proof_iat: input.proofIat,
+        risk_level: 'low',
+        evidence: {
+            route: resolveRequestPath(input.req),
+            origin_hash: hashTrustSurfaceValue(input.req.headers.get('origin')),
+            telemetry_source: 'oauthClientCredentials',
+        },
+    });
+    if (error) {
+        throw new Error('DPoP proof replay detected or proof event could not be recorded.');
+    }
+}
+
 function resolveGrantedScopes(
     oauthClient: OAuthClientRecord,
     requestedScopes: readonly string[] | string | null | undefined,
@@ -858,6 +955,66 @@ function verifyJwtClientAssertionSignature(oauthClient: OAuthClientRecord, jwt: 
     }
 }
 
+async function verifyDpopProof(input: {
+    client: SupabaseClient;
+    tenantId: string;
+    oauthClientId: string;
+    oauthAccessTokenId?: string | null;
+    req: Request | null;
+    proofUse: 'token_request' | 'resource_request';
+    expectedAccessToken: string | null;
+    expectedJwkThumbprint?: string | null;
+}): Promise<DpopProofVerification> {
+    if (!input.req) {
+        throw new Error('DPoP proof requires request context.');
+    }
+    const proof = input.req.headers.get('dpop');
+    if (!proof) {
+        throw new Error('DPoP proof is required for this access token.');
+    }
+
+    const decoded = decodeJwtClientAssertion(proof);
+    const headerTyp = readString(decoded.header.typ)?.toLowerCase() ?? null;
+    if (headerTyp !== 'dpop+jwt') {
+        throw new Error('DPoP proof typ must be dpop+jwt.');
+    }
+    const publicJwk = normalizeDpopPublicJwk(decoded.header.jwk);
+    const jwkThumbprint = computeJwkThumbprint(publicJwk);
+    if (input.expectedJwkThumbprint && input.expectedJwkThumbprint !== jwkThumbprint) {
+        throw new Error('DPoP proof key does not match the bound access token.');
+    }
+    verifyDpopProofSignature(publicJwk, decoded);
+    validateDpopProofClaims({
+        payload: decoded.payload,
+        req: input.req,
+        expectedAccessToken: input.expectedAccessToken,
+    });
+
+    const proofJti = readString(decoded.payload.jti);
+    if (!proofJti) {
+        throw new Error('DPoP proof jti is required.');
+    }
+    const proofIat = readNumber(decoded.payload.iat);
+    await writeDpopProofEvent(input.client, {
+        tenantId: input.tenantId,
+        oauthClientId: input.oauthClientId,
+        oauthAccessTokenId: input.oauthAccessTokenId ?? null,
+        proofUse: input.proofUse,
+        proofJti,
+        jwkThumbprint,
+        req: input.req,
+        accessToken: input.expectedAccessToken,
+        proofIat: proofIat ? new Date(proofIat * 1000).toISOString() : null,
+    });
+
+    return {
+        jwkThumbprint,
+        publicJwk,
+        proofJti,
+        proofIat: proofIat ? new Date(proofIat * 1000).toISOString() : null,
+    };
+}
+
 function selectJwkForAssertion(jwks: Record<string, unknown>, kid: string | null): Record<string, unknown> | null {
     const keys = getJwksKeys(jwks).filter((key) => readString(key.kty) === 'RSA');
     if (keys.length === 0) return null;
@@ -867,8 +1024,95 @@ function selectJwkForAssertion(jwks: Record<string, unknown>, kid: string | null
     return keys.length === 1 ? keys[0] : null;
 }
 
+function normalizeDpopPublicJwk(value: unknown): Record<string, unknown> {
+    const jwk = asRecord(value);
+    if (readString(jwk.kty) !== 'RSA') {
+        throw new Error('DPoP proof JWK must be an RSA public key for VetIOS DPoP v1.');
+    }
+    const n = readString(jwk.n);
+    const e = readString(jwk.e);
+    if (!n || !e) {
+        throw new Error('DPoP proof RSA JWK is missing modulus or exponent.');
+    }
+    return {
+        kty: 'RSA',
+        n,
+        e,
+        ...(readString(jwk.kid) ? { kid: readString(jwk.kid) } : {}),
+        ...(readString(jwk.alg) ? { alg: readString(jwk.alg) } : {}),
+        ...(readString(jwk.use) ? { use: readString(jwk.use) } : {}),
+    };
+}
+
+function computeJwkThumbprint(jwk: Record<string, unknown>): string {
+    const kty = readString(jwk.kty);
+    if (kty !== 'RSA') {
+        throw new Error('Only RSA DPoP JWK thumbprints are supported in VetIOS DPoP v1.');
+    }
+    const canonical = JSON.stringify({
+        e: readString(jwk.e),
+        kty,
+        n: readString(jwk.n),
+    });
+    return createHash('sha256').update(canonical).digest('base64url');
+}
+
+function verifyDpopProofSignature(publicJwk: Record<string, unknown>, jwt: JwtClientAssertionParts): void {
+    const alg = readString(jwt.header.alg);
+    if (alg !== 'RS256') {
+        throw new Error('DPoP proof algorithm is not accepted.');
+    }
+    const publicKey = createPublicKey({
+        key: publicJwk as JsonWebKey,
+        format: 'jwk',
+    });
+    const ok = verify(
+        'RSA-SHA256',
+        Buffer.from(jwt.signingInput),
+        publicKey,
+        jwt.signature,
+    );
+    if (!ok) {
+        throw new Error('DPoP proof signature is invalid.');
+    }
+}
+
+function validateDpopProofClaims(input: {
+    payload: Record<string, unknown>;
+    req: Request;
+    expectedAccessToken: string | null;
+}): void {
+    const htm = readString(input.payload.htm);
+    const htu = readString(input.payload.htu);
+    const iat = readNumber(input.payload.iat);
+    const jti = readString(input.payload.jti);
+    if (!htm || htm.toUpperCase() !== input.req.method.toUpperCase()) {
+        throw new Error('DPoP proof htm does not match the request method.');
+    }
+    if (!htu || htu !== resolveDpopHttpUri(input.req)) {
+        throw new Error('DPoP proof htu does not match the request URI.');
+    }
+    if (!jti) {
+        throw new Error('DPoP proof jti is required.');
+    }
+    const now = Math.floor(Date.now() / 1000);
+    if (!iat || Math.abs(now - iat) > 300) {
+        throw new Error('DPoP proof iat is outside the accepted clock window.');
+    }
+    if (input.expectedAccessToken) {
+        const ath = readString(input.payload.ath);
+        if (!ath || ath !== hashAccessTokenForDpop(input.expectedAccessToken)) {
+            throw new Error('DPoP proof ath does not match the access token.');
+        }
+    }
+}
+
 function sha256Hex(value: string): string {
     return createHash('sha256').update(value).digest('hex');
+}
+
+function hashAccessTokenForDpop(value: string): string {
+    return createHash('sha256').update(value).digest('base64url');
 }
 
 function mapOAuthClient(row: Record<string, unknown>): OAuthClientRecord {
@@ -915,6 +1159,11 @@ function mapOAuthToken(row: Record<string, unknown>): OAuthAccessTokenRecord {
         last_introspected_at: normalizeOptionalText(row.last_introspected_at),
         ip_hash: normalizeOptionalText(row.ip_hash),
         user_agent_hash: normalizeOptionalText(row.user_agent_hash),
+        token_binding_method: normalizeOAuthTokenBindingMethod(row.token_binding_method),
+        dpop_jwk_thumbprint: normalizeOptionalText(row.dpop_jwk_thumbprint),
+        dpop_public_jwk: asRecord(row.dpop_public_jwk),
+        dpop_bound_at: normalizeOptionalText(row.dpop_bound_at),
+        dpop_last_seen_at: normalizeOptionalText(row.dpop_last_seen_at),
         evidence: asRecord(row.evidence),
         created_at: String(row.created_at),
     };
@@ -926,6 +1175,10 @@ function normalizeOAuthClientStatus(value: unknown): OAuthClientStatus {
 
 function normalizeOAuthTokenStatus(value: unknown): OAuthTokenStatus {
     return value === 'revoked' || value === 'expired' ? value : 'active';
+}
+
+function normalizeOAuthTokenBindingMethod(value: unknown): OAuthTokenBindingMethod {
+    return value === 'dpop' ? 'dpop' : 'bearer';
 }
 
 function normalizeOAuthClientAuthMethods(value: readonly string[] | null | undefined): OAuthClientAuthMethod[] {
@@ -1058,4 +1311,9 @@ function resolveRequestPath(req: Request | null): string | null {
     } catch {
         return null;
     }
+}
+
+function resolveDpopHttpUri(req: Request): string {
+    const url = new URL(req.url);
+    return `${url.origin}${url.pathname}`;
 }

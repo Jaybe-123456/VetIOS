@@ -61,7 +61,7 @@ export async function POST(req: Request) {
         return withHeaders(
             NextResponse.json({
                 access_token: issued.accessToken,
-                token_type: 'Bearer',
+                token_type: issued.tokenType,
                 expires_in: issued.expiresIn,
                 scope: issued.token.scopes.join(' '),
                 audience: issued.token.audience,
