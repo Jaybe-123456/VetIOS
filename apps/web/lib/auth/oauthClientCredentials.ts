@@ -60,6 +60,10 @@ export interface OAuthClientRecord {
     assertion_algorithms: OAuthClientAssertionAlgorithm[];
     assertion_audiences: string[];
     assertion_max_ttl_seconds: number;
+    mtls_required: boolean;
+    mtls_cert_thumbprints: string[];
+    mtls_last_thumbprint: string | null;
+    mtls_last_seen_at: string | null;
     metadata: Record<string, unknown>;
     created_by: string | null;
     revoked_by: string | null;
@@ -162,6 +166,8 @@ export async function createOAuthClient(input: {
     assertionAlgorithms?: readonly string[] | null;
     assertionAudiences?: readonly string[] | null;
     assertionMaxTtlSeconds?: number | null;
+    mtlsRequired?: boolean | null;
+    mtlsCertThumbprints?: readonly string[] | null;
     metadata?: Record<string, unknown>;
 }): Promise<{ oauthClient: OAuthClientRecord; clientSecret: string }> {
     const clientId = `${OAUTH_CLIENT_ID_PREFIX}${randomBytes(12).toString('hex')}`;
@@ -175,8 +181,13 @@ export async function createOAuthClient(input: {
     const assertionAudiences = normalizeTextArray(input.assertionAudiences);
     const assertionMaxTtlSeconds = normalizeAssertionMaxTtl(input.assertionMaxTtlSeconds);
     const jwks = normalizeJwks(input.jwks);
+    const mtlsCertThumbprints = normalizeSha256Thumbprints(input.mtlsCertThumbprints);
+    const mtlsRequired = input.mtlsRequired === true;
     if (clientAuthMethods.includes('private_key_jwt') && getJwksKeys(jwks).length === 0) {
         throw new Error('private_key_jwt clients require at least one public JWK.');
+    }
+    if (mtlsRequired && mtlsCertThumbprints.length === 0) {
+        throw new Error('mTLS-required OAuth clients require at least one certificate SHA-256 thumbprint.');
     }
 
     const C = OAUTH_CLIENTS.COLUMNS;
@@ -197,6 +208,8 @@ export async function createOAuthClient(input: {
             [C.assertion_algorithms]: assertionAlgorithms,
             [C.assertion_audiences]: assertionAudiences,
             [C.assertion_max_ttl_seconds]: assertionMaxTtlSeconds,
+            [C.mtls_required]: mtlsRequired,
+            [C.mtls_cert_thumbprints]: mtlsCertThumbprints,
             [C.metadata]: input.metadata ?? {},
             [C.created_by]: input.actor,
         })
@@ -222,6 +235,8 @@ export async function createOAuthClient(input: {
             assertion_algorithms: oauthClient.assertion_algorithms,
             assertion_audiences_count: oauthClient.assertion_audiences.length,
             jwks_key_count: getJwksKeys(oauthClient.jwks).length,
+            mtls_required: oauthClient.mtls_required,
+            mtls_cert_thumbprints_count: oauthClient.mtls_cert_thumbprints.length,
         },
     });
 
@@ -304,6 +319,7 @@ export async function authenticateOAuthClient(input: {
     client: SupabaseClient;
     clientId: string;
     clientSecret: string;
+    req?: Request | null;
 }): Promise<OAuthClientRecord> {
     const oauthClient = await getOAuthClientByClientId(input.client, input.clientId);
     if (!oauthClient) {
@@ -319,6 +335,7 @@ export async function authenticateOAuthClient(input: {
     if (!verifySecret(input.clientSecret, oauthClient.client_secret_hash)) {
         throw new Error('OAuth client credentials are invalid.');
     }
+    await enforceOAuthClientMtlsBinding(input.client, oauthClient, input.req ?? null);
     return oauthClient;
 }
 
@@ -329,6 +346,7 @@ export async function authenticateOAuthClientRequest(input: {
     clientAssertionType?: string | null;
     clientAssertion?: string | null;
     expectedAssertionAudiences?: readonly string[] | null;
+    req?: Request | null;
 }): Promise<{
     oauthClient: OAuthClientRecord;
     authMethod: 'client_secret' | 'private_key_jwt';
@@ -343,6 +361,7 @@ export async function authenticateOAuthClientRequest(input: {
             clientId: input.clientId ?? null,
             clientAssertion: input.clientAssertion,
             expectedAudiences: input.expectedAssertionAudiences ?? [],
+            req: input.req ?? null,
         });
     }
 
@@ -353,6 +372,7 @@ export async function authenticateOAuthClientRequest(input: {
         client: input.client,
         clientId: input.clientId,
         clientSecret: input.clientSecret,
+        req: input.req ?? null,
     });
     return { oauthClient, authMethod: 'client_secret' };
 }
@@ -362,6 +382,7 @@ export async function authenticateOAuthClientAssertion(input: {
     clientId?: string | null;
     clientAssertion: string;
     expectedAudiences: readonly string[];
+    req?: Request | null;
 }): Promise<{
     oauthClient: OAuthClientRecord;
     authMethod: 'private_key_jwt';
@@ -395,6 +416,7 @@ export async function authenticateOAuthClientAssertion(input: {
         expectedAudiences: input.expectedAudiences,
     });
     verifyJwtClientAssertionSignature(oauthClient, decoded);
+    await enforceOAuthClientMtlsBinding(input.client, oauthClient, input.req ?? null);
 
     return {
         oauthClient,
@@ -1015,6 +1037,31 @@ async function verifyDpopProof(input: {
     };
 }
 
+async function enforceOAuthClientMtlsBinding(
+    client: SupabaseClient,
+    oauthClient: OAuthClientRecord,
+    req: Request | null,
+): Promise<void> {
+    if (!oauthClient.mtls_required) {
+        return;
+    }
+    const observedThumbprint = resolveMtlsClientCertThumbprint(req);
+    if (!observedThumbprint) {
+        throw new Error('OAuth client requires mTLS certificate binding.');
+    }
+    if (!oauthClient.mtls_cert_thumbprints.includes(observedThumbprint)) {
+        throw new Error('OAuth client certificate fingerprint is not allowed.');
+    }
+
+    await client
+        .from(OAUTH_CLIENTS.TABLE)
+        .update({
+            [OAUTH_CLIENTS.COLUMNS.mtls_last_thumbprint]: observedThumbprint,
+            [OAUTH_CLIENTS.COLUMNS.mtls_last_seen_at]: new Date().toISOString(),
+        })
+        .eq(OAUTH_CLIENTS.COLUMNS.id, oauthClient.id);
+}
+
 function selectJwkForAssertion(jwks: Record<string, unknown>, kid: string | null): Record<string, unknown> | null {
     const keys = getJwksKeys(jwks).filter((key) => readString(key.kty) === 'RSA');
     if (keys.length === 0) return null;
@@ -1132,6 +1179,10 @@ function mapOAuthClient(row: Record<string, unknown>): OAuthClientRecord {
         assertion_algorithms: normalizeOAuthClientAssertionAlgorithms(asStringArray(row.assertion_algorithms)),
         assertion_audiences: asStringArray(row.assertion_audiences),
         assertion_max_ttl_seconds: normalizeAssertionMaxTtl(Number(row.assertion_max_ttl_seconds)),
+        mtls_required: row.mtls_required === true,
+        mtls_cert_thumbprints: normalizeSha256Thumbprints(asStringArray(row.mtls_cert_thumbprints)),
+        mtls_last_thumbprint: normalizeSha256Thumbprint(row.mtls_last_thumbprint),
+        mtls_last_seen_at: normalizeOptionalText(row.mtls_last_seen_at),
         metadata: asRecord(row.metadata),
         created_by: normalizeOptionalText(row.created_by),
         revoked_by: normalizeOptionalText(row.revoked_by),
@@ -1234,6 +1285,20 @@ function normalizeTextArray(value: readonly string[] | null | undefined): string
         : [];
 }
 
+function normalizeSha256Thumbprints(value: readonly string[] | null | undefined): string[] {
+    return Array.isArray(value)
+        ? [...new Set(value
+            .map(normalizeSha256Thumbprint)
+            .filter((entry): entry is string => Boolean(entry)))]
+        : [];
+}
+
+function normalizeSha256Thumbprint(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const normalized = value.trim().toLowerCase().replace(/[^a-f0-9]/g, '');
+    return /^[a-f0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
 function normalizeJwks(value: Record<string, unknown> | null | undefined): Record<string, unknown> {
     const record = asRecord(value);
     const keys = getJwksKeys(record);
@@ -1302,6 +1367,14 @@ function resolveRequestIp(req: Request | null): string | null {
         ?? req.headers.get('cf-connecting-ip')?.trim()
         ?? req.headers.get('x-real-ip')?.trim()
         ?? null;
+}
+
+function resolveMtlsClientCertThumbprint(req: Request | null): string | null {
+    if (!req) return null;
+    return normalizeSha256Thumbprint(req.headers.get('x-vetios-client-cert-sha256'))
+        ?? normalizeSha256Thumbprint(req.headers.get('x-client-cert-sha256'))
+        ?? normalizeSha256Thumbprint(req.headers.get('x-forwarded-client-cert-sha256'))
+        ?? normalizeSha256Thumbprint(req.headers.get('ssl-client-fingerprint-sha256'));
 }
 
 function resolveRequestPath(req: Request | null): string | null {

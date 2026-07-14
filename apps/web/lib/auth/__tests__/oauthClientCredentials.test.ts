@@ -248,6 +248,46 @@ describe('oauth client credentials foundation', () => {
         expect(resolved.principal?.clientName).toBe('DPoP partner client');
         expect(memory.rows.oauth_dpop_proof_events).toHaveLength(2);
     });
+
+    it('requires a pinned client certificate fingerprint for mTLS-bound OAuth clients', async () => {
+        const memory = createMemorySupabase();
+        const allowedThumbprint = 'a'.repeat(64);
+        const created = await createOAuthClient({
+            client: memory.client,
+            tenantId: 'tenant_1',
+            actor: null,
+            clientName: 'mTLS lab bridge',
+            allowedScopes: ['signals:ingest'],
+            mtlsRequired: true,
+            mtlsCertThumbprints: [allowedThumbprint],
+        });
+
+        await expect(issueOAuthClientCredentialsToken({
+            client: memory.client,
+            clientId: created.oauthClient.client_id,
+            clientSecret: created.clientSecret,
+            requestedScopes: 'signals:ingest',
+            req: new Request('https://vetios.test/api/oauth/token', { method: 'POST' }),
+        })).rejects.toThrow(/mTLS/i);
+
+        const issued = await issueOAuthClientCredentialsToken({
+            client: memory.client,
+            clientId: created.oauthClient.client_id,
+            clientSecret: created.clientSecret,
+            requestedScopes: 'signals:ingest',
+            req: new Request('https://vetios.test/api/oauth/token', {
+                method: 'POST',
+                headers: {
+                    'x-vetios-client-cert-sha256': allowedThumbprint.match(/.{2}/g)?.join(':') ?? allowedThumbprint,
+                },
+            }),
+        });
+
+        expect(issued.accessToken).toMatch(/^vetios_at_/);
+        const storedClient = memory.rows.oauth_clients.find((row) => row.id === created.oauthClient.id);
+        expect(storedClient?.mtls_last_thumbprint).toBe(allowedThumbprint);
+        expect(storedClient?.mtls_last_seen_at).toEqual(expect.any(String));
+    });
 });
 
 function createMemorySupabase(): {

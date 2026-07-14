@@ -30,6 +30,8 @@ type OAuthClientAction =
         assertion_algorithms?: string[];
         assertion_audiences?: string[];
         assertion_max_ttl_seconds?: number | null;
+        mtls_required?: boolean | null;
+        mtls_cert_thumbprints?: string[];
         metadata?: Record<string, unknown>;
     }
     | {
@@ -140,6 +142,8 @@ export async function POST(req: Request) {
                 assertionAlgorithms: parsed.data.assertion_algorithms ?? null,
                 assertionAudiences: parsed.data.assertion_audiences ?? null,
                 assertionMaxTtlSeconds: parsed.data.assertion_max_ttl_seconds ?? null,
+                mtlsRequired: parsed.data.mtls_required ?? null,
+                mtlsCertThumbprints: parsed.data.mtls_cert_thumbprints ?? null,
                 metadata: asRecord(parsed.data.metadata),
             });
             result = {

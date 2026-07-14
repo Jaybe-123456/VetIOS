@@ -38,6 +38,7 @@ export async function POST(req: Request) {
             clientAssertionType: body.client_assertion_type,
             clientAssertion: body.client_assertion,
             expectedAssertionAudiences: buildExpectedOAuthAudiences(req),
+            req,
         });
         const result = await revokeOAuthAccessToken({
             client,
