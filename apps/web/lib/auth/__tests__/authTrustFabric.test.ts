@@ -4,6 +4,7 @@ import {
     hashTrustSurfaceValue,
     writeAuthorizationDecisionEvent,
     writeHighRiskOperationChallengeEvent,
+    writeHighRiskOperationChallengeSatisfiedEvent,
     type AuthTrustInsertClient,
 } from '../authTrustFabric';
 
@@ -146,6 +147,92 @@ describe('auth trust fabric', () => {
                 challenge_status: 'required',
             },
         });
+    });
+
+    it('records satisfied step-up challenges after MFA/passkey completion', async () => {
+        const writes: Array<{ table: string; payload: Record<string, unknown> }> = [];
+        const client: AuthTrustInsertClient = {
+            from(table: string) {
+                return {
+                    async insert(payload: Record<string, unknown>) {
+                        writes.push({ table, payload });
+                        return { error: null };
+                    },
+                };
+            },
+        };
+
+        const packet = authorizeVetiosAction({
+            tenantId: 'tenant_1',
+            requestId: 'req_export_3',
+            actionKey: 'dataset.export',
+            resource: { type: 'dataset', id: 'dataset_1', tenantId: 'tenant_1' },
+            subject: {
+                type: 'session_user',
+                authMode: 'session',
+                userId: '00000000-0000-4000-8000-000000000001',
+                role: 'admin',
+                grantedScopes: ['*'],
+                assuranceLevel: 'passkey',
+            },
+        });
+
+        expect(packet.decision).toBe('allow');
+        await writeAuthorizationDecisionEvent(client, packet);
+        await writeHighRiskOperationChallengeSatisfiedEvent(client, packet, {
+            completedAt: '2026-07-12T12:20:00.000Z',
+            evidence: { challenge_id: 'challenge_1' },
+        });
+
+        expect(writes).toHaveLength(2);
+        expect(writes[1]).toMatchObject({
+            table: 'high_risk_operation_challenge_events',
+            payload: {
+                tenant_id: 'tenant_1',
+                request_id: 'req_export_3',
+                action_key: 'dataset.export',
+                challenge_type: 'mfa',
+                challenge_status: 'satisfied',
+                required_assurance_level: 'mfa',
+                satisfied_assurance_level: 'passkey',
+            },
+        });
+    });
+
+    it('treats identifiable research imports and surveillance exports as critical gated actions', () => {
+        const researchPacket = authorizeVetiosAction({
+            tenantId: 'tenant_1',
+            requestId: 'req_research_1',
+            actionKey: 'research.identifiable_data.write',
+            resource: { type: 'clinical_case_import', id: 'import_1', tenantId: 'tenant_1' },
+            subject: {
+                type: 'service_account',
+                authMode: 'service_account',
+                subjectRef: 'research_gateway',
+                grantedScopes: ['outcome:write'],
+                assuranceLevel: 'workload_identity',
+            },
+        });
+        expect(researchPacket).toMatchObject({
+            decision: 'allow',
+            actionCategory: 'dataset_export',
+            riskLevel: 'critical',
+        });
+
+        const surveillancePacket = authorizeVetiosAction({
+            tenantId: 'tenant_1',
+            requestId: 'req_surveillance_1',
+            actionKey: 'surveillance.cross_tenant.export',
+            resource: { type: 'amr_one_health_export', id: 'all', tenantId: 'tenant_1' },
+            subject: {
+                type: 'oauth_client',
+                authMode: 'oauth_client',
+                subjectRef: 'one_health_exporter',
+                grantedScopes: ['evaluation:read'],
+                assuranceLevel: 'workload_identity',
+            },
+        });
+        expect(surveillancePacket.decision).toBe('allow');
     });
 
     it('hashes request-surface values without storing raw IPs or user agents', () => {

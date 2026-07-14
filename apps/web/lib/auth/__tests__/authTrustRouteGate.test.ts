@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { RouteAuthorizationContext } from '../authorization';
 import {
     buildAuthTrustSubjectFromClinicalActor,
+    buildAuthTrustSubjectFromPlatformActor,
     buildAuthTrustSubjectFromRouteContext,
     enforceVetiosClinicalActorGate,
     enforceVetiosHighRiskRouteGate,
+    enforceVetiosPlatformActorGate,
     mapDeveloperPlatformActionToAuthTrustAction,
     mapFederationActionToAuthTrustAction,
     mapMachineAuthActionToAuthTrustAction,
@@ -106,6 +108,34 @@ describe('auth trust route gate', () => {
         expect(writes).toHaveLength(1);
     });
 
+    it('allows workload-identity platform actors to export simulation datasets', async () => {
+        const writes: Array<{ table: string; payload: Record<string, unknown> }> = [];
+        const result = await enforceVetiosPlatformActorGate({
+            client: captureClient(writes),
+            requestId: 'req_platform_export_1',
+            actor: {
+                userId: null,
+                tenantId: 'tenant_1',
+                role: 'tenant_user',
+                authMode: 'oauth_client',
+                scopes: ['simulation:write'],
+                tenantScope: null,
+            },
+            tenantId: 'tenant_1',
+            actionKey: 'dataset.simulation.export',
+            resource: { type: 'simulation_export', id: 'sim_1', tenantId: 'tenant_1' },
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.packet).toMatchObject({
+            subjectType: 'oauth_client',
+            actionKey: 'dataset.simulation.export',
+            assuranceLevel: 'workload_identity',
+            decision: 'allow',
+        });
+        expect(writes).toHaveLength(1);
+    });
+
     it('denies session actors for workload-only ontology ingestion', async () => {
         const result = await enforceVetiosClinicalActorGate({
             client: captureClient([]),
@@ -168,6 +198,37 @@ describe('auth trust route gate', () => {
             credentialId: '00000000-0000-4000-8000-000000000004',
             assuranceLevel: 'workload_identity',
             grantedScopes: ['signals:ingest', 'rag:write'],
+        });
+    });
+
+    it('builds platform actor subjects for trusted edge and OAuth export paths', () => {
+        expect(buildAuthTrustSubjectFromPlatformActor({
+            userId: 'platform-controller',
+            tenantId: null,
+            role: 'system_admin',
+            authMode: 'jwt',
+            scopes: [],
+            tenantScope: null,
+        })).toMatchObject({
+            type: 'internal_service',
+            authMode: 'internal_token',
+            role: 'admin',
+            assuranceLevel: 'workload_identity',
+            grantedScopes: ['*'],
+        });
+
+        expect(buildAuthTrustSubjectFromPlatformActor({
+            userId: null,
+            tenantId: 'tenant_1',
+            role: 'tenant_user',
+            authMode: 'oauth_client',
+            scopes: ['simulation:write'],
+            tenantScope: null,
+        })).toMatchObject({
+            type: 'oauth_client',
+            authMode: 'oauth_client',
+            assuranceLevel: 'workload_identity',
+            grantedScopes: ['simulation:write'],
         });
     });
 });

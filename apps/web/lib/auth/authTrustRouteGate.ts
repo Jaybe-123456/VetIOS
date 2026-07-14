@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { User } from '@supabase/supabase-js';
 import type { RouteAuthorizationContext } from './authorization';
 import type { ClinicalApiActor } from './machineAuth';
+import type { PlatformActor } from '@/lib/platform/types';
 import {
     authorizeVetiosAction,
     writeAuthorizationDecisionEvent,
@@ -29,6 +30,18 @@ export interface VetiosClinicalActorGateInput {
     client: AuthTrustInsertClient;
     requestId: string;
     actor: ClinicalApiActor;
+    actionKey: string;
+    resource: AuthTrustResource;
+    environment?: AuthTrustEnvironment;
+    riskSignals?: AuthTrustRiskSignals;
+    evidence?: Record<string, unknown>;
+}
+
+export interface VetiosPlatformActorGateInput {
+    client: AuthTrustInsertClient;
+    requestId: string;
+    actor: PlatformActor;
+    tenantId: string | null;
     actionKey: string;
     resource: AuthTrustResource;
     environment?: AuthTrustEnvironment;
@@ -163,6 +176,52 @@ export async function enforceVetiosClinicalActorGate(
     return { ok: false, packet, response };
 }
 
+export async function enforceVetiosPlatformActorGate(
+    input: VetiosPlatformActorGateInput,
+): Promise<VetiosHighRiskRouteGateResult> {
+    const packet = authorizeVetiosAction({
+        tenantId: input.tenantId ?? input.actor.tenantId,
+        requestId: input.requestId,
+        subject: buildAuthTrustSubjectFromPlatformActor(input.actor),
+        actionKey: input.actionKey,
+        resource: input.resource,
+        environment: input.environment ?? resolveDeploymentEnvironment(),
+        permissionSnapshot: {
+            platform_role: input.actor.role,
+            auth_mode: input.actor.authMode,
+            scopes: input.actor.scopes,
+            tenant_scope: input.actor.tenantScope,
+        },
+        riskSignals: input.riskSignals,
+        evidence: {
+            auth_route_gate_version: 'auth_trust_platform_actor_gate_v1',
+            ...input.evidence,
+        },
+    });
+
+    await writeAuthorizationDecisionEvent(input.client, packet).catch(() => {
+        // Authorization should enforce even if best-effort audit persistence is degraded.
+    });
+
+    if (packet.decision === 'challenge') {
+        await writeHighRiskOperationChallengeEvent(input.client, packet, {
+            expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+            evidence: {
+                route_gate: 'auth_trust_platform_actor_gate_v1',
+            },
+        }).catch(() => {
+            // Step-up response should still be returned even if challenge ledger write fails.
+        });
+    }
+
+    if (packet.decision === 'allow') {
+        return { ok: true, packet };
+    }
+
+    const response = buildAuthTrustFailureResponse(packet);
+    return { ok: false, packet, response };
+}
+
 export function buildAuthTrustSubjectFromRouteContext(context: RouteAuthorizationContext): AuthTrustSubject {
     if (context.authMode === 'internal_token') {
         return {
@@ -196,6 +255,66 @@ export function buildAuthTrustSubjectFromRouteContext(context: RouteAuthorizatio
         role: context.role,
         grantedScopes: ['*'],
         assuranceLevel: resolveUserAssuranceLevel(context.user),
+    };
+}
+
+export function buildAuthTrustSubjectFromPlatformActor(actor: PlatformActor): AuthTrustSubject {
+    if (actor.authMode === 'jwt') {
+        return {
+            type: 'internal_service',
+            authMode: 'internal_token',
+            subjectRef: actor.userId ?? 'platform_jwt',
+            userId: actor.userId,
+            role: actor.role === 'system_admin' ? 'admin' : 'clinician',
+            grantedScopes: actor.role === 'system_admin' ? ['*'] : actor.scopes,
+            assuranceLevel: 'workload_identity',
+        };
+    }
+
+    if (actor.authMode === 'service_account' || actor.authMode === 'connector_installation') {
+        return {
+            type: actor.authMode,
+            authMode: actor.authMode,
+            subjectRef: actor.userId ?? actor.authMode,
+            userId: null,
+            role: null,
+            grantedScopes: actor.scopes,
+            assuranceLevel: 'workload_identity',
+        };
+    }
+
+    if (actor.authMode === 'oauth_client') {
+        return {
+            type: 'oauth_client',
+            authMode: 'oauth_client',
+            subjectRef: actor.userId ?? 'oauth_client',
+            userId: null,
+            role: null,
+            grantedScopes: actor.scopes,
+            assuranceLevel: 'workload_identity',
+        };
+    }
+
+    if (actor.authMode === 'dev_bypass') {
+        return {
+            type: 'dev_bypass',
+            authMode: 'dev_bypass',
+            subjectRef: 'dev_bypass',
+            userId: actor.userId,
+            role: null,
+            grantedScopes: actor.scopes,
+            assuranceLevel: 'anonymous',
+        };
+    }
+
+    return {
+        type: 'session_user',
+        authMode: 'session',
+        subjectRef: actor.userId,
+        userId: actor.userId,
+        role: actor.role === 'system_admin' ? 'admin' : 'clinician',
+        grantedScopes: ['*'],
+        assuranceLevel: 'session',
     };
 }
 

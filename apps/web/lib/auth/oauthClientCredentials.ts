@@ -1045,6 +1045,7 @@ async function enforceOAuthClientMtlsBinding(
     if (!oauthClient.mtls_required) {
         return;
     }
+    assertTrustedMtlsProxy(req);
     const observedThumbprint = resolveMtlsClientCertThumbprint(req);
     if (!observedThumbprint) {
         throw new Error('OAuth client requires mTLS certificate binding.');
@@ -1060,6 +1061,33 @@ async function enforceOAuthClientMtlsBinding(
             [OAUTH_CLIENTS.COLUMNS.mtls_last_seen_at]: new Date().toISOString(),
         })
         .eq(OAUTH_CLIENTS.COLUMNS.id, oauthClient.id);
+}
+
+function assertTrustedMtlsProxy(req: Request | null): void {
+    if (!req) {
+        throw new Error('OAuth mTLS requires trusted edge proxy context.');
+    }
+
+    const expected = normalizeOptionalText(process.env.VETIOS_MTLS_PROXY_SECRET)
+        ?? normalizeOptionalText(process.env.VETIOS_TRUSTED_MTLS_PROXY_SECRET);
+    if (!expected) {
+        if (process.env.VETIOS_ALLOW_UNTRUSTED_MTLS_PROXY === 'true') {
+            return;
+        }
+        throw new Error('OAuth mTLS trusted proxy secret is not configured.');
+    }
+
+    const presented = normalizeOptionalText(req.headers.get('x-vetios-mtls-proxy-secret'))
+        ?? normalizeOptionalText(req.headers.get('x-mtls-proxy-secret'));
+    if (!presented || !safeEqualText(presented, expected)) {
+        throw new Error('OAuth mTLS certificate header was not forwarded by a trusted proxy.');
+    }
+}
+
+function safeEqualText(left: string, right: string): boolean {
+    const leftBuffer = Buffer.from(left);
+    const rightBuffer = Buffer.from(right);
+    return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function selectJwkForAssertion(jwks: Record<string, unknown>, kid: string | null): Record<string, unknown> | null {

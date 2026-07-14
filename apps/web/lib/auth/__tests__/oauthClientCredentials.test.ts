@@ -250,6 +250,8 @@ describe('oauth client credentials foundation', () => {
     });
 
     it('requires a pinned client certificate fingerprint for mTLS-bound OAuth clients', async () => {
+        const previousProxySecret = process.env.VETIOS_MTLS_PROXY_SECRET;
+        process.env.VETIOS_MTLS_PROXY_SECRET = 'trusted-proxy-secret';
         const memory = createMemorySupabase();
         const allowedThumbprint = 'a'.repeat(64);
         const created = await createOAuthClient({
@@ -262,31 +264,53 @@ describe('oauth client credentials foundation', () => {
             mtlsCertThumbprints: [allowedThumbprint],
         });
 
-        await expect(issueOAuthClientCredentialsToken({
-            client: memory.client,
-            clientId: created.oauthClient.client_id,
-            clientSecret: created.clientSecret,
-            requestedScopes: 'signals:ingest',
-            req: new Request('https://vetios.test/api/oauth/token', { method: 'POST' }),
-        })).rejects.toThrow(/mTLS/i);
+        try {
+            await expect(issueOAuthClientCredentialsToken({
+                client: memory.client,
+                clientId: created.oauthClient.client_id,
+                clientSecret: created.clientSecret,
+                requestedScopes: 'signals:ingest',
+                req: new Request('https://vetios.test/api/oauth/token', { method: 'POST' }),
+            })).rejects.toThrow(/trusted proxy/i);
 
-        const issued = await issueOAuthClientCredentialsToken({
-            client: memory.client,
-            clientId: created.oauthClient.client_id,
-            clientSecret: created.clientSecret,
-            requestedScopes: 'signals:ingest',
-            req: new Request('https://vetios.test/api/oauth/token', {
-                method: 'POST',
-                headers: {
-                    'x-vetios-client-cert-sha256': allowedThumbprint.match(/.{2}/g)?.join(':') ?? allowedThumbprint,
-                },
-            }),
-        });
+            await expect(issueOAuthClientCredentialsToken({
+                client: memory.client,
+                clientId: created.oauthClient.client_id,
+                clientSecret: created.clientSecret,
+                requestedScopes: 'signals:ingest',
+                req: new Request('https://vetios.test/api/oauth/token', {
+                    method: 'POST',
+                    headers: {
+                        'x-vetios-mtls-proxy-secret': 'trusted-proxy-secret',
+                    },
+                }),
+            })).rejects.toThrow(/mTLS certificate binding/i);
 
-        expect(issued.accessToken).toMatch(/^vetios_at_/);
-        const storedClient = memory.rows.oauth_clients.find((row) => row.id === created.oauthClient.id);
-        expect(storedClient?.mtls_last_thumbprint).toBe(allowedThumbprint);
-        expect(storedClient?.mtls_last_seen_at).toEqual(expect.any(String));
+            const issued = await issueOAuthClientCredentialsToken({
+                client: memory.client,
+                clientId: created.oauthClient.client_id,
+                clientSecret: created.clientSecret,
+                requestedScopes: 'signals:ingest',
+                req: new Request('https://vetios.test/api/oauth/token', {
+                    method: 'POST',
+                    headers: {
+                        'x-vetios-mtls-proxy-secret': 'trusted-proxy-secret',
+                        'x-vetios-client-cert-sha256': allowedThumbprint.match(/.{2}/g)?.join(':') ?? allowedThumbprint,
+                    },
+                }),
+            });
+
+            expect(issued.accessToken).toMatch(/^vetios_at_/);
+            const storedClient = memory.rows.oauth_clients.find((row) => row.id === created.oauthClient.id);
+            expect(storedClient?.mtls_last_thumbprint).toBe(allowedThumbprint);
+            expect(storedClient?.mtls_last_seen_at).toEqual(expect.any(String));
+        } finally {
+            if (previousProxySecret === undefined) {
+                delete process.env.VETIOS_MTLS_PROXY_SECRET;
+            } else {
+                process.env.VETIOS_MTLS_PROXY_SECRET = previousProxySecret;
+            }
+        }
     });
 });
 

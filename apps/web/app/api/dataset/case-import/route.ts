@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
+import { buildRouteAuthorizationContext } from '@/lib/auth/authorization';
+import { enforceVetiosClinicalActorGate, enforceVetiosHighRiskRouteGate } from '@/lib/auth/authTrustRouteGate';
 import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { formatZodErrors } from '@/lib/http/schemas';
 import { withRequestHeaders } from '@/lib/http/requestId';
@@ -14,7 +17,7 @@ import {
 } from '@/lib/dataset/importJobs';
 import { importRealClinicalCases, type RealCaseImportRow } from '@/lib/dataset/realCaseImport';
 import { listTenantLearningConsents } from '@/lib/learning/consent';
-import { getSupabaseServer } from '@/lib/supabaseServer';
+import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -97,6 +100,39 @@ export async function POST(req: Request) {
             { error: 'invalid_input', detail: formatZodErrors(parsed.error), request_id: requestId },
             { status: 400 },
         );
+    }
+
+    if (requiresIdentifiableResearchGate(parsed.data.cases)) {
+        const trustGate = auth.actor.authMode === 'session'
+            ? await enforceSessionIdentifiableResearchGate(requestId, {
+                caseCount: parsed.data.cases.length,
+                dryRun: parsed.data.dry_run,
+                sourceName: parsed.data.source_name ?? null,
+                clinicId: parsed.data.clinic_id ?? null,
+            })
+            : await enforceVetiosClinicalActorGate({
+                client: supabase as unknown as Parameters<typeof enforceVetiosClinicalActorGate>[0]['client'],
+                requestId,
+                actor: auth.actor,
+                actionKey: 'research.identifiable_data.write',
+                resource: {
+                    type: 'clinical_case_import',
+                    id: hashImportPayload(parsed.data),
+                    tenantId: auth.actor.tenantId,
+                },
+                evidence: {
+                    route: 'api/dataset/case-import',
+                    case_count: parsed.data.cases.length,
+                    dry_run: parsed.data.dry_run,
+                    source_name: parsed.data.source_name ?? null,
+                    clinic_id: parsed.data.clinic_id ?? null,
+                    trigger: 'consented_research_or_identifier_fields',
+                },
+            });
+        if (!trustGate.ok) {
+            withRequestHeaders(trustGate.response.headers, requestId, startTime);
+            return trustGate.response;
+        }
     }
 
     const payloadHash = hashImportPayload(parsed.data);
@@ -183,4 +219,59 @@ export async function POST(req: Request) {
             { status: 500 },
         );
     }
+}
+
+async function enforceSessionIdentifiableResearchGate(
+    requestId: string,
+    evidence: {
+        caseCount: number;
+        dryRun: boolean;
+        sourceName: string | null;
+        clinicId: string | null;
+    },
+) {
+    const session = await resolveSessionTenant();
+    if (!session) {
+        return {
+            ok: false as const,
+            packet: null as never,
+            response: NextResponse.json({ error: 'Unauthorized', request_id: requestId }, { status: 401 }),
+        };
+    }
+    const actor = resolveRequestActor(session);
+    const context = buildRouteAuthorizationContext({
+        tenantId: actor.tenantId,
+        userId: actor.userId,
+        authMode: 'session',
+        user: (await session.supabase.auth.getUser()).data.user ?? null,
+    });
+    return enforceVetiosHighRiskRouteGate({
+        client: getSupabaseServer() as unknown as Parameters<typeof enforceVetiosHighRiskRouteGate>[0]['client'],
+        requestId,
+        context,
+        actionKey: 'research.identifiable_data.write',
+        resource: {
+            type: 'clinical_case_import',
+            id: evidence.sourceName ?? evidence.clinicId ?? 'inline_payload',
+            tenantId: context.tenantId,
+        },
+        evidence: {
+            route: 'api/dataset/case-import',
+            case_count: evidence.caseCount,
+            dry_run: evidence.dryRun,
+            source_name: evidence.sourceName,
+            clinic_id: evidence.clinicId,
+            trigger: 'consented_research_or_identifier_fields',
+        },
+    });
+}
+
+function requiresIdentifiableResearchGate(cases: Array<z.infer<typeof RealCaseImportRowSchema>>): boolean {
+    return cases.some((row) =>
+        row.usage_class === 'consented_research'
+        || row.deidentified === false
+        || Boolean(row.patient.name)
+        || Boolean(row.patient.owner_name)
+        || Boolean(row.patient.owner_contact)
+        || Boolean(row.patient.microchip_id));
 }

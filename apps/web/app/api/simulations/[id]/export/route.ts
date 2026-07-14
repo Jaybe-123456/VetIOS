@@ -1,4 +1,5 @@
 import { getSupabaseServer } from '@/lib/supabaseServer';
+import { enforceVetiosPlatformActorGate } from '@/lib/auth/authTrustRouteGate';
 import { requirePlatformRequestContext } from '@/lib/platform/route';
 import { PlatformAuthError } from '@/lib/platform/tenantContext';
 import { assertSimulationTenantAccess, exportSimulationEventsCsv } from '@/lib/platform/simulations';
@@ -12,6 +13,7 @@ export async function GET(
 ) {
     const params = await context.params;
     const supabase = getSupabaseServer();
+    const requestId = crypto.randomUUID();
 
     try {
         const requestedTenantId = new URL(req.url).searchParams.get('tenant_id');
@@ -23,6 +25,28 @@ export async function GET(
         if (!resolvedTenantId) {
             throw new PlatformAuthError(400, 'tenant_missing', 'tenant_id is required.');
         }
+
+        const trustGate = await enforceVetiosPlatformActorGate({
+            client: supabase as unknown as Parameters<typeof enforceVetiosPlatformActorGate>[0]['client'],
+            requestId,
+            actor,
+            tenantId: resolvedTenantId,
+            actionKey: 'dataset.simulation.export',
+            resource: {
+                type: 'simulation_export',
+                id: params.id,
+                tenantId: resolvedTenantId,
+            },
+            evidence: {
+                route: 'api/simulations/[id]/export',
+                requested_tenant_id: requestedTenantId,
+                content_type: 'text/csv',
+            },
+        });
+        if (!trustGate.ok) {
+            return trustGate.response;
+        }
+
         await assertSimulationTenantAccess(supabase, {
             tenantId: resolvedTenantId,
             simulationId: params.id,

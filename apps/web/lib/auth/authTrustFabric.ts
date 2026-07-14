@@ -164,6 +164,24 @@ export const AUTH_TRUST_ACTION_REQUIREMENTS: Record<string, AuthTrustActionRequi
         allowedRoles: ['admin'],
         challengeType: 'mfa',
     },
+    'dataset.simulation.export': {
+        actionKey: 'dataset.simulation.export',
+        actionCategory: 'dataset_export',
+        riskLevel: 'critical',
+        requiredAssuranceLevel: 'mfa',
+        requiredScopes: ['simulation:write'],
+        allowedRoles: ['admin'],
+        challengeType: 'mfa',
+    },
+    'research.identifiable_data.write': {
+        actionKey: 'research.identifiable_data.write',
+        actionCategory: 'dataset_export',
+        riskLevel: 'critical',
+        requiredAssuranceLevel: 'mfa',
+        requiredScopes: ['outcome:write'],
+        allowedRoles: ['admin'],
+        challengeType: 'mfa',
+    },
     'api_credential.create': {
         actionKey: 'api_credential.create',
         actionCategory: 'api_credential_management',
@@ -222,7 +240,7 @@ export const AUTH_TRUST_ACTION_REQUIREMENTS: Record<string, AuthTrustActionRequi
         actionCategory: 'cross_tenant_surveillance',
         riskLevel: 'critical',
         requiredAssuranceLevel: 'mfa',
-        requiredScopes: ['signals:read'],
+        requiredScopes: ['evaluation:read'],
         allowedRoles: ['admin'],
         challengeType: 'mfa',
     },
@@ -435,6 +453,52 @@ export async function writeHighRiskOperationChallengeEvent(
     }
 }
 
+export async function writeHighRiskOperationChallengeSatisfiedEvent(
+    client: AuthTrustInsertClient,
+    packet: AuthTrustDecisionPacket,
+    input: {
+        authorizationDecisionEventId?: string | null;
+        completedAt?: string | null;
+        evidence?: Record<string, unknown>;
+    } = {},
+): Promise<void> {
+    if (packet.decision !== 'allow') {
+        return;
+    }
+    if (ASSURANCE_RANK[packet.requiredAssuranceLevel] < ASSURANCE_RANK.recent_auth) {
+        return;
+    }
+
+    const completedAt = input.completedAt ?? new Date().toISOString();
+    const { error } = await client.from('high_risk_operation_challenge_events').insert({
+        tenant_id: packet.tenantId,
+        request_id: packet.requestId,
+        authorization_decision_event_id: input.authorizationDecisionEventId ?? null,
+        subject_type: packet.subjectType,
+        subject_ref: packet.subjectRef,
+        actor_user_id: packet.actorUserId,
+        action_key: packet.actionKey,
+        resource_type: packet.resourceType,
+        resource_id: packet.resourceId,
+        challenge_type: packet.challengeType ?? resolveSatisfiedChallengeType(packet),
+        challenge_status: 'satisfied',
+        required_assurance_level: packet.requiredAssuranceLevel,
+        satisfied_assurance_level: packet.assuranceLevel,
+        expires_at: null,
+        evidence: {
+            decision_request_id: packet.requestId,
+            step_up_completed_at: completedAt,
+            completion_source: 'auth_trust_step_up_completion_v1',
+            ...input.evidence,
+        },
+        observed_at: completedAt,
+    });
+
+    if (error) {
+        throw new Error(`Failed to write satisfied high-risk challenge event: ${error.message}`);
+    }
+}
+
 export function hashTrustSurfaceValue(value: string | null | undefined): string | null {
     const normalized = normalizeText(value);
     return normalized ? createHash('sha256').update(normalized).digest('hex') : null;
@@ -499,6 +563,13 @@ function isCrossTenant(tenantId: string | null | undefined, resourceTenantId: st
 
 function maxRisk(left: AuthTrustRiskLevel, right: AuthTrustRiskLevel): AuthTrustRiskLevel {
     return RISK_RANK[right] > RISK_RANK[left] ? right : left;
+}
+
+function resolveSatisfiedChallengeType(packet: AuthTrustDecisionPacket): AuthTrustActionRequirement['challengeType'] {
+    if (packet.requiredAssuranceLevel === 'passkey') return 'passkey';
+    if (packet.requiredAssuranceLevel === 'mfa') return 'mfa';
+    if (packet.requiredAssuranceLevel === 'workload_identity') return 'workload_identity';
+    return 'recent_auth';
 }
 
 function normalizeText(value: string | null | undefined): string | null {
