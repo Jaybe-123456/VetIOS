@@ -519,6 +519,7 @@ The web application is deployed to Vercel and designed for serverless scaling.
 - CI workflow: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
 - Deployment target: Vercel auto-deploy from `main`
 - Database/auth: Supabase PostgreSQL with RLS-backed tenant isolation
+- Partner mTLS edge: [`infra/mtls-proxy`](infra/mtls-proxy) terminates client certificates, forwards the verified SHA-256 certificate fingerprint, and adds `VETIOS_MTLS_PROXY_SECRET` for mTLS-bound OAuth clients.
 
 The GitHub Actions pipeline runs linting, typechecking, builds, and API smoke checks before merge or deployment promotion.
 

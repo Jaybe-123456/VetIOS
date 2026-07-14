@@ -1,0 +1,95 @@
+static_resources:
+  listeners:
+    - name: vetios_mtls_listener
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9443
+      filter_chains:
+        - transport_socket:
+            name: envoy.transport_sockets.tls
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+              require_client_certificate: true
+              common_tls_context:
+                tls_certificates:
+                  - certificate_chain:
+                      filename: "${VETIOS_MTLS_PROXY_CERT}"
+                    private_key:
+                      filename: "${VETIOS_MTLS_PROXY_KEY}"
+                validation_context:
+                  trusted_ca:
+                    filename: "${VETIOS_MTLS_CLIENT_CA}"
+          filters:
+            - name: envoy.filters.network.http_connection_manager
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                stat_prefix: vetios_mtls_http
+                codec_type: AUTO
+                normalize_path: true
+                merge_slashes: true
+                route_config:
+                  name: vetios_mtls_routes
+                  request_headers_to_remove:
+                    - x-vetios-mtls-proxy-secret
+                    - x-mtls-proxy-secret
+                    - x-vetios-client-cert-sha256
+                    - x-client-cert-sha256
+                    - x-forwarded-client-cert-sha256
+                    - ssl-client-fingerprint-sha256
+                  virtual_hosts:
+                    - name: vetios_upstream
+                      domains:
+                        - "*"
+                      request_headers_to_add:
+                        - header:
+                            key: ":authority"
+                            value: "${VETIOS_UPSTREAM_HOST}"
+                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                        - header:
+                            key: x-vetios-mtls-proxy-secret
+                            value: "${VETIOS_MTLS_PROXY_SECRET}"
+                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                        - header:
+                            key: x-vetios-client-cert-sha256
+                            value: "%DOWNSTREAM_PEER_FINGERPRINT_256%"
+                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                        - header:
+                            key: x-forwarded-proto
+                            value: "https"
+                          append_action: OVERWRITE_IF_EXISTS_OR_ADD
+                      routes:
+                        - match:
+                            prefix: "/"
+                          route:
+                            cluster: vetios_app
+                            timeout: 60s
+                http_filters:
+                  - name: envoy.filters.http.router
+                    typed_config:
+                      "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+  clusters:
+    - name: vetios_app
+      type: LOGICAL_DNS
+      connect_timeout: 10s
+      dns_lookup_family: V4_PREFERRED
+      lb_policy: ROUND_ROBIN
+      load_assignment:
+        cluster_name: vetios_app
+        endpoints:
+          - lb_endpoints:
+              - endpoint:
+                  address:
+                    socket_address:
+                      address: "${VETIOS_UPSTREAM_HOST}"
+                      port_value: ${VETIOS_UPSTREAM_PORT}
+      transport_socket:
+        name: envoy.transport_sockets.tls
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+          sni: "${VETIOS_UPSTREAM_HOST}"
+admin:
+  address:
+    socket_address:
+      address: 127.0.0.1
+      port_value: 9901

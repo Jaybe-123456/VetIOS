@@ -1,0 +1,15 @@
+services:
+  vetios-mtls-proxy:
+    build:
+      context: .
+    ports:
+      - "9443:9443"
+    environment:
+      VETIOS_MTLS_PROXY_SECRET: "${VETIOS_MTLS_PROXY_SECRET:?set VETIOS_MTLS_PROXY_SECRET}"
+      VETIOS_UPSTREAM_HOST: "${VETIOS_UPSTREAM_HOST:-www.vetios.tech}"
+      VETIOS_UPSTREAM_PORT: "${VETIOS_UPSTREAM_PORT:-443}"
+      VETIOS_MTLS_PROXY_CERT: "/etc/envoy/certs/server.crt"
+      VETIOS_MTLS_PROXY_KEY: "/etc/envoy/certs/server.key"
+      VETIOS_MTLS_CLIENT_CA: "/etc/envoy/certs/client-ca.crt"
+    volumes:
+      - ./certs:/etc/envoy/certs:ro
