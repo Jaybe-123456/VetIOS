@@ -358,7 +358,7 @@ export default function DiseaseImagePanel({ messageContent, topic, queryText, me
 
                             {signal && (
                                 <div className="border border-white/8 bg-black/30 px-3 py-2 font-mono text-[11px] leading-relaxed text-white/56">
-                                    {signal.images_available} {signal.images_source === 'curated' ? 'curated' : signal.images_source === 'pmc_oa' ? 'PMC OA' : 'inline'} image{signal.images_available === 1 ? '' : 's'} // {signal.literature_papers} PubMed paper{signal.literature_papers === 1 ? '' : 's'} // {signal.specialist_guideline_available ? 'specialist guideline available' : 'no matched specialist guideline'} // {signal.evidence_strength_rationale}
+                                    {signal.images_available} {signal.images_source === 'curated' ? 'curated' : signal.images_source === 'pmc_oa' ? 'PMC OA' : 'inline'} image{signal.images_available === 1 ? '' : 's'}{' // '}{signal.literature_papers} PubMed paper{signal.literature_papers === 1 ? '' : 's'}{' // '}{signal.specialist_guideline_available ? 'specialist guideline available' : 'no matched specialist guideline'}{' // '}{signal.evidence_strength_rationale}
                                 </div>
                             )}
 

@@ -700,7 +700,7 @@ export default function AgenticRagClient() {
                                     <div key={`${citation.index}-${citation.title}`} className="border border-grid bg-black/20 p-3">
                                         <div className="mb-2 flex flex-wrap items-center justify-between gap-2 font-mono text-[10px] uppercase tracking-[0.14em]">
                                             <span className="text-accent">[{citation.index}] {citation.source_name}</span>
-                                            <span className="text-muted">{citation.authority_tier} // {(citation.similarity * 100).toFixed(1)}%</span>
+                                            <span className="text-muted">{citation.authority_tier}{' // '}{(citation.similarity * 100).toFixed(1)}%</span>
                                         </div>
                                         <p className="font-mono text-xs leading-relaxed text-foreground/90">{citation.quote}</p>
                                         {citation.url && (
@@ -746,7 +746,7 @@ export default function AgenticRagClient() {
                             <div key={document.id} className="border border-grid bg-black/20 p-3">
                                 <div className="font-mono text-xs uppercase tracking-[0.12em] text-foreground">{document.title}</div>
                                 <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-                                    {source?.name ?? 'Unknown source'} // {document.ingestion_status} // {document.content_length} chars
+                                    {source?.name ?? 'Unknown source'}{' // '}{document.ingestion_status}{' // '}{document.content_length} chars
                                 </div>
                             </div>
                         );

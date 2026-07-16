@@ -5,7 +5,7 @@
         "build": "turbo run build",
         "dev": "turbo run dev",
         "lint": "turbo run lint",
-        "security:audit": "pnpm audit --prod",
+        "security:audit": "node apps/web/scripts/security-audit-bulk.cjs",
         "security:routes": "pnpm --filter @vetios/web run test:api-auth-surface",
         "cire:conformance": "pnpm --filter @vetios/cire-engine test",
         "test:adversarial-regressions": "node --experimental-strip-types --loader ./internal/testing/alias-loader.mjs ./internal/testing/test_adversarial_regressions.ts",

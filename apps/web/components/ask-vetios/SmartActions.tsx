@@ -884,7 +884,7 @@ export default function SmartActions({
                                         className="block border border-white/8 bg-black/20 px-2.5 py-2 font-mono text-[10px] leading-relaxed text-white/64 transition-colors hover:border-accent/25 hover:text-accent"
                                     >
                                         <span className="text-white/82">{reference.label}</span>
-                                        {reference.year && <span className="text-white/36"> // {reference.year}</span>}
+                                        {reference.year && <span className="text-white/36">{' // '}{reference.year}</span>}
                                         <span className="mt-0.5 block break-all text-white/34">{reference.url}</span>
                                     </a>
                                 ))}

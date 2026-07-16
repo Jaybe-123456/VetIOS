@@ -21,7 +21,7 @@
     },
     {
       "path": "/api/cron/outbox-flush",
-      "schedule": "*/1 * * * *"
+      "schedule": "15 0 * * *"
     },
     {
       "path": "/api/cron/active-learning-sweep",

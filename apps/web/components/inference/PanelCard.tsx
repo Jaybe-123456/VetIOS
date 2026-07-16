@@ -38,7 +38,7 @@ export function PanelCard({
       <div className="p-4 border border-danger/30 bg-danger/5 rounded-sm flex items-center gap-3">
         <AlertCircle className="w-5 h-5 text-danger" />
         <div className="font-mono text-xs text-danger uppercase tracking-wider">
-          Error: Definition for panel "{panel.panel}" not found.
+          {`Error: Definition for panel "${panel.panel}" not found.`}
         </div>
         <button
           type="button"
