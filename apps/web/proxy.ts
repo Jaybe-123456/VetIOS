@@ -116,6 +116,7 @@ export async function proxy(request: NextRequest) {
     const origin = request.headers.get('origin');
     const pathname = request.nextUrl.pathname;
     const isApiRoute = pathname.startsWith('/api/');
+    const requestId = request.headers.get('x-request-id')?.trim() || crypto.randomUUID();
 
     let corsResponseHeaders = new Headers();
     let isAllowedOrigin = false;
@@ -132,14 +133,18 @@ export async function proxy(request: NextRequest) {
     // 2. Preflight Response Fast-path
     if (isApiRoute && request.method === 'OPTIONS') {
         if (isAllowedOrigin) {
+            corsResponseHeaders.set('x-request-id', requestId);
             return new NextResponse(null, { status: 204, headers: corsResponseHeaders });
         }
         // Block unapproved origins preflights
-        return new NextResponse(null, { status: 403 });
+        return new NextResponse(null, { status: 403, headers: { 'x-request-id': requestId } });
     }
 
     // 3. Let normal requests pass through
-    const response = NextResponse.next({ request });
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set('x-request-id', requestId);
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    response.headers.set('x-request-id', requestId);
 
     // 4. Inject CORS explicitly on the outgoing valid response
     if (isApiRoute && isAllowedOrigin) {
