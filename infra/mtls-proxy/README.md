@@ -75,18 +75,184 @@ Then call with the generated partner cert:
 
 ```powershell
 curl.exe --cert .\certs\partner-client.crt --key .\certs\partner-client.key `
-  https://localhost:9443/api/health -k
+  https://localhost:9443/healthz -k
 ```
 
 Call without a client cert should fail at TLS before reaching VetIOS.
 
-## Production Deployment Notes
+## Production VM Deployment
 
-- Use a real certificate for `mtls.vetios.tech`.
-- Use a private partner/client CA file as `VETIOS_MTLS_CLIENT_CA`.
-- Keep `VETIOS_MTLS_PROXY_SECRET` only in the proxy and Vercel secrets.
-- Rotate the proxy secret if it is ever exposed.
-- Configure OAuth clients in VetIOS with `mtls_required=true` and the partner certificate SHA-256 thumbprint.
+Use an Ubuntu 24.04 LTS VM with a static public IPv4 address. The production compose profile:
+
+- publishes the mTLS listener on TCP 443;
+- binds the health listener to VM loopback on port 8080;
+- accepts only `/api/oauth/*` and `/healthz` on the mTLS hostname;
+- runs Envoy as UID/GID 101 with all Linux capabilities dropped;
+- mounts certificates read-only and reads the proxy secret from a Docker secret;
+- restarts automatically and bounds memory, CPU, PIDs, and local logs.
+
+### Automated Google Compute Engine Deployment
+
+The repository includes a guarded GCE deployment script for project `vetios-488515`. It will not
+run unless project billing is enabled, a Cloudflare DNS token is available, the public client-CA
+bundle exists, and the same proxy secret has already been configured in Vercel Production.
+
+Enable billing first:
+
+```text
+https://console.cloud.google.com/billing/linkedaccount?project=vetios-488515
+```
+
+Create a Cloudflare API token with `Zone:DNS:Edit` and `Zone:Zone:Read` limited to `vetios.tech`, then
+place it in the current PowerShell process:
+
+```powershell
+$env:CLOUDFLARE_API_TOKEN = "<token>"
+```
+
+Run the deployment from the repository root:
+
+```powershell
+.\infra\mtls-proxy\scripts\deploy-gce.ps1 `
+  -LetsEncryptEmail "security@vetios.tech" `
+  -ClientCaPath "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI\client-ca.crt" `
+  -ProxySecretPath "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI\proxy-secret" `
+  -ConfirmVercelSecretConfigured
+```
+
+The script enables Compute Engine, reserves a static regional IP, creates an Ubuntu 24.04 LTS
+`e2-small` VM with Shielded VM controls, restricts SSH to the operator's current public IP, creates
+the DNS-only Cloudflare record, uploads the proxy package and public CA bundle, issues the public
+certificate, and starts the production compose profile.
+
+### 1. Bootstrap the VM
+
+Copy this directory to `/opt/vetios/mtls-proxy`, then run:
+
+```bash
+cd /opt/vetios/mtls-proxy
+sudo bash ./scripts/bootstrap-ubuntu-vm.sh
+sudo cp .env.production.example .env.production
+```
+
+Create the shared proxy secret without writing it to shell history:
+
+```bash
+sudo sh -c 'umask 077; openssl rand -hex 32 > /opt/vetios/mtls/secrets/proxy-secret'
+```
+
+Set the exact same value as `VETIOS_MTLS_PROXY_SECRET` in the VetIOS Vercel Production environment,
+then redeploy the web application. Never commit or log this value.
+
+### 2. Create the Partner Client PKI Offline
+
+Generate the private client root and issuing CA on an offline operator workstation, outside this repo:
+
+```powershell
+$PassphraseFile = "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI\ca-passphrase"
+$Parent = Split-Path -Parent $PassphraseFile
+New-Item -ItemType Directory -Force -Path $Parent | Out-Null
+$Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$Bytes = New-Object byte[] 48
+$Rng.GetBytes($Bytes)
+[System.IO.File]::WriteAllText($PassphraseFile, [Convert]::ToBase64String($Bytes))
+$Rng.Dispose()
+
+.\scripts\generate-production-client-pki.ps1 `
+  -OutputDir "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI" `
+  -PassphraseFile $PassphraseFile
+```
+
+Copy only `client-ca.crt` to the VM:
+
+```text
+/opt/vetios/mtls/certs/client-ca.crt
+```
+
+Keep `client-root-ca.key` and `client-intermediate-ca.key` offline and encrypted. They are not proxy
+runtime files.
+
+Issue a 90-day partner certificate from the offline workstation:
+
+```powershell
+.\scripts\issue-partner-client.ps1 `
+  -PkiDir "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI" `
+  -CaPassphraseFile "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI\ca-passphrase" `
+  -PartnerId "partner-clinic-001" `
+  -OutputDir "$env:USERPROFILE\Documents\VetIOS-Partner-Certs\partner-clinic-001"
+```
+
+Store the printed SHA-256 thumbprint on that OAuth client in VetIOS and set `mtls_required=true`.
+
+### 3. Configure Cloudflare DNS
+
+The authoritative nameservers for `vetios.tech` are Cloudflare. Add this record after the VM has a
+static IP:
+
+```text
+Type: A
+Name: mtls
+Target: <VM_STATIC_IPV4>
+Proxy status: DNS only
+TTL: Auto
+```
+
+The record must be DNS-only unless Cloudflare API Shield is deliberately configured to authenticate
+clients and forward a cryptographically trusted certificate identity. The default orange-cloud proxy
+terminates TLS before Envoy and prevents this direct client-certificate flow.
+
+### 4. Issue the Public Server Certificate
+
+After `mtls.vetios.tech` resolves to the VM, issue and install the Let's Encrypt certificate:
+
+```bash
+cd /opt/vetios/mtls-proxy
+sudo LETSENCRYPT_EMAIL=security@vetios.tech bash ./scripts/provision-server-cert.sh
+```
+
+The script installs a Certbot deploy hook that refreshes `server.crt` and `server.key` and recreates
+the proxy after renewals.
+
+### 5. Start and Verify
+
+```bash
+cd /opt/vetios/mtls-proxy
+sudo docker compose \
+  --env-file .env.production \
+  -f docker-compose.production.yml \
+  up -d --build
+
+sudo docker compose -f docker-compose.production.yml ps
+curl --fail --silent http://127.0.0.1:8080/healthz
+```
+
+From an external machine, a call without a client certificate must fail during TLS negotiation:
+
+```bash
+curl -v https://mtls.vetios.tech/healthz
+```
+
+A call with a valid partner certificate must return `ok`:
+
+```bash
+curl --cert partner-client-chain.crt --key partner-client.key \
+  https://mtls.vetios.tech/healthz
+```
+
+Partner OAuth clients then use:
+
+```text
+https://mtls.vetios.tech/api/oauth/token
+```
+
+## Production Rules
+
+- Keep the proxy secret only in `/opt/vetios/mtls/secrets/proxy-secret` and Vercel Production secrets.
+- Deploy only the public client CA bundle to the VM; never deploy client CA private keys.
+- Revoke and rotate a partner certificate immediately if its private key may be exposed.
+- Rotate the shared proxy secret if it is exposed and redeploy Vercel and the proxy together.
+- Keep Cloudflare proxying disabled for this hostname unless API Shield replaces the direct mTLS design.
+- Monitor `docker compose ps`, Envoy logs, certificate expiry, and `/healthz` from the VM.
 
 Partner cert thumbprint example:
 

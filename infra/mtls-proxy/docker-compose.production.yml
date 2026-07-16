@@ -1,0 +1,50 @@
+name: vetios-mtls-edge
+
+services:
+  vetios-mtls-proxy:
+    image: vetios/mtls-proxy:${VETIOS_MTLS_PROXY_IMAGE_TAG:-1.0.0}
+    build:
+      context: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "${VETIOS_MTLS_BIND_ADDRESS:-0.0.0.0}:443:9443"
+      - "127.0.0.1:8080:8080"
+    environment:
+      VETIOS_MTLS_PROXY_SECRET_FILE: /run/secrets/vetios_mtls_proxy_secret
+      VETIOS_UPSTREAM_HOST: "${VETIOS_UPSTREAM_HOST:-www.vetios.tech}"
+      VETIOS_UPSTREAM_PORT: "${VETIOS_UPSTREAM_PORT:-443}"
+      VETIOS_MTLS_PROXY_CERT: /etc/envoy/certs/server.crt
+      VETIOS_MTLS_PROXY_KEY: /etc/envoy/certs/server.key
+      VETIOS_MTLS_CLIENT_CA: /etc/envoy/certs/client-ca.crt
+      VETIOS_ENVOY_LOG_LEVEL: "${VETIOS_ENVOY_LOG_LEVEL:-info}"
+    secrets:
+      - vetios_mtls_proxy_secret
+    volumes:
+      - "${VETIOS_MTLS_CERT_DIR:-/opt/vetios/mtls/certs}:/etc/envoy/certs:ro"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 256m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "5"
+    stop_grace_period: 30s
+
+secrets:
+  vetios_mtls_proxy_secret:
+    file: "${VETIOS_MTLS_PROXY_SECRET_PATH:-/opt/vetios/mtls/secrets/proxy-secret}"

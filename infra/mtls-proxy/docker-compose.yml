@@ -4,6 +4,7 @@ services:
       context: .
     ports:
       - "9443:9443"
+      - "127.0.0.1:8080:8080"
     environment:
       VETIOS_MTLS_PROXY_SECRET: "${VETIOS_MTLS_PROXY_SECRET:?set VETIOS_MTLS_PROXY_SECRET}"
       VETIOS_UPSTREAM_HOST: "${VETIOS_UPSTREAM_HOST:-www.vetios.tech}"
@@ -13,3 +14,16 @@ services:
       VETIOS_MTLS_CLIENT_CA: "/etc/envoy/certs/client-ca.crt"
     volumes:
       - ./certs:/etc/envoy/certs:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s

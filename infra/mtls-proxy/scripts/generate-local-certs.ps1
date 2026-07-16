@@ -4,8 +4,15 @@ $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $CertDir = Join-Path $Root "certs"
 New-Item -ItemType Directory -Force -Path $CertDir | Out-Null
 
-$OpenSsl = "openssl"
-if (-not (Get-Command $OpenSsl -ErrorAction SilentlyContinue)) {
+$OpenSslCommand = Get-Command openssl -ErrorAction SilentlyContinue
+$OpenSsl = if ($OpenSslCommand) {
+    $OpenSslCommand.Source
+} elseif (Test-Path "C:\Program Files\Git\usr\bin\openssl.exe") {
+    "C:\Program Files\Git\usr\bin\openssl.exe"
+} else {
+    $null
+}
+if (-not $OpenSsl) {
     throw "OpenSSL is required. Install Git for Windows, OpenSSL, or run this in an environment that has openssl."
 }
 
