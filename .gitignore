@@ -61,3 +61,5 @@ artifacts/vvrb-training/
 /VetIOS/
 /models/
 .worktrees/
+.vercel
+.env*.local
