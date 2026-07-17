@@ -2,8 +2,10 @@ import { NextResponse } from 'next/server';
 import { buildForbiddenRouteResponse, buildRouteAuthorizationContext } from '@/lib/auth/authorization';
 import { enforceVetiosHighRiskRouteGate } from '@/lib/auth/authTrustRouteGate';
 import {
+    bindOAuthClientMtlsCertificate,
     createOAuthClient,
     listOAuthClients,
+    retireOAuthClientMtlsCertificate,
     revokeOAuthClient,
     rotateOAuthClientSecret,
     sanitizeOAuthClient,
@@ -41,6 +43,16 @@ type OAuthClientAction =
     | {
         action: 'revoke_oauth_client';
         oauth_client_id?: string;
+    }
+    | {
+        action: 'bind_oauth_client_mtls_certificate';
+        oauth_client_id?: string;
+        certificate_thumbprint?: string;
+    }
+    | {
+        action: 'retire_oauth_client_mtls_certificate';
+        oauth_client_id?: string;
+        certificate_thumbprint?: string;
     };
 
 export async function GET(req: Request) {
@@ -103,6 +115,7 @@ export async function POST(req: Request) {
     }
 
     const trustAction = parsed.data.action === 'revoke_oauth_client'
+        || parsed.data.action === 'retire_oauth_client_mtls_certificate'
         ? 'api_credential.revoke'
         : 'api_credential.create';
     const trustGate = await enforceVetiosHighRiskRouteGate({
@@ -170,6 +183,34 @@ export async function POST(req: Request) {
             });
             result = {
                 oauth_client: sanitizeOAuthClient(revoked),
+            };
+        } else if (parsed.data.action === 'bind_oauth_client_mtls_certificate') {
+            const bound = await bindOAuthClientMtlsCertificate({
+                client,
+                tenantId: context.tenantId,
+                actor: context.userId,
+                oauthClientId: requireText(parsed.data.oauth_client_id, 'oauth_client_id'),
+                certificateThumbprint: requireText(
+                    parsed.data.certificate_thumbprint,
+                    'certificate_thumbprint',
+                ),
+            });
+            result = {
+                oauth_client: sanitizeOAuthClient(bound),
+            };
+        } else if (parsed.data.action === 'retire_oauth_client_mtls_certificate') {
+            const retired = await retireOAuthClientMtlsCertificate({
+                client,
+                tenantId: context.tenantId,
+                actor: context.userId,
+                oauthClientId: requireText(parsed.data.oauth_client_id, 'oauth_client_id'),
+                certificateThumbprint: requireText(
+                    parsed.data.certificate_thumbprint,
+                    'certificate_thumbprint',
+                ),
+            });
+            result = {
+                oauth_client: sanitizeOAuthClient(retired),
             };
         } else {
             return NextResponse.json({ error: 'Unsupported OAuth client action.', request_id: requestId }, { status: 400 });

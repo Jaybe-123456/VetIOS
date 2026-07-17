@@ -279,6 +279,56 @@ export async function rotateOAuthClientSecret(input: {
     return { oauthClient, clientSecret };
 }
 
+export async function bindOAuthClientMtlsCertificate(input: {
+    client: SupabaseClient;
+    tenantId: string;
+    actor: string | null;
+    oauthClientId: string;
+    certificateThumbprint: string;
+}): Promise<OAuthClientRecord> {
+    const certificateThumbprint = requireSha256Thumbprint(input.certificateThumbprint);
+    const { data, error } = await input.client
+        .rpc('manage_oauth_client_mtls_certificate', {
+            p_tenant_id: input.tenantId,
+            p_oauth_client_id: input.oauthClientId,
+            p_certificate_thumbprint: certificateThumbprint,
+            p_operation: 'bind',
+            p_actor_user_id: coerceUuidOrNull(input.actor),
+            p_request_id: `oauth_client_certificate_bound:${input.oauthClientId}:${Date.now()}`,
+        })
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to bind OAuth client certificate: ${error?.message ?? 'Unknown error'}`);
+    }
+    return mapOAuthClient(data as Record<string, unknown>);
+}
+
+export async function retireOAuthClientMtlsCertificate(input: {
+    client: SupabaseClient;
+    tenantId: string;
+    actor: string | null;
+    oauthClientId: string;
+    certificateThumbprint: string;
+}): Promise<OAuthClientRecord> {
+    const certificateThumbprint = requireSha256Thumbprint(input.certificateThumbprint);
+    const { data, error } = await input.client
+        .rpc('manage_oauth_client_mtls_certificate', {
+            p_tenant_id: input.tenantId,
+            p_oauth_client_id: input.oauthClientId,
+            p_certificate_thumbprint: certificateThumbprint,
+            p_operation: 'retire',
+            p_actor_user_id: coerceUuidOrNull(input.actor),
+            p_request_id: `oauth_client_certificate_retired:${input.oauthClientId}:${Date.now()}`,
+        })
+        .single();
+
+    if (error || !data) {
+        throw new Error(`Failed to retire OAuth client certificate: ${error?.message ?? 'Unknown error'}`);
+    }
+    return mapOAuthClient(data as Record<string, unknown>);
+}
+
 export async function revokeOAuthClient(input: {
     client: SupabaseClient;
     tenantId: string;
@@ -1319,6 +1369,14 @@ function normalizeSha256Thumbprints(value: readonly string[] | null | undefined)
             .map(normalizeSha256Thumbprint)
             .filter((entry): entry is string => Boolean(entry)))]
         : [];
+}
+
+function requireSha256Thumbprint(value: unknown): string {
+    const normalized = normalizeSha256Thumbprint(value);
+    if (!normalized) {
+        throw new Error('certificate_thumbprint must be a SHA-256 fingerprint.');
+    }
+    return normalized;
 }
 
 function normalizeSha256Thumbprint(value: unknown): string | null {

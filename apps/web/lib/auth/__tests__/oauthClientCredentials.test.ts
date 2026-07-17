@@ -2,11 +2,13 @@ import { createHash, generateKeyPairSync, sign } from 'crypto';
 import { describe, expect, it } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
+    bindOAuthClientMtlsCertificate,
     createOAuthClient,
     issueOAuthClientCredentialsToken,
     normalizeOAuthScopes,
     OAUTH_CLIENT_ASSERTION_TYPE,
     resolveOAuthClientCredentialsPrincipal,
+    retireOAuthClientMtlsCertificate,
     revokeOAuthAccessToken,
     sanitizeOAuthClient,
 } from '../oauthClientCredentials';
@@ -312,6 +314,65 @@ describe('oauth client credentials foundation', () => {
             }
         }
     });
+
+    it('rotates mTLS certificates with an overlap window and append-only lifecycle evidence', async () => {
+        const memory = createMemorySupabase();
+        const previousThumbprint = 'a'.repeat(64);
+        const nextThumbprint = 'b'.repeat(64);
+        const created = await createOAuthClient({
+            client: memory.client,
+            tenantId: 'tenant_1',
+            actor: '00000000-0000-4000-8000-000000000001',
+            clientName: 'Rotating partner bridge',
+            allowedScopes: ['signals:ingest'],
+            mtlsRequired: true,
+            mtlsCertThumbprints: [previousThumbprint],
+        });
+
+        const bound = await bindOAuthClientMtlsCertificate({
+            client: memory.client,
+            tenantId: 'tenant_1',
+            actor: '00000000-0000-4000-8000-000000000001',
+            oauthClientId: created.oauthClient.id,
+            certificateThumbprint: nextThumbprint.match(/.{2}/g)?.join(':') ?? nextThumbprint,
+        });
+
+        expect(bound.mtls_required).toBe(true);
+        expect(bound.mtls_cert_thumbprints).toEqual([previousThumbprint, nextThumbprint]);
+        expect(memory.rows.oauth_client_events.at(-1)).toMatchObject({
+            lifecycle_event: 'certificate_bound',
+            evidence: {
+                certificate_thumbprint_sha256: nextThumbprint,
+                active_thumbprint_count: 2,
+                rotation_overlap: true,
+            },
+        });
+
+        const retired = await retireOAuthClientMtlsCertificate({
+            client: memory.client,
+            tenantId: 'tenant_1',
+            actor: '00000000-0000-4000-8000-000000000001',
+            oauthClientId: created.oauthClient.id,
+            certificateThumbprint: previousThumbprint,
+        });
+
+        expect(retired.mtls_cert_thumbprints).toEqual([nextThumbprint]);
+        expect(memory.rows.oauth_client_events.at(-1)).toMatchObject({
+            lifecycle_event: 'certificate_retired',
+            evidence: {
+                certificate_thumbprint_sha256: previousThumbprint,
+                active_thumbprint_count: 1,
+            },
+        });
+
+        await expect(retireOAuthClientMtlsCertificate({
+            client: memory.client,
+            tenantId: 'tenant_1',
+            actor: null,
+            oauthClientId: created.oauthClient.id,
+            certificateThumbprint: nextThumbprint,
+        })).rejects.toThrow(/final certificate/i);
+    });
 });
 
 function createMemorySupabase(): {
@@ -330,9 +391,93 @@ function createMemorySupabase(): {
         from(table: string) {
             return new MemoryQuery(rows, table);
         },
+        rpc(functionName: string, params: Record<string, unknown>) {
+            return new MemoryRpcQuery(rows, functionName, params);
+        },
     } as unknown as SupabaseClient;
 
     return { client, rows };
+}
+
+class MemoryRpcQuery {
+    constructor(
+        private readonly rows: Record<string, Array<Record<string, unknown>>>,
+        private readonly functionName: string,
+        private readonly params: Record<string, unknown>,
+    ) {}
+
+    async single() {
+        if (this.functionName !== 'manage_oauth_client_mtls_certificate') {
+            return { data: null, error: { message: `Unsupported RPC: ${this.functionName}` } };
+        }
+
+        const oauthClient = this.rows.oauth_clients.find((row) =>
+            row.id === this.params.p_oauth_client_id
+            && row.tenant_id === this.params.p_tenant_id);
+        if (!oauthClient) {
+            return { data: null, error: { message: 'OAuth client was not found' } };
+        }
+
+        const thumbprint = String(this.params.p_certificate_thumbprint ?? '');
+        const thumbprints = Array.isArray(oauthClient.mtls_cert_thumbprints)
+            ? oauthClient.mtls_cert_thumbprints as string[]
+            : [];
+        const operation = String(this.params.p_operation ?? '');
+        let rotationOverlap = false;
+        let lifecycleEvent: string;
+        let riskLevel: string;
+
+        if (operation === 'bind') {
+            if (oauthClient.status !== 'active') {
+                return { data: null, error: { message: 'Certificates can only be bound to an active OAuth client' } };
+            }
+            rotationOverlap = thumbprints.length > 0;
+            oauthClient.mtls_required = true;
+            oauthClient.mtls_cert_thumbprints = [...new Set([...thumbprints, thumbprint])];
+            lifecycleEvent = 'certificate_bound';
+            riskLevel = 'high';
+        } else if (operation === 'retire') {
+            if (!thumbprints.includes(thumbprint)) {
+                return { data: null, error: { message: 'OAuth client certificate thumbprint is not registered' } };
+            }
+            const remaining = thumbprints.filter((entry) => entry !== thumbprint);
+            if (oauthClient.mtls_required === true && remaining.length === 0) {
+                return {
+                    data: null,
+                    error: { message: 'Cannot retire the final certificate from an mTLS-required OAuth client' },
+                };
+            }
+            oauthClient.mtls_cert_thumbprints = remaining;
+            lifecycleEvent = 'certificate_retired';
+            riskLevel = 'critical';
+        } else {
+            return { data: null, error: { message: `Unsupported operation: ${operation}` } };
+        }
+
+        this.rows.oauth_client_events.push({
+            id: randomUuid(),
+            tenant_id: oauthClient.tenant_id,
+            request_id: this.params.p_request_id,
+            oauth_client_id: oauthClient.id,
+            client_id: oauthClient.client_id,
+            actor_user_id: this.params.p_actor_user_id,
+            lifecycle_event: lifecycleEvent,
+            status: oauthClient.status,
+            allowed_scopes: oauthClient.allowed_scopes,
+            token_ttl_seconds: oauthClient.token_ttl_seconds,
+            risk_level: riskLevel,
+            evidence: {
+                client_name: oauthClient.client_name,
+                telemetry_source: 'manage_oauth_client_mtls_certificate',
+                certificate_thumbprint_sha256: thumbprint,
+                active_thumbprint_count: (oauthClient.mtls_cert_thumbprints as string[]).length,
+                rotation_overlap: rotationOverlap,
+            },
+            created_at: new Date().toISOString(),
+        });
+
+        return { data: oauthClient, error: null };
+    }
 }
 
 class MemoryQuery {

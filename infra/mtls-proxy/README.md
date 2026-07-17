@@ -172,17 +172,68 @@ Copy only `client-ca.crt` to the VM:
 Keep `client-root-ca.key` and `client-intermediate-ca.key` offline and encrypted. They are not proxy
 runtime files.
 
-Issue a 90-day partner certificate from the offline workstation:
+Create a separate delivery passphrase and issue a short-lived partner certificate from the offline
+workstation. The issuer encrypts the private key and delivery PKCS#12 bundle, uses a unique random
+certificate serial, verifies the chain, writes a non-secret manifest, and removes the standalone PEM
+key unless `-RetainEncryptedPemKey` is explicitly set:
 
 ```powershell
+$DeliveryPassphraseFile = "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI\partner-clinic-001-delivery-passphrase"
+$Rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+$Bytes = New-Object byte[] 32
+$Rng.GetBytes($Bytes)
+[System.IO.File]::WriteAllText($DeliveryPassphraseFile, [Convert]::ToBase64String($Bytes))
+$Rng.Dispose()
+
 .\scripts\issue-partner-client.ps1 `
   -PkiDir "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI" `
   -CaPassphraseFile "$env:USERPROFILE\Documents\VetIOS-Production-Client-PKI\ca-passphrase" `
   -PartnerId "partner-clinic-001" `
-  -OutputDir "$env:USERPROFILE\Documents\VetIOS-Partner-Certs\partner-clinic-001"
+  -OutputDir "$env:USERPROFILE\Documents\VetIOS-Partner-Certs\partner-clinic-001" `
+  -DeliveryPassphraseFile $DeliveryPassphraseFile `
+  -OAuthClientRecordId "<oauth_clients.id>" `
+  -ValidityDays 30
 ```
 
-Store the printed SHA-256 thumbprint on that OAuth client in VetIOS and set `mtls_required=true`.
+Bind the manifest's `sha256_thumbprint` to the intended OAuth client from an MFA-authenticated admin
+browser session. This preserves the tenant/admin gate and appends a `certificate_bound` lifecycle
+event:
+
+```js
+await fetch('/api/platform/oauth-clients', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    action: 'bind_oauth_client_mtls_certificate',
+    oauth_client_id: '<oauth_clients.id>',
+    certificate_thumbprint: '<manifest.sha256_thumbprint>',
+  }),
+}).then(async (response) => ({ status: response.status, body: await response.json() }));
+```
+
+For a new client, pass `mtls_required: true` and `mtls_cert_thumbprints: [thumbprint]` to the existing
+`create_oauth_client` action instead. VetIOS refuses to enable mTLS without at least one valid SHA-256
+thumbprint.
+
+Verify the newly bound certificate through `https://mtls.vetios.tech/api/oauth/token` before retiring
+the previous certificate. During rotation both thumbprints remain accepted. After successful token
+issuance, retire only the old thumbprint:
+
+```js
+await fetch('/api/platform/oauth-clients', {
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({
+    action: 'retire_oauth_client_mtls_certificate',
+    oauth_client_id: '<oauth_clients.id>',
+    certificate_thumbprint: '<old.sha256_thumbprint>',
+  }),
+}).then(async (response) => ({ status: response.status, body: await response.json() }));
+```
+
+The service refuses to retire the final certificate from an mTLS-required client. Keep the encrypted
+PKCS#12 bundle and its delivery passphrase in separate secure channels, and delete operator delivery
+copies after the partner confirms import.
 
 ### 3. Configure Cloudflare DNS
 
