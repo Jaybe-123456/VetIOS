@@ -11,6 +11,7 @@ import {
     sanitizeOAuthClient,
 } from '@/lib/auth/oauthClientCredentials';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
+import { resolveStepUpAssurance } from '@/lib/auth/stepUpCompletion';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
@@ -118,10 +119,14 @@ export async function POST(req: Request) {
         || parsed.data.action === 'retire_oauth_client_mtls_certificate'
         ? 'api_credential.revoke'
         : 'api_credential.create';
+    const assurance = session
+        ? await resolveStepUpAssurance({ supabase: session.supabase, user: context.user })
+        : null;
     const trustGate = await enforceVetiosHighRiskRouteGate({
         client,
         requestId,
         context,
+        assuranceLevel: assurance?.assuranceLevel,
         actionKey: trustAction,
         resource: {
             type: 'oauth_client',
@@ -131,6 +136,10 @@ export async function POST(req: Request) {
         evidence: {
             route: 'api/platform/oauth-clients',
             requested_action: parsed.data.action,
+            step_up_assurance_source: assurance?.source ?? null,
+            supabase_current_level: assurance?.supabaseCurrentLevel ?? null,
+            supabase_next_level: assurance?.supabaseNextLevel ?? null,
+            authentication_methods: assurance?.authenticationMethods ?? [],
         },
     });
     if (!trustGate.ok) {

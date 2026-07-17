@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { MfaSecurityCard } from '@/components/auth/MfaSecurityCard';
 import { ConsoleCard, Container, DataRow, PageHeader, TerminalButton } from '@/components/ui/terminal';
 import { resolveAccountProductSummary } from '@/lib/billing/entitlements';
 import { formatPlanLimit } from '@/lib/billing/productPlans';
@@ -80,6 +81,8 @@ export default async function ProfilePage() {
                     </p>
                 </ConsoleCard>
             </div>
+
+            <MfaSecurityCard />
         </Container>
     );
 }

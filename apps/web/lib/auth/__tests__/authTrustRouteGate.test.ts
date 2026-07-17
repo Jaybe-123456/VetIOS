@@ -66,6 +66,31 @@ describe('auth trust route gate', () => {
         });
     });
 
+    it('uses live session assurance when metadata has no MFA marker', async () => {
+        const writes: Array<{ table: string; payload: Record<string, unknown> }> = [];
+        const result = await enforceVetiosHighRiskRouteGate({
+            client: captureClient(writes),
+            requestId: 'req_gate_live_aal2',
+            context: routeContext({
+                role: 'admin',
+                app_metadata: {},
+            }),
+            assuranceLevel: 'mfa',
+            actionKey: 'api_credential.create',
+            resource: { type: 'oauth_client', tenantId: 'tenant_1' },
+        });
+
+        expect(result.ok).toBe(true);
+        expect(result.packet).toMatchObject({
+            decision: 'allow',
+            assuranceLevel: 'mfa',
+        });
+        expect(writes[0]?.payload).toMatchObject({
+            decision: 'allow',
+            assurance_level: 'mfa',
+        });
+    });
+
     it('allows internal workload identity for secure aggregation admin actions', async () => {
         const result = await enforceVetiosHighRiskRouteGate({
             client: captureClient([]),

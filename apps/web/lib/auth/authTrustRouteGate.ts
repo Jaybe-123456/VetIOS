@@ -22,6 +22,7 @@ export interface VetiosHighRiskRouteGateInput {
     actionKey: string;
     resource: AuthTrustResource;
     environment?: AuthTrustEnvironment;
+    assuranceLevel?: AuthTrustAssuranceLevel;
     riskSignals?: AuthTrustRiskSignals;
     evidence?: Record<string, unknown>;
 }
@@ -63,10 +64,14 @@ export type VetiosHighRiskRouteGateResult =
 export async function enforceVetiosHighRiskRouteGate(
     input: VetiosHighRiskRouteGateInput,
 ): Promise<VetiosHighRiskRouteGateResult> {
+    const subject = buildAuthTrustSubjectFromRouteContext(input.context);
+    if (input.assuranceLevel) {
+        subject.assuranceLevel = input.assuranceLevel;
+    }
     const packet = authorizeVetiosAction({
         tenantId: input.context.tenantId,
         requestId: input.requestId,
-        subject: buildAuthTrustSubjectFromRouteContext(input.context),
+        subject,
         actionKey: input.actionKey,
         resource: input.resource,
         environment: input.environment ?? resolveDeploymentEnvironment(),
