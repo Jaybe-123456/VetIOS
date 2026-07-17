@@ -21,7 +21,7 @@ apt-get install -y --no-install-recommends \
 systemctl enable --now docker
 
 install -d -m 0750 /opt/vetios/mtls-proxy
-install -d -m 0750 /opt/vetios/mtls/certs
+install -d -o root -g 101 -m 0750 /opt/vetios/mtls/certs
 install -d -m 0700 /opt/vetios/mtls/secrets
 
 ufw allow OpenSSH

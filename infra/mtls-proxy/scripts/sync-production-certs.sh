@@ -12,6 +12,8 @@ fi
 
 live_dir="/etc/letsencrypt/live/${VETIOS_MTLS_DOMAIN}"
 
+install -d -o root -g 101 -m 0750 "${VETIOS_MTLS_CERT_DIR}"
+
 if [[ ! -f "${live_dir}/fullchain.pem" || ! -f "${live_dir}/privkey.pem" ]]; then
   echo "Let's Encrypt certificate is missing for ${VETIOS_MTLS_DOMAIN}." >&2
   exit 1

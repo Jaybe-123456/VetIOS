@@ -47,8 +47,9 @@ if ($SecretValue.Length -lt 32) {
 }
 
 $GcloudCandidates = @(
-    (Get-Command gcloud -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
-    "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd"
+    (Get-Command gcloud.cmd -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue),
+    "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin\gcloud.cmd",
+    (Get-Command gcloud -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -ErrorAction SilentlyContinue)
 ) | Where-Object { $_ -and (Test-Path $_) }
 
 $Gcloud = $GcloudCandidates | Select-Object -First 1
@@ -59,6 +60,12 @@ if (-not $Gcloud) {
 $ProxyDir = Split-Path -Parent $PSScriptRoot
 $Region = $Zone -replace '-[a-z]$', ''
 $Tag = "vetios-mtls-proxy"
+$RemoteUser = $env:USERNAME
+if ($RemoteUser -notmatch '^[A-Za-z0-9._-]+$') {
+    throw "Local username cannot be mapped safely to a remote Linux account."
+}
+$RemoteTarget = "$RemoteUser@$InstanceName"
+$RemoteHome = "/home/$RemoteUser"
 $HttpsFirewall = "vetios-mtls-allow-https"
 $HttpFirewall = "vetios-mtls-allow-certbot"
 $SshFirewall = "vetios-mtls-allow-operator-ssh"
@@ -66,8 +73,15 @@ $SshFirewall = "vetios-mtls-allow-operator-ssh"
 function Invoke-Gcloud {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
 
-    & $Gcloud @Arguments
-    if ($LASTEXITCODE -ne 0) {
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $Gcloud @Arguments
+        $ExitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $PreviousErrorActionPreference
+    }
+    if ($ExitCode -ne 0) {
         throw "gcloud failed: $($Arguments -join ' ')"
     }
 }
@@ -75,8 +89,31 @@ function Invoke-Gcloud {
 function Test-GcloudResource {
     param([string[]]$Arguments)
 
-    & $Gcloud @Arguments 1>$null 2>$null
-    return $LASTEXITCODE -eq 0
+    for ($Attempt = 1; $Attempt -le 4; $Attempt++) {
+        $PreviousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = "Continue"
+            $Output = @(& $Gcloud @Arguments 2>&1)
+            $ExitCode = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $PreviousErrorActionPreference
+        }
+
+        if ($ExitCode -eq 0) {
+            return $true
+        }
+
+        $ErrorText = ($Output | Out-String)
+        if ($ErrorText -match '(?i)\bwas not found\b|\bresource not found\b|\bnotFound\b') {
+            return $false
+        }
+
+        if ($Attempt -lt 4) {
+            Start-Sleep -Seconds (5 * $Attempt)
+        }
+    }
+
+    throw "Unable to determine gcloud resource state after retries: $($Arguments -join ' ')"
 }
 
 $BillingEnabled = (& $Gcloud billing projects describe $ProjectId --format='value(billingEnabled)').Trim()
@@ -156,23 +193,24 @@ if (-not $DnsResult.success) {
     throw "Cloudflare DNS update failed."
 }
 
-Invoke-Gcloud compute ssh $InstanceName --project $ProjectId --zone $Zone --quiet --command 'mkdir -p ~/vetios-mtls-upload'
-Invoke-Gcloud compute scp --recurse "$ProxyDir\*" "${InstanceName}:~/vetios-mtls-upload/" --project $ProjectId --zone $Zone --quiet
-Invoke-Gcloud compute scp $ClientCa "${InstanceName}:~/client-ca.crt" --project $ProjectId --zone $Zone --quiet
-Invoke-Gcloud compute scp $ProxySecret "${InstanceName}:~/proxy-secret" --project $ProjectId --zone $Zone --quiet
+Invoke-Gcloud compute ssh $RemoteTarget --project $ProjectId --zone $Zone --strict-host-key-checking=no --quiet --command "mkdir -p '$RemoteHome/vetios-mtls-upload'"
+Invoke-Gcloud compute scp --recurse "$ProxyDir\*" "${RemoteTarget}:$RemoteHome/vetios-mtls-upload/" --project $ProjectId --zone $Zone --strict-host-key-checking=no --quiet
+Invoke-Gcloud compute scp $ClientCa "${RemoteTarget}:$RemoteHome/client-ca.crt" --project $ProjectId --zone $Zone --strict-host-key-checking=no --quiet
+Invoke-Gcloud compute scp $ProxySecret "${RemoteTarget}:$RemoteHome/proxy-secret" --project $ProjectId --zone $Zone --strict-host-key-checking=no --quiet
 
-$RemoteBootstrap = @"
-set -euo pipefail
-find ~/vetios-mtls-upload/scripts -type f -name '*.sh' -exec sed -i 's/\r$//' {} +
-sudo bash ~/vetios-mtls-upload/scripts/bootstrap-ubuntu-vm.sh
-sudo cp -R ~/vetios-mtls-upload/. /opt/vetios/mtls-proxy/
-sudo cp ~/client-ca.crt /opt/vetios/mtls/certs/client-ca.crt
-sudo cp ~/proxy-secret /opt/vetios/mtls/secrets/proxy-secret
-sudo chmod 0600 /opt/vetios/mtls/secrets/proxy-secret
-sudo cp /opt/vetios/mtls-proxy/.env.production.example /opt/vetios/mtls-proxy/.env.production
-sudo rm -f ~/client-ca.crt ~/proxy-secret
-"@
-Invoke-Gcloud compute ssh $InstanceName --project $ProjectId --zone $Zone --quiet --command $RemoteBootstrap
+$RemoteBootstrap = @(
+    "set -euo pipefail",
+    "find '$RemoteHome/vetios-mtls-upload/scripts' -type f -name '*.sh' -exec sed -i 's/\r$//' {} +",
+    "sudo bash '$RemoteHome/vetios-mtls-upload/scripts/bootstrap-ubuntu-vm.sh'",
+    "sudo cp -R '$RemoteHome/vetios-mtls-upload/.' /opt/vetios/mtls-proxy/",
+    "sudo cp '$RemoteHome/client-ca.crt' /opt/vetios/mtls/certs/client-ca.crt",
+    "sudo cp '$RemoteHome/proxy-secret' /opt/vetios/mtls/secrets/proxy-secret",
+    "sudo chown root:101 /opt/vetios/mtls/secrets/proxy-secret",
+    "sudo chmod 0640 /opt/vetios/mtls/secrets/proxy-secret",
+    "sudo cp /opt/vetios/mtls-proxy/.env.production.example /opt/vetios/mtls-proxy/.env.production",
+    "sudo rm -f '$RemoteHome/client-ca.crt' '$RemoteHome/proxy-secret'"
+) -join " && "
+Invoke-Gcloud compute ssh $RemoteTarget --project $ProjectId --zone $Zone --strict-host-key-checking=no --quiet --command $RemoteBootstrap
 
 $DnsReady = $false
 for ($Attempt = 1; $Attempt -le 30; $Attempt++) {
@@ -188,7 +226,7 @@ if (-not $DnsReady) {
 }
 
 $RemoteCertificate = "sudo env LETSENCRYPT_EMAIL='$LetsEncryptEmail' VETIOS_MTLS_DOMAIN='$Domain' bash /opt/vetios/mtls-proxy/scripts/provision-server-cert.sh"
-Invoke-Gcloud compute ssh $InstanceName --project $ProjectId --zone $Zone --quiet --command $RemoteCertificate
+Invoke-Gcloud compute ssh $RemoteTarget --project $ProjectId --zone $Zone --strict-host-key-checking=no --quiet --command $RemoteCertificate
 
 Write-Host "VetIOS mTLS proxy deployed at https://$Domain"
 Write-Host "Static IP: $StaticIp"
