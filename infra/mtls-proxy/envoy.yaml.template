@@ -54,10 +54,10 @@ static_resources:
                           upstream_host: "%UPSTREAM_HOST%"
                 route_config:
                   name: vetios_mtls_routes
+                  # Canonical proof headers are overwritten below. Removing them here
+                  # would run after virtual-host mutation and erase the trusted values.
                   request_headers_to_remove:
-                    - x-vetios-mtls-proxy-secret
                     - x-mtls-proxy-secret
-                    - x-vetios-client-cert-sha256
                     - x-client-cert-sha256
                     - x-forwarded-client-cert-sha256
                     - ssl-client-fingerprint-sha256

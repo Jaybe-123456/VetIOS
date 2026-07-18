@@ -13,6 +13,11 @@ This folder provides a deployable Envoy proxy that:
 3. Forwards Envoy's verified downstream client certificate SHA-256 fingerprint.
 4. Adds the shared mTLS proxy secret header consumed by VetIOS.
 
+Envoy strips the alternate trust-header names and overwrites both canonical `x-vetios-*` headers.
+Do not add the canonical headers to `request_headers_to_remove`: route-configuration removal runs
+after virtual-host mutation and would erase the trusted values. Verify this contract after proxy
+changes with `node infra/mtls-proxy/scripts/check-envoy-header-contract.mjs`.
+
 ## Required Runtime Values
 
 Set these in the proxy runtime:
