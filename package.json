@@ -10,6 +10,9 @@
         "test:mtls-proxy": "node infra/mtls-proxy/scripts/check-envoy-header-contract.mjs",
         "cire:conformance": "pnpm --filter @vetios/cire-engine test",
         "test:adversarial-regressions": "node --experimental-strip-types --loader ./internal/testing/alias-loader.mjs ./internal/testing/test_adversarial_regressions.ts",
+        "proofloop:demo": "pnpm --filter @vetios/proofloop-build-week demo",
+        "proofloop:test": "pnpm --filter @vetios/proofloop-build-week test",
+        "proofloop:typecheck": "pnpm --filter @vetios/proofloop-build-week typecheck",
         "typecheck": "turbo run typecheck",
         "clean": "turbo run clean",
         "format": "prettier --write \"**/*.{ts,tsx,md,json}\""

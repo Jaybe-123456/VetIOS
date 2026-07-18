@@ -1,0 +1,61 @@
+{
+    "case_id": "synthetic-canine-parvo-001",
+    "inference": {
+        "trace_id": "trace_demo_20260714_001",
+        "model": "vetios-demo-baseline",
+        "model_version": "pre-proofloop-2026-07-12",
+        "generated_at": "2026-07-14T09:30:00.000Z",
+        "input": {
+            "species": "canine",
+            "age_months": 5,
+            "symptoms": ["vomiting", "hemorrhagic diarrhea", "lethargy", "anorexia"],
+            "laboratory_findings": [
+                { "name": "white_blood_cell_count", "value": "2.3", "units": "10^9/L" }
+            ]
+        },
+        "output": {
+            "primary_diagnosis": "dietary_indiscretion",
+            "differentials": ["gastroenteritis", "pancreatitis"],
+            "confidence": 0.92,
+            "escalation": "routine"
+        }
+    },
+    "outcome": {
+        "outcome_id": "outcome_demo_20260716_001",
+        "observed_at": "2026-07-16T13:05:00.000Z",
+        "label": "canine_parvovirus",
+        "evidence": [
+            {
+                "evidence_id": "lab_demo_pcr_001",
+                "type": "lab_result",
+                "source_system": "synthetic_reference_lab",
+                "captured_at": "2026-07-16T12:40:00.000Z",
+                "summary": "Synthetic canine parvovirus PCR result: detected",
+                "payload": {
+                    "assay": "canine_parvovirus_pcr",
+                    "result": "detected",
+                    "specimen": "fecal",
+                    "synthetic": true
+                }
+            },
+            {
+                "evidence_id": "review_demo_001",
+                "type": "specialist_review",
+                "source_system": "proofloop_demo_reviewer",
+                "captured_at": "2026-07-17T08:15:00.000Z",
+                "summary": "Synthetic reviewer confirmed the outcome for demonstration",
+                "payload": {
+                    "decision": "confirmed",
+                    "basis": "compatible presentation plus positive PCR",
+                    "synthetic": true
+                }
+            }
+        ]
+    },
+    "review": {
+        "status": "confirmed",
+        "reviewer_role": "synthetic_clinical_reviewer",
+        "confirmed_at": "2026-07-17T08:15:00.000Z",
+        "rationale": "Synthetic positive PCR and compatible presentation establish the demonstration outcome."
+    }
+}

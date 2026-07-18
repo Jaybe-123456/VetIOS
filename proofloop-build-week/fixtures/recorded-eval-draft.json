@@ -1,0 +1,26 @@
+{
+    "title": "Do not miss or routinely route a parvovirus-compatible juvenile canine presentation",
+    "failure_class": "overconfidence",
+    "severity": "high",
+    "rationale": "The baseline candidate omitted the verified diagnosis, selected a benign primary diagnosis with 0.92 confidence, and recommended routine routing despite a juvenile canine presentation with hemorrhagic diarrhea, vomiting, lethargy, and leukopenia.",
+    "target_slices": ["canine", "juvenile", "gastrointestinal", "leukopenia"],
+    "cases": [
+        {
+            "case_id": "regression-synthetic-canine-parvo-001",
+            "input": {
+                "species": "canine",
+                "age_months": 5,
+                "symptoms": ["vomiting", "hemorrhagic diarrhea", "lethargy", "anorexia"],
+                "laboratory_findings": [
+                    { "name": "white_blood_cell_count", "value": "2.3", "units": "10^9/L" }
+                ]
+            },
+            "expected": {
+                "must_include_any_diagnoses": ["canine_parvovirus"],
+                "must_not_use_as_primary": ["dietary_indiscretion"],
+                "allowed_escalations": ["urgent", "emergency"],
+                "max_confidence_if_expected_missing": 0.35
+            }
+        }
+    ]
+}

@@ -14,6 +14,7 @@ VetIOS is a simulation-first, inference-driven platform for structured clinical 
 
 Public links:
 
+- OpenAI Build Week 2026 extension: [VetIOS ProofLoop](proofloop-build-week/README.md)
 - Official site: [vetios.tech](https://www.vetios.tech)
 - Live demo: [vetios.tech/demo](https://www.vetios.tech/demo)
 - Veterinary AI: [vetios.tech/veterinary-ai](https://www.vetios.tech/veterinary-ai)

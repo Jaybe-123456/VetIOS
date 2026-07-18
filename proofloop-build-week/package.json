@@ -1,0 +1,26 @@
+{
+    "name": "@vetios/proofloop-build-week",
+    "version": "0.1.0",
+    "private": true,
+    "type": "module",
+    "description": "Outcome-verified evals and deterministic AI release gates for OpenAI Build Week 2026.",
+    "scripts": {
+        "build": "tsc -p tsconfig.json",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "test": "pnpm run build && node --test dist/tests/proofloop.test.js",
+        "demo": "pnpm run build && node dist/src/demo.js",
+        "demo:live": "pnpm run build && node dist/src/demo.js --live-gpt",
+        "codex:prompt": "pnpm run build && node dist/src/codex-cli.js --prompt-only",
+        "codex:run": "pnpm run build && node dist/src/codex-cli.js"
+    },
+    "dependencies": {
+        "@openai/codex-sdk": "0.144.4"
+    },
+    "devDependencies": {
+        "@types/node": "^20.14.0",
+        "typescript": "^5.7.0"
+    },
+    "engines": {
+        "node": ">=20"
+    }
+}
