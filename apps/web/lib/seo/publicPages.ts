@@ -102,6 +102,12 @@ export const PUBLIC_SEO_PAGES = [
         priority: 0.78,
     },
     {
+        path: '/proofloop',
+        title: 'VetIOS ProofLoop',
+        description: 'See how a verified clinical outcome becomes an executable AI evaluation, regression test, and release gate.',
+        priority: 0.86,
+    },
+    {
         path: '/support',
         title: 'VetIOS Support',
         description: 'Support and contact information for VetIOS platform operators and integration partners.',
