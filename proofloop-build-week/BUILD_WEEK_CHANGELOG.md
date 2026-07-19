@@ -38,7 +38,9 @@ From the repository root on `codex/proofloop-build-week`:
 git diff a51f660...HEAD -- \
   proofloop-build-week \
   apps/web/app/proofloop \
+  apps/web/app/api/proofloop \
   apps/web/components/proofloop/ProofLoopDemo.tsx \
+  apps/web/lib/proofloop/replay.ts \
   apps/web/lib/seo/publicPages.ts \
   apps/web/lib/site.ts \
   apps/web/app/opengraph-image.tsx \

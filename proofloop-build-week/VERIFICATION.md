@@ -44,7 +44,7 @@ Corrected candidate      PASS
 
 ## Hosted walkthrough
 
-The public `/proofloop` interface is a recorded-fixture walkthrough of the same synthetic closed case. It makes the Outcome Receipt, strict eval expectations, repository-aware regression test, and legacy `BLOCK` versus corrected `PASS` decision inspectable in a browser. It does not represent a live GPT-5.6 or Codex call; those adapters, their strict contracts, and their safety constraints remain reviewable in source.
+The public `/proofloop` interface runs a recorded-fixture replay of the same synthetic closed case through a public Node-runtime endpoint. It creates and verifies a run-scoped signed Outcome Receipt, binds the strict eval expectations, executes the four deterministic gate checks, and exposes legacy `BLOCK`, corrected `PASS`, and tamper-triggered `HOLD` outcomes in a browser. It does not represent a live GPT-5.6 or Codex call; those adapters, their strict contracts, and their safety constraints remain reviewable in source.
 
 ## Claims not yet verified
 

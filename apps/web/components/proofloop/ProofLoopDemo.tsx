@@ -12,6 +12,7 @@ import {
     FileCheck2,
     Fingerprint,
     Github,
+    LoaderCircle,
     ShieldCheck,
     Sparkles,
     TestTube2,
@@ -19,6 +20,46 @@ import {
 } from 'lucide-react';
 
 type Candidate = 'legacy' | 'corrected';
+type ReplayDecision = 'PASS' | 'BLOCK' | 'HOLD';
+
+type ReplayResponse = {
+    run_id: string;
+    source: 'recorded_fixture';
+    candidate: Candidate;
+    receipt: {
+        receipt_id: string;
+        content_sha256: string;
+        evidence_set_sha256: string;
+        public_key_fingerprint: string;
+        content_digest_valid: boolean;
+        evidence_digest_valid: boolean;
+        signature_valid: boolean;
+        valid: boolean;
+    };
+    eval: {
+        eval_id: string;
+        spec_sha256: string;
+        source_receipt_sha256: string;
+        valid: boolean;
+    };
+    gate: {
+        decision: ReplayDecision;
+        reason: string;
+        output: {
+            primary_diagnosis: string;
+            differentials: string[];
+            confidence: number;
+            escalation: string;
+        } | null;
+        checks: Array<{
+            id: string;
+            label: string;
+            passed: boolean;
+            expected: string;
+            observed: string;
+        }>;
+    };
+};
 
 const flow = [
     { label: 'Reality', detail: 'PCR + review', icon: CircleDot },
@@ -28,29 +69,59 @@ const flow = [
     { label: 'Gate', detail: 'BLOCK or PASS', icon: ShieldCheck },
 ] as const;
 
-const candidateResults = {
+const candidateDetails = {
     legacy: {
         label: 'Legacy candidate',
         version: 'pre-proofloop-2026-07-12',
         diagnosis: 'dietary_indiscretion',
         escalation: 'routine',
-        gate: 'BLOCK',
-        reason: 'Verified diagnosis missing; unsafe routine routing remained.',
     },
     corrected: {
         label: 'Corrected candidate',
         version: 'proofloop-corrected-demo',
         diagnosis: 'canine_parvovirus',
         escalation: 'urgent',
-        gate: 'PASS',
-        reason: 'Expected diagnosis and urgent escalation satisfy the outcome-derived eval.',
     },
 } as const;
 
 export function ProofLoopDemo() {
     const [candidate, setCandidate] = useState<Candidate>('legacy');
-    const result = candidateResults[candidate];
-    const passed = result.gate === 'PASS';
+    const [replay, setReplay] = useState<ReplayResponse | null>(null);
+    const [isRunning, setIsRunning] = useState(false);
+    const [requestError, setRequestError] = useState<string | null>(null);
+    const selectedCandidate = candidateDetails[candidate];
+    const decision: ReplayDecision | 'READY' | 'VERIFYING' = isRunning
+        ? 'VERIFYING'
+        : replay?.gate.decision ?? 'READY';
+    const passed = decision === 'PASS';
+    const held = decision === 'HOLD';
+    const decisionClass = passed ? 'text-emerald-300' : held ? 'text-amber-200' : decision === 'READY' || decision === 'VERIFYING' ? 'text-slate-100' : 'text-rose-300';
+    const decisionBorderClass = passed ? 'border-emerald-400/25 bg-emerald-400/[0.07]' : held ? 'border-amber-300/25 bg-amber-300/[0.07]' : decision === 'READY' || decision === 'VERIFYING' ? 'border-blue-400/25 bg-blue-400/[0.07]' : 'border-rose-400/25 bg-rose-400/[0.07]';
+
+    async function runReplay(tamper = false) {
+        setIsRunning(true);
+        setRequestError(null);
+        try {
+            const response = await fetch('/api/proofloop/replay', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ candidate, tamper }),
+            });
+            if (!response.ok) throw new Error(`Replay request failed (${response.status}).`);
+            setReplay(await response.json() as ReplayResponse);
+        } catch (error) {
+            setReplay(null);
+            setRequestError(error instanceof Error ? error.message : 'Replay request failed.');
+        } finally {
+            setIsRunning(false);
+        }
+    }
+
+    function chooseCandidate(nextCandidate: Candidate) {
+        setCandidate(nextCandidate);
+        setReplay(null);
+        setRequestError(null);
+    }
 
     return (
         <main className="relative min-h-[100svh] min-h-[100dvh] shrink-0 overflow-x-clip bg-[#050910] text-white">
@@ -107,35 +178,60 @@ export function ProofLoopDemo() {
                         </p>
                         <button
                             type="button"
-                            onClick={() => document.getElementById('failure-replay')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                            onClick={() => {
+                                document.getElementById('failure-replay')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                void runReplay();
+                            }}
                             className="mt-7 inline-flex min-h-11 items-center gap-2 rounded-full bg-emerald-300 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-200"
                         >
-                            Run the failure replay
-                            <ArrowRight className="h-4 w-4" />
+                            {isRunning ? 'Verifying outcome…' : 'Run the failure replay'}
+                            {isRunning ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
                         </button>
                     </div>
 
-                    <div className={`rounded-[28px] border p-6 shadow-[0_26px_100px_rgba(0,0,0,0.34)] backdrop-blur-xl sm:p-7 ${passed ? 'border-emerald-400/25 bg-emerald-400/[0.07]' : 'border-rose-400/25 bg-rose-400/[0.07]'}`}>
+                    <div className={`rounded-[28px] border p-6 shadow-[0_26px_100px_rgba(0,0,0,0.34)] backdrop-blur-xl sm:p-7 ${decisionBorderClass}`}>
                         <div className="flex items-start justify-between gap-5">
                             <div>
                                 <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400">Current release decision</div>
-                                <div className={`mt-3 text-4xl font-semibold tracking-tight ${passed ? 'text-emerald-300' : 'text-rose-300'}`}>
-                                    {result.gate}
+                                <div className={`mt-3 text-4xl font-semibold tracking-tight ${decisionClass}`}>
+                                    {decision}
                                 </div>
                             </div>
-                            <span className={`grid h-12 w-12 place-items-center rounded-2xl border ${passed ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300' : 'border-rose-400/30 bg-rose-400/10 text-rose-300'}`}>
-                                {passed ? <Check className="h-6 w-6" /> : <X className="h-6 w-6" />}
+                            <span className={`grid h-12 w-12 place-items-center rounded-2xl border ${passed ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300' : held ? 'border-amber-300/30 bg-amber-300/10 text-amber-200' : decision === 'READY' || decision === 'VERIFYING' ? 'border-blue-400/30 bg-blue-400/10 text-blue-200' : 'border-rose-400/30 bg-rose-400/10 text-rose-300'}`}>
+                                {isRunning ? <LoaderCircle className="h-6 w-6 animate-spin" /> : passed ? <Check className="h-6 w-6" /> : held ? <ShieldCheck className="h-6 w-6" /> : decision === 'READY' ? <TestTube2 className="h-6 w-6" /> : <X className="h-6 w-6" />}
                             </span>
                         </div>
-                        <p className="mt-5 text-sm leading-6 text-slate-300">{result.reason}</p>
+                        <p className="mt-5 text-sm leading-6 text-slate-300">
+                            {isRunning
+                                ? 'Creating the signed synthetic receipt, binding the eval, and running the deterministic gate…'
+                                : replay?.gate.reason ?? `Choose ${selectedCandidate.label.toLowerCase()} and run the replay.`}
+                        </p>
                         <dl className="mt-5 grid gap-2 text-xs sm:grid-cols-3">
-                            <DecisionDetail label="Version" value={result.version} />
-                            <DecisionDetail label="Primary" value={result.diagnosis} />
-                            <DecisionDetail label="Route" value={result.escalation} />
+                            <DecisionDetail label="Version" value={selectedCandidate.version} />
+                            <DecisionDetail label="Primary" value={replay?.gate.output?.primary_diagnosis ?? selectedCandidate.diagnosis} />
+                            <DecisionDetail label="Route" value={replay?.gate.output?.escalation ?? selectedCandidate.escalation} />
                         </dl>
                         <div className="mt-6 grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-black/20 p-1.5" aria-label="Choose model candidate">
-                            <CandidateButton selected={candidate === 'legacy'} onClick={() => setCandidate('legacy')} label="Legacy" />
-                            <CandidateButton selected={candidate === 'corrected'} onClick={() => setCandidate('corrected')} label="Corrected" />
+                            <CandidateButton selected={candidate === 'legacy'} onClick={() => chooseCandidate('legacy')} label="Legacy" />
+                            <CandidateButton selected={candidate === 'corrected'} onClick={() => chooseCandidate('corrected')} label="Corrected" />
+                        </div>
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                            <button
+                                type="button"
+                                onClick={() => void runReplay()}
+                                disabled={isRunning}
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-white px-4 py-2 text-xs font-semibold text-slate-950 transition hover:bg-slate-200 disabled:cursor-wait disabled:opacity-60"
+                            >
+                                {isRunning ? 'Running…' : `Run ${selectedCandidate.label}`}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => void runReplay(true)}
+                                disabled={isRunning}
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-amber-300/25 bg-amber-300/[0.08] px-4 py-2 text-xs font-semibold text-amber-100 transition hover:bg-amber-300/[0.14] disabled:cursor-wait disabled:opacity-60"
+                            >
+                                Tamper the receipt
+                            </button>
                         </div>
                     </div>
                 </section>
@@ -160,6 +256,104 @@ export function ProofLoopDemo() {
                             );
                         })}
                     </div>
+                </section>
+
+                <section className="mt-8 rounded-[28px] border border-emerald-400/15 bg-[#07101a] p-6 shadow-[0_25px_90px_rgba(0,0,0,0.28)] sm:p-8" aria-live="polite">
+                    <div className="flex flex-col gap-5 border-b border-white/[0.08] pb-6 lg:flex-row lg:items-start lg:justify-between">
+                        <div>
+                            <SectionLabel icon={TestTube2}>Runnable proof</SectionLabel>
+                            <h2 className="mt-4 text-3xl font-semibold tracking-tight text-white">Run the outcome-to-gate chain.</h2>
+                            <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-400">
+                                This calls a public Node-runtime API, generates a run-scoped Ed25519 receipt, verifies its integrity, binds the recorded eval, and executes all release checks. It is intentionally a synthetic recorded-fixture replay—not a live GPT-5.6 or Codex call.
+                            </p>
+                        </div>
+                        <div className="rounded-2xl border border-white/[0.08] bg-black/20 px-4 py-3 text-xs leading-5 text-slate-400">
+                            <div className="font-semibold uppercase tracking-[0.16em] text-slate-500">Execution mode</div>
+                            <div className="mt-1 text-emerald-200">Public API · Node runtime · no persistence</div>
+                        </div>
+                    </div>
+
+                    {requestError ? (
+                        <div className="mt-6 rounded-2xl border border-rose-400/25 bg-rose-400/[0.08] p-4 text-sm text-rose-100">
+                            {requestError}
+                        </div>
+                    ) : null}
+
+                    {!replay && !isRunning && !requestError ? (
+                        <div className="mt-6 rounded-2xl border border-dashed border-white/15 bg-white/[0.025] p-6 text-sm leading-7 text-slate-400">
+                            Select a candidate above, then run the replay. Try <span className="font-semibold text-amber-100">Tamper the receipt</span> to see integrity failure force a HOLD before any candidate is evaluated.
+                        </div>
+                    ) : null}
+
+                    {isRunning ? (
+                        <div className="mt-6 grid gap-3 md:grid-cols-4">
+                            {['Hash evidence', 'Verify signature', 'Bind eval spec', 'Run release gate'].map((step, index) => (
+                                <div key={step} className="flex items-center gap-3 rounded-2xl border border-blue-400/15 bg-blue-400/[0.06] p-4 text-sm text-blue-100">
+                                    <span className="grid h-7 w-7 place-items-center rounded-full border border-blue-300/20 bg-blue-300/10 text-xs font-semibold text-blue-200">{index + 1}</span>
+                                    <span>{step}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : null}
+
+                    {replay ? (
+                        <div className="mt-6 space-y-5">
+                            <div className="grid gap-3 md:grid-cols-3">
+                                <ReplayMetric
+                                    label="Receipt integrity"
+                                    value={replay.receipt.valid ? 'VERIFIED' : 'INVALID'}
+                                    detail={replay.receipt.receipt_id}
+                                    tone={replay.receipt.valid ? 'good' : 'bad'}
+                                />
+                                <ReplayMetric
+                                    label="Eval source binding"
+                                    value={replay.eval.valid ? 'VERIFIED' : 'INVALID'}
+                                    detail={replay.eval.eval_id}
+                                    tone={replay.eval.valid ? 'good' : 'bad'}
+                                />
+                                <ReplayMetric
+                                    label="Release decision"
+                                    value={replay.gate.decision}
+                                    detail={replay.gate.reason}
+                                    tone={replay.gate.decision === 'PASS' ? 'good' : replay.gate.decision === 'HOLD' ? 'warn' : 'bad'}
+                                />
+                            </div>
+
+                            <div className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+                                <div className="rounded-2xl border border-white/[0.08] bg-black/20 p-5">
+                                    <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Integrity artifacts</div>
+                                    <div className="mt-4 space-y-3 text-xs">
+                                        <ArtifactRow label="Receipt digest" value={shortDigest(replay.receipt.content_sha256)} valid={replay.receipt.content_digest_valid} />
+                                        <ArtifactRow label="Evidence manifest" value={shortDigest(replay.receipt.evidence_set_sha256)} valid={replay.receipt.evidence_digest_valid} />
+                                        <ArtifactRow label="Ed25519 signature" value={shortDigest(replay.receipt.public_key_fingerprint)} valid={replay.receipt.signature_valid} />
+                                        <ArtifactRow label="Eval spec" value={shortDigest(replay.eval.spec_sha256)} valid={replay.eval.valid} />
+                                    </div>
+                                    <p className="mt-4 text-[11px] leading-5 text-slate-500">A fresh signing key is generated per replay. This proves mutation detection; it is not an external attestation service.</p>
+                                </div>
+
+                                <div className="rounded-2xl border border-white/[0.08] bg-black/20 p-5">
+                                    <div className="flex items-center justify-between gap-4">
+                                        <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">Outcome-derived regression checks</div>
+                                        <span className="font-mono text-[10px] text-slate-600">{replay.run_id}</span>
+                                    </div>
+                                    <div className="mt-4 space-y-2">
+                                        {replay.gate.checks.map((check) => (
+                                            <div key={check.id} className="grid gap-2 rounded-xl border border-white/[0.07] bg-white/[0.025] p-3 sm:grid-cols-[auto_1fr_auto] sm:items-center">
+                                                <span className={`grid h-6 w-6 place-items-center rounded-full ${check.passed ? 'bg-emerald-400/15 text-emerald-300' : 'bg-rose-400/15 text-rose-300'}`}>
+                                                    {check.passed ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
+                                                </span>
+                                                <div>
+                                                    <div className="text-xs font-medium text-slate-200">{check.label}</div>
+                                                    <div className="mt-1 text-[11px] leading-5 text-slate-500">Expected: {check.expected}</div>
+                                                </div>
+                                                <div className="text-[11px] text-slate-400 sm:text-right">Observed: {check.observed}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    ) : null}
                 </section>
 
                 <section className="mt-8 grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
@@ -364,4 +558,38 @@ function TrustCard({
             <p className="mt-3 text-sm leading-7 text-slate-400">{children}</p>
         </article>
     );
+}
+
+function ReplayMetric({
+    label,
+    value,
+    detail,
+    tone,
+}: {
+    label: string;
+    value: string;
+    detail: string;
+    tone: 'good' | 'warn' | 'bad';
+}) {
+    const valueClass = tone === 'good' ? 'text-emerald-300' : tone === 'warn' ? 'text-amber-200' : 'text-rose-300';
+    return (
+        <div className="rounded-2xl border border-white/[0.08] bg-white/[0.03] p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">{label}</div>
+            <div className={`mt-2 text-lg font-semibold ${valueClass}`}>{value}</div>
+            <div className="mt-2 truncate font-mono text-[10px] text-slate-500" title={detail}>{detail}</div>
+        </div>
+    );
+}
+
+function ArtifactRow({ label, value, valid }: { label: string; value: string; valid: boolean }) {
+    return (
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-white/[0.07] bg-white/[0.025] px-3 py-2.5">
+            <span className="text-slate-400">{label}</span>
+            <span className={`font-mono ${valid ? 'text-emerald-300' : 'text-rose-300'}`}>{value}</span>
+        </div>
+    );
+}
+
+function shortDigest(value: string): string {
+    return `${value.slice(0, 10)}…${value.slice(-8)}`;
 }
