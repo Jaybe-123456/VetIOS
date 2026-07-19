@@ -42,11 +42,15 @@ Legacy candidate         BLOCK
 Corrected candidate      PASS
 ```
 
+## Hosted walkthrough
+
+The public `/proofloop` interface is a recorded-fixture walkthrough of the same synthetic closed case. It makes the Outcome Receipt, strict eval expectations, repository-aware regression test, and legacy `BLOCK` versus corrected `PASS` decision inspectable in a browser. It does not represent a live GPT-5.6 or Codex call; those adapters, their strict contracts, and their safety constraints remain reviewable in source.
+
 ## Claims not yet verified
 
 - No live GPT-5.6 API request was executed during this local verification because no API key was provided to the build process.
 - No Codex SDK mutation run was executed against an external target repository; prompt generation and safety constraints were verified.
 - No real clinical data, clinical accuracy, production deployment, or external veterinary validation is claimed.
-- The first slice is a CLI demonstration. A hosted ProofLoop interface remains a separate milestone.
+- The hosted walkthrough is not evidence of live GPT-5.6 or Codex execution; it is explicitly labeled as a recorded fixture.
 
 These limitations must remain visible until corresponding evidence exists.

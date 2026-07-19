@@ -53,7 +53,7 @@ export function ProofLoopDemo() {
     const passed = result.gate === 'PASS';
 
     return (
-        <main className="relative min-h-full overflow-hidden bg-[#050910] text-white">
+        <main className="relative min-h-[100svh] min-h-[100dvh] shrink-0 overflow-x-clip bg-[#050910] text-white">
             <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_16%_4%,rgba(16,185,129,0.12),transparent_31%),radial-gradient(circle_at_86%_18%,rgba(59,130,246,0.12),transparent_27%)]" />
             <div className="pointer-events-none absolute inset-0 landing-grid opacity-35" />
 
@@ -93,6 +93,26 @@ export function ProofLoopDemo() {
                         <p className="mt-6 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">
                             ProofLoop connects an AI inference to what happened later, signs the outcome lineage, and turns that correction into an executable eval and regression gate.
                         </p>
+                        <p className="mt-4 max-w-2xl text-xs leading-6 text-slate-400">
+                            <span className="font-semibold text-slate-300">Build Week scope:</span> VetIOS is the demonstration environment; ProofLoop is a separately documented extension with dated commits, tests, and implementation evidence.{' '}
+                            <a
+                                href="https://github.com/Jaybe-123456/VetIOS/blob/codex/proofloop-build-week/proofloop-build-week/BUILD_WEEK_CHANGELOG.md"
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-emerald-300 transition hover:text-emerald-200"
+                            >
+                                Review the changelog
+                            </a>
+                            .
+                        </p>
+                        <button
+                            type="button"
+                            onClick={() => document.getElementById('failure-replay')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                            className="mt-7 inline-flex min-h-11 items-center gap-2 rounded-full bg-emerald-300 px-5 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-emerald-200"
+                        >
+                            Run the failure replay
+                            <ArrowRight className="h-4 w-4" />
+                        </button>
                     </div>
 
                     <div className={`rounded-[28px] border p-6 shadow-[0_26px_100px_rgba(0,0,0,0.34)] backdrop-blur-xl sm:p-7 ${passed ? 'border-emerald-400/25 bg-emerald-400/[0.07]' : 'border-rose-400/25 bg-rose-400/[0.07]'}`}>
@@ -120,7 +140,7 @@ export function ProofLoopDemo() {
                     </div>
                 </section>
 
-                <section aria-label="ProofLoop stages" className="rounded-[28px] border border-white/10 bg-[#09111d]/90 p-5 shadow-[0_25px_90px_rgba(0,0,0,0.28)] sm:p-7">
+                <section id="failure-replay" aria-label="ProofLoop stages" className="scroll-mt-5 rounded-[28px] border border-white/10 bg-[#09111d]/90 p-5 shadow-[0_25px_90px_rgba(0,0,0,0.28)] sm:p-7">
                     <div className="grid gap-3 md:grid-cols-5">
                         {flow.map((stage, index) => {
                             const Icon = stage.icon;
@@ -189,7 +209,10 @@ export function ProofLoopDemo() {
                             <SectionLabel icon={Code2}>Repository-aware regression</SectionLabel>
                             <h2 className="mt-4 text-3xl font-semibold tracking-tight text-white">The correction becomes executable.</h2>
                             <p className="mt-4 max-w-xl text-sm leading-7 text-slate-400">
-                                Codex receives a digest-bound prompt, inspects repository conventions, writes the targeted fixture and test, and cannot weaken existing tests to make the gate pass.
+                                The constrained Codex workflow binds receipt and eval digests, then—when run against an explicit target repository—inspects conventions and creates the smallest relevant fixture and test without weakening existing coverage.
+                            </p>
+                            <p className="mt-3 max-w-xl text-xs leading-6 text-slate-500">
+                                This browser replay is a recorded fixture; it does not represent a live Codex mutation run.
                             </p>
                             <a
                                 href="https://github.com/Jaybe-123456/VetIOS/tree/codex/proofloop-build-week/proofloop-build-week"

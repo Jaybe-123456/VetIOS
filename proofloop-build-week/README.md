@@ -47,6 +47,10 @@ Corrected candidate      PASS
 
 The default demo is fully offline and never pretends that a recorded fixture came from a live model call.
 
+## Why this is a reliability moat
+
+Most AI systems leave real-world corrections as passive feedback. ProofLoop turns one verified correction into a signed, schema-bound, repository-native regression test that prevents the same failure from being promoted again. Its compounding asset is verifiable failure-to-test lineage—not a generic LLM score, an unvalidated accuracy claim, or a proprietary training-data assertion.
+
 ## Live GPT-5.6 mode
 
 Set `OPENAI_API_KEY` locally; never commit it. Then run:

@@ -30,11 +30,19 @@ Several unrelated security and infrastructure commits were added to `main` after
 
 ## Reproducing the eligible diff
 
-From the repository root:
+ProofLoop's clean branch base is `a51f660` (`main` before this Build Week branch). Review the eligible, judge-facing change set from that base and the paths below; this intentionally excludes unrelated post-window work elsewhere in VetIOS.
+
+From the repository root on `codex/proofloop-build-week`:
 
 ```bash
-git diff 941e72867a5dbb0d3f3670a1e87de5f3413ff66f...HEAD -- \
-  proofloop-build-week package.json pnpm-workspace.yaml pnpm-lock.yaml README.md
+git diff a51f660...HEAD -- \
+  proofloop-build-week \
+  apps/web/app/proofloop \
+  apps/web/components/proofloop/ProofLoopDemo.tsx \
+  apps/web/lib/seo/publicPages.ts \
+  apps/web/lib/site.ts \
+  apps/web/app/opengraph-image.tsx \
+  vercel.json package.json pnpm-workspace.yaml pnpm-lock.yaml README.md
 ```
 
-The Build Week evaluation should focus on those paths only.
+The Build Week evaluation should focus on those paths only. The deployed `/proofloop` page is a recorded-fixture walkthrough of the isolated Build Week slice.
