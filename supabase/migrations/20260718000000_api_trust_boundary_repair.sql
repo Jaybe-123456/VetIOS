@@ -236,10 +236,18 @@ grant select on public.rlhf_accuracy_by_tenant_tuple to service_role;
 comment on view public.rlhf_accuracy_by_tenant_tuple is
     'Tenant-preserving RLHF accuracy aggregate. The legacy global materialized view must not be used by tenant APIs.';
 
-create index if not exists idx_amr_genomic_events_tenant_created
-    on public.amr_genomic_events (tenant_id, created_at desc);
+do $$
+begin
+    if to_regclass('public.amr_genomic_events') is not null then
+        execute 'create index if not exists idx_amr_genomic_events_tenant_created
+            on public.amr_genomic_events (tenant_id, created_at desc)';
+    end if;
 
-create index if not exists idx_rna_folding_events_tenant_created
-    on public.rna_folding_events (tenant_id, created_at desc);
+    if to_regclass('public.rna_folding_events') is not null then
+        execute 'create index if not exists idx_rna_folding_events_tenant_created
+            on public.rna_folding_events (tenant_id, created_at desc)';
+    end if;
+end
+$$;
 
 notify pgrst, 'reload schema';
