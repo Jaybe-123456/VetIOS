@@ -458,19 +458,34 @@ export async function handleImagingIngestPost(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 120, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
-    if (!hasPassiveIngestKey(req)) return jsonError('unauthorized', 'Invalid passive connector ingest key.', 401, requestId, startTime);
     const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['signals:ingest'],
+    });
+    if (auth.error || !auth.actor) {
+        return jsonError('unauthorized', auth.error?.message ?? 'Unauthorized', auth.error?.status ?? 401, requestId, startTime);
+    }
     const form = await req.formData();
     const metadataRaw = form.get('metadata');
-    const metadata = typeof metadataRaw === 'string' ? JSON.parse(metadataRaw) as Record<string, unknown> : {};
+    let metadata: Record<string, unknown> = {};
+    try {
+        metadata = typeof metadataRaw === 'string' ? JSON.parse(metadataRaw) as Record<string, unknown> : {};
+    } catch {
+        return jsonError('bad_request', 'metadata must be valid JSON.', 400, requestId, startTime);
+    }
     const file = form.get('file');
-    const tenantId = readString(metadata.tenant_id);
+    const requestedTenantId = readString(metadata.tenant_id);
+    if (requestedTenantId && requestedTenantId !== auth.actor.tenantId) {
+        return jsonError('forbidden', 'Imaging tenant does not match the authenticated tenant.', 403, requestId, startTime);
+    }
+    const tenantId = auth.actor.tenantId;
     const patientId = readString(metadata.patient_id);
     const studyId = readString(metadata.study_id);
     const species = readString(metadata.species) ?? 'canine';
     const modality = readString(metadata.modality) ?? 'xray';
     const bodyRegion = readString(metadata.body_region) ?? 'unspecified';
-    if (!tenantId || !patientId || !studyId) return jsonError('bad_request', 'metadata.tenant_id, patient_id, and study_id are required.', 400, requestId, startTime);
+    if (!patientId || !studyId) return jsonError('bad_request', 'metadata.patient_id and study_id are required.', 400, requestId, startTime);
     const storageUrl = await storeImagingFile(supabase, tenantId, studyId, file);
     const enrichment = await enrichImagingStudy(metadata, file);
     const { data, error } = await supabase
@@ -655,10 +670,16 @@ export async function handleAuditCaseGet(req: Request, caseId: string) {
     const guard = await apiGuard(req, { maxRequests: 120, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
-    if (!isInternalRequest(req) && !(await resolveAuditLicensee(req, getSupabaseServer())).ok) {
+    const supabase = getSupabaseServer();
+    const internal = isInternalRequest(req);
+    const licensee = internal ? null : await resolveAuditLicensee(req, supabase);
+    if (!internal && (!licensee || !licensee.ok)) {
         return jsonError('unauthorized', 'Audit access requires an internal token or audit licensee key.', 401, requestId, startTime);
     }
-    const chain = await loadCaseAuditChain(getSupabaseServer(), caseId);
+    if (licensee?.ok && !auditLicenseAllows(licensee, 'case:read', caseId)) {
+        return jsonError('forbidden', 'Audit license does not permit this case operation.', 403, requestId, startTime);
+    }
+    const chain = await loadCaseAuditChain(supabase, caseId, licensee?.ok ? licensee.tenantId : null);
     return jsonOk({ case_id: caseId, event_chain: chain, chain_valid: verifyLoadedChain(chain).chain_valid }, requestId, startTime);
 }
 
@@ -666,12 +687,18 @@ export async function handleAuditVerifyPost(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
-    if (!isInternalRequest(req) && !(await resolveAuditLicensee(req, getSupabaseServer())).ok) {
+    const supabase = getSupabaseServer();
+    const internal = isInternalRequest(req);
+    const licensee = internal ? null : await resolveAuditLicensee(req, supabase);
+    if (!internal && (!licensee || !licensee.ok)) {
         return jsonError('unauthorized', 'Audit verification requires an internal token or audit licensee key.', 401, requestId, startTime);
     }
     const parsed = await parseBody(req, z.object({ case_id: z.string().uuid() }), requestId, startTime);
     if (parsed instanceof NextResponse) return parsed;
-    const chain = await loadCaseAuditChain(getSupabaseServer(), parsed.case_id);
+    if (licensee?.ok && !auditLicenseAllows(licensee, 'chain:verify', parsed.case_id)) {
+        return jsonError('forbidden', 'Audit license does not permit this case operation.', 403, requestId, startTime);
+    }
+    const chain = await loadCaseAuditChain(supabase, parsed.case_id, licensee?.ok ? licensee.tenantId : null);
     return jsonOk(verifyLoadedChain(chain), requestId, startTime);
 }
 
@@ -972,15 +999,25 @@ export async function handleTelemetryIngestPost(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 300, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
-    if (!hasPassiveIngestKey(req)) return jsonError('unauthorized', 'Invalid passive connector ingest key.', 401, requestId, startTime);
     const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['signals:ingest'],
+    });
+    if (auth.error || !auth.actor) {
+        return jsonError('unauthorized', auth.error?.message ?? 'Unauthorized', auth.error?.status ?? 401, requestId, startTime);
+    }
     const parsed = await parseBody(req, TelemetryIngestSchema, requestId, startTime);
     if (parsed instanceof NextResponse) return parsed;
-    const rows = parsed.readings.map((reading: z.infer<typeof TelemetryIngestSchema>['readings'][number]) => ({
-        tenant_id: parsed.tenant_id,
-        patient_id: parsed.patient_id,
-        device_id: parsed.device_id,
-        device_type: parsed.device_type,
+    if (parsed.tenant_id && parsed.tenant_id !== auth.actor.tenantId) {
+        return jsonError('forbidden', 'Telemetry tenant does not match the authenticated tenant.', 403, requestId, startTime);
+    }
+    const tenantBound = { ...parsed, tenant_id: auth.actor.tenantId };
+    const rows = tenantBound.readings.map((reading: z.infer<typeof TelemetryIngestSchema>['readings'][number]) => ({
+        tenant_id: tenantBound.tenant_id,
+        patient_id: tenantBound.patient_id,
+        device_id: tenantBound.device_id,
+        device_type: tenantBound.device_type,
         metric_type: reading.metric_type,
         value: reading.value,
         recorded_at: reading.recorded_at,
@@ -988,15 +1025,15 @@ export async function handleTelemetryIngestPost(req: Request) {
     }));
     const { error } = await supabase.from('telemetry_streams').insert(rows);
     if (error) return jsonError('telemetry_ingest_failed', error.message, 500, requestId, startTime);
-    const anomalies = await detectTelemetryAnomalies(supabase, parsed);
-    const inference = await maybeRunTelemetryInference(supabase, requestId, parsed, anomalies);
+    const anomalies = await detectTelemetryAnomalies(supabase, tenantBound);
+    const inference = await maybeRunTelemetryInference(supabase, requestId, tenantBound, anomalies);
     await emitMoatEvent(supabase, {
-        tenantId: parsed.tenant_id,
+        tenantId: tenantBound.tenant_id,
         eventName: 'telemetry.ingested',
         aggregateType: 'telemetry_stream',
-        aggregateId: parsed.patient_id,
+        aggregateId: tenantBound.patient_id,
         payload: {
-            patient_id: parsed.patient_id,
+            patient_id: tenantBound.patient_id,
             readings: rows.length,
             anomalies: anomalies.length,
             inference_event_id: inference?.inference_event_id ?? null,
@@ -1778,18 +1815,19 @@ async function loadTelemetryPatientSnapshot(supabase: SupabaseClient, tenantId: 
     };
 }
 
-async function loadCaseAuditChain(supabase: SupabaseClient, caseId: string) {
+async function loadCaseAuditChain(supabase: SupabaseClient, caseId: string, tenantId: string | null = null) {
     const tables = [
         { table: 'ai_inference_events', type: 'inference' },
         { table: 'clinical_outcome_events', type: 'outcome' },
         { table: 'edge_simulation_events', type: 'simulation' },
     ];
     const chunks = await Promise.all(tables.map(async ({ table, type }) => {
-        const { data } = await supabase
+        let query = supabase
             .from(table)
             .select('id,tenant_id,created_at,event_hash,prev_event_hash')
-            .eq('case_id', caseId)
-            .order('created_at', { ascending: true });
+            .eq('case_id', caseId);
+        if (tenantId) query = query.eq('tenant_id', tenantId);
+        const { data } = await query.order('created_at', { ascending: true });
         return (data ?? []).map((row) => ({ ...row, event_type: type, source_table: table }));
     }));
     return chunks.flat().sort((left, right) => String(left.created_at).localeCompare(String(right.created_at)));
@@ -1944,17 +1982,50 @@ async function resolveResearchLicensee(req: Request, supabase: SupabaseClient): 
     return { ok: false, status: 403, message: 'Invalid or inactive pharma licensee key.' };
 }
 
-async function resolveAuditLicensee(req: Request, supabase: SupabaseClient): Promise<{ ok: true; licenseeId: string } | { ok: false }> {
+type ResolvedAuditLicensee = {
+    ok: true;
+    licenseeId: string;
+    tenantId: string;
+    accessScope: Record<string, unknown>;
+};
+
+async function resolveAuditLicensee(req: Request, supabase: SupabaseClient): Promise<ResolvedAuditLicensee | { ok: false }> {
     const apiKey = extractPresentedKey(req);
     const secret = process.env.API_KEY_SIGNING_SECRET;
     if (!apiKey || !secret) return { ok: false };
     const apiKeyHash = createHmac('sha256', secret).update(apiKey).digest('hex');
     const { data } = await supabase
         .from('audit_licensees')
-        .select('id')
+        .select('id,tenant_id,access_scope,active,expires_at')
         .eq('api_key_hash', apiKeyHash)
+        .eq('active', true)
         .maybeSingle();
-    return data?.id ? { ok: true, licenseeId: String(data.id) } : { ok: false };
+    if (!data?.id || !data.tenant_id) return { ok: false };
+    const expiresAt = readString(data.expires_at);
+    if (expiresAt && Date.parse(expiresAt) <= Date.now()) return { ok: false };
+    await supabase
+        .from('audit_licensees')
+        .update({ last_used_at: new Date().toISOString() })
+        .eq('id', data.id);
+    return {
+        ok: true,
+        licenseeId: String(data.id),
+        tenantId: String(data.tenant_id),
+        accessScope: asRecord(data.access_scope),
+    };
+}
+
+function auditLicenseAllows(
+    licensee: ResolvedAuditLicensee,
+    operation: 'case:read' | 'chain:verify',
+    caseId: string,
+): boolean {
+    const operations = readStringArray(licensee.accessScope.operations);
+    if (operations.length > 0 && !operations.includes(operation) && !operations.includes('audit:*')) {
+        return false;
+    }
+    const caseIds = readStringArray(licensee.accessScope.case_ids);
+    return caseIds.length === 0 || caseIds.includes(caseId);
 }
 
 async function storeImagingFile(supabase: SupabaseClient, tenantId: string, studyId: string, file: FormDataEntryValue | null) {
@@ -2027,12 +2098,6 @@ function classifyTelemetryAnomaly(metricType: string, value: number, species: st
     if (value > high) return { type: 'high', severity: value > high * 1.2 ? 'critical' : 'moderate' } as const;
     if (value < low) return { type: 'low', severity: value < low * 0.8 ? 'critical' : 'moderate' } as const;
     return null;
-}
-
-function hasPassiveIngestKey(req: Request) {
-    const configured = process.env.PASSIVE_CONNECTOR_INGEST_KEY;
-    const presented = req.headers.get('x-vetios-ingest-key') ?? req.headers.get('x-passive-connector-key');
-    return Boolean(configured && presented && configured === presented);
 }
 
 function isInternalRequest(req: Request) {

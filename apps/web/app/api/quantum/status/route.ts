@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { GBSClient } from '@vetios/quantum';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -8,6 +10,17 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
+
+    const auth = await resolveClinicalApiActor(req, {
+        client: getSupabaseServer(),
+        requiredScopes: ['evaluation:read'],
+    });
+    if (auth.error || !auth.actor) {
+        return NextResponse.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: guard.requestId },
+            { status: auth.error?.status ?? 401 },
+        );
+    }
 
     const enabled = process.env.QUANTUM_ENABLED === 'true';
     const serviceUrl = process.env.QUANTUM_SERVICE_URL?.trim() ?? null;

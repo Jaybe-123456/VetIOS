@@ -42,7 +42,7 @@ export type OAuthClientStatus = 'active' | 'disabled' | 'revoked';
 export type OAuthTokenStatus = 'active' | 'revoked' | 'expired';
 export type OAuthClientAuthMethod = 'client_secret_basic' | 'client_secret_post' | 'private_key_jwt';
 export type OAuthClientAssertionAlgorithm = 'RS256';
-export type OAuthTokenBindingMethod = 'bearer' | 'dpop';
+export type OAuthTokenBindingMethod = 'bearer' | 'dpop' | 'mtls';
 
 export interface OAuthClientRecord {
     id: string;
@@ -90,6 +90,7 @@ export interface OAuthAccessTokenRecord {
     ip_hash: string | null;
     user_agent_hash: string | null;
     token_binding_method: OAuthTokenBindingMethod;
+    mtls_cert_thumbprint: string | null;
     dpop_jwk_thumbprint: string | null;
     dpop_public_jwk: Record<string, unknown>;
     dpop_bound_at: string | null;
@@ -510,6 +511,14 @@ export async function issueOAuthClientCredentialsToken(input: {
             expectedAccessToken: null,
         })
         : null;
+    const mtlsCertThumbprint = oauthClient.mtls_required
+        ? resolveMtlsClientCertThumbprint(input.req ?? null)
+        : null;
+    const tokenBindingMethod: OAuthTokenBindingMethod = mtlsCertThumbprint
+        ? 'mtls'
+        : dpopProof
+            ? 'dpop'
+            : 'bearer';
 
     const { data, error } = await input.client
         .from(OAUTH_ACCESS_TOKENS.TABLE)
@@ -525,7 +534,8 @@ export async function issueOAuthClientCredentialsToken(input: {
             [C.expires_at]: expiresAt.toISOString(),
             [C.ip_hash]: hashTrustSurfaceValue(resolveRequestIp(input.req ?? null)),
             [C.user_agent_hash]: hashTrustSurfaceValue(input.req?.headers.get('user-agent') ?? null),
-            [C.token_binding_method]: dpopProof ? 'dpop' : 'bearer',
+            [C.token_binding_method]: tokenBindingMethod,
+            [C.mtls_cert_thumbprint]: mtlsCertThumbprint,
             [C.dpop_jwk_thumbprint]: dpopProof?.jwkThumbprint ?? null,
             [C.dpop_public_jwk]: dpopProof?.publicJwk ?? {},
             [C.dpop_bound_at]: dpopProof ? now.toISOString() : null,
@@ -533,7 +543,8 @@ export async function issueOAuthClientCredentialsToken(input: {
                 grant_type: 'client_credentials',
                 client_auth_method: authentication.authMethod,
                 client_assertion_kid: authentication.assertionKid ?? null,
-                token_binding_method: dpopProof ? 'dpop' : 'bearer',
+                token_binding_method: tokenBindingMethod,
+                mtls_cert_thumbprint: mtlsCertThumbprint,
                 dpop_jwk_thumbprint: dpopProof?.jwkThumbprint ?? null,
                 route: resolveRequestPath(input.req ?? null),
                 origin_hash: hashTrustSurfaceValue(input.req?.headers.get('origin') ?? null),
@@ -564,6 +575,7 @@ export async function issueOAuthClientCredentialsToken(input: {
                 client_auth_method: authentication.authMethod,
                 client_assertion_kid: authentication.assertionKid ?? null,
                 token_binding_method: token.token_binding_method,
+                mtls_cert_thumbprint: token.mtls_cert_thumbprint,
                 dpop_jwk_thumbprint: token.dpop_jwk_thumbprint,
             },
         }),
@@ -585,6 +597,7 @@ export async function introspectOAuthAccessToken(input: {
     token: string;
     authenticatedClientId?: string | null;
     enforceDpopProof?: boolean;
+    enforceSenderConstraint?: boolean;
     req?: Request | null;
 }): Promise<{
     active: boolean;
@@ -608,7 +621,8 @@ export async function introspectOAuthAccessToken(input: {
     const expired = Date.parse(tokenRecord.expires_at) <= Date.now();
     let active = oauthClient.status === 'active' && tokenRecord.status === 'active' && !expired;
     let inactiveReason = expired ? 'token_expired' : 'token_or_client_inactive';
-    if (active && input.enforceDpopProof && tokenRecord.token_binding_method === 'dpop') {
+    const enforceSenderConstraint = input.enforceSenderConstraint ?? input.enforceDpopProof ?? false;
+    if (active && enforceSenderConstraint && tokenRecord.token_binding_method === 'dpop') {
         try {
             await verifyDpopProof({
                 client: input.client,
@@ -627,6 +641,24 @@ export async function introspectOAuthAccessToken(input: {
         } catch (error) {
             active = false;
             inactiveReason = error instanceof Error ? error.message : 'dpop_proof_invalid';
+        }
+    }
+    if (active && enforceSenderConstraint && tokenRecord.token_binding_method === 'mtls') {
+        try {
+            assertTrustedMtlsProxy(input.req ?? null);
+            const observedThumbprint = resolveMtlsClientCertThumbprint(input.req ?? null);
+            if (!observedThumbprint || !tokenRecord.mtls_cert_thumbprint) {
+                throw new Error('mTLS-bound token requires a verified client certificate.');
+            }
+            if (!safeEqualText(observedThumbprint, tokenRecord.mtls_cert_thumbprint)) {
+                throw new Error('mTLS client certificate does not match the token binding.');
+            }
+            if (!oauthClient.mtls_cert_thumbprints.includes(observedThumbprint)) {
+                throw new Error('mTLS client certificate is no longer allowed for this OAuth client.');
+            }
+        } catch (error) {
+            active = false;
+            inactiveReason = error instanceof Error ? error.message : 'mtls_sender_constraint_invalid';
         }
     }
     const status: OAuthTokenStatus = active ? tokenRecord.status : expired ? 'expired' : tokenRecord.status;
@@ -654,6 +686,7 @@ export async function introspectOAuthAccessToken(input: {
                 active,
                 reason: active ? null : inactiveReason,
                 token_binding_method: tokenRecord.token_binding_method,
+                mtls_cert_thumbprint: tokenRecord.mtls_cert_thumbprint,
                 dpop_jwk_thumbprint: tokenRecord.dpop_jwk_thumbprint,
             },
         }),
@@ -724,7 +757,7 @@ export async function resolveOAuthClientCredentialsPrincipal(
         return { principal: null, error: null };
     }
 
-    const introspection = await introspectOAuthAccessToken({ client, token, req, enforceDpopProof: true });
+    const introspection = await introspectOAuthAccessToken({ client, token, req, enforceSenderConstraint: true });
     if (!introspection.active || !introspection.oauthClient || !introspection.tokenRecord) {
         return {
             principal: null,
@@ -1121,7 +1154,7 @@ function assertTrustedMtlsProxy(req: Request | null): void {
     const expected = normalizeOptionalText(process.env.VETIOS_MTLS_PROXY_SECRET)
         ?? normalizeOptionalText(process.env.VETIOS_TRUSTED_MTLS_PROXY_SECRET);
     if (!expected) {
-        if (process.env.VETIOS_ALLOW_UNTRUSTED_MTLS_PROXY === 'true') {
+        if (process.env.NODE_ENV !== 'production' && process.env.VETIOS_ALLOW_UNTRUSTED_MTLS_PROXY === 'true') {
             return;
         }
         throw new Error('OAuth mTLS trusted proxy secret is not configured.');
@@ -1289,6 +1322,7 @@ function mapOAuthToken(row: Record<string, unknown>): OAuthAccessTokenRecord {
         ip_hash: normalizeOptionalText(row.ip_hash),
         user_agent_hash: normalizeOptionalText(row.user_agent_hash),
         token_binding_method: normalizeOAuthTokenBindingMethod(row.token_binding_method),
+        mtls_cert_thumbprint: normalizeSha256Thumbprint(row.mtls_cert_thumbprint),
         dpop_jwk_thumbprint: normalizeOptionalText(row.dpop_jwk_thumbprint),
         dpop_public_jwk: asRecord(row.dpop_public_jwk),
         dpop_bound_at: normalizeOptionalText(row.dpop_bound_at),
@@ -1307,7 +1341,7 @@ function normalizeOAuthTokenStatus(value: unknown): OAuthTokenStatus {
 }
 
 function normalizeOAuthTokenBindingMethod(value: unknown): OAuthTokenBindingMethod {
-    return value === 'dpop' ? 'dpop' : 'bearer';
+    return value === 'dpop' || value === 'mtls' ? value : 'bearer';
 }
 
 function normalizeOAuthClientAuthMethods(value: readonly string[] | null | undefined): OAuthClientAuthMethod[] {

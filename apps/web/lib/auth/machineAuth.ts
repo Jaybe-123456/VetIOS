@@ -6,6 +6,10 @@ import { resolveOAuthClientCredentialsPrincipal } from '@/lib/auth/oauthClientCr
 import { API_CREDENTIALS, CONNECTOR_INSTALLATIONS, SERVICE_ACCOUNTS } from '@/lib/db/schemaContracts';
 import { resolveRequestActor } from '@/lib/auth/requestActor';
 import { resolveSessionTenant } from '@/lib/supabaseServer';
+import { resolveControlPlaneRole } from '@/lib/settings/permissions';
+import type { AuthTrustAssuranceLevel } from '@/lib/auth/authTrustFabric';
+import type { ControlPlaneUserRole } from '@/lib/settings/types';
+import { resolveStepUpAssurance } from '@/lib/auth/stepUpCompletion';
 
 const UUID_PATTERN =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -108,6 +112,8 @@ export interface ClinicalApiActor {
     serviceAccountId: string | null;
     oauthClientId?: string | null;
     connectorInstallation: ConnectorInstallationRecord | null;
+    role: ControlPlaneUserRole | null;
+    assuranceLevel: AuthTrustAssuranceLevel;
 }
 
 export interface ClinicalApiActorResolution {
@@ -498,6 +504,10 @@ export async function resolveClinicalApiActor(
     const session = await resolveSessionTenant();
     if (session) {
         const actor = resolveRequestActor(session);
+        const assurance = await resolveStepUpAssurance({
+            supabase: session.supabase,
+            user: session.user,
+        });
         return {
             actor: {
                 tenantId: actor.tenantId,
@@ -509,6 +519,8 @@ export async function resolveClinicalApiActor(
                 serviceAccountId: null,
                 oauthClientId: null,
                 connectorInstallation: null,
+                role: resolveControlPlaneRole(session.user, 'session'),
+                assuranceLevel: assurance.assuranceLevel,
             },
             error: null,
         };
@@ -532,6 +544,8 @@ export async function resolveClinicalApiActor(
                 serviceAccountId: null,
                 oauthClientId: oauth.principal.oauthClientId,
                 connectorInstallation: null,
+                role: null,
+                assuranceLevel: 'workload_identity',
             },
             error: null,
         };
@@ -555,6 +569,8 @@ export async function resolveClinicalApiActor(
                 serviceAccountId: machine.principal.serviceAccount?.id ?? null,
                 oauthClientId: null,
                 connectorInstallation: machine.principal.connectorInstallation,
+                role: null,
+                assuranceLevel: 'workload_identity',
             },
             error: null,
         };
@@ -572,6 +588,8 @@ export async function resolveClinicalApiActor(
                 serviceAccountId: null,
                 oauthClientId: null,
                 connectorInstallation: null,
+                role: 'admin',
+                assuranceLevel: 'anonymous',
             },
             error: null,
         };

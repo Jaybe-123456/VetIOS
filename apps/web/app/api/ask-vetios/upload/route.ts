@@ -10,6 +10,7 @@ import {
 } from '@/lib/askVetios/uploadSecurityGate';
 import { writeUploadSecurityEvent } from '@/lib/askVetios/uploadSecurityEvent';
 import { ingestClinicalUploadToRag, type ClinicalUploadIngestionResult } from '@/lib/askVetios/documentIngestion';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -25,6 +26,17 @@ export async function POST(req: Request) {
     if (guard.blocked) return guard.response!;
 
     const { requestId, startTime } = guard;
+    const client = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client,
+        requiredScopes: ['rag:write'],
+    });
+    if (auth.error || !auth.actor) {
+        return withUploadHeaders(NextResponse.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 },
+        ), requestId, startTime);
+    }
     const form = await req.formData().catch(() => null);
     if (!form) {
         const res = NextResponse.json({ error: 'Invalid multipart upload', request_id: requestId }, { status: 400 });
@@ -78,13 +90,19 @@ export async function POST(req: Request) {
         return withUploadHeaders(res, requestId, startTime);
     }
 
-    await registerUploadHash(result, file.name).catch((error: unknown) => {
+    await registerUploadHash(
+        auth.actor.tenantId,
+        auth.actor.userId,
+        result,
+        file.name,
+    ).catch((error: unknown) => {
         console.warn('[ask-vetios/upload] upload hash registration failed:', error);
     });
 
     const species = normalizeOptionalString(form.get('species'));
     const domain = normalizeOptionalString(form.get('domain'));
     const ingestion = await ingestUpload(req, {
+        tenantId: auth.actor.tenantId,
         sessionId,
         fileName: file.name,
         species,
@@ -143,23 +161,31 @@ async function isFlaggedUploadHash(contentHash: string): Promise<boolean> {
     }
 }
 
-async function registerUploadHash(result: Extract<UploadSecurityGateResult, { ok: true }>, fileName: string): Promise<void> {
+async function registerUploadHash(
+    tenantId: string,
+    userId: string | null,
+    result: Extract<UploadSecurityGateResult, { ok: true }>,
+    fileName: string,
+): Promise<void> {
     const { error } = await getSupabaseServer()
         .from('upload_hashes')
         .upsert({
+            tenant_id: tenantId,
+            user_id: userId,
             content_hash: result.contentHash,
             source_type: result.sourceType,
             detected_mime: result.detectedMime,
             first_seen_file_name_hash: hashPrivacyValue(fileName),
             upload_status: 'validated',
             last_seen_at: new Date().toISOString(),
-        }, { onConflict: 'content_hash' });
+        }, { onConflict: 'tenant_id,content_hash' });
     if (error) throw new Error(error.message);
 }
 
 async function ingestUpload(
     req: Request,
     input: {
+        tenantId: string;
         sessionId: string | null;
         fileName: string;
         species: string | null;
@@ -172,7 +198,7 @@ async function ingestUpload(
         const client = getSupabaseServer();
         const ingestion = await ingestClinicalUploadToRag({
             client,
-            tenantId: process.env.VETIOS_PUBLIC_RAG_TENANT_ID || 'public',
+            tenantId: input.tenantId,
             actorLabel: req.headers.get('x-vetios-actor') ?? 'ask_vetios_upload',
             sessionId: input.sessionId,
             fileName: input.fileName,
@@ -193,6 +219,7 @@ async function ingestUpload(
                 processed_at: new Date().toISOString(),
                 last_seen_at: new Date().toISOString(),
             })
+            .eq('tenant_id', input.tenantId)
             .eq('content_hash', input.result.contentHash);
 
         return ingestion;
@@ -207,6 +234,7 @@ async function ingestUpload(
                     processing_error: reason,
                     last_seen_at: new Date().toISOString(),
                 })
+                .eq('tenant_id', input.tenantId)
                 .eq('content_hash', input.result.contentHash);
         } catch {
             // Non-fatal: the client still receives a validated/deferred upload response.

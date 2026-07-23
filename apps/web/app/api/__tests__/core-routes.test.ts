@@ -56,8 +56,16 @@ describe('core API regression suite', () => {
             actor: {
                 tenantId,
                 userId,
+                authMode: 'session',
                 scopes: ['*'],
+                credentialId: null,
+                principalLabel: 'Core route clinician',
+                serviceAccountId: null,
+                connectorInstallation: null,
+                role: 'clinician',
+                assuranceLevel: 'recent_auth',
             },
+            error: null,
         });
         mocks.confirmOutcome.mockResolvedValue(undefined);
         mocks.startCireCalibration.mockResolvedValue({
@@ -194,6 +202,47 @@ describe('core API regression suite', () => {
 
         expect(response.status).toBe(200);
         expect(body.outcome_event_id).toBe(outcomeEventId);
+    });
+
+    it('Outcome route: ordinary session requires recent-auth step-up before confirmation', async () => {
+        mocks.resolveClinicalApiActor.mockResolvedValueOnce({
+            actor: {
+                tenantId,
+                userId,
+                authMode: 'session',
+                scopes: ['*'],
+                credentialId: null,
+                principalLabel: 'Core route clinician',
+                serviceAccountId: null,
+                connectorInstallation: null,
+                role: 'clinician',
+                assuranceLevel: 'session',
+            },
+            error: null,
+        });
+        mocks.getSupabaseServer.mockReturnValue(createOutcomeSupabaseMock({ inferenceFound: true }));
+
+        const response = await outcomePost(jsonRequest('/api/outcome', {
+            request_id: requestId,
+            inference_event_id: inferenceEventId,
+            outcome: {
+                type: 'confirmed_diagnosis',
+                payload: {
+                    label: 'canine_pancreatitis',
+                    confidence: 0.9,
+                },
+                timestamp: '2026-05-22T12:00:00.000Z',
+            },
+        }));
+        const body = await response.json();
+
+        expect(response.status).toBe(428);
+        expect(body.error).toBe('step_up_required');
+        expect(body.auth_trust).toMatchObject({
+            action_key: 'outcome.confirm.write',
+            assurance_level: 'session',
+            required_assurance_level: 'recent_auth',
+        });
     });
 
     it('Outcome route: calibration write failure does not block confirmed outcome capture', async () => {

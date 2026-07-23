@@ -107,6 +107,7 @@ export interface AgentStep {
 export interface HITLInterrupt {
   interrupt_id: string;
   agent_run_id: string;
+  tenant_id: string;
   reason: string;
   pending_tool?: ToolCall;
   context_snapshot: Record<string, unknown>;

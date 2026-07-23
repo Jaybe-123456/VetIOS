@@ -132,5 +132,7 @@ function actor(overrides: Partial<ClinicalApiActor> = {}): ClinicalApiActor {
         serviceAccountId: null,
         connectorInstallation: null,
         ...overrides,
+        role: overrides.role ?? null,
+        assuranceLevel: overrides.assuranceLevel ?? 'workload_identity',
     };
 }

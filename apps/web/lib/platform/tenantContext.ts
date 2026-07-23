@@ -7,6 +7,9 @@ interface JwtPayload {
     sub?: unknown;
     tenant_id?: unknown;
     role?: unknown;
+    iss?: unknown;
+    aud?: unknown;
+    iat?: unknown;
     exp?: unknown;
     scopes?: unknown;
 }
@@ -35,10 +38,7 @@ export async function resolvePlatformActor(
     const bearerToken = extractBearerToken(req);
 
     if (bearerToken && looksLikeJwt(bearerToken)) {
-        const actor = resolveJwtPlatformActor(bearerToken, tenantScope);
-        if (actor) {
-            return actor;
-        }
+        return resolveJwtPlatformActor(bearerToken, tenantScope);
     }
 
     const clinicalActor = await resolveClinicalApiActor(req, {
@@ -132,13 +132,33 @@ export function issueInternalPlatformToken(input: {
         throw new Error('VETIOS_JWT_SECRET is required to issue internal platform tokens.');
     }
 
+    const subject = input.sub.trim();
+    if (!subject) {
+        throw new Error('Internal platform token subject is required.');
+    }
+    if (input.role === 'tenant_user' && !input.tenantId) {
+        throw new Error('Tenant user tokens require tenantId.');
+    }
+    const expiresInSeconds = input.expiresInSeconds ?? 300;
+    if (
+        !Number.isSafeInteger(expiresInSeconds)
+        || expiresInSeconds <= 0
+        || expiresInSeconds > resolveJwtMaxTtlSeconds()
+    ) {
+        throw new Error('Internal platform token lifetime exceeds the configured bound.');
+    }
+
     const header = { alg: 'HS256', typ: 'JWT' };
+    const now = Math.floor(Date.now() / 1000);
     const payload = {
-        sub: input.sub,
+        sub: subject,
         tenant_id: input.tenantId,
         role: input.role,
         scopes: input.scopes ?? [],
-        exp: Math.floor(Date.now() / 1000) + (input.expiresInSeconds ?? 300),
+        iss: resolveJwtIssuer(),
+        aud: resolveJwtAudience(),
+        iat: now,
+        exp: now + expiresInSeconds,
     };
 
     const encodedHeader = base64UrlEncode(JSON.stringify(header));
@@ -151,15 +171,20 @@ export function issueInternalPlatformToken(input: {
     return `${unsignedToken}.${signature}`;
 }
 
-function resolveJwtPlatformActor(token: string, tenantScope: string | null): PlatformActor | null {
+function resolveJwtPlatformActor(token: string, tenantScope: string | null): PlatformActor {
     const secret = process.env.VETIOS_JWT_SECRET;
     if (!secret) {
-        return null;
+        throw new PlatformAuthError(503, 'jwt_verifier_unconfigured', 'Internal JWT verification is not configured.');
     }
 
     const [encodedHeader, encodedPayload, encodedSignature] = token.split('.');
     if (!encodedHeader || !encodedPayload || !encodedSignature) {
         throw new PlatformAuthError(401, 'invalid_jwt', 'Malformed JWT token.');
+    }
+
+    const header = parseJwtObject(encodedHeader, 'header');
+    if (header.alg !== 'HS256' || header.typ !== 'JWT') {
+        throw new PlatformAuthError(401, 'invalid_jwt_header', 'JWT alg and typ are not accepted.');
     }
 
     const unsignedToken = `${encodedHeader}.${encodedPayload}`;
@@ -175,15 +200,40 @@ function resolveJwtPlatformActor(token: string, tenantScope: string | null): Pla
         throw new PlatformAuthError(401, 'invalid_jwt_signature', 'JWT signature verification failed.');
     }
 
-    const payload = JSON.parse(base64UrlDecode(encodedPayload)) as JwtPayload;
+    const payload = parseJwtObject(encodedPayload, 'payload') as JwtPayload;
     const role = normalizeRole(payload.role);
     const tenantId = normalizeOptionalText(payload.tenant_id);
+    const subject = normalizeOptionalText(payload.sub);
+    const issuer = normalizeOptionalText(payload.iss);
+    const audience = normalizeAudience(payload.aud);
+    const issuedAt = normalizeInteger(payload.iat);
+    const expiresAt = normalizeInteger(payload.exp);
+    const now = Math.floor(Date.now() / 1000);
+    const maxTtl = resolveJwtMaxTtlSeconds();
 
-    if (payload.exp != null && Number(payload.exp) <= Math.floor(Date.now() / 1000)) {
+    if (!role) {
+        throw new PlatformAuthError(401, 'invalid_jwt_role', 'JWT role is not accepted.');
+    }
+    if (!subject) {
+        throw new PlatformAuthError(401, 'invalid_jwt_subject', 'JWT subject is required.');
+    }
+    if (issuer !== resolveJwtIssuer() || !audience.includes(resolveJwtAudience())) {
+        throw new PlatformAuthError(401, 'invalid_jwt_issuer_audience', 'JWT issuer or audience is not accepted.');
+    }
+    if (issuedAt == null || issuedAt > now + 60) {
+        throw new PlatformAuthError(401, 'invalid_jwt_iat', 'JWT issued-at time is missing or invalid.');
+    }
+    if (expiresAt == null || expiresAt <= now) {
         throw new PlatformAuthError(401, 'jwt_expired', 'JWT token has expired.');
     }
+    if (expiresAt <= issuedAt || expiresAt - issuedAt > maxTtl) {
+        throw new PlatformAuthError(401, 'invalid_jwt_lifetime', 'JWT lifetime exceeds the accepted bound.');
+    }
 
-    if (role === 'tenant_user' && (!tenantId || (tenantScope && tenantScope !== tenantId))) {
+    if (role === 'tenant_user' && !tenantId) {
+        throw new PlatformAuthError(401, 'jwt_tenant_missing', 'Tenant user JWTs require tenant_id.');
+    }
+    if (role === 'tenant_user' && tenantScope && tenantScope !== tenantId) {
         throw new PlatformAuthError(
             403,
             'tenant_scope_mismatch',
@@ -192,7 +242,7 @@ function resolveJwtPlatformActor(token: string, tenantScope: string | null): Pla
     }
 
     return {
-        userId: normalizeOptionalText(payload.sub),
+        userId: subject,
         tenantId,
         role,
         authMode: 'jwt',
@@ -211,8 +261,43 @@ function looksLikeJwt(token: string) {
     return token.split('.').length === 3;
 }
 
-function normalizeRole(value: unknown): PlatformRole {
-    return value === 'tenant_user' ? 'tenant_user' : 'system_admin';
+function normalizeRole(value: unknown): PlatformRole | null {
+    return value === 'tenant_user' || value === 'system_admin' ? value : null;
+}
+
+function normalizeAudience(value: unknown): string[] {
+    if (typeof value === 'string' && value.trim()) return [value.trim()];
+    if (!Array.isArray(value)) return [];
+    return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+        .map((entry) => entry.trim());
+}
+
+function normalizeInteger(value: unknown): number | null {
+    const parsed = typeof value === 'number' ? value : Number.NaN;
+    return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function resolveJwtIssuer() {
+    return process.env.VETIOS_PLATFORM_JWT_ISSUER?.trim() || 'vetios-platform';
+}
+
+function resolveJwtAudience() {
+    return process.env.VETIOS_PLATFORM_JWT_AUDIENCE?.trim() || 'vetios-platform-api';
+}
+
+function resolveJwtMaxTtlSeconds() {
+    const configured = Number(process.env.VETIOS_INTERNAL_JWT_MAX_TTL_SECONDS ?? 3600);
+    return Number.isFinite(configured) ? Math.max(60, Math.min(86_400, Math.floor(configured))) : 3600;
+}
+
+function parseJwtObject(encoded: string, part: 'header' | 'payload'): Record<string, unknown> {
+    try {
+        const parsed = JSON.parse(base64UrlDecode(encoded)) as unknown;
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not_object');
+        return parsed as Record<string, unknown>;
+    } catch {
+        throw new PlatformAuthError(401, 'invalid_jwt', `JWT ${part} is malformed.`);
+    }
 }
 
 function normalizeScopes(value: unknown) {

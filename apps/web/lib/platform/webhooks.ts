@@ -2,6 +2,7 @@ import { createHmac, randomUUID } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { recordPlatformTelemetry } from '@/lib/platform/telemetry';
 import type { WebhookDeliveryRecord, WebhookSubscriptionRecord } from '@/lib/platform/types';
+import { safeOutboundRequest, validateSafeOutboundUrl } from '@/lib/http/safeOutboundRequest';
 
 export const SUPPORTED_WEBHOOK_EVENTS = [
     'inference.completed',
@@ -32,12 +33,13 @@ export async function createWebhookSubscription(
     if (events.length === 0) {
         throw new Error('At least one supported webhook event is required.');
     }
+    const validatedUrl = await validateSafeOutboundUrl(input.url);
 
     const { data, error } = await client
         .from('webhook_subscriptions')
         .insert({
             tenant_id: input.tenantId,
-            url: input.url.trim(),
+            url: validatedUrl.toString(),
             events,
             secret: input.secret?.trim() || randomUUID().replace(/-/g, ''),
             active: input.active !== false,
@@ -136,13 +138,17 @@ async function deliverWebhookWithRetry(
         const signature = signWebhookPayload(subscription.secret, requestPayload);
 
         try {
-            const response = await fetch(subscription.url, {
+            const serializedPayload = JSON.stringify(requestPayload);
+            const response = await safeOutboundRequest(subscription.url, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Vetios-Signature': signature,
                 },
-                body: JSON.stringify(requestPayload),
+                body: serializedPayload,
+                timeoutMs: 5_000,
+                maxRequestBytes: 512 * 1024,
+                maxResponseBytes: 64 * 1024,
             });
             const responseText = await response.text();
 

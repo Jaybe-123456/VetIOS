@@ -311,6 +311,8 @@ function clinicalActor(input: {
         credentialId: input.credentialId ?? null,
         principalLabel: 'test_principal',
         serviceAccountId: input.serviceAccountId ?? null,
+        role: input.authMode === 'session' ? 'clinician' : null,
+        assuranceLevel: input.authMode === 'session' ? 'session' : 'workload_identity',
         connectorInstallation: input.authMode === 'connector_installation'
             ? {
                 id: '00000000-0000-4000-8000-000000000005',

@@ -17,6 +17,7 @@ const DIRECT_ANALYSIS_CHUNK_LIMIT = 24;
 
 export async function loadUploadedDocumentContexts(input: {
     client: SupabaseClient;
+    tenantId: string;
     uploadIds: string[];
 }): Promise<UploadedDocumentContext[]> {
     const uploadIds = input.uploadIds.filter((value) => /^[a-f0-9]{64}$/i.test(value)).slice(0, 20);
@@ -25,6 +26,7 @@ export async function loadUploadedDocumentContexts(input: {
     const { data: uploadRows, error: uploadError } = await input.client
         .from('upload_hashes')
         .select('content_hash, rag_document_id')
+        .eq('tenant_id', input.tenantId)
         .in('content_hash', uploadIds);
     if (uploadError) return [];
 
@@ -36,6 +38,7 @@ export async function loadUploadedDocumentContexts(input: {
     const { data: documents, error: documentError } = await input.client
         .from('rag_documents')
         .select('id, title, source_id')
+        .eq('tenant_id', input.tenantId)
         .in('id', documentIds);
     if (documentError) return [];
 
@@ -43,12 +46,13 @@ export async function loadUploadedDocumentContexts(input: {
         .map((row) => typeof row.source_id === 'string' ? row.source_id : null)
         .filter((value): value is string => Boolean(value)))];
     const { data: sources } = sourceIds.length > 0
-        ? await input.client.from('rag_sources').select('id, name').in('id', sourceIds)
+        ? await input.client.from('rag_sources').select('id, name').eq('tenant_id', input.tenantId).in('id', sourceIds)
         : { data: [] };
 
     const { data: chunks, error: chunkError } = await input.client
         .from('rag_chunks')
         .select('document_id, chunk_index, chunk_text, heading')
+        .eq('tenant_id', input.tenantId)
         .in('document_id', documentIds)
         .order('chunk_index', { ascending: true });
     if (chunkError) return [];

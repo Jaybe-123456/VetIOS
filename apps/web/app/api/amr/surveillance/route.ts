@@ -5,6 +5,7 @@ import {
     normalizeOptionalAMRLabel,
     type AMRLabFeedSurveillanceEventRow,
 } from '@/lib/amr/stewardship';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
@@ -15,6 +16,18 @@ export async function GET(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
 
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['signals:read'],
+    });
+    if (auth.error || !auth.actor) {
+        return NextResponse.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: guard.requestId },
+            { status: auth.error?.status ?? 401 },
+        );
+    }
+
     const { searchParams } = new URL(req.url);
     const species = normalizeFilter(searchParams.get('species'));
     const region = normalizeRegion(searchParams.get('region'));
@@ -23,11 +36,10 @@ export async function GET(req: Request) {
     const days = clampDays(Number(searchParams.get('days') ?? 90));
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const now = new Date().toISOString();
-    const supabase = getSupabaseServer();
-
     let query = supabase
         .from('amr_genomic_events')
         .select('species, pathogen_label, region, resistance_genes, resistance_classes, novel_pattern_score, created_at')
+        .eq('tenant_id', auth.actor.tenantId)
         .gte('created_at', since)
         .order('created_at', { ascending: false })
         .limit(10_000);
@@ -43,6 +55,7 @@ export async function GET(req: Request) {
     let rnaQuery = supabase
         .from('rna_folding_events')
         .select('pathogen_label, region, sequence_length, wfsg_node_count, secondary_structure, mcc_score, created_at')
+        .eq('tenant_id', auth.actor.tenantId)
         .gte('created_at', since)
         .order('created_at', { ascending: false })
         .limit(2_000);
@@ -78,6 +91,7 @@ export async function GET(req: Request) {
             'warnings',
             'observed_at',
         ].join(','))
+        .eq('tenant_id', auth.actor.tenantId)
         .gte('observed_at', since)
         .order('observed_at', { ascending: false })
         .limit(10_000);

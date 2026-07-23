@@ -12,9 +12,11 @@
  */
 
 import { NextResponse } from 'next/server';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { getVKG } from '@/lib/vkg/veterinaryKnowledgeGraph';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +25,19 @@ export async function GET(req: Request) {
   const guard = await apiGuard(req, { maxRequests: 120, windowMs: 60_000 });
   if (guard.blocked) return guard.response!;
   const { requestId, startTime } = guard;
+
+  const auth = await resolveClinicalApiActor(req, {
+    client: getSupabaseServer(),
+    requiredScopes: ['rag:read'],
+  });
+  if (auth.error || !auth.actor) {
+    const res = NextResponse.json(
+      { error: { code: 'unauthorized', message: auth.error?.message ?? 'Unauthorized' } },
+      { status: auth.error?.status ?? 401 },
+    );
+    withRequestHeaders(res.headers, requestId, startTime);
+    return res;
+  }
 
   const url = new URL(req.url);
   const mode = url.searchParams.get('mode') ?? 'differentials';

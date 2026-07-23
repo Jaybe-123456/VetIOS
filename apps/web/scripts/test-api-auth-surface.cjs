@@ -5,7 +5,6 @@ const appRoot = path.resolve(__dirname, '..');
 const apiRoot = path.join(appRoot, 'app', 'api');
 
 const EXPLICIT_AUTH_MARKERS = [
-    'apiGuard(',
     'runPartnerV1Route(',
     'authenticatePartnerRequest(',
     'resolvePartnerApiKeyAccess(',
@@ -16,11 +15,22 @@ const EXPLICIT_AUTH_MARKERS = [
     'requirePlatformRequestContext(',
     'requireDebugToolsRouteAccess(',
     'authorizeCronRequest(',
+    'authorizeCron(',
+    'authenticateEdgeBox(',
     'resolvePresentedControlPlaneKey(',
     'requirePublicPlatformDetailAccess(',
     'authorizeOperator(',
     'checkOrigin(',
     'stripe.webhooks.constructEvent(',
+    'enforceVetiosClinicalActorGate(',
+    'enforceVetiosHighRiskRouteGate(',
+    'enforceVetiosPlatformActorGate(',
+    'authenticateOAuthClientRequest(',
+    'issueOAuthClientCredentialsToken(',
+    'introspectOAuthAccessToken(',
+    'revokeOAuthAccessToken(',
+    'requireOutboxRouteAuthorization(',
+    'acceptNativeVendorAuthorizationCallback(',
 ];
 
 const INTENTIONAL_PUBLIC_ROUTE_PATTERNS = [
@@ -33,10 +43,7 @@ const INTENTIONAL_PUBLIC_ROUTE_PATTERNS = [
 ];
 
 const ROUTES_WITH_LOCAL_PROTECTION = new Map([
-    ['ask-vetios/clinical-images/route.ts', 'Ask VetIOS route performs local request validation and only uses provider keys server-side.'],
-    ['ask-vetios/drug-formulary/route.ts', 'Ask VetIOS route exposes formulary lookup with server-side validation.'],
-    ['ask-vetios/feedback/route.ts', 'Ask VetIOS feedback accepts bounded feedback payloads.'],
-    ['ask-vetios/similar-cases/route.ts', 'Ask VetIOS route returns bounded similar-case context.'],
+    ['diagnostic/snapshot/route.ts', 'Diagnostic alias delegates to the authenticated settings control-plane handler with the original credentials.'],
     ['audit/case/[case_id]/route.ts', 'Audit route validates case access through audit service lookups.'],
     ['audit/report/[case_id]/route.ts', 'Audit report route validates case access through audit service lookups.'],
     ['labs/recommendations/[inference_event_id]/route.ts', 'Lab recommendation route resolves by inference event context.'],

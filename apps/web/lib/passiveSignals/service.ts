@@ -441,28 +441,58 @@ export async function acceptNativeVendorAuthorizationCallback(input: {
         throw new Error('Native vendor authorization state was not found.');
     }
 
+    const existingRecord = asRecord(existing);
+    const existingMetadata = asRecord(existingRecord.metadata);
+    const issuedAt = normalizeTimestamp(existingMetadata.authorization_state_issued_at);
+    const stateMaxAgeMs = 10 * 60_000;
+    if (!issuedAt || Date.now() - Date.parse(issuedAt) > stateMaxAgeMs) {
+        await input.client
+            .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
+            .update({
+                [C.status]: 'error',
+                [C.authorization_state_hash]: null,
+                [C.last_sync_status]: 'authorization_state_expired',
+                [C.metadata]: {
+                    ...existingMetadata,
+                    authorization_state_expired_at: new Date().toISOString(),
+                },
+            })
+            .eq(C.id, String(existingRecord.id))
+            .eq(C.authorization_state_hash, stateHash);
+        throw new Error('Native vendor authorization state has expired.');
+    }
+    if (normalizeNativeAuthProtocol(existingRecord.auth_protocol) !== 'oauth2_pkce') {
+        throw new Error('Native vendor authorization callback is only valid for OAuth 2.0 PKCE connections.');
+    }
+    if (!input.error && !normalizeOptionalText(input.code)) {
+        throw new Error('Native vendor authorization code is required.');
+    }
+
     const now = new Date().toISOString();
-    const status: NativeVendorConnectionStatus = input.error ? 'error' : 'active';
+    const status: NativeVendorConnectionStatus = input.error ? 'error' : 'authorization_required';
     const { data, error } = await input.client
         .from(PASSIVE_NATIVE_VENDOR_CONNECTIONS.TABLE)
         .update({
             [C.status]: status,
-            [C.credential_ref_hash]: input.code ? hashSecret(input.code) : asRecord(existing).credential_ref_hash ?? null,
-            [C.last_authorized_at]: status === 'active' ? now : null,
-            [C.last_sync_status]: status === 'active' ? 'authorized' : 'authorization_error',
+            [C.authorization_state_hash]: null,
+            [C.credential_ref_hash]: existingRecord.credential_ref_hash ?? null,
+            [C.last_authorized_at]: null,
+            [C.last_sync_status]: input.error ? 'authorization_error' : 'token_exchange_pending',
             [C.metadata]: {
-                ...asRecord(asRecord(existing).metadata),
+                ...existingMetadata,
                 authorization_callback_at: now,
                 authorization_error: normalizeOptionalText(input.error),
                 authorization_code_received: Boolean(input.code),
+                token_exchange_status: input.error ? 'not_started' : 'pending',
             },
         })
-        .eq(C.id, String(asRecord(existing).id))
+        .eq(C.id, String(existingRecord.id))
+        .eq(C.authorization_state_hash, stateHash)
         .select('*')
-        .single();
+        .maybeSingle();
 
     if (error || !data) {
-        throw new Error(`Failed to update native vendor authorization: ${error?.message ?? 'Unknown error'}`);
+        throw new Error(`Failed to consume native vendor authorization state: ${error?.message ?? 'State was already used'}`);
     }
 
     return mapNativeVendorConnection(asRecord(data));

@@ -12,7 +12,7 @@
  * JS client below still needs the Supabase API URL, not a postgresql:// URL.
  */
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
 import { getEmailVerificationState } from '@/lib/auth/emailVerification';
@@ -164,6 +164,7 @@ export async function resolveSessionState(): Promise<
         tenantId: string;
         userId: string;
         email: string;
+        user: User;
     }
     | {
         status: 'pending_email_verification';
@@ -241,6 +242,7 @@ export async function resolveSessionState(): Promise<
         tenantId: user.id, // V1: tenant_id = auth.uid()
         userId: user.id,
         email: user.email ?? '',
+        user,
     };
 }
 
@@ -257,6 +259,7 @@ export async function resolveSessionTenant(): Promise<{
     tenantId: string;
     userId: string;
     email: string;
+    user: User;
 } | null> {
     const sessionState = await resolveSessionState();
     if (sessionState.status !== 'authenticated') {

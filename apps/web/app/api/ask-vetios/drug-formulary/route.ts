@@ -18,6 +18,8 @@ import {
     detectSpeciesFromTexts,
     isVetiosSpecies,
 } from '@/lib/askVetios/context';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { apiGuard } from '@/lib/http/apiGuard';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
@@ -32,7 +34,21 @@ const RequestSchema = z.object({
 });
 
 export async function POST(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 20, windowMs: 60_000, maxBodySize: 64 * 1024 });
+    if (guard.blocked) return guard.response!;
+
     try {
+        const auth = await resolveClinicalApiActor(req, {
+            client: getSupabaseServer(),
+            requiredScopes: ['rag:read'],
+        });
+        if (auth.error || !auth.actor) {
+            return NextResponse.json(
+                { error: auth.error?.message ?? 'Unauthorized', request_id: guard.requestId },
+                { status: auth.error?.status ?? 401 },
+            );
+        }
+
         const parsed = RequestSchema.safeParse(await req.json());
         if (!parsed.success) {
             return NextResponse.json({ error: 'Invalid payload', details: parsed.error.flatten() }, { status: 400 });
@@ -50,6 +66,7 @@ export async function POST(req: Request) {
         const invalidValidation = validation.valid ? null : validation;
 
         await logValidationEvent({
+            tenantId: auth.actor.tenantId,
             species,
             weightKg: inferredWeight,
             validationResult: invalidValidation ? invalidValidation.severity : 'valid',
@@ -143,6 +160,7 @@ function extractWeightKg(text: string) {
 }
 
 async function logValidationEvent(input: {
+    tenantId: string;
     species: string;
     weightKg: number;
     validationResult: 'valid' | 'impossible' | 'extreme_outlier';
@@ -152,7 +170,7 @@ async function logValidationEvent(input: {
     try {
         const supabase = getSupabaseServer();
         await supabase.from('pharmacos_validation_events').insert({
-            tenant_id: null,
+            tenant_id: input.tenantId,
             session_id: crypto.randomUUID(),
             species: input.species,
             weight_kg: input.weightKg,

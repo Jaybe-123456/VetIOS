@@ -6,6 +6,7 @@ import { safeJson } from '@/lib/http/safeJson';
 import { buildRateLimitErrorPayload, PlatformRateLimitError, requirePlatformRequestContext } from '@/lib/platform/route';
 import { PlatformAuthError, resolveActorTenant } from '@/lib/platform/tenantContext';
 import { createWebhookSubscription, listWebhookSubscriptions } from '@/lib/platform/webhooks';
+import { validateSafeOutboundUrl } from '@/lib/http/safeOutboundRequest';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -104,10 +105,20 @@ export async function POST(req: Request) {
         if (!parsed.data.url || !Array.isArray(parsed.data.events)) {
             throw new PlatformAuthError(400, 'invalid_webhook', 'url and events are required to create a webhook.');
         }
+        let webhookUrl: URL;
+        try {
+            webhookUrl = await validateSafeOutboundUrl(parsed.data.url);
+        } catch (error) {
+            throw new PlatformAuthError(
+                400,
+                'invalid_webhook_url',
+                error instanceof Error ? error.message : 'Webhook URL is not allowed.',
+            );
+        }
 
         const subscription = await createWebhookSubscription(supabase, {
             tenantId,
-            url: parsed.data.url,
+            url: webhookUrl.toString(),
             events: parsed.data.events,
             secret: parsed.data.secret ?? null,
             active: parsed.data.active,

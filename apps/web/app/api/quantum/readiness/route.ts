@@ -1,7 +1,9 @@
 import { NextResponse } from 'next/server';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { buildGbsReadinessProblem } from '@/lib/quantum/gbsReadiness';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +19,19 @@ export async function POST(req: Request) {
   const guard = await apiGuard(req, { maxRequests: 60, windowMs: 60_000 });
   if (guard.blocked) return guard.response!;
   const { requestId, startTime } = guard;
+
+  const auth = await resolveClinicalApiActor(req, {
+    client: getSupabaseServer(),
+    requiredScopes: ['inference:write'],
+  });
+  if (auth.error || !auth.actor) {
+    const res = NextResponse.json(
+      { data: null, error: { code: 'unauthorized', message: auth.error?.message ?? 'Unauthorized' } },
+      { status: auth.error?.status ?? 401 },
+    );
+    withRequestHeaders(res.headers, requestId, startTime);
+    return res;
+  }
 
   try {
     const body = await req.json() as {

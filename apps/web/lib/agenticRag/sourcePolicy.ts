@@ -1,5 +1,5 @@
-import { isIP } from 'net';
 import type { RagAuthorityTier, RagSourceType } from './types';
+import { validateOutboundUrlSyntax } from '@/lib/http/safeOutboundRequest';
 
 const TRUSTED_MEDICAL_HOSTS = [
     'avma.org',
@@ -23,13 +23,6 @@ const TRUSTED_MEDICAL_HOSTS = [
     'cdc.gov',
     'woah.org',
     'wormsandgermsblog.com',
-];
-
-const PRIVATE_HOST_PATTERNS = [
-    /^localhost$/i,
-    /\.localhost$/i,
-    /^metadata\.google\.internal$/i,
-    /^169\.254\.169\.254$/,
 ];
 
 export function normalizeRagSourceType(value: string | null | undefined): RagSourceType {
@@ -86,51 +79,22 @@ export function validatePublicSourceUrl(value: string | null | undefined): {
 
     let parsed: URL;
     try {
-        parsed = new URL(raw);
-    } catch {
-        return { ok: false, error: 'Source URL must be a valid URL.' };
-    }
-
-    if (parsed.protocol !== 'https:') {
-        return { ok: false, error: 'Source URL must use HTTPS.' };
-    }
-
-    const hostname = parsed.hostname.toLowerCase();
-    if (PRIVATE_HOST_PATTERNS.some((pattern) => pattern.test(hostname)) || isPrivateIp(hostname)) {
-        return { ok: false, error: 'Private, local, and metadata URLs are not allowed for RAG ingestion.' };
+        parsed = validateOutboundUrlSyntax(raw);
+    } catch (error) {
+        return {
+            ok: false,
+            error: error instanceof Error ? error.message : 'Source URL is not allowed.',
+        };
     }
 
     return {
         ok: true,
         url: parsed.toString(),
-        trusted: isTrustedMedicalHost(hostname),
+        trusted: isTrustedMedicalHost(parsed.hostname),
     };
 }
 
 export function isTrustedMedicalHost(hostname: string): boolean {
     const normalized = hostname.toLowerCase();
     return TRUSTED_MEDICAL_HOSTS.some((host) => normalized === host || normalized.endsWith(`.${host}`));
-}
-
-function isPrivateIp(hostname: string): boolean {
-    const ipHost = hostname.replace(/^\[|\]$/g, '');
-    const family = isIP(ipHost);
-    if (family === 0) return false;
-
-    if (family === 4) {
-        const octets = ipHost.split('.').map((part) => Number(part));
-        const [a, b] = octets;
-        return a === 10
-            || (a === 172 && b >= 16 && b <= 31)
-            || (a === 192 && b === 168)
-            || a === 127
-            || (a === 169 && b === 254)
-            || a === 0;
-    }
-
-    const lower = ipHost.toLowerCase();
-    return lower === '::1'
-        || lower.startsWith('fc')
-        || lower.startsWith('fd')
-        || lower.startsWith('fe80:');
 }

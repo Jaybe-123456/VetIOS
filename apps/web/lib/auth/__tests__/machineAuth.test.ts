@@ -145,6 +145,8 @@ function createConnectorActor(
         principalLabel: installation.installation_name,
         serviceAccountId: null,
         connectorInstallation: installation,
+        role: null,
+        assuranceLevel: 'workload_identity',
     };
 }
 

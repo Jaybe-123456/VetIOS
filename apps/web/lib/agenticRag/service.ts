@@ -7,6 +7,7 @@ import {
     normalizeStringList,
     validatePublicSourceUrl,
 } from './sourcePolicy';
+import { safeOutboundRequest } from '@/lib/http/safeOutboundRequest';
 import { getCuratedRagCatalog } from './sourceCatalog';
 import type {
     RagAnswerResult,
@@ -519,23 +520,24 @@ async function resolveDocumentContent(document: IngestRagDocumentInput['document
 }
 
 async function fetchRemoteText(url: string): Promise<string> {
-    const response = await fetch(url, {
-        cache: 'no-store',
-        signal: AbortSignal.timeout(10_000),
+    const response = await safeOutboundRequest(url, {
         headers: {
             Accept: 'text/plain,text/markdown,text/html,application/json;q=0.8,*/*;q=0.1',
         },
+        timeoutMs: 10_000,
+        maxResponseBytes: MAX_REMOTE_CONTENT_BYTES,
+        allowedContentTypes: /text\/|application\/json|application\/xml|application\/xhtml\+xml/i,
     });
     if (!response.ok) {
         throw new Error(`Remote document fetch failed with ${response.status}.`);
     }
 
-    const contentLength = Number(response.headers.get('content-length') ?? '0');
+    const contentLength = Number(response.headers['content-length'] ?? '0');
     if (contentLength > MAX_REMOTE_CONTENT_BYTES) {
         throw new Error(`Remote document exceeds ${MAX_REMOTE_CONTENT_BYTES} bytes.`);
     }
 
-    const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+    const contentType = response.headers['content-type']?.toLowerCase() ?? '';
     if (
         contentType
         && !/text\/|application\/json|application\/xml|application\/xhtml\+xml/.test(contentType)

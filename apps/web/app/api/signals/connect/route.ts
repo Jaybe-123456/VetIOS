@@ -50,21 +50,19 @@ export async function POST(req: Request) {
         client: supabase,
         requiredScopes: ['signals:connect'],
     });
-    const connectorKey = req.headers.get('x-vetios-connector-key');
-    const expectedConnectorKey = process.env.PASSIVE_CONNECTOR_INGEST_KEY?.trim() ?? '';
-    const hasLegacyConnectorAccess = expectedConnectorKey.length > 0 && connectorKey === expectedConnectorKey;
-
-    const tenantId = auth.actor?.tenantId
-        ?? body.connector.tenant_id
-        ?? process.env.VETIOS_DEV_TENANT_ID
-        ?? null;
-
-    if (!tenantId || (!auth.actor && !hasLegacyConnectorAccess)) {
+    if (auth.error || !auth.actor) {
         return NextResponse.json(
             { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
             { status: auth.error?.status ?? 401 },
         );
     }
+    if (body.connector.tenant_id && body.connector.tenant_id !== auth.actor.tenantId) {
+        return NextResponse.json(
+            { error: 'Connector tenant does not match the authenticated tenant.', request_id: requestId },
+            { status: 403 },
+        );
+    }
+    const tenantId = auth.actor.tenantId;
 
     let workflow: ReturnType<typeof resolvePassiveConnectorWorkflow>;
     try {
@@ -81,19 +79,17 @@ export async function POST(req: Request) {
         );
     }
 
-    if (auth.actor) {
-        const connectorAccess = validateConnectorInstallationAccess({
-            actor: auth.actor,
-            connectorType: workflow.connectorType,
-            vendorName: body.connector.vendor_name ?? null,
-            vendorAccountRef: body.connector.vendor_account_ref ?? null,
-        });
-        if (!connectorAccess.ok) {
-            return NextResponse.json(
-                { error: connectorAccess.message, request_id: requestId },
-                { status: connectorAccess.status },
-            );
-        }
+    const connectorAccess = validateConnectorInstallationAccess({
+        actor: auth.actor,
+        connectorType: workflow.connectorType,
+        vendorName: body.connector.vendor_name ?? null,
+        vendorAccountRef: body.connector.vendor_account_ref ?? null,
+    });
+    if (!connectorAccess.ok) {
+        return NextResponse.json(
+            { error: connectorAccess.message, request_id: requestId },
+            { status: connectorAccess.status },
+        );
     }
 
     try {
@@ -153,7 +149,7 @@ export async function POST(req: Request) {
         let reconcileError: string | null = null;
         let outboxEventId: string | null = null;
         if (body.connector.auto_reconcile !== false) {
-            const deferReconcile = shouldDeferSignalReconcile(auth.actor?.authMode ?? null, req, hasLegacyConnectorAccess);
+            const deferReconcile = shouldDeferSignalReconcile(auth.actor.authMode, req);
             if (deferReconcile) {
                 if (signalEvent.episode_id) {
                     episode = await repo.findEpisodeById(tenantId, signalEvent.episode_id);
@@ -314,15 +310,13 @@ export async function POST(req: Request) {
 function shouldDeferSignalReconcile(
     authMode: 'session' | 'dev_bypass' | 'service_account' | 'connector_installation' | 'oauth_client' | null,
     req: Request,
-    hasLegacyConnectorAccess: boolean,
 ): boolean {
     const requestedMode = req.headers.get('x-vetios-event-mode')?.trim().toLowerCase();
     if (requestedMode === 'async') {
         return true;
     }
 
-    return hasLegacyConnectorAccess
-        || authMode === 'service_account'
+    return authMode === 'service_account'
         || authMode === 'connector_installation'
         || authMode === 'oauth_client';
 }

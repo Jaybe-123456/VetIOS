@@ -8,6 +8,8 @@ import {
     searchPrecisionPubMed,
 } from '@vetios/ask-vetios';
 import { compactSearchTerms, detectSpeciesFromTexts, type DetectedVetiosSpecies } from '@/lib/askVetios/context';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { apiGuard } from '@/lib/http/apiGuard';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
@@ -1211,7 +1213,21 @@ function buildReferenceDescription(
 }
 
 export async function POST(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 12, windowMs: 60_000, maxBodySize: 64 * 1024 });
+    if (guard.blocked) return guard.response!;
+
     try {
+        const auth = await resolveClinicalApiActor(req, {
+            client: getSupabaseServer(),
+            requiredScopes: ['rag:read'],
+        });
+        if (auth.error || !auth.actor) {
+            return NextResponse.json(
+                { error: auth.error?.message ?? 'Unauthorized', request_id: guard.requestId },
+                { status: auth.error?.status ?? 401 },
+            );
+        }
+
         const parsed = RequestSchema.safeParse(await req.json());
         if (!parsed.success) {
             return NextResponse.json({ error: 'Invalid payload', details: parsed.error.flatten() }, { status: 400 });

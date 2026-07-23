@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { getSupabaseServer } from '@/lib/supabaseServer';
@@ -11,6 +12,20 @@ export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 120, windowMs: 60_000 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
+
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['inference:write'],
+    });
+    if (auth.error || !auth.actor) {
+        const response = NextResponse.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 },
+        );
+        withRequestHeaders(response.headers, requestId, startTime);
+        return response;
+    }
 
     try {
         const body = await req.json() as {
@@ -34,7 +49,7 @@ export async function POST(req: Request) {
             return response;
         }
 
-        const result = await queryGraphPriors(getSupabaseServer(), {
+        const result = await queryGraphPriors(supabase, {
             species,
             symptoms,
             age_months: typeof body.age_months === 'number' ? body.age_months : null,

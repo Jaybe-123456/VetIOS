@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { getSupabaseServer } from '@/lib/supabaseServer';
@@ -8,16 +9,27 @@ export async function GET(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['evaluation:read'],
+    });
+    if (auth.error || !auth.actor) {
+        return NextResponse.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 },
+        );
+    }
+
     const { searchParams } = new URL(req.url);
     const species = searchParams.get('species');
     const diagnosis = searchParams.get('diagnosis');
     const minCount = parseInt(searchParams.get('min_count') ?? '5', 10);
 
-    const supabase = getSupabaseServer();
-
     let query = supabase
-        .from('rlhf_accuracy_by_tuple')
+        .from('rlhf_accuracy_by_tenant_tuple')
         .select('species, breed, top_ai_diagnosis, total_signals, correct_count, accuracy_pct, avg_ai_confidence, last_signal_at')
+        .eq('tenant_id', auth.actor.tenantId)
         .gte('total_signals', minCount)
         .order('accuracy_pct', { ascending: false })
         .limit(100);

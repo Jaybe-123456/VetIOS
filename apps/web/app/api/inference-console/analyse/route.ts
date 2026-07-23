@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { analyseLabResults, parseCsvLabResults, type LabPatternMatch, type LabReport } from '@/lib/inferenceConsole/labAnalysis';
+import { resolveClinicalApiActor, type ClinicalApiActor } from '@/lib/auth/machineAuth';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { safeJson } from '@/lib/http/safeJson';
 import { withRequestHeaders } from '@/lib/http/requestId';
@@ -41,6 +42,22 @@ export async function POST(req: Request) {
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
 
+    const supabase = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client: supabase,
+        requiredScopes: ['inference:write'],
+    });
+    if (auth.error || !auth.actor) {
+        return withHeaders(
+            NextResponse.json(
+                { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+                { status: auth.error?.status ?? 401 },
+            ),
+            requestId,
+            startTime,
+        );
+    }
+
     const parsedJson = await safeJson(req);
     if (!parsedJson.ok) {
         return withHeaders(NextResponse.json({ error: parsedJson.error, request_id: requestId }, { status: 400 }), requestId, startTime);
@@ -69,7 +86,7 @@ export async function POST(req: Request) {
         labReport,
     });
 
-    void persistReport(report).catch((error) => {
+    void persistReport(report, auth.actor).catch((error) => {
         console.warn('[inference-console/analyse] report persistence failed:', error);
     });
 
@@ -246,12 +263,17 @@ For complex, critical, or ambiguous cases, specialist consultation is strongly r
 VetIOS Inference Console - inference-v2-lab-foundation - ${new Date().toISOString()}`;
 }
 
-async function persistReport(report: ReturnType<typeof buildInferenceConsoleReport>): Promise<void> {
+async function persistReport(
+    report: ReturnType<typeof buildInferenceConsoleReport>,
+    actor: ClinicalApiActor,
+): Promise<void> {
     const client = getSupabaseServer();
     const { data: labData } = await client
         .from('lab_reports')
         .insert({
             id: report.lab_report.report_id,
+            tenant_id: actor.tenantId,
+            user_id: actor.userId,
             inference_event_id: report.inference_event_id,
             session_id: report.session_id,
             species: report.lab_report.species,
@@ -269,6 +291,8 @@ async function persistReport(report: ReturnType<typeof buildInferenceConsoleRepo
         .from('inference_console_reports')
         .insert({
             id: report.report_id,
+            tenant_id: actor.tenantId,
+            user_id: actor.userId,
             inference_event_id: report.inference_event_id,
             session_id: report.session_id,
             patient: report.patient,

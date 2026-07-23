@@ -15,6 +15,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 import { addAskVetiosBudgetHeaders, enforceAskVetiosTokenBudget } from '@/lib/askVetios/usageBudget';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -32,6 +33,17 @@ export async function POST(req: Request) {
     const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 64 * 1024 });
     if (guard.blocked) return guard.response!;
     const { requestId, startTime } = guard;
+    const client = getSupabaseServer();
+    const auth = await resolveClinicalApiActor(req, {
+        client,
+        requiredScopes: ['rag:read'],
+    });
+    if (auth.error || !auth.actor) {
+        return withHeaders(NextResponse.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
+            { status: auth.error?.status ?? 401 },
+        ), requestId, startTime);
+    }
 
     const parsedJson = await safeJson(req);
     if (!parsedJson.ok) {
@@ -64,7 +76,8 @@ export async function POST(req: Request) {
     }
     if (parsed.data.upload_ids.length > 0) {
         const contexts = await loadUploadedDocumentContexts({
-            client: getSupabaseServer(),
+            client,
+            tenantId: auth.actor.tenantId,
             uploadIds: parsed.data.upload_ids,
         });
         if (contexts.length > 0) {
@@ -97,7 +110,11 @@ export async function POST(req: Request) {
     }
 
     const heuristic = buildHeuristicResponse(parsed.data.query);
-    const sourceIds = await resolveQuerySourceIds(parsed.data.source_ids, parsed.data.upload_ids);
+    const sourceIds = await resolveQuerySourceIds(
+        parsed.data.source_ids,
+        parsed.data.upload_ids,
+        auth.actor.tenantId,
+    );
     const rag = await resolveQueryRag({
         question: parsed.data.query,
         sourceIds,
@@ -144,7 +161,7 @@ async function resolveQueryRag(input: {
     }
 }
 
-async function resolveQuerySourceIds(sourceIds: string[], uploadIds: string[]): Promise<string[]> {
+async function resolveQuerySourceIds(sourceIds: string[], uploadIds: string[], tenantId: string): Promise<string[]> {
     const direct = new Set(sourceIds);
     if (uploadIds.length === 0) return [...direct];
 
@@ -152,6 +169,7 @@ async function resolveQuerySourceIds(sourceIds: string[], uploadIds: string[]): 
         const { data, error } = await getSupabaseServer()
             .from('upload_hashes')
             .select('rag_source_id')
+            .eq('tenant_id', tenantId)
             .in('content_hash', uploadIds);
         if (error) return [...direct];
         for (const row of data ?? []) {

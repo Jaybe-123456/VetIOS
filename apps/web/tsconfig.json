@@ -41,6 +41,9 @@
       ],
       "@vetios/graph": [
         "../../packages/graph/src/index.ts"
+      ],
+      "@vetios/gaas": [
+        "../../packages/gaas/src/index.ts"
       ]
     },
     "allowArbitraryExtensions": true

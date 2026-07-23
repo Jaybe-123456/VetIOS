@@ -51,8 +51,11 @@ export class InMemoryHITLStore implements HITLStore {
     return resolved;
   }
 
-  async listPending(): Promise<HITLInterrupt[]> {
-    return Array.from(this.store.values()).filter((i) => !i.resolved_at);
+  async listPending(tenant_id?: string): Promise<HITLInterrupt[]> {
+    return Array.from(this.store.values()).filter(
+      (interrupt) => !interrupt.resolved_at
+        && (!tenant_id || interrupt.tenant_id === tenant_id)
+    );
   }
 }
 
@@ -71,6 +74,7 @@ export class HITLManager {
     const interrupt: HITLInterrupt = {
       interrupt_id: `hitl_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
       agent_run_id: run.run_id,
+      tenant_id: run.tenant_id,
       reason,
       pending_tool,
       context_snapshot: {
@@ -101,6 +105,10 @@ export class HITLManager {
     modified_input?: Record<string, unknown>
   ): Promise<HITLInterrupt> {
     return this.store.resolve(interrupt_id, resolution, resolved_by, modified_input);
+  }
+
+  async get(interrupt_id: string): Promise<HITLInterrupt | null> {
+    return this.store.get(interrupt_id);
   }
 
   async getPending(tenant_id?: string): Promise<HITLInterrupt[]> {

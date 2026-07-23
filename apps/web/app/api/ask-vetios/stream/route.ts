@@ -1,6 +1,8 @@
 import { POST as runAskVetios } from '../route';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { buildHeuristicResponse } from '@/lib/askVetios/heuristicResponse';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 import {
     buildAskVetiosSpeculativeDraft,
     shouldEmitAskVetiosSpeculativeDraft,
@@ -28,6 +30,16 @@ export async function POST(req: Request) {
     const finalRequest = req.clone();
     const guard = await apiGuard(guardRequest, { maxRequests: 30, windowMs: 60_000, maxBodySize: 32 * 1024 });
     if (guard.blocked) return guard.response!;
+    const auth = await resolveClinicalApiActor(req, {
+        client: getSupabaseServer(),
+        requiredScopes: ['rag:read'],
+    });
+    if (auth.error || !auth.actor) {
+        return Response.json(
+            { error: auth.error?.message ?? 'Unauthorized', request_id: guard.requestId },
+            { status: auth.error?.status ?? 401 },
+        );
+    }
 
     const stream = new ReadableStream<Uint8Array>({
         start(controller) {

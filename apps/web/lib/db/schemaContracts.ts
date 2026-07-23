@@ -1293,6 +1293,7 @@ export const OAUTH_ACCESS_TOKENS = {
         ip_hash: 'ip_hash',
         user_agent_hash: 'user_agent_hash',
         token_binding_method: 'token_binding_method',
+        mtls_cert_thumbprint: 'mtls_cert_thumbprint',
         dpop_jwk_thumbprint: 'dpop_jwk_thumbprint',
         dpop_public_jwk: 'dpop_public_jwk',
         dpop_bound_at: 'dpop_bound_at',

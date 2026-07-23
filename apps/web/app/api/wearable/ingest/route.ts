@@ -23,6 +23,9 @@
 import { NextResponse } from 'next/server';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
+import { safeJson } from '@/lib/http/safeJson';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 import { getPassiveVitalConnector } from '@/lib/wearable/passiveVitalConnector';
 import type { DeviceType } from '@/lib/wearable/passiveVitalConnector';
 
@@ -37,9 +40,40 @@ export async function POST(req: Request) {
   const { requestId, startTime } = guard;
 
   try {
-    const body = await req.json() as Record<string, unknown>;
+    const auth = await resolveClinicalApiActor(req, {
+      client: getSupabaseServer(),
+      requiredScopes: ['signals:ingest'],
+    });
+    if (auth.error || !auth.actor) {
+      const response = NextResponse.json(
+        { data: null, error: { code: 'unauthorized', message: auth.error?.message ?? 'Unauthorized' } },
+        { status: auth.error?.status ?? 401 },
+      );
+      withRequestHeaders(response.headers, requestId, startTime);
+      return response;
+    }
 
-    const tenantId = typeof body.tenant_id === 'string' ? body.tenant_id : null;
+    const json = await safeJson<Record<string, unknown>>(req);
+    if (!json.ok) {
+      const response = NextResponse.json(
+        { data: null, error: { code: 'bad_request', message: json.error } },
+        { status: 400 },
+      );
+      withRequestHeaders(response.headers, requestId, startTime);
+      return response;
+    }
+    const body = json.data;
+
+    const requestedTenantId = typeof body.tenant_id === 'string' ? body.tenant_id : null;
+    if (requestedTenantId && requestedTenantId !== auth.actor.tenantId) {
+      const response = NextResponse.json(
+        { data: null, error: { code: 'forbidden', message: 'Tenant mismatch' } },
+        { status: 403 },
+      );
+      withRequestHeaders(response.headers, requestId, startTime);
+      return response;
+    }
+    const tenantId = auth.actor.tenantId;
     const patientId = typeof body.patient_id === 'string' ? body.patient_id : null;
     const deviceId = typeof body.device_id === 'string' ? body.device_id : null;
     const deviceType = typeof body.device_type === 'string' && VALID_DEVICE_TYPES.has(body.device_type as DeviceType)

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { enforceVetiosClinicalActorGate } from '@/lib/auth/authTrustRouteGate';
+import type { ClinicalApiActor } from '@/lib/auth/machineAuth';
 import {
     SupabaseWriteError,
     asRecord as asCoreRecord,
@@ -175,6 +177,35 @@ export async function POST(req: Request) {
         );
     }
 
+    const requestOutcomePayload = asRecord(body.outcome.payload);
+    const labelResolution = resolveOutcomeLabelType(auth.actor, requestOutcomePayload);
+    if (!labelResolution.ok) {
+        return NextResponse.json(
+            { error: labelResolution.code, detail: labelResolution.message, request_id: requestId },
+            { status: labelResolution.status },
+        );
+    }
+    const labelType = labelResolution.labelType;
+
+    const trustGate = await enforceVetiosClinicalActorGate({
+        client: supabase as unknown as Parameters<typeof enforceVetiosClinicalActorGate>[0]['client'],
+        requestId,
+        actor: auth.actor,
+        actionKey: 'outcome.confirm.write',
+        resource: {
+            type: 'ai_inference_event',
+            id: body.inference_event_id,
+            tenantId,
+        },
+        evidence: {
+            label_type: labelType,
+            outcome_type: body.outcome.type,
+        },
+    });
+    if (!trustGate.ok) {
+        return trustGate.response;
+    }
+
     const differentials = readDifferentials(inferenceEvent as Record<string, unknown>);
     const actualLabel = body.outcome.payload.label;
     const outputPayload = asRecord((inferenceEvent as Record<string, unknown>).output_payload);
@@ -186,9 +217,9 @@ export async function POST(req: Request) {
     const inputSignature = asRecord((inferenceEvent as Record<string, unknown>).input_signature);
     const diagnosticEvidenceSnapshot = buildDiagnosticEvidenceSnapshot(inputSignature);
     const learningConsent = normalizeLearningConsent(body.learning_consent);
-    const requestOutcomePayload = asRecord(body.outcome.payload);
     const outcomePayload = {
         ...body.outcome.payload,
+        label_type: labelType,
         label: actualLabel,
         actual_label: actualLabel,
         confirmed_diagnosis: readText(requestOutcomePayload.confirmed_diagnosis) ?? actualLabel,
@@ -214,7 +245,7 @@ export async function POST(req: Request) {
             outcome_type: body.outcome.type,
             outcome_payload: outcomePayload,
             outcome_timestamp: body.outcome.timestamp,
-            label_type: readText(requestOutcomePayload.label_type) ?? 'expert_reviewed',
+            label_type: labelType,
             actual_label: actualLabel,
             actual_confidence: body.outcome.payload.confidence,
             calibration_delta: calibrationDelta,
@@ -344,7 +375,7 @@ export async function POST(req: Request) {
         inferenceEventId: body.inference_event_id,
         outcomeEventId: persistedOutcomeId,
         confirmedDiagnosis: actualLabel,
-        labelType: readText(requestOutcomePayload.label_type) ?? 'expert_reviewed',
+        labelType,
         labeledAt: body.outcome.timestamp,
         patientMetadata: clinicalCase?.patient_metadata ?? asRecord(inputSignature.metadata),
         latestInputSignature: clinicalCase?.latest_input_signature ?? inputSignature,
@@ -1140,6 +1171,73 @@ function readUuid(value: unknown): string | null {
     return text && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text)
         ? text
         : null;
+}
+
+type OutcomeLabelType = 'inferred_only' | 'expert_reviewed' | 'lab_confirmed';
+
+function resolveOutcomeLabelType(
+    actor: ClinicalApiActor,
+    payload: Record<string, unknown>,
+):
+    | { ok: true; labelType: OutcomeLabelType }
+    | { ok: false; status: number; code: string; message: string } {
+    const requested = readText(payload.label_type)?.toLowerCase() ?? null;
+    if (requested && !['inferred_only', 'expert_reviewed', 'lab_confirmed'].includes(requested)) {
+        return {
+            ok: false,
+            status: 400,
+            code: 'invalid_label_type',
+            message: 'label_type must be inferred_only, expert_reviewed, or lab_confirmed.',
+        };
+    }
+
+    if (actor.authMode === 'session') {
+        if (actor.role !== 'clinician' && actor.role !== 'admin') {
+            return {
+                ok: false,
+                status: 403,
+                code: 'clinical_role_required',
+                message: 'Only clinician or admin sessions may confirm outcomes.',
+            };
+        }
+        return {
+            ok: true,
+            labelType: (requested as OutcomeLabelType | null) ?? 'expert_reviewed',
+        };
+    }
+
+    if (requested === 'expert_reviewed') {
+        return {
+            ok: false,
+            status: 403,
+            code: 'expert_review_requires_clinician_session',
+            message: 'Machine identities cannot assert an expert-reviewed label.',
+        };
+    }
+
+    if (requested === 'lab_confirmed' && !hasMachineLabEvidence(payload)) {
+        return {
+            ok: false,
+            status: 422,
+            code: 'lab_confirmation_evidence_required',
+            message: 'Machine lab-confirmed outcomes require a lab result reference or explicit laboratory evidence.',
+        };
+    }
+
+    return {
+        ok: true,
+        labelType: requested === 'lab_confirmed' ? 'lab_confirmed' : 'inferred_only',
+    };
+}
+
+function hasMachineLabEvidence(payload: Record<string, unknown>): boolean {
+    return Boolean(
+        readText(payload.lab_result_id)
+        || readText(payload.laboratory_result_id)
+        || readText(payload.lab_report_hash)
+        || payload.lab_confirmed === true
+        || Object.keys(asRecord(payload.laboratory_evidence)).length > 0,
+    );
 }
 
 function readStringArray(...values: unknown[]): string[] {

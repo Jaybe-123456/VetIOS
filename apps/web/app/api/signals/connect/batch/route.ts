@@ -71,20 +71,19 @@ export async function POST(req: Request) {
         client: supabase,
         requiredScopes: ['signals:connect'],
     });
-    const connectorKey = req.headers.get('x-vetios-connector-key');
-    const expectedConnectorKey = process.env.PASSIVE_CONNECTOR_INGEST_KEY?.trim() ?? '';
-    const hasLegacyConnectorAccess = expectedConnectorKey.length > 0 && connectorKey === expectedConnectorKey;
-    const tenantId = auth.actor?.tenantId
-        ?? body.connector_batch.tenant_id
-        ?? process.env.VETIOS_DEV_TENANT_ID
-        ?? null;
-
-    if (!tenantId || (!auth.actor && !hasLegacyConnectorAccess)) {
+    if (auth.error || !auth.actor) {
         return NextResponse.json(
             { error: auth.error?.message ?? 'Unauthorized', request_id: requestId },
             { status: auth.error?.status ?? 401 },
         );
     }
+    if (body.connector_batch.tenant_id && body.connector_batch.tenant_id !== auth.actor.tenantId) {
+        return NextResponse.json(
+            { error: 'Connector batch tenant does not match the authenticated tenant.', request_id: requestId },
+            { status: 403 },
+        );
+    }
+    const tenantId = auth.actor.tenantId;
 
     const repo = createOutcomeNetworkRepository(supabase);
     const prepared: PreparedBatchEvent[] = [];
@@ -99,7 +98,6 @@ export async function POST(req: Request) {
                 repo,
                 req,
                 actor: auth.actor,
-                hasLegacyConnectorAccess,
                 tenantId,
                 requestId: eventRequestId,
                 batchId: body.connector_batch.batch_id ?? null,
@@ -174,8 +172,7 @@ async function prepareBatchEvent(input: {
     client: SupabaseClient;
     repo: OutcomeNetworkRepository;
     req: Request;
-    actor: ClinicalApiActor | null;
-    hasLegacyConnectorAccess: boolean;
+    actor: ClinicalApiActor;
     tenantId: string;
     requestId: string;
     batchId: string | null;
@@ -191,16 +188,14 @@ async function prepareBatchEvent(input: {
         payload: connector.payload,
     });
 
-    if (input.actor) {
-        const connectorAccess = validateConnectorInstallationAccess({
-            actor: input.actor,
-            connectorType: workflow.connectorType,
-            vendorName: connector.vendor_name ?? null,
-            vendorAccountRef: connector.vendor_account_ref ?? null,
-        });
-        if (!connectorAccess.ok) {
-            throw new Error(connectorAccess.message);
-        }
+    const connectorAccess = validateConnectorInstallationAccess({
+        actor: input.actor,
+        connectorType: workflow.connectorType,
+        vendorName: connector.vendor_name ?? null,
+        vendorAccountRef: connector.vendor_account_ref ?? null,
+    });
+    if (!connectorAccess.ok) {
+        throw new Error(connectorAccess.message);
     }
 
     const normalized = normalizePassiveConnectorPayload({
@@ -258,9 +253,8 @@ async function prepareBatchEvent(input: {
     let outboxEventId: string | null = null;
     if (connector.auto_reconcile !== false) {
         const deferReconcile = shouldDeferSignalReconcile(
-            input.actor?.authMode ?? null,
+            input.actor.authMode,
             input.req,
-            input.hasLegacyConnectorAccess,
         );
         if (deferReconcile) {
             if (signalEvent.ingestion_status !== 'attached') {
@@ -398,15 +392,13 @@ function mergeBatchConnectorEvent(
 function shouldDeferSignalReconcile(
     authMode: 'session' | 'dev_bypass' | 'service_account' | 'connector_installation' | 'oauth_client' | null,
     req: Request,
-    hasLegacyConnectorAccess: boolean,
 ): boolean {
     const requestedMode = req.headers.get('x-vetios-event-mode')?.trim().toLowerCase();
     if (requestedMode === 'async') {
         return true;
     }
 
-    return hasLegacyConnectorAccess
-        || authMode === 'service_account'
+    return authMode === 'service_account'
         || authMode === 'connector_installation'
         || authMode === 'oauth_client';
 }

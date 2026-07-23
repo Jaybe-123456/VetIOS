@@ -129,10 +129,23 @@ export async function handleResumeAgent(
   req: ResumeAgentRequest,
   runtime: AgentRuntime,
   hitlManager: HITLManager,
-  runStore: Map<string, import("../types/agent").AgentRun>
+  runStore: Map<string, import("../types/agent").AgentRun>,
+  tenant_id?: string,
 ): Promise<AgentResumeResponse> {
   const run = runStore.get(req.run_id);
   if (!run) throw new Error(`Run ${req.run_id} not found`);
+  if (tenant_id && run.tenant_id !== tenant_id) {
+    throw new Error(`Run ${req.run_id} not found`);
+  }
+
+  const interrupt = await hitlManager.get(req.interrupt_id);
+  if (
+    !interrupt
+    || interrupt.agent_run_id !== run.run_id
+    || (tenant_id && interrupt.tenant_id !== tenant_id)
+  ) {
+    throw new Error(`Interrupt ${req.interrupt_id} not found`);
+  }
 
   await hitlManager.resolve(
     req.interrupt_id,
@@ -154,9 +167,10 @@ export async function handleResumeAgent(
 
 // ─── Route: GET /api/agent/interrupts ────────────────────────
 export async function handleListInterrupts(
-  hitlManager: HITLManager
+  hitlManager: HITLManager,
+  tenant_id?: string,
 ): Promise<{ interrupts: ReturnType<typeof buildDecisionCard>[]; count: number }> {
-  const pending = await hitlManager.getPending();
+  const pending = await hitlManager.getPending(tenant_id);
   return {
     interrupts: pending.map(buildDecisionCard),
     count: pending.length,

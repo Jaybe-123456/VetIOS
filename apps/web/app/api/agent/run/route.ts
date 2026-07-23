@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { getGaaSPlatform } from '@/lib/gaas';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 import { handleRunAgent, type RunAgentRequest } from '@vetios/gaas';
 
 export const runtime = 'nodejs';
@@ -25,9 +27,17 @@ export async function POST(req: Request) {
     const { requestId, startTime } = guard;
 
     try {
+        const auth = await resolveClinicalApiActor(req, {
+            client: getSupabaseServer(),
+            requiredScopes: ['inference:write'],
+        });
+        if (auth.error || !auth.actor) {
+            return authError(auth.error?.status ?? 401, requestId, startTime);
+        }
+
         const body = (await req.json()) as RunAgentRequest;
 
-        if (!body.tenant_id || !body.agent_role || !body.patient_context) {
+        if (!body.agent_role || !body.patient_context) {
             const res = NextResponse.json(
                 {
                     data: null,
@@ -35,7 +45,7 @@ export async function POST(req: Request) {
                     error: {
                         code: 'bad_request',
                         message:
-                            'Missing required fields: tenant_id, agent_role, patient_context',
+                            'Missing required fields: agent_role, patient_context',
                     },
                 },
                 { status: 400 }
@@ -44,8 +54,17 @@ export async function POST(req: Request) {
             return res;
         }
 
+        if (body.tenant_id && body.tenant_id !== auth.actor.tenantId) {
+            return authError(403, requestId, startTime, 'Tenant mismatch');
+        }
+
+        const tenantBoundBody: RunAgentRequest = {
+            ...body,
+            tenant_id: auth.actor.tenantId,
+        };
+
         const platform = getGaaSPlatform();
-        const result = await handleRunAgent(body, platform.runtime);
+        const result = await handleRunAgent(tenantBoundBody, platform.runtime);
 
         // Persist in the in-memory run store for resume operations
         platform.runStore.set(result.run_id, {
@@ -70,11 +89,11 @@ export async function POST(req: Request) {
                 require_human_approval_for: [],
                 safe_terminal_states: [],
             },
-            tenant_id: body.tenant_id,
+            tenant_id: auth.actor.tenantId,
         });
 
         platform.usageMeter.record({
-            tenant_id: body.tenant_id,
+            tenant_id: auth.actor.tenantId,
             event_type: 'agent_run',
             agent_role: body.agent_role,
             timestamp: new Date().toISOString(),
@@ -83,7 +102,7 @@ export async function POST(req: Request) {
         const res = NextResponse.json({
             data: result,
             meta: {
-                tenant_id: body.tenant_id,
+                tenant_id: auth.actor.tenantId,
                 timestamp: new Date().toISOString(),
                 request_id: requestId,
             },
@@ -110,4 +129,18 @@ export async function POST(req: Request) {
         withRequestHeaders(res.headers, requestId, startTime);
         return res;
     }
+}
+
+function authError(
+    status: number,
+    requestId: string,
+    startTime: number,
+    message = 'Unauthorized',
+) {
+    const response = NextResponse.json(
+        { data: null, error: { code: status === 403 ? 'forbidden' : 'unauthorized', message } },
+        { status },
+    );
+    withRequestHeaders(response.headers, requestId, startTime);
+    return response;
 }

@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { apiGuard } from '@/lib/http/apiGuard';
 import { withRequestHeaders } from '@/lib/http/requestId';
 import { getGaaSPlatform } from '@/lib/gaas';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 import { handleResumeAgent, type ResumeAgentRequest } from '@vetios/gaas';
 
 export const runtime = 'nodejs';
@@ -25,9 +27,19 @@ export async function POST(req: Request) {
     const { requestId, startTime } = guard;
 
     try {
+        const auth = await resolveClinicalApiActor(req, { client: getSupabaseServer() });
+        if (auth.error || !auth.actor || auth.actor.authMode !== 'session' || !auth.actor.userId) {
+            const response = NextResponse.json(
+                { data: null, error: { code: 'unauthorized', message: 'A clinician session is required.' } },
+                { status: 401 },
+            );
+            withRequestHeaders(response.headers, requestId, startTime);
+            return response;
+        }
+
         const body = (await req.json()) as ResumeAgentRequest;
 
-        if (!body.run_id || !body.interrupt_id || !body.resolution || !body.resolved_by) {
+        if (!body.run_id || !body.interrupt_id || !body.resolution) {
             const res = NextResponse.json(
                 {
                     data: null,
@@ -35,7 +47,7 @@ export async function POST(req: Request) {
                     error: {
                         code: 'bad_request',
                         message:
-                            'Missing required fields: run_id, interrupt_id, resolution, resolved_by',
+                            'Missing required fields: run_id, interrupt_id, resolution',
                     },
                 },
                 { status: 400 }
@@ -46,10 +58,11 @@ export async function POST(req: Request) {
 
         const platform = getGaaSPlatform();
         const result = await handleResumeAgent(
-            body,
+            { ...body, resolved_by: auth.actor.userId },
             platform.runtime,
             platform.hitlManager,
-            platform.runStore
+            platform.runStore,
+            auth.actor.tenantId,
         );
 
         const res = NextResponse.json({
@@ -57,6 +70,7 @@ export async function POST(req: Request) {
             meta: {
                 timestamp: new Date().toISOString(),
                 request_id: requestId,
+                tenant_id: auth.actor.tenantId,
             },
             error: null,
         });

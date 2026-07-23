@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { getAiProviderApiKey, getAiProviderBaseUrl } from '../../../../lib/ai/config';
 import { detectSpeciesFromTexts } from '@/lib/askVetios/context';
+import { resolveClinicalApiActor } from '@/lib/auth/machineAuth';
+import { apiGuard } from '@/lib/http/apiGuard';
+import { safeJson } from '@/lib/http/safeJson';
+import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
@@ -23,17 +26,6 @@ interface StoredCaseVector {
     diagnosis: string | null;
     outcome_confirmed: boolean;
     similarity: number;
-}
-
-function getSupabaseServerClient() {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!url || !key) {
-        throw new Error('Supabase server credentials are not configured.');
-    }
-
-    return createClient(url, key, { auth: { persistSession: false } });
 }
 
 async function embedQuery(text: string) {
@@ -71,8 +63,24 @@ function buildRetrievalSummary(cases: StoredCaseVector[], species: string) {
 }
 
 export async function POST(req: Request) {
+    const guard = await apiGuard(req, { maxRequests: 30, windowMs: 60_000, maxBodySize: 64 * 1024 });
+    if (guard.blocked) return guard.response!;
+
     try {
-        const parsed = RequestSchema.safeParse(await req.json());
+        const supabase = getSupabaseServer();
+        const auth = await resolveClinicalApiActor(req, {
+            client: supabase,
+            requiredScopes: ['rag:read'],
+        });
+        if (auth.error || !auth.actor) {
+            return NextResponse.json(
+                { error: auth.error?.message ?? 'Unauthorized', request_id: guard.requestId },
+                { status: auth.error?.status ?? 401 },
+            );
+        }
+
+        const json = await safeJson(req);
+        const parsed = RequestSchema.safeParse(json.ok ? json.data : null);
         if (!parsed.success) {
             return NextResponse.json({ error: 'Invalid payload', details: parsed.error.flatten() }, { status: 400 });
         }
@@ -88,9 +96,9 @@ export async function POST(req: Request) {
             return NextResponse.json({ species, retrievalSummary: `No similar ${species} cases were retrieved from the VetIOS network.`, cases: [] });
         }
 
-        const supabase = getSupabaseServerClient();
-        const { data, error } = await supabase.rpc('match_vet_case_vectors', {
+        const { data, error } = await supabase.rpc('match_tenant_vet_case_vectors', {
             query_embedding: `[${embedding.join(',')}]`,
+            filter_tenant: auth.actor.tenantId,
             match_threshold: 0.72,
             match_count: 5,
             filter_species: species,
@@ -116,6 +124,7 @@ export async function POST(req: Request) {
 
         return NextResponse.json({
             species,
+            tenant_id: auth.actor.tenantId,
             retrievalSummary: buildRetrievalSummary(data as StoredCaseVector[] ?? [], species),
             cases,
         });

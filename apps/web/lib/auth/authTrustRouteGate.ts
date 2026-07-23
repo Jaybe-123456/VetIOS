@@ -382,9 +382,9 @@ export function buildAuthTrustSubjectFromClinicalActor(actor: ClinicalApiActor):
         subjectRef: actor.userId,
         userId: actor.userId,
         credentialId: null,
-        role: null,
+        role: actor.role ?? 'clinician',
         grantedScopes: actor.scopes,
-        assuranceLevel: 'session',
+        assuranceLevel: actor.assuranceLevel,
     };
 }
 

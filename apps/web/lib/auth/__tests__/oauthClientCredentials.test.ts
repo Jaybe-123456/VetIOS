@@ -256,6 +256,7 @@ describe('oauth client credentials foundation', () => {
         process.env.VETIOS_MTLS_PROXY_SECRET = 'trusted-proxy-secret';
         const memory = createMemorySupabase();
         const allowedThumbprint = 'a'.repeat(64);
+        const otherAllowedThumbprint = 'b'.repeat(64);
         const created = await createOAuthClient({
             client: memory.client,
             tenantId: 'tenant_1',
@@ -263,7 +264,7 @@ describe('oauth client credentials foundation', () => {
             clientName: 'mTLS lab bridge',
             allowedScopes: ['signals:ingest'],
             mtlsRequired: true,
-            mtlsCertThumbprints: [allowedThumbprint],
+            mtlsCertThumbprints: [allowedThumbprint, otherAllowedThumbprint],
         });
 
         try {
@@ -303,9 +304,47 @@ describe('oauth client credentials foundation', () => {
             });
 
             expect(issued.accessToken).toMatch(/^vetios_at_/);
+            expect(issued.token.token_binding_method).toBe('mtls');
+            expect(issued.token.mtls_cert_thumbprint).toBe(allowedThumbprint);
             const storedClient = memory.rows.oauth_clients.find((row) => row.id === created.oauthClient.id);
             expect(storedClient?.mtls_last_thumbprint).toBe(allowedThumbprint);
             expect(storedClient?.mtls_last_seen_at).toEqual(expect.any(String));
+
+            const missingCertificate = await resolveOAuthClientCredentialsPrincipal(
+                memory.client,
+                new Request('https://vetios.test/api/signals/connect', {
+                    headers: { authorization: `Bearer ${issued.accessToken}` },
+                }),
+                { requiredScopes: ['signals:ingest'] },
+            );
+            expect(missingCertificate.error).toMatchObject({ status: 401 });
+
+            const wrongCertificate = await resolveOAuthClientCredentialsPrincipal(
+                memory.client,
+                new Request('https://vetios.test/api/signals/connect', {
+                    headers: {
+                        authorization: `Bearer ${issued.accessToken}`,
+                        'x-vetios-mtls-proxy-secret': 'trusted-proxy-secret',
+                        'x-vetios-client-cert-sha256': otherAllowedThumbprint,
+                    },
+                }),
+                { requiredScopes: ['signals:ingest'] },
+            );
+            expect(wrongCertificate.error).toMatchObject({ status: 401 });
+
+            const matchingCertificate = await resolveOAuthClientCredentialsPrincipal(
+                memory.client,
+                new Request('https://vetios.test/api/signals/connect', {
+                    headers: {
+                        authorization: `Bearer ${issued.accessToken}`,
+                        'x-vetios-mtls-proxy-secret': 'trusted-proxy-secret',
+                        'x-vetios-client-cert-sha256': allowedThumbprint,
+                    },
+                }),
+                { requiredScopes: ['signals:ingest'] },
+            );
+            expect(matchingCertificate.error).toBeNull();
+            expect(matchingCertificate.principal?.oauthClientId).toBe(created.oauthClient.id);
         } finally {
             if (previousProxySecret === undefined) {
                 delete process.env.VETIOS_MTLS_PROXY_SECRET;
