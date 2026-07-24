@@ -741,6 +741,15 @@ async function main() {
                 role: 'champion',
                 lifecycle: 'production',
             });
+            championRun.safety_metrics = {
+                ...championRun.safety_metrics,
+                macro_f1: 0.91,
+                recall_critical: 0.93,
+                false_negative_critical_rate: 0.05,
+                dangerous_false_reassurance_rate: 0.03,
+                abstain_accuracy: 0.87,
+                contradiction_detection_rate: 0.9,
+            };
 
             return {
                 tenantId,

@@ -188,9 +188,13 @@ export function buildFederationNodeProtocolAssessment(
 
 export function summarizeFederationNodeProtocolEvents(
     rows: FederationNodeRuntimeEventRow[],
+    now = new Date(),
 ): FederationNodeProtocolSummary {
     const latestRows = latestNodeRows(rows);
-    const assessments = latestRows.map((row) => buildFederationNodeProtocolAssessment(row));
+    const assessments = latestRows.map((row) => buildFederationNodeProtocolAssessment({
+        ...row,
+        now,
+    }));
     const blockerCounts = new Map<string, number>();
 
     for (const assessment of assessments) {

@@ -3,12 +3,12 @@ import { SearchLandingPage } from '@/components/seo/SearchLandingPage';
 
 export const metadata: Metadata = {
     title: 'Veterinary Diagnostic AI',
-    description: 'AI-assisted veterinary differential diagnosis with graph priors, CIRE reliability signals, structured inputs, and outcome feedback.',
+    description: 'AI-assisted veterinary differential diagnosis with graph priors, CIRE runtime signals, structured inputs, and outcome feedback.',
     alternates: { canonical: '/veterinary-diagnostic-ai' },
     keywords: ['veterinary diagnostic AI', 'AI differential diagnosis', 'veterinary diagnosis software', 'VetIOS'],
     openGraph: {
         title: 'Veterinary Diagnostic AI | VetIOS',
-        description: 'AI-assisted veterinary differential diagnosis with graph priors, CIRE reliability signals, structured inputs, and outcome feedback.',
+        description: 'AI-assisted veterinary differential diagnosis with graph priors, CIRE runtime signals, structured inputs, and outcome feedback.',
         url: '/veterinary-diagnostic-ai',
         type: 'website',
         images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'VetIOS veterinary diagnostic AI' }],
@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     twitter: {
         card: 'summary_large_image',
         title: 'Veterinary Diagnostic AI | VetIOS',
-        description: 'Veterinary differential diagnosis with graph priors, CIRE reliability signals, structured inputs, and outcome feedback.',
+        description: 'Veterinary differential diagnosis with graph priors, CIRE runtime signals, structured inputs, and outcome feedback.',
         images: ['/opengraph-image'],
     },
 };
@@ -25,8 +25,8 @@ export default function VeterinaryDiagnosticAIPage() {
     return (
         <SearchLandingPage
             eyebrow="Diagnostic AI"
-            title="Veterinary diagnostic AI with reliability signals."
-            description="VetIOS supports veterinary differential diagnosis by combining structured clinical input, graph priors, model output, CIRE reliability signals, and confirmed outcome feedback."
+            title="Veterinary diagnostic AI with governed runtime signals."
+            description="VetIOS supports veterinary differential diagnosis by combining structured clinical input, graph priors, deterministic inference, CIRE publication signals, and confirmed outcome feedback."
             canonicalPath="/veterinary-diagnostic-ai"
             keywords={['veterinary diagnostic AI', 'differential diagnosis', 'veterinary diagnosis software', 'CIRE']}
             sections={[
@@ -36,9 +36,9 @@ export default function VeterinaryDiagnosticAIPage() {
                     points: ['Species-specific context', 'Symptom-driven graph priors', 'Confidence scores for every result'],
                 },
                 {
-                    title: 'Reliability estimation',
-                    body: 'CIRE signals give operators a structured way to see reliability pressure and safety state alongside model output.',
-                    points: ['phi_hat reliability signal', 'Calibration pressure score', 'Safety state in the response'],
+                    title: 'Runtime publication controls',
+                    body: 'CIRE signals show differential concentration, perturbation pressure, and publication state alongside inference output.',
+                    points: ['phi_hat concentration signal', 'Runtime perturbation score', 'Safety state in the response'],
                 },
                 {
                     title: 'Closed-loop validation',
@@ -49,7 +49,7 @@ export default function VeterinaryDiagnosticAIPage() {
             faqs={[
                 {
                     question: 'How does VetIOS rank veterinary differentials?',
-                    answer: 'VetIOS combines structured clinical inputs with graph priors and model output, then returns ranked differential labels with confidence and reliability metadata.',
+                    answer: 'VetIOS combines structured clinical inputs with graph priors and deterministic inference, then returns ranked differential labels with confidence and runtime publication metadata.',
                 },
                 {
                     question: 'What species does VetIOS support?',
@@ -57,7 +57,7 @@ export default function VeterinaryDiagnosticAIPage() {
                 },
                 {
                     question: 'Can diagnostic AI be used without outcome feedback?',
-                    answer: 'It can be used for decision support, but the strongest reliability gains come when confirmed outcomes are linked back to inference events.',
+                    answer: 'It is decision support only. Confirmed outcomes are required to measure calibration and clinical performance.',
                 },
             ]}
         />

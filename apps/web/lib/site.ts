@@ -3,16 +3,21 @@ import { PUBLIC_SEO_PATHS } from '@/lib/seo/publicPages';
 const DEFAULT_SITE_ORIGIN = 'https://www.vetios.tech';
 const PREVIEW_HOST_SUFFIXES = ['.vercel.app'];
 const PUBLIC_AUTH_PATH_PREFIXES = ['/login', '/signup', '/forgot-password', '/reset-password', '/verify-email', '/auth/callback'];
-const PUBLIC_MARKETING_PATHS = [...PUBLIC_SEO_PATHS, '/ask-vetios'];
-const PUBLIC_PLATFORM_PATHS = [
-    '/platform/cire-standard',
+const DETAILED_PLATFORM_PATHS = [
     '/platform/developers',
     '/platform/edge-box',
-    '/platform/model-cards',
     '/platform/network-learning',
     '/platform/passive-signals',
     '/platform/petpass',
     '/platform/population-intelligence',
+];
+const PUBLIC_MARKETING_PATHS = [
+    ...PUBLIC_SEO_PATHS.filter((path) =>
+        !DETAILED_PLATFORM_PATHS.some((detailPath) =>
+            path === detailPath || path.startsWith(`${detailPath}/`),
+        ),
+    ),
+    '/ask-vetios',
 ];
 const PUBLIC_METADATA_PATHS = [
     '/robots.txt',
@@ -77,7 +82,8 @@ export function isPublicMarketingPath(pathname: string): boolean {
 }
 
 export function isPublicPlatformPath(pathname: string): boolean {
-    return PUBLIC_PLATFORM_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+    return shouldExposePublicPlatformDetails()
+        && DETAILED_PLATFORM_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
 export function isPublicMetadataPath(pathname: string): boolean {
@@ -95,7 +101,7 @@ export function isShelllessPublicPath(pathname: string): boolean {
     return isPublicAuthPath(pathname)
         || PUBLIC_SEO_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`))
         || pathname === '/ask-vetios'
-        || isPublicPlatformPath(pathname);
+        || DETAILED_PLATFORM_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
 export function shouldRedirectPreviewAuthHost(hostname: string, pathname: string): boolean {

@@ -3,7 +3,7 @@
 > AI-Native Veterinary Intelligence Infrastructure
 
 [![CI](https://img.shields.io/github/actions/workflow/status/Jaybe-123456/VetIOS/ci.yml?branch=main&label=ci&style=flat-square)](https://github.com/Jaybe-123456/VetIOS/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![License: Proprietary](https://img.shields.io/badge/license-proprietary-555?style=flat-square)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-20.x-339933?logo=node.js&logoColor=white&style=flat-square)](.nvmrc)
 [![pnpm](https://img.shields.io/badge/pnpm-9.14.4-F69220?logo=pnpm&logoColor=white&style=flat-square)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-87%25-3178C6?logo=typescript&logoColor=white&style=flat-square)](package.json)
@@ -27,7 +27,7 @@ Public links:
 ## Table of Contents
 
 - [Why VetIOS?](#why-vetios)
-- [CIRE Open Standard](#cire-open-standard)
+- [CIRE Public Specification](#cire-public-specification)
 - [Architecture](#architecture)
 - [Decision Rails](#decision-rails)
 - [Strategic Infrastructure Rails](#strategic-infrastructure-rails)
@@ -52,9 +52,9 @@ Public links:
 
 VetIOS turns every structured veterinary encounter into an auditable learning loop: inference creates a probabilistic hypothesis, outcomes ground it in reality, and simulations stress-test the next version before failure reaches production.
 
-## CIRE Open Standard
+## CIRE Public Specification
 
-VetIOS publishes the Clinical Inference Reliability Engine (CIRE) as an open reliability specification for veterinary clinical AI. CIRE defines `phi_hat`, input impairment, rolling drift, volatility, CPS safety bands, and the minimum event lineage needed to connect inference, review, outcome confirmation, and calibration.
+VetIOS publishes the Clinical Inference Reliability Engine (CIRE) methodology as a public runtime telemetry and conformance specification for veterinary clinical AI. CIRE defines `phi_hat`, input impairment, rolling drift, volatility, CPS publication bands, and the minimum event lineage needed to connect inference, review, outcome confirmation, and calibration. CIRE signals do not establish diagnostic correctness or clinical reliability without outcome-linked and external validation. The repository and reference implementation remain governed by the proprietary VetIOS licence unless separate written terms are provided.
 
 The strategy is CUDA-like but more precise: CIRE is the free scoring language and reference contract; VetIOS captures value in the managed infrastructure, outcome-confirmed data graph, AMR feeds, governance APIs, and partner-node workflows that run the standard at production quality.
 
@@ -113,7 +113,7 @@ The platform favors structured schemas over free text, append-only event logs ov
 
 ## Decision Rails
 
-VetIOS Decision Rails v1 is the cross-module operating packet that turns the platform from separate features into one clinical infrastructure control plane. `GET /api/decision-rails` reads the tenant's inference anchor, CIRE reliability packet, gate decision, review queue, outcome linkage, ontology coverage, federation runtime, workflow integration, specialist review, AMR surveillance, AI security, and regulatory claim evidence, then returns one read-only decision posture.
+VetIOS Decision Rails v1 is the cross-module operating packet that turns the platform from separate features into one clinical infrastructure control plane. `GET /api/decision-rails` reads the tenant's inference anchor, CIRE runtime packet, gate decision, review queue, outcome linkage, ontology coverage, federation runtime, workflow integration, specialist review, AMR surveillance, AI security, and regulatory claim evidence, then returns one read-only decision posture.
 
 The packet answers four operational questions:
 
@@ -131,7 +131,7 @@ VetIOS should become the veterinary and One Health infrastructure substrate, not
 `GET /api/infrastructure/strategic-rails` returns a protected, read-only rail map that connects the current modules to the operating thesis:
 
 - daily clinical workflow embed;
-- clinical inference and CIRE reliability;
+- clinical inference, CIRE runtime integrity, and outcome-linked reliability evidence;
 - outcome-confirmed learning;
 - global One Health ontology;
 - retrieval and citation quality;
@@ -171,6 +171,28 @@ vetios-federation-node round-proof \
 ```
 
 Round-proof mode emits sanitized accepted-update submissions, participant audits, source digests, mask commitments, encrypted unmask-share evidence, aggregate materialization evidence, and a coordinator artifact input bundle. Raw clinic rows, raw model deltas, raw unmask seeds, source paths, and node private keys stay local. The optional coordinator recovery packet is for local proof only and is marked `do_not_persist_private_material`.
+
+## AMR Outcome Network Pilot
+
+VetIOS now includes a production-shaped AMR pilot control plane at `/amr-network`
+and `GET|POST /api/amr/outcome-network`. It records append-only site enrollment,
+data-use approval, connector verification, and culture/AST episode milestones.
+Eligibility is computed by the server: synthetic, identifiable, unreviewed,
+outcome-missing, unlinked, or provenance-incomplete rows cannot enter AMR
+calibration or federation counts.
+
+The evidence gate is intentionally strict. `evidence_ready` requires one
+operational laboratory, at least three operational clinics, 250
+outcome-confirmed federation-eligible episodes, 250 outcome-linked
+One Health-export-ready lab records, and measured AMR calibration improvement
+against a prior baseline. Until real partners and records satisfy those gates,
+the console reports the pilot as enrolling or collecting rather than complete.
+
+- Migration: `supabase/migrations/20260723000000_amr_outcome_network_pilot.sql`
+- Operations runbook: [AMR Outcome Network Pilot v1](docs/amr-outcome-network-pilot-v1.md)
+- Existing AMR ingestion: `POST /api/amr/stewardship`
+- Existing surveillance: `GET /api/amr/surveillance`
+- Existing One Health export: `GET /api/amr/one-health/export`
 
 ## Core API
 
@@ -536,7 +558,7 @@ The GitHub Actions pipeline runs linting, typechecking, builds, and API smoke ch
 - **Clinical Knowledge Graph:** Species-specific pharmacological interactions, contraindications, and symptom-cluster reasoning.
 - **Multimodal Inputs:** Radiographs, ultrasound, documents, and structured telemetry in the same inference graph.
 - **Outcome-Confirmed Federated Learning:** Clinic/lab nodes that train locally, submit masked updates, and prove aggregate materialization without raw data export.
-- **Reinforcement Learning from Outcomes:** Automated calibration and model-weight updates from clinician-confirmed outcomes.
+- **Outcome-Governed Learning:** Outcome-linked calibration, active-learning queues, and auditable candidate-update evidence. Production model-weight changes require a separately trained, evaluated, approved, and deployed model artifact.
 - **Real-Time Decision Systems:** Sub-100ms edge inference for critical-care routing and escalation support.
 
 ## Design Principles
@@ -561,11 +583,11 @@ Before opening a pull request:
 
 ## License
 
-VetIOS is intended to be released under the [MIT License](LICENSE).
+VetIOS is distributed under the repository's [proprietary software licence](LICENSE).
 
 ## Links
 
 - Live demo: [https://www.vetios.tech/demo](https://www.vetios.tech/demo)
 - GitHub: [https://github.com/Jaybe-123456/VetIOS](https://github.com/Jaybe-123456/VetIOS)
-- License: [MIT](LICENSE)
+- License: [VetIOS Proprietary Software Licence](LICENSE)
 - Contact: [https://www.vetios.tech/contact](https://www.vetios.tech/contact)

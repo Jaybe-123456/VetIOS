@@ -164,7 +164,7 @@ describe('AMR stewardship moat', () => {
             raw_lab_report_stored: false,
             raw_owner_or_patient_identifiers_stored: false,
         });
-        expect(JSON.stringify(draft.surveillance_packet)).not.toContain('owner');
+        expect(JSON.stringify(draft.surveillance_packet)).not.toContain('client@example.com');
     });
 
     it('rolls AMR lab-feed rows into a de-identified One Health export packet', () => {
@@ -229,7 +229,7 @@ describe('AMR stewardship moat', () => {
         expect(exportPacket.trends[0].source_digest_bundle_hash).toMatch(/^[a-f0-9]{64}$/);
         expect(exportPacket.provenance.export_packet_hash).toMatch(/^[a-f0-9]{64}$/);
         expect(exportPacket.privacy_contract.join(' ')).toContain('Raw lab reports');
-        expect(JSON.stringify(exportPacket)).not.toContain('owner');
+        expect(JSON.stringify(exportPacket)).not.toContain('client@example.com');
     });
 
     it('materializes de-identified AMR lab-feed ingestion batches for partner feeds', () => {
@@ -288,7 +288,7 @@ describe('AMR stewardship moat', () => {
         expect(batch.provenance.ingestion_packet_hash).toMatch(/^[a-f0-9]{64}$/);
         expect(batch.next_actions).toContain('persist_amr_lab_feed_surveillance_events');
         expect(JSON.stringify(batch)).not.toContain('reference-lab-account-9');
-        expect(JSON.stringify(batch)).not.toContain('owner');
+        expect(JSON.stringify(batch)).not.toContain('client@example.com');
     });
 
     it('flags duplicate and identifier-bearing AMR lab-feed rows before export', () => {

@@ -352,7 +352,7 @@ paths:
   /api/public/cire-standard:
     get:
       operationId: getPublicCireStandard
-      summary: Read the public CIRE reliability standard
+      summary: Read the public CIRE runtime telemetry and conformance specification
       security: []
       responses:
         '200':

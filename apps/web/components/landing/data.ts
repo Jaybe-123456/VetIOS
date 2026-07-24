@@ -71,7 +71,7 @@ export const stackBlocks = [
     'Next.js',
     'TypeScript',
     'Supabase',
-    'Hugging Face primary inference',
+    'Deterministic clinical inference core',
     'Event-driven architecture',
     'Vercel deployment',
 ] as const;
@@ -80,7 +80,7 @@ export const techStackDescriptions: Record<(typeof stackBlocks)[number], string>
     'Next.js': 'Public surface and operator console delivery',
     TypeScript: 'Typed application contracts across runtime boundaries',
     Supabase: 'Auth, session state, persistence, and event adjacency',
-    'Hugging Face primary inference': 'Custom model inference with OpenAI fallback only',
+    'Deterministic clinical inference core': 'Versioned clinical rules with outcome calibration and optional provider augmentation',
     'Event-driven architecture': 'Outcome, simulation, and observability fanout',
     'Vercel deployment': 'Fast edge delivery for interface and control plane surfaces',
 };

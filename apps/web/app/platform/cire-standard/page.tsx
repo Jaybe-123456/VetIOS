@@ -6,8 +6,8 @@ import { getCireOpenStandard } from '@/lib/cire/standard';
 import { getConfiguredSiteOrigin } from '@/lib/site';
 
 export const metadata: Metadata = {
-    title: 'CIRE Open Standard',
-    description: 'Public VetIOS clinical inference reliability standard for phi_hat, CPS, safety states, and audit lineage.',
+    title: 'CIRE Public Specification',
+    description: 'Public VetIOS runtime telemetry and conformance specification for phi_hat, CPS, safety states, and audit lineage.',
     alternates: {
         canonical: '/platform/cire-standard',
     },
@@ -26,9 +26,9 @@ export default function CireStandardPage() {
 
     return (
         <PlatformShell
-            badge="OPEN STANDARD"
-            title="CIRE is the reliability contract for veterinary AI infrastructure."
-            description="VetIOS publishes CIRE as a versioned standard so partners, researchers, and regulators can reason about inference confidence, safety state, and outcome-linked lineage without depending on a private UI."
+            badge="PUBLIC SPECIFICATION"
+            title="CIRE is the runtime signal contract for veterinary AI infrastructure."
+            description="VetIOS publishes the CIRE methodology as a versioned telemetry and conformance specification. Its signals describe output structure and publication state; clinical reliability still requires outcome-linked and external validation. The reference implementation remains subject to the VetIOS licence."
             actions={(
                 <Link
                     href="/api/public/cire-standard"
@@ -106,7 +106,7 @@ export default function CireStandardPage() {
             <section className="mt-10 rounded-[24px] border border-cyan-400/15 bg-cyan-400/10 p-6 text-cyan-50">
                 <div className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-200">Infrastructure posture</div>
                 <p className="mt-3 max-w-4xl text-sm leading-7">
-                    The standard is public; the managed VetIOS infrastructure remains the commercial product. Partners can cite the reliability contract, while production deployments use VetIOS for hosted inference, outcome lineage, model cards, network learning, and enterprise/government API access.
+                    The specification is public; the managed VetIOS infrastructure remains the commercial product. Partners can implement the runtime signal contract, while production deployments use VetIOS for hosted lineage, outcomes, model cards, network learning, and enterprise/government API access.
                 </p>
             </section>
         </PlatformShell>

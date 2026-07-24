@@ -59,6 +59,7 @@ export function TerminalTextarea({ className = '', ...props }: React.TextareaHTM
 export function TerminalButton({
     children,
     variant = 'primary',
+    className = '',
     ...props
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'secondary' | 'danger' }) {
     const baseClasses = "font-mono text-[13px] uppercase tracking-[0.16em] px-4 sm:px-5 py-3 sm:py-2.5 transition-all border min-h-[44px] touch-manipulation flex items-center justify-center";
@@ -71,7 +72,7 @@ export function TerminalButton({
 
     return (
         <button
-            className={`${baseClasses} ${variants[variant]} disabled:opacity-40 disabled:cursor-not-allowed`}
+            className={`${baseClasses} ${variants[variant]} disabled:opacity-40 disabled:cursor-not-allowed ${className}`}
             {...props}
         >
             {children}
@@ -93,12 +94,12 @@ export function Container({ children, className = '' }: { children: React.ReactN
 
 export function PageHeader({ title, description }: { title: string, description?: string }) {
     return (
-        <div className="mb-6 sm:mb-8 pb-4 sm:pb-5 border-b border-[hsl(0_0%_100%_/_0.08)] relative accent-line-top">
-            <h1 className="font-mono text-xl sm:text-2xl font-semibold text-[hsl(0_0%_97%)] tracking-[0.08em] mb-1.5">
+        <div className="relative mb-6 min-w-0 max-w-full border-b border-[hsl(0_0%_100%_/_0.08)] pb-4 sm:mb-8 sm:pb-5 accent-line-top">
+            <h1 className="mb-1.5 max-w-full break-words font-mono text-xl font-semibold tracking-[0.08em] text-[hsl(0_0%_97%)] [overflow-wrap:anywhere] sm:text-2xl">
                 {title}
             </h1>
             {description && (
-                <p className="font-mono text-[13px] sm:text-[14px] text-[hsl(0_0%_92%)] leading-relaxed max-w-3xl">
+                <p className="max-w-full whitespace-normal break-words font-mono text-[13px] leading-relaxed text-[hsl(0_0%_92%)] [overflow-wrap:anywhere] sm:max-w-3xl sm:text-[14px]">
                     {description}
                 </p>
             )}

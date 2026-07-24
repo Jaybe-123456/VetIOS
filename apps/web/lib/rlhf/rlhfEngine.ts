@@ -464,10 +464,10 @@ export class RLHFEngine {
     }
   ): string {
     const parts: string[] = [];
-    parts.push(`RLHF feedback processed: ${input.feedbackType} (δ=${results.impactDelta.toFixed(3)})`);
+    parts.push(`Outcome feedback processed: ${input.feedbackType} (δ=${results.impactDelta.toFixed(3)})`);
 
     const applied: string[] = [];
-    if (results.reinforcementApplied) applied.push('model weights updated');
+    if (results.reinforcementApplied) applied.push('reinforcement evidence appended');
     if (results.calibrationUpdated) applied.push('calibration tuple incremented');
     if (results.vectorStoreUpdated) applied.push('vector store confirmed');
     if (results.longitudinalUpdated) applied.push('longitudinal record updated');

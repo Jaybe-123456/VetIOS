@@ -519,7 +519,6 @@ export function buildAMRLabFeedSurveillancePacket(input: AMRLabFeedSurveillanceI
         blockerCount: blockers.size,
     });
     const sourceRecordDigest = hashJson({
-        request_id: input.request_id ?? null,
         species,
         pathogen_key: pathogenKey,
         syndrome,

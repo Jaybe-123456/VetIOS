@@ -191,7 +191,7 @@ export function DemoCase() {
                             <h1 className="mt-3 text-3xl font-semibold tracking-tight">Try a VetIOS demo case.</h1>
                             <p className="mt-3 text-sm leading-6 text-white/62">
                                 Run representative veterinary cases through a deterministic demo of the VetIOS flow:
-                                structured input, graph priors, ranked differentials, reliability signals, and outcome learning.
+                                structured input, graph priors, ranked differentials, runtime integrity signals, and outcome learning.
                             </p>
                             <div className="mt-5 rounded-md border border-accent/25 bg-accent/10 p-3 text-sm text-accent">
                                 Demo data stays in the browser. No patient data is sent or saved.
@@ -276,7 +276,7 @@ function EmptyState() {
                 <Activity className="mx-auto h-8 w-8 text-accent" />
                 <h2 className="mt-4 text-xl font-semibold text-white">Ready to rank a case.</h2>
                 <p className="mt-2 max-w-md text-sm leading-6 text-white/60">
-                    Select a case and run the demo to see ranked diagnoses, next tests, graph support, and reliability signals.
+                    Select a case and run the demo to see ranked diagnoses, next tests, graph support, and runtime integrity signals.
                 </p>
             </div>
         </div>

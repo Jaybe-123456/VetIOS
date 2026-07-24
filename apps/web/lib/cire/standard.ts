@@ -67,9 +67,9 @@ export interface CireOpenStandard {
 const formulas: CireFormulaDefinition[] = [
     {
         key: 'phi_hat',
-        name: 'Inference certainty entropy score',
+        name: 'Differential concentration score',
         formula: 'phi_hat = 1 - H(D) / ln(|D|), where H(D) = -sum(p_i * ln(p_i)) over normalized differential probabilities',
-        interpretation: 'Higher values mean the differential distribution is more concentrated and easier to act on.',
+        interpretation: 'Higher values mean the differential distribution is more concentrated. Concentration does not establish correctness, calibration, or clinical actionability.',
         range: '0.0 to 1.0',
     },
     {
@@ -81,23 +81,23 @@ const formulas: CireFormulaDefinition[] = [
     },
     {
         key: 'delta_rolling',
-        name: 'Rolling reliability drift',
+        name: 'Rolling runtime signal drift',
         formula: 'delta_rolling = EMA(delta_hat, alpha = 0.1)',
-        interpretation: 'Tracks short-horizon movement in reliability compared with prior inference behavior.',
+        interpretation: 'Tracks short-horizon movement in the runtime signal compared with prior inference behavior.',
         range: 'negative to positive real number',
     },
     {
         key: 'sigma_delta',
-        name: 'Reliability volatility',
+        name: 'Runtime signal volatility',
         formula: 'sigma_delta = standard_deviation(last 50 delta_hat values)',
-        interpretation: 'Higher values indicate less stable reliability behavior across recent events.',
+        interpretation: 'Higher values indicate less stable runtime signal behavior across recent events.',
         range: '0.0 and above',
     },
     {
         key: 'cps',
-        name: 'Clinical perturbation score',
+        name: 'Runtime perturbation score',
         formula: 'cps = 0.40 * (1 - phi_hat / phi0) + 0.35 * max(0, -delta_rolling) / phi0 + 0.25 * sigma_delta / phi0',
-        interpretation: 'Composite safety score used to decide whether an inference is high confidence, reviewable, cautionary, or suppressed.',
+        interpretation: 'Composite runtime score used to place an output inside a configured publication envelope. It does not measure diagnostic correctness.',
         range: '0.0 and above',
     },
 ];
@@ -106,13 +106,13 @@ const safetyStates: CireSafetyStateDefinition[] = [
     {
         safety_state: 'nominal',
         reliability_badge: 'HIGH',
-        meaning: 'The inference is within the expected reliability envelope.',
-        expected_action: 'Show the differential with normal clinical decision-support language.',
+        meaning: 'The runtime signals are within the configured publication envelope.',
+        expected_action: 'Publish the differential with its runtime status; retain clinician review and outcome validation requirements.',
     },
     {
         safety_state: 'warning',
         reliability_badge: 'REVIEW',
-        meaning: 'The inference should be interpreted with clinician review because reliability has weakened.',
+        meaning: 'The inference should be interpreted with clinician review because runtime stability has weakened.',
         expected_action: 'Surface uncertainty and recommend additional diagnostic confirmation.',
     },
     {
@@ -138,8 +138,8 @@ export function getCireOpenStandard(baseUrl = 'https://www.vetios.tech'): CireOp
         standard_key: CIRE_STANDARD_KEY,
         version: CIRE_STANDARD_VERSION,
         status: 'public_reference',
-        title: 'CIRE Open Standard',
-        summary: 'A versioned clinical inference reliability contract for publishing phi_hat, input quality, drift, volatility, and safety-state lineage across veterinary AI workflows.',
+        title: 'CIRE Public Runtime Specification',
+        summary: 'A versioned runtime telemetry and conformance contract for publishing phi_hat, input quality, drift, volatility, and safety-state lineage across veterinary AI workflows. It does not establish clinical reliability without outcome-linked and external validation.',
         canonical_url: absoluteUrl(baseUrl, CIRE_STANDARD_PATH),
         machine_readable_url: absoluteUrl(baseUrl, CIRE_STANDARD_API_PATH),
         conformance_report_url: absoluteUrl(baseUrl, CIRE_CONFORMANCE_API_PATH),

@@ -317,6 +317,22 @@ async function persistAMRLabFeedSurveillanceEvent(
     client: SupabaseClient,
     draft: AMRLabFeedSurveillanceEventDraft,
 ): Promise<{ id: string | null; warning: string | null }> {
+    const { data: existing, error: existingError } = await client
+        .from('amr_lab_feed_surveillance_events')
+        .select('id')
+        .eq('tenant_id', draft.tenant_id)
+        .eq('source_record_digest', draft.source_record_digest)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+    if (!existingError && existing?.id) {
+        return {
+            id: String(existing.id),
+            warning: 'Duplicate AMR source record detected by clinical digest; the existing surveillance event was reused.',
+        };
+    }
+
     const { data, error } = await client
         .from('amr_lab_feed_surveillance_events')
         .insert(draft)
@@ -324,6 +340,24 @@ async function persistAMRLabFeedSurveillanceEvent(
         .single();
 
     if (error || !data?.id) {
+        if (error?.code === '23505') {
+            const { data: duplicate } = await client
+                .from('amr_lab_feed_surveillance_events')
+                .select('id')
+                .eq('tenant_id', draft.tenant_id)
+                .eq('source_record_digest', draft.source_record_digest)
+                .order('created_at', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+
+            if (duplicate?.id) {
+                return {
+                    id: String(duplicate.id),
+                    warning: 'Duplicate AMR source record detected by clinical digest; the existing surveillance event was reused.',
+                };
+            }
+        }
+
         const message = error?.message ?? 'unknown persistence failure';
         return {
             id: null,

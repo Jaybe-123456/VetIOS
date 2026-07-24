@@ -104,7 +104,7 @@ const concepts = [
     },
     {
         title: 'CIRE Signals',
-        description: 'Clinical Inference Reliability Estimation. Each inference response includes phi_hat (hypothesis confidence), cps (calibration pressure score), and safety_state — giving operators visibility into output reliability.',
+        description: 'Clinical Inference Runtime Estimation. Each inference response includes phi_hat (differential concentration), cps (runtime perturbation score), and safety_state. These signals govern publication but do not establish diagnostic correctness.',
         tags: ['phi_hat', 'cps', 'safety_state'],
     },
     {

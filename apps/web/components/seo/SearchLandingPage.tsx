@@ -89,7 +89,7 @@ export function SearchLandingPage({
                 <div className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#6BF7CF]/70">Why this matters</div>
                 <p className="mt-4 max-w-3xl text-sm leading-7 text-white/65">
                     VetIOS is built as infrastructure rather than a standalone chatbot. The platform connects structured
-                    veterinary inputs, graph priors, model execution, reliability signals, outcomes, simulations, and
+                    veterinary inputs, graph priors, model execution, runtime integrity signals, outcomes, simulations, and
                     public-health research surfaces into one auditable loop.
                 </p>
                 <div className="mt-6 flex flex-wrap gap-3">

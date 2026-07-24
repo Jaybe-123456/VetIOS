@@ -1082,7 +1082,7 @@ export default function InferenceConsole() {
             const riskModelOutput = output?.risk_model_output as Record<string, unknown> | undefined;
             
             pushLog('VECTORS GENERATED SUCCESSFULLY', 'success');
-            pushLog('COMPUTING CIRE RELIABILITY...', 'info');
+            pushLog('COMPUTING CIRE RUNTIME INTEGRITY...', 'info');
 
             const diffs = Array.isArray(diagnosis?.top_differentials) ? diagnosis.top_differentials : [];
             const mappedProbabilities = diffs.map((d: any) => ({
@@ -1553,7 +1553,7 @@ export default function InferenceConsole() {
                             </ConsoleCard>
 
                             {state.cire && (
-                                <ConsoleCard title="CIRE RELIABILITY">
+                                <ConsoleCard title="CIRE RUNTIME INTEGRITY">
                                     <div className="grid grid-cols-[88px,1fr] gap-4 items-center">
                                         <div className="relative w-[88px] h-[88px] rounded-full border border-accent/30 flex items-center justify-center">
                                             <div
@@ -1587,7 +1587,7 @@ export default function InferenceConsole() {
                                                     />
                                                 </div>
                                             </div>
-                                            <DataRow label="Input Quality" value={`${(state.cire.input_quality * 100).toFixed(1)}%`} />
+                                            <DataRow label="Runtime Margin" value={`${(state.cire.input_quality * 100).toFixed(1)}%`} />
                                             <DataRow label="Safety State" value={state.cire.safety_state.toUpperCase()} />
                                         </div>
                                     </div>
@@ -1700,7 +1700,7 @@ export default function InferenceConsole() {
                                                     <div className="flex items-center justify-between font-mono text-xs sm:text-sm gap-2">
                                                         <span className={`flex items-center gap-2 min-w-0 ${i === 0 ? 'text-accent font-bold' : 'text-foreground/70'}`}>
                                                             {state.cire ? (
-                                                                <span className="shrink-0" title={`CIRE ${state.cire.reliability_badge}`}>
+                                                                <span className="shrink-0" title={`CIRE runtime state: ${cireBadgeLabel(state.cire.reliability_badge)}`}>
                                                                     <CireReliabilityGlyph badge={state.cire.reliability_badge} />
                                                                 </span>
                                                             ) : null}
@@ -3343,7 +3343,7 @@ function formatNullableLabel(value: string | null): string {
 }
 
 function cireBadgeLabel(badge: CireState['reliability_badge']) {
-    if (badge === 'HIGH') return 'HIGH';
+    if (badge === 'HIGH') return 'WITHIN ENVELOPE';
     if (badge === 'REVIEW') return 'REVIEW';
     if (badge === 'CAUTION') return 'CAUTION';
     return 'SUPPRESSED';

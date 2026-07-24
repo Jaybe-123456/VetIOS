@@ -20,7 +20,7 @@ export const PUBLIC_SEO_PAGES = [
     {
         path: '/veterinary-diagnostic-ai',
         title: 'Veterinary Diagnostic AI',
-        description: 'AI-assisted veterinary differential diagnosis with structured inputs, graph priors, CIRE reliability signals, and outcome feedback.',
+        description: 'AI-assisted veterinary differential diagnosis with structured inputs, graph priors, CIRE runtime integrity signals, and outcome feedback.',
         priority: 0.94,
     },
     {
@@ -37,8 +37,8 @@ export const PUBLIC_SEO_PAGES = [
     },
     {
         path: '/platform/cire-standard',
-        title: 'VetIOS CIRE Open Standard',
-        description: 'Public VetIOS clinical inference reliability standard for phi_hat, CPS, safety states, and outcome-linked audit lineage.',
+        title: 'VetIOS CIRE Public Specification',
+        description: 'Public VetIOS runtime telemetry and conformance specification for phi_hat, CPS, safety states, and outcome-linked audit lineage.',
         priority: 0.86,
     },
     {

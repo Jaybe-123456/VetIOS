@@ -9,8 +9,8 @@ import {
     getCireOpenStandard,
 } from '../standard';
 
-describe('CIRE open standard', () => {
-    it('publishes a versioned public reliability contract', () => {
+describe('CIRE public specification', () => {
+    it('publishes a versioned public runtime signal contract', () => {
         const standard = getCireOpenStandard('https://www.vetios.tech');
 
         expect(standard.standard_key).toBe(CIRE_STANDARD_KEY);

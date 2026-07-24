@@ -26,7 +26,7 @@ export default function VeterinaryAIPage() {
         <SearchLandingPage
             eyebrow="Veterinary AI"
             title="Veterinary AI infrastructure for clinical intelligence."
-            description="VetIOS connects structured veterinary cases, model inference, reliability signals, confirmed outcomes, and simulation into a closed-loop platform."
+            description="VetIOS connects structured veterinary cases, model inference, runtime integrity telemetry, confirmed outcomes, and simulation into a closed-loop platform."
             canonicalPath="/veterinary-ai"
             keywords={['veterinary AI', 'AI veterinary platform', 'clinical intelligence', 'outcome learning']}
             sections={[
@@ -53,7 +53,7 @@ export default function VeterinaryAIPage() {
                 },
                 {
                     question: 'Is VetIOS a veterinary chatbot?',
-                    answer: 'No. VetIOS is infrastructure for veterinary intelligence. It exposes APIs, event stores, reliability signals, outcome learning, simulation, and public surveillance surfaces.',
+                    answer: 'No. VetIOS is infrastructure for veterinary intelligence. It exposes APIs, event stores, runtime integrity telemetry, outcome-linked calibration evidence, simulation, and public surveillance surfaces.',
                 },
                 {
                     question: 'Does VetIOS replace veterinarians?',

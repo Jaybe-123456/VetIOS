@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 const layers = [
     {
         title: 'Inference',
-        body: 'Clinical inputs are normalized, sent to the deployed Hugging Face diagnostic model, scored, and stored with CIRE safety signals.',
+        body: 'Clinical inputs are normalized, routed through the deterministic clinical inference core, optionally augmented by configured model providers, and stored with CIRE runtime signals.',
         icon: Route,
     },
     {
@@ -55,7 +55,7 @@ export default function PlatformPage() {
             <section className="rounded-[24px] border border-white/10 bg-white/[0.04] p-6">
                 <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">What VetIOS is</div>
                 <p className="mt-4 max-w-4xl text-sm leading-7 text-slate-300">
-                    VetIOS is a clinical intelligence layer for veterinary diagnostics. It receives structured case data, calls the primary Hugging Face model, records the result, and keeps later outcomes and simulations connected to the original inference event.
+                    VetIOS is a clinical intelligence layer for veterinary diagnostics. It receives structured case data, runs the versioned inference core, records the result, and keeps later outcomes and simulations connected to the original inference event. Optional external or hosted models are augmentations, not the declared clinical authority.
                 </p>
             </section>
 

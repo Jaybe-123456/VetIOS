@@ -211,9 +211,10 @@ export const developerEndpoints: DeveloperEndpointDefinition[] = [
         path: '/api/public/cire-standard',
         auth: 'public',
         readiness: 'public',
-        purpose: 'Publish the versioned CIRE reliability standard for phi_hat, CPS, safety states, and inference lineage.',
+        purpose: 'Publish the versioned CIRE runtime telemetry and conformance specification for phi_hat, CPS, safety states, and inference lineage.',
         notes: [
-            'This is intentionally open so external researchers and partners can cite the reliability contract.',
+            'This is intentionally open so external researchers and partners can implement the runtime signal contract.',
+            'Conformance does not establish clinical reliability; outcome-linked and external validation are separate requirements.',
             'Managed VetIOS deployments provide hosted lineage, outcome loops, model cards, and enterprise SLA support around the standard.',
         ],
     },

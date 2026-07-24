@@ -1323,6 +1323,8 @@ export function deriveFederatedCandidateEvidenceFromRuntime(input: {
         safety_incident_count: safetyIncidentCount,
         hallucination_incident_count: hallucinationIncidentCount,
         false_negative_incident_count: falseNegativeIncidentCount,
+        generated_from_aggregate_artifact:
+            readBoolean(asRecord(runtime.safety).generated_from_aggregate_artifact) === true,
         evidence_digest: stableHash({ safety: runtime.safety, safetyCaseCount, safetyTotalIncidents }),
         generated_at: now,
     };
@@ -1347,6 +1349,8 @@ export function deriveFederatedCandidateEvidenceFromRuntime(input: {
         passed: adversarialPassed,
         failed: adversarialFailed,
         score: adversarialScore,
+        generated_from_aggregate_artifact:
+            readBoolean(adversarial.generated_from_aggregate_artifact) === true,
         evidence_digest: stableHash({ adversarial, adversarialCaseCount, adversarialFailed }),
         generated_at: now,
     };
@@ -1390,6 +1394,8 @@ export function deriveFederatedCandidateEvidenceFromRuntime(input: {
         blocked: readFirstBoolean(runtime, ['candidateBlocked', 'candidate_blocked'])
             ?? readFirstBoolean(regression, ['blocked', 'candidate_blocked'])
             ?? false,
+        generated_from_aggregate_artifact:
+            readBoolean(regression.generated_from_aggregate_artifact) === true,
         evidence_digest: stableHash({ regression, regressionFixtureCount, regressionFailed, regressionTotalReplayed }),
         generated_at: now,
     };

@@ -115,7 +115,7 @@ describe('federation live node protocol', () => {
         ];
 
         const latest = latestNodeRows(rows);
-        const summary = summarizeFederationNodeProtocolEvents(rows);
+        const summary = summarizeFederationNodeProtocolEvents(rows, NOW);
 
         expect(latest).toHaveLength(2);
         expect(summary.total_nodes).toBe(2);

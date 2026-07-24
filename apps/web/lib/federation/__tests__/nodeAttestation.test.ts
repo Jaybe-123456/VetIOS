@@ -93,7 +93,7 @@ describe('federation node attestation', () => {
             signatureHash: HASH_E,
             signingKeyFingerprint: 'sigstore:node-key:2026',
             allowedTaskTypes: ['diagnosis_delta', 'support_summary'],
-            expiresAt: '2026-07-21T00:00:00.000Z',
+            expiresAt: '2099-07-21T00:00:00.000Z',
             observedAt: '2026-06-21T12:00:00.000Z',
         });
 

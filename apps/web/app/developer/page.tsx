@@ -68,7 +68,7 @@ export default function DeveloperPage() {
                 <ShieldCheck className="h-5 w-5 text-cyan-200" />
                 <h2 className="mt-4 text-xl font-semibold text-white">Handling the response</h2>
                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                    The response includes ranked differentials and CIRE signals. `phi_hat` is top-hypothesis confidence, `cps` is normalized entropy pressure, and `safety_state` is `nominal`, `review`, or `hold`.
+                    The response includes ranked differentials and CIRE signals. `phi_hat` measures differential concentration, `cps` measures runtime perturbation pressure, and `safety_state` controls publication. These signals are not clinical correctness estimates.
                 </p>
                 <div className="mt-5">
                     <Link

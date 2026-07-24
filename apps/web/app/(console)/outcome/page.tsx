@@ -8,7 +8,7 @@ import { ArrowRight, ArrowDown, BrainCircuit, Activity, Database, GitMerge, Chec
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-type PipelineStage = 'idle' | 'prediction' | 'outcome_injected' | 'weights_updated' | 'telemetry_logged';
+type PipelineStage = 'idle' | 'prediction' | 'outcome_injected' | 'reinforcement_recorded' | 'telemetry_logged';
 type OutcomeTab = 'injection' | 'monitor';
 
 interface EvalResult {
@@ -89,10 +89,10 @@ export default function OutcomeLearning() {
                 throw new Error(formatApiError(result, 'Failed to attach outcome'));
             }
 
-            // Stage 3: Weights updated (evaluation computed)
+            // Stage 3: governed reinforcement evidence recorded
             setState(prev => ({
                 ...prev,
-                pipelineStage: 'weights_updated',
+                pipelineStage: 'reinforcement_recorded',
                 outcomeEventId: result.outcome_event_id,
                 linkedInferenceId: result.linked_inference_event_id,
                 evaluation: result.evaluation || null,
@@ -115,7 +115,7 @@ export default function OutcomeLearning() {
         <Container>
             <PageHeader
                 title="OUTCOME LEARNING HUB"
-                description="Attach ground truth to inference events to calculate calibration curves and reinforce the base model parameters."
+                description="Attach ground truth to inference events to calculate calibration evidence and queue governed learning signals."
             />
 
             <TerminalTabs
@@ -147,7 +147,7 @@ export default function OutcomeLearning() {
                                     <Activity className="w-5 h-5 animate-spin" />
                                     {state.pipelineStage === 'prediction' && 'VALIDATING INFERENCE EVENT...'}
                                     {state.pipelineStage === 'outcome_injected' && 'INJECTING OUTCOME & COMPUTING METRICS...'}
-                                    {state.pipelineStage === 'weights_updated' && 'UPDATING WEIGHT GRADIENTS...'}
+                                    {state.pipelineStage === 'reinforcement_recorded' && 'RECORDING GOVERNED LEARNING EVIDENCE...'}
                                 </div>
                             )}
                             {state.status === 'success' && state.evaluation && (
@@ -248,7 +248,7 @@ export default function OutcomeLearning() {
 const STAGES: { key: PipelineStage; label: string; icon: React.ReactNode; shape: string }[] = [
     { key: 'prediction', label: 'Prediction', icon: <BrainCircuit className="w-5 h-5 sm:w-6 sm:h-6" />, shape: 'rounded-full' },
     { key: 'outcome_injected', label: 'Outcome Injected', icon: <GitMerge className="w-5 h-5 sm:w-6 sm:h-6" />, shape: 'rounded-full' },
-    { key: 'weights_updated', label: 'Weights Updated', icon: <Activity className="w-5 h-5 sm:w-6 sm:h-6" />, shape: 'rounded-[4px]' },
+    { key: 'reinforcement_recorded', label: 'Evidence Recorded', icon: <Activity className="w-5 h-5 sm:w-6 sm:h-6" />, shape: 'rounded-[4px]' },
     { key: 'telemetry_logged', label: 'Telemetry Logged', icon: <Database className="w-5 h-5 sm:w-6 sm:h-6" />, shape: 'rounded-sm' },
 ];
 

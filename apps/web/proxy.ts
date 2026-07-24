@@ -17,6 +17,7 @@ type PageRole = 'admin' | 'developer' | 'researcher' | 'clinician';
 
 const CLINICIAN_CONSOLE_PATHS = [
     '/admin',
+    '/amr-network',
     '/console',
     '/dashboard',
     '/dataset',

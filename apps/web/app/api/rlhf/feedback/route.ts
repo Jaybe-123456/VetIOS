@@ -2,7 +2,8 @@
  * POST /api/rlhf/feedback
  *
  * Vet feedback submission endpoint.
- * Every correction, confirmation, or outcome report feeds the RLHF flywheel.
+ * Legacy route name retained for compatibility. Corrections and confirmations
+ * append governed feedback evidence; this endpoint does not update model weights.
  */
 
 import { NextResponse } from 'next/server';
@@ -77,7 +78,7 @@ export async function POST(req: Request) {
       {
         error: {
           code: 'internal_error',
-          message: err instanceof Error ? err.message : 'RLHF feedback processing failed',
+          message: err instanceof Error ? err.message : 'Outcome feedback processing failed',
         },
       },
       { status: 500 }

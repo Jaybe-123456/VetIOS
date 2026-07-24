@@ -139,7 +139,7 @@ export default function PrivacyPage() {
                             <div className="mt-8 rounded-2xl border border-white/5 bg-white/5 p-6">
                                 <h3 className="text-sm font-medium uppercase tracking-wider text-white">AI/ML Model Training Exclusion</h3>
                                 <p className="mt-3 text-sm leading-7 text-slate-300">
-                                    VetIOS does <strong className="text-white">not</strong> use Google user data, including email, profile, or any Google-sourced information, to train, fine-tune, or improve any AI or machine learning model. Veterinary inference models are trained exclusively on structured clinical signals, including species, vitals, and symptoms, submitted directly by platform operators. Google-sourced identity data is fully isolated from the ML training pipeline.
+                                    VetIOS does <strong className="text-white">not</strong> use Google user data, including email, profile, or any Google-sourced information, to train, fine-tune, evaluate, or improve any AI or machine learning model. Any VetIOS training or evaluation workflow must use an explicitly approved, provenance-tracked dataset under the applicable consent and licensing controls. Google-sourced identity data is isolated from those workflows.
                                 </p>
                             </div>
 

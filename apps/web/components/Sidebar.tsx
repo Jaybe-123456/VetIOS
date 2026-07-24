@@ -16,6 +16,7 @@ import {
     Settings,
     Cpu,
     BookOpenCheck,
+    Microscope,
     X
 } from 'lucide-react';
 
@@ -39,6 +40,7 @@ const navItems = [
         label: 'Evidence Layer',
         items: [
             { name: 'Clinical Dataset', href: '/dataset', icon: Database },
+            { name: 'AMR Outcome Network', href: '/amr-network', icon: Microscope },
             { name: 'Agentic RAG', href: '/rag', icon: BookOpenCheck },
         ],
     },

@@ -2,15 +2,15 @@
 
 **Version:** 1.0.0  
 **Date:** July 2, 2026  
-**Status:** Open specification draft and VetIOS reference implementation  
+**Status:** Public specification draft; proprietary VetIOS reference implementation
 **Reference implementation:** `@vetios/cire-engine`  
 **Machine-readable contract:** `/api/public/cire-standard`
 
 ## Abstract
 
-The Clinical Inference Reliability Engine (CIRE) is a distribution-first reliability standard for veterinary clinical AI. CIRE measures whether an inference output remains structured, reviewable, and safe to display before ground-truth outcome labels are available. It defines `phi_hat`, `input_m_hat`, rolling drift, volatility, the Collapse Proximity Score (CPS), safety states, and the minimum event lineage required to connect inference, review, outcome confirmation, and calibration.
+The Clinical Inference Reliability Engine (CIRE) is a distribution-first runtime telemetry and conformance specification for veterinary clinical AI. CIRE measures whether an inference output remains structured and within a configured publication envelope before ground-truth outcome labels are available. It defines `phi_hat`, `input_m_hat`, rolling drift, volatility, the Collapse Proximity Score (CPS), safety states, and the minimum event lineage required to connect inference, review, outcome confirmation, and calibration. These runtime signals are not evidence of diagnostic correctness or clinical reliability without outcome-linked and external validation.
 
-CIRE is designed as an open specification. VetIOS keeps the specification public while capturing value in the hard-to-replicate layer above it: managed clinic infrastructure, outcome-confirmed data pipelines, regulatory evidence packets, AMR surveillance feeds, and the proprietary corpus of clinician-reviewed outcomes generated through live use.
+CIRE is published as a readable specification. Publication does not grant an open-source or standards-body licence: the VetIOS reference implementation remains governed by the repository licence unless separate written terms are provided. VetIOS captures value in the hard-to-replicate layer above the specification: managed clinic infrastructure, outcome-confirmed data pipelines, regulatory evidence packets, AMR surveillance feeds, and the proprietary corpus of clinician-reviewed outcomes generated through live use.
 
 ## 1. Strategic Positioning
 
@@ -23,11 +23,11 @@ CIRE follows that pattern:
 3. Use compatibility pressure to create demand for managed CIRE workflows.
 4. Capture value in the non-commodity layer: live outcome capture, model governance, federated learning, AMR evidence, audit-grade APIs, and outcome-confirmed data.
 
-The open layer is the scoring language. The scarce layer is the longitudinal clinical evidence graph.
+The public layer is the scoring language. The scarce layer is the longitudinal clinical evidence graph.
 
 ## 2. Scope and Non-Claims
 
-CIRE is not a diagnosis, treatment recommendation, or substitute for licensed veterinary judgment. CIRE is a reliability, safety, and lineage contract for clinical decision-support outputs.
+CIRE is not a diagnosis, treatment recommendation, or substitute for licensed veterinary judgment. CIRE is a runtime telemetry, publication-gating, and lineage contract for clinical decision-support outputs.
 
 CIRE does not by itself prove a model is clinically effective. Clinical effectiveness requires outcome-linked evaluation, external validation, and human factors review. CIRE provides a runtime and audit framework that can support those studies.
 
@@ -118,7 +118,7 @@ In clinical settings, suppression is a successful safety behavior, not a product
 
 ## 5. Outcome-Linked Calibration
 
-CIRE separates inference-time reliability from outcome-confirmed calibration.
+CIRE separates outcome-independent runtime integrity telemetry from outcome-confirmed calibration and reliability evaluation.
 
 At inference time, CIRE can score distribution structure without knowing the final diagnosis. After a case closes, the confirmed outcome updates diagnosis-specific calibration tuples:
 
@@ -209,11 +209,11 @@ The open specification creates adoption pressure. The managed infrastructure cap
 
 ### Reference moat
 
-If CIRE becomes a cited reliability language for veterinary AI, VetIOS becomes the reference implementation and standard maintainer.
+If CIRE becomes a cited runtime integrity language for veterinary AI, VetIOS becomes the reference implementation and specification maintainer.
 
 ### Switching-cost moat
 
-Clinics that run CIRE-scored workflows accumulate longitudinal reliability and outcome history. Moving to a competitor means losing continuity unless the competitor becomes CIRE-compatible.
+Clinics that run CIRE-scored workflows accumulate longitudinal runtime and outcome history. Moving to a competitor means losing continuity unless the competitor becomes CIRE-compatible.
 
 ### Data-compound moat
 
@@ -229,7 +229,7 @@ CIRE is aligned with the direction of current health AI governance:
 - WHO's LMM guidance highlights that foundation and large multimodal models may be useful across health care, research, public health, and drug development, while requiring governance.
 - CONSORT-AI and SPIRIT-AI require transparent reporting of AI interventions, input/output handling, human-AI interaction, and error cases.
 - DECIDE-AI focuses on early-stage clinical evaluation, safety, human factors, and replicability for AI decision-support systems.
-- WHO GLASS establishes AMR surveillance as a standardized public-health infrastructure problem; CIRE can provide clinical inference reliability metadata alongside veterinary AMR signal feeds.
+- WHO GLASS establishes AMR surveillance as a standardized public-health infrastructure problem; CIRE can provide runtime integrity metadata alongside veterinary AMR signal feeds.
 
 ## 11. Source References
 
