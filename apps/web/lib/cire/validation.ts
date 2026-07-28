@@ -3,6 +3,8 @@ import { AI_INFERENCE_EVENTS, CLINICAL_OUTCOME_EVENTS } from '@/lib/db/schemaCon
 
 export interface CireValidationInferenceRow {
     id: string;
+    is_synthetic?: boolean | string | null;
+    simulation_id?: string | null;
     model_version?: string | null;
     prompt_template_hash?: string | null;
     prompt_template_version?: string | null;
@@ -21,6 +23,7 @@ export interface CireValidationOutcomeRow {
     source_module?: string | null;
     label_type?: string | null;
     is_synthetic?: boolean | string | null;
+    simulation_id?: string | null;
     outcome_payload?: Record<string, unknown> | null;
     created_at?: string | null;
 }
@@ -72,7 +75,7 @@ export async function loadCireValidationReport(
     const IC = AI_INFERENCE_EVENTS.COLUMNS;
     const { data: outcomes, error: outcomeError } = await client
         .from(CLINICAL_OUTCOME_EVENTS.TABLE)
-        .select(`${OC.id},${OC.inference_event_id},${OC.source_module},${OC.label_type},${OC.is_synthetic},${OC.outcome_payload},${OC.created_at}`)
+        .select(`${OC.id},${OC.inference_event_id},${OC.source_module},${OC.label_type},${OC.is_synthetic},${OC.simulation_id},${OC.outcome_payload},${OC.created_at}`)
         .eq(OC.tenant_id, input.tenantId)
         .order(OC.created_at, { ascending: false })
         .limit(limit);
@@ -112,14 +115,17 @@ export function buildCireValidationReportFromRows(
     const inferenceById = new Map(inferences.map((row) => [row.id, row]));
     const pairs: ValidationPair[] = [];
 
-    for (const outcome of outcomes) {
-        if (realClinicalOnly && !isRealClinicalOutcome(outcome)) continue;
-
+    for (const outcome of selectCanonicalOutcomes(outcomes, realClinicalOnly)) {
         const inferenceId = readText(outcome.inference_event_id);
         if (!inferenceId) continue;
 
         const inference = inferenceById.get(inferenceId);
         if (!inference) continue;
+        if (realClinicalOnly && (
+            !isRealClinicalOutcome(outcome)
+            || readBoolean(inference.is_synthetic) === true
+            || readText(inference.simulation_id) != null
+        )) continue;
 
         const correct = readBoolean(asRecord(outcome.outcome_payload).prediction_correct)
             ?? readBoolean(inference.prediction_correct);
@@ -178,6 +184,8 @@ async function loadValidationInferenceRows(
         IC.uncertainty_metrics,
         IC.output_payload,
         IC.prediction_correct,
+        IC.is_synthetic,
+        IC.simulation_id,
         IC.created_at,
     ].join(',');
     const legacySelect = [
@@ -187,6 +195,8 @@ async function loadValidationInferenceRows(
         IC.uncertainty_metrics,
         IC.output_payload,
         IC.prediction_correct,
+        IC.is_synthetic,
+        IC.simulation_id,
         IC.created_at,
     ].join(',');
 
@@ -264,15 +274,65 @@ function buildInterpretation(
 
 function isRealClinicalOutcome(row: CireValidationOutcomeRow): boolean {
     if (readBoolean(row.is_synthetic) === true) return false;
+    if (readText(row.simulation_id) != null) return false;
 
     const payload = asRecord(row.outcome_payload);
     const labelType = (readText(row.label_type) ?? readText(payload.label_type) ?? '').toLowerCase();
-    if (labelType === 'synthetic') return false;
+    if (labelType !== 'expert_reviewed' && labelType !== 'lab_confirmed') return false;
 
     const sourceModule = (readText(row.source_module) ?? '').toLowerCase();
     if (sourceModule.includes('simulation')) return false;
 
     return true;
+}
+
+function selectCanonicalOutcomes(
+    outcomes: CireValidationOutcomeRow[],
+    realClinicalOnly: boolean,
+): CireValidationOutcomeRow[] {
+    const selected = new Map<string, CireValidationOutcomeRow>();
+
+    for (const outcome of outcomes) {
+        const inferenceId = readText(outcome.inference_event_id);
+        if (!inferenceId) continue;
+        if (realClinicalOnly && !isRealClinicalOutcome(outcome)) continue;
+
+        const current = selected.get(inferenceId);
+        if (!current || compareOutcomeAuthority(outcome, current) > 0) {
+            selected.set(inferenceId, outcome);
+        }
+    }
+
+    return Array.from(selected.values());
+}
+
+function compareOutcomeAuthority(
+    left: CireValidationOutcomeRow,
+    right: CireValidationOutcomeRow,
+): number {
+    const authorityDelta = outcomeAuthority(left) - outcomeAuthority(right);
+    if (authorityDelta !== 0) return authorityDelta;
+
+    return readTimestamp(left.created_at) - readTimestamp(right.created_at);
+}
+
+function outcomeAuthority(row: CireValidationOutcomeRow): number {
+    const labelType = (
+        readText(row.label_type)
+        ?? readText(asRecord(row.outcome_payload).label_type)
+        ?? ''
+    ).toLowerCase();
+    if (labelType === 'lab_confirmed') return 3;
+    if (labelType === 'expert_reviewed') return 2;
+    if (labelType === 'inferred_only') return 1;
+    return 0;
+}
+
+function readTimestamp(value: unknown): number {
+    const timestamp = readText(value);
+    if (!timestamp) return 0;
+    const parsed = Date.parse(timestamp);
+    return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function buildReliabilityBins(pairs: ValidationPair[]) {

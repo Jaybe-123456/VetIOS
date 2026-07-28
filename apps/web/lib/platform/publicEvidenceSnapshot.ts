@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { loadCireValidationReport } from '@/lib/cire/validation';
-import { AI_INFERENCE_EVENTS, CLINICAL_CASES, CLINICAL_OUTCOME_EVENTS, PASSIVE_SIGNAL_EVENTS } from '@/lib/db/schemaContracts';
+import { AI_INFERENCE_EVENTS, CLINICAL_CASES, PASSIVE_SIGNAL_EVENTS } from '@/lib/db/schemaContracts';
 import { passiveSignalMarketplace } from '@/lib/platform/passiveSignalMarketplace';
 import { resolvePublicCatalogTenant, type PublicCatalogSource } from '@/lib/platform/publicTenant';
 import { getSupabaseServer } from '@/lib/supabaseServer';
@@ -22,9 +22,21 @@ export interface PublicEvidenceSnapshot {
     };
     inference: {
         inference_events: number;
+        real_inference_events: number;
         outcome_linked_inferences: number;
+        outcome_confirmed_inferences: number;
+        expert_reviewed_inferences: number;
+        lab_confirmed_inferences: number;
+        calibration_ready_outcomes: number;
+        synthetic_inferences_excluded: number;
+        synthetic_outcome_inferences_excluded: number;
+        outcome_confirmation_rate: number;
+        latest_outcome_confirmed_at: string | null;
+        outcome_metric_version: string;
         cire_sample_size: number;
+        cire_min_sample_size: number;
         cire_status: string;
+        cire_validation_scope: string;
         cire_spearman_r: number | null;
     };
     workflow: {
@@ -172,11 +184,15 @@ async function loadInferenceEvidence(
     warnings: string[],
 ): Promise<PublicEvidenceSnapshot['inference']> {
     const IC = AI_INFERENCE_EVENTS.COLUMNS;
-    const OC = CLINICAL_OUTCOME_EVENTS.COLUMNS;
-    const [inferenceEvents, outcomeLinkedInferences, cire] = await Promise.all([
+    const [inferenceEvents, outcomeValue, cire] = await Promise.all([
         countRows(client, AI_INFERENCE_EVENTS.TABLE, (query) => query.eq(IC.tenant_id, tenantId), warnings, 'inference events'),
-        countRows(client, CLINICAL_OUTCOME_EVENTS.TABLE, (query) => query.eq(OC.tenant_id, tenantId).not(OC.inference_event_id, 'is', null), warnings, 'outcome-linked inferences'),
-        loadCireValidationReport(client, { tenantId, minSampleSize: 30 }).catch((error) => {
+        loadOutcomeValueMetrics(client, tenantId, warnings),
+        loadCireValidationReport(client, {
+            tenantId,
+            limit: 5000,
+            minSampleSize: 200,
+            realClinicalOnly: true,
+        }).catch((error) => {
             warnings.push(`CIRE validation unavailable: ${readErrorMessage(error)}`);
             return null;
         }),
@@ -184,10 +200,82 @@ async function loadInferenceEvidence(
 
     return {
         inference_events: inferenceEvents,
-        outcome_linked_inferences: outcomeLinkedInferences,
+        real_inference_events: outcomeValue.real_inference_events,
+        outcome_linked_inferences: outcomeValue.outcome_linked_inferences,
+        outcome_confirmed_inferences: outcomeValue.outcome_confirmed_inferences,
+        expert_reviewed_inferences: outcomeValue.expert_reviewed_inferences,
+        lab_confirmed_inferences: outcomeValue.lab_confirmed_inferences,
+        calibration_ready_outcomes: outcomeValue.calibration_ready_outcomes,
+        synthetic_inferences_excluded: outcomeValue.synthetic_inferences_excluded,
+        synthetic_outcome_inferences_excluded: outcomeValue.synthetic_outcome_inferences_excluded,
+        outcome_confirmation_rate: outcomeValue.outcome_confirmation_rate,
+        latest_outcome_confirmed_at: outcomeValue.latest_outcome_confirmed_at,
+        outcome_metric_version: outcomeValue.metric_version,
         cire_sample_size: cire?.sample_size ?? 0,
+        cire_min_sample_size: cire?.min_sample_size ?? 200,
         cire_status: cire?.status ?? 'unavailable',
+        cire_validation_scope: cire?.validation_scope ?? 'real_clinical_outcomes',
         cire_spearman_r: cire?.spearman_r ?? null,
+    };
+}
+
+interface OutcomeValueMetrics {
+    real_inference_events: number;
+    outcome_linked_inferences: number;
+    outcome_confirmed_inferences: number;
+    expert_reviewed_inferences: number;
+    lab_confirmed_inferences: number;
+    calibration_ready_outcomes: number;
+    synthetic_inferences_excluded: number;
+    synthetic_outcome_inferences_excluded: number;
+    outcome_confirmation_rate: number;
+    latest_outcome_confirmed_at: string | null;
+    metric_version: string;
+}
+
+async function loadOutcomeValueMetrics(
+    client: SupabaseClient,
+    tenantId: string,
+    warnings: string[],
+): Promise<OutcomeValueMetrics> {
+    const empty = emptyOutcomeValueMetrics();
+    const { data, error } = await client
+        .from('outcome_value_metrics_v1')
+        .select([
+            'real_inference_events',
+            'outcome_linked_inferences',
+            'outcome_confirmed_inferences',
+            'expert_reviewed_inferences',
+            'lab_confirmed_inferences',
+            'calibration_ready_outcomes',
+            'synthetic_inferences_excluded',
+            'synthetic_outcome_inferences_excluded',
+            'outcome_confirmation_rate',
+            'latest_outcome_confirmed_at',
+            'metric_version',
+        ].join(','))
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
+    if (error) {
+        warnings.push(`outcome value metrics unavailable: ${readErrorMessage(error)}`);
+        return empty;
+    }
+    if (!data || typeof data !== 'object') return empty;
+
+    const row = data as Record<string, unknown>;
+    return {
+        real_inference_events: readMetricNumber(row.real_inference_events),
+        outcome_linked_inferences: readMetricNumber(row.outcome_linked_inferences),
+        outcome_confirmed_inferences: readMetricNumber(row.outcome_confirmed_inferences),
+        expert_reviewed_inferences: readMetricNumber(row.expert_reviewed_inferences),
+        lab_confirmed_inferences: readMetricNumber(row.lab_confirmed_inferences),
+        calibration_ready_outcomes: readMetricNumber(row.calibration_ready_outcomes),
+        synthetic_inferences_excluded: readMetricNumber(row.synthetic_inferences_excluded),
+        synthetic_outcome_inferences_excluded: readMetricNumber(row.synthetic_outcome_inferences_excluded),
+        outcome_confirmation_rate: readMetricNumber(row.outcome_confirmation_rate),
+        latest_outcome_confirmed_at: readMetricText(row.latest_outcome_confirmed_at),
+        metric_version: readMetricText(row.metric_version) ?? empty.metric_version,
     };
 }
 
@@ -344,10 +432,9 @@ export function buildPublicEvidenceIntegrity(input: {
         };
     }
 
-    const outcomeConfirmedCorpus = input.dataset.confirmed_labels > 0
-        && input.inference.outcome_linked_inferences > 0;
+    const outcomeConfirmedCorpus = input.inference.outcome_confirmed_inferences > 0;
     const cireValidationReady = input.inference.cire_status === 'validated'
-        || input.inference.cire_sample_size >= 30;
+        && input.inference.cire_validation_scope === 'real_clinical_outcomes';
     const amrLoopActive = input.amr.stewardship_events > 0
         || input.amr.genomic_events > 0;
     const specialistReviewLoopActive = input.specialist_review.review_events > 0
@@ -421,9 +508,21 @@ function emptyEvidenceSnapshot(input: {
         },
         inference: {
             inference_events: 0,
+            real_inference_events: 0,
             outcome_linked_inferences: 0,
+            outcome_confirmed_inferences: 0,
+            expert_reviewed_inferences: 0,
+            lab_confirmed_inferences: 0,
+            calibration_ready_outcomes: 0,
+            synthetic_inferences_excluded: 0,
+            synthetic_outcome_inferences_excluded: 0,
+            outcome_confirmation_rate: 0,
+            latest_outcome_confirmed_at: null,
+            outcome_metric_version: 'outcome_value_v1',
             cire_sample_size: 0,
+            cire_min_sample_size: 200,
             cire_status: 'unconfigured',
+            cire_validation_scope: 'real_clinical_outcomes',
             cire_spearman_r: null,
         },
         workflow: {
@@ -466,9 +565,21 @@ function emptyEvidenceSnapshot(input: {
             },
             inference: {
                 inference_events: 0,
+                real_inference_events: 0,
                 outcome_linked_inferences: 0,
+                outcome_confirmed_inferences: 0,
+                expert_reviewed_inferences: 0,
+                lab_confirmed_inferences: 0,
+                calibration_ready_outcomes: 0,
+                synthetic_inferences_excluded: 0,
+                synthetic_outcome_inferences_excluded: 0,
+                outcome_confirmation_rate: 0,
+                latest_outcome_confirmed_at: null,
+                outcome_metric_version: 'outcome_value_v1',
                 cire_sample_size: 0,
+                cire_min_sample_size: 200,
                 cire_status: 'unconfigured',
+                cire_validation_scope: 'real_clinical_outcomes',
                 cire_spearman_r: null,
             },
             workflow: {
@@ -501,4 +612,29 @@ function emptyEvidenceSnapshot(input: {
             },
         }),
     };
+}
+
+function emptyOutcomeValueMetrics(): OutcomeValueMetrics {
+    return {
+        real_inference_events: 0,
+        outcome_linked_inferences: 0,
+        outcome_confirmed_inferences: 0,
+        expert_reviewed_inferences: 0,
+        lab_confirmed_inferences: 0,
+        calibration_ready_outcomes: 0,
+        synthetic_inferences_excluded: 0,
+        synthetic_outcome_inferences_excluded: 0,
+        outcome_confirmation_rate: 0,
+        latest_outcome_confirmed_at: null,
+        metric_version: 'outcome_value_v1',
+    };
+}
+
+function readMetricNumber(value: unknown): number {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function readMetricText(value: unknown): string | null {
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }

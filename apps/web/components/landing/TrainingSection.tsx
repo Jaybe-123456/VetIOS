@@ -26,12 +26,11 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
                         VetIOS Evidence Infrastructure
                     </div>
                     <h2 className="text-3xl font-semibold tracking-normal text-white md:text-5xl">
-                        Building a verifiable clinical dataset
+                        Outcome-confirmed intelligence, not token volume
                     </h2>
                     <p className="mt-5 text-base leading-7 text-[#8EA899]">
-                        VetIOS now reports the evidence it can verify: case intake, confirmed labels, CIRE validation coverage,
-                        and workflow signals from the connected platform. When public dataset access is not configured, this
-                        section says so plainly.
+                        VetIOS reports distinct, non-synthetic inferences closed by a clinician-reviewed or laboratory-confirmed
+                        label. Repeated outcome rows, inferred-only labels, and simulation traffic do not inflate this metric.
                     </p>
                 </div>
 
@@ -73,6 +72,7 @@ export default function TrainingSection({ evidenceSnapshot }: { evidenceSnapshot
                             <EvidenceItem label="Real-case import path" value="Live" detail="Consent-gated, de-identified case rows can enter the dataset API." />
                             <EvidenceItem label="Governance lineage" value="Live" detail="Inference events carry prompt, schema, model, and CIRE lineage." />
                             <EvidenceItem label="PIMS workflow intake" value="Live" detail="Clinic workflow events normalize into passive signal contracts." />
+                            <EvidenceItem label="Outcome value ledger" value={snapshotOutcomeValueStatus(evidenceSnapshot)} detail={outcomeValueDetail(evidenceSnapshot)} />
                             <EvidenceItem label="CIRE claim status" value={titleCase(evidenceSnapshot.inference.cire_status)} detail={cireDetail(evidenceSnapshot)} />
                             <EvidenceItem label="Specialist oversight" value={evidenceSnapshot.integrity.specialist_review_loop_active ? 'Measured' : 'Ready'} detail={specialistReviewDetail(evidenceSnapshot)} />
                             <EvidenceItem label="Claim posture" value={titleCase(evidenceSnapshot.integrity.public_claim_posture)} detail={integrityDetail(evidenceSnapshot)} />
@@ -159,11 +159,11 @@ function buildEvidenceMetrics(snapshot: PublicEvidenceSnapshot) {
             icon: Database,
         },
         {
-            label: 'Confirmed labels',
-            rawValue: snapshot.dataset.confirmed_labels,
-            value: formatNumber(snapshot.dataset.confirmed_labels),
-            detail: `${formatNumber(snapshot.dataset.learning_ready_cases)} cases are currently marked learning-ready.`,
-            status: snapshot.dataset.confirmed_labels > 0 ? 'measured' : 'building',
+            label: 'Outcome-confirmed inferences',
+            rawValue: snapshot.inference.outcome_confirmed_inferences,
+            value: formatNumber(snapshot.inference.outcome_confirmed_inferences),
+            detail: `${formatNumber(snapshot.inference.expert_reviewed_inferences)} carry clinician review; ${formatNumber(snapshot.inference.lab_confirmed_inferences)} carry lab confirmation. Synthetic traffic is excluded.`,
+            status: snapshot.inference.outcome_confirmed_inferences > 0 ? 'measured' : 'collecting',
             icon: ShieldCheck,
         },
         {
@@ -220,7 +220,10 @@ function buildTerminalRows(snapshot: PublicEvidenceSnapshot): Array<{ key: strin
         { key: 'labels', value: formatNumber(snapshot.dataset.confirmed_labels) },
         { key: 'imports', value: formatNumber(snapshot.dataset.real_case_imports) },
         { key: 'inferences', value: formatNumber(snapshot.inference.inference_events) },
-        { key: 'outcomes', value: formatNumber(snapshot.inference.outcome_linked_inferences) },
+        { key: 'confirmed', value: formatNumber(snapshot.inference.outcome_confirmed_inferences) },
+        { key: 'linked', value: formatNumber(snapshot.inference.outcome_linked_inferences) },
+        { key: 'synthetic_x', value: formatNumber(snapshot.inference.synthetic_inferences_excluded + snapshot.inference.synthetic_outcome_inferences_excluded) },
+        { key: 'closure_rate', value: formatPercent(snapshot.inference.outcome_confirmation_rate) },
         { key: 'cire', value: titleCase(snapshot.inference.cire_status), tone: snapshot.inference.cire_status === 'validated' ? undefined : 'warning' },
         { key: 'ask', value: `${formatNumber(snapshot.ask_vetios.query_events)} governed queries` },
         { key: 'amr', value: `${formatNumber(snapshot.amr.stewardship_events)} stewardship events` },
@@ -233,12 +236,12 @@ function buildTerminalRows(snapshot: PublicEvidenceSnapshot): Array<{ key: strin
 
 function cireDetail(snapshot: PublicEvidenceSnapshot): string {
     if (snapshot.inference.cire_status === 'validated') {
-        return `Validated with Spearman r=${snapshot.inference.cire_spearman_r ?? 'n/a'}.`;
+        return `Validated on real clinician/lab-confirmed outcomes with Spearman r=${snapshot.inference.cire_spearman_r ?? 'n/a'}.`;
     }
     if (snapshot.inference.cire_sample_size > 0) {
-        return `${formatNumber(snapshot.inference.cire_sample_size)} outcome-linked inference pairs collected; validation threshold not yet met.`;
+        return `${formatNumber(snapshot.inference.cire_sample_size)}/${formatNumber(snapshot.inference.cire_min_sample_size)} real confirmed pairs; current status is ${titleCase(snapshot.inference.cire_status)}.`;
     }
-    return 'Awaiting outcome-linked inference pairs before reliability claims are evidence-grade.';
+    return `Awaiting ${formatNumber(snapshot.inference.cire_min_sample_size)} real clinician/lab-confirmed pairs before reliability claims are evidence-grade.`;
 }
 
 function integrityDetail(snapshot: PublicEvidenceSnapshot): string {
@@ -261,8 +264,22 @@ function specialistReviewDetail(snapshot: PublicEvidenceSnapshot): string {
     return 'Append-only review events can capture specialist disposition, reports, corrections, and outcome-ready learning signals.';
 }
 
+function snapshotOutcomeValueStatus(snapshot: PublicEvidenceSnapshot): string {
+    return snapshot.inference.outcome_confirmed_inferences > 0 ? 'Measured' : 'Collecting';
+}
+
+function outcomeValueDetail(snapshot: PublicEvidenceSnapshot): string {
+    const excluded = snapshot.inference.synthetic_inferences_excluded
+        + snapshot.inference.synthetic_outcome_inferences_excluded;
+    return `${formatNumber(snapshot.inference.outcome_confirmed_inferences)} distinct confirmed inferences; ${formatNumber(excluded)} synthetic inference paths excluded; ${formatNumber(snapshot.inference.calibration_ready_outcomes)} carry calibration deltas.`;
+}
+
 function formatNumber(value: number): string {
     return Number.isFinite(value) ? value.toLocaleString() : '0';
+}
+
+function formatPercent(value: number): string {
+    return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : '0.0%';
 }
 
 function formatTimestamp(value: string): string {

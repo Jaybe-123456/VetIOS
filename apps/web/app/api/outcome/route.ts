@@ -138,7 +138,7 @@ export async function POST(req: Request) {
 
     const { data: inferenceEvent, error: inferenceError } = await supabase
         .from('ai_inference_events')
-        .select('id, tenant_id, user_id, clinic_id, case_id, source_module, input_signature, output_payload, confidence_score, model_version')
+        .select('id, tenant_id, user_id, clinic_id, case_id, source_module, input_signature, output_payload, confidence_score, model_version, simulation_id, is_synthetic')
         .eq('id', body.inference_event_id)
         .eq('tenant_id', tenantId)
         .maybeSingle();
@@ -250,6 +250,8 @@ export async function POST(req: Request) {
             actual_confidence: body.outcome.payload.confidence,
             calibration_delta: calibrationDelta,
             timestamp: body.outcome.timestamp,
+            simulation_id: readText((inferenceEvent as Record<string, unknown>).simulation_id),
+            is_synthetic: (inferenceEvent as Record<string, unknown>).is_synthetic === true,
         });
     } catch (error) {
         if (isUniqueViolation(error)) {
@@ -656,6 +658,8 @@ const OPTIONAL_OUTCOME_INSERT_COLUMNS = new Set([
     'actual_confidence',
     'calibration_delta',
     'timestamp',
+    'simulation_id',
+    'is_synthetic',
 ]);
 
 const OPTIONAL_DIAGNOSIS_RECORD_COLUMNS = new Set([
