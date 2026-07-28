@@ -42,8 +42,8 @@ describe('Ask VetIOS speculative draft', () => {
     });
 
     it('is enabled by default and can be disabled by environment', () => {
-        expect(shouldEmitAskVetiosSpeculativeDraft({} as NodeJS.ProcessEnv)).toBe(true);
-        expect(shouldEmitAskVetiosSpeculativeDraft({ VETIOS_ASK_SPECULATIVE_DRAFT_ENABLED: 'false' } as NodeJS.ProcessEnv)).toBe(false);
-        expect(shouldEmitAskVetiosSpeculativeDraft({ VETIOS_ASK_SPECULATIVE_DRAFT_ENABLED: '0' } as NodeJS.ProcessEnv)).toBe(false);
+        expect(shouldEmitAskVetiosSpeculativeDraft({})).toBe(true);
+        expect(shouldEmitAskVetiosSpeculativeDraft({ VETIOS_ASK_SPECULATIVE_DRAFT_ENABLED: 'false' })).toBe(false);
+        expect(shouldEmitAskVetiosSpeculativeDraft({ VETIOS_ASK_SPECULATIVE_DRAFT_ENABLED: '0' })).toBe(false);
     });
 });

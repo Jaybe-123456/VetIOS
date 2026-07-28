@@ -1,5 +1,7 @@
 import { createHash } from 'crypto';
-import { auditVvrbCases, type VvrbAuditIssue, type VvrbAuditReport, type VvrbCaseRecord } from '@/lib/learningEngine/vvrbBenchmark';
+import { auditVvrbCases, type VvrbAuditReport, type VvrbCaseRecord } from '@/lib/learningEngine/vvrbBenchmark';
+
+export type { VvrbCaseRecord } from '@/lib/learningEngine/vvrbBenchmark';
 
 export type VvrbTrainingSplit = 'train' | 'validation' | 'test';
 
@@ -186,7 +188,7 @@ export function buildVvrbExperimentalTrainingExport(
     };
 }
 
-export function encodeJsonlRows(rows: Array<Record<string, unknown>>): string {
+export function encodeJsonlRows<T extends object>(rows: readonly T[]): string {
     return rows.map((row) => JSON.stringify(row)).join('\n') + (rows.length > 0 ? '\n' : '');
 }
 

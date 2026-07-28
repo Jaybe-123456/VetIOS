@@ -1193,11 +1193,13 @@ describe('VetIOS Agentic RAG service primitives', () => {
     });
 
     it('records RAG citation feedback without storing raw notes or raw citation quotes', async () => {
-        let insertedPayload: Record<string, unknown> | null = null;
+        const capture: { insertedPayload: Record<string, unknown> | null } = {
+            insertedPayload: null,
+        };
         const client = {
             from: (table: string) => ({
                 insert: (payload: Record<string, unknown>) => {
-                    insertedPayload = { table, ...payload };
+                    capture.insertedPayload = { table, ...payload };
                     return {
                         select: () => ({
                             single: async () => ({
@@ -1227,11 +1229,11 @@ describe('VetIOS Agentic RAG service primitives', () => {
 
         expect(result.stored).toBe(true);
         expect(result.feedback_id).toBe('99999999-9999-4999-8999-999999999999');
-        expect(insertedPayload?.table).toBe('rag_citation_feedback_events');
-        expect(insertedPayload?.notes_hash).toHaveLength(64);
-        expect(JSON.stringify(insertedPayload)).not.toContain('This citation was clinically useful');
-        expect((insertedPayload?.metadata as Record<string, unknown>).raw_citation_quotes_stored).toBe(false);
-        expect(insertedPayload?.citation_indexes).toEqual([1]);
+        expect(capture.insertedPayload?.table).toBe('rag_citation_feedback_events');
+        expect(capture.insertedPayload?.notes_hash).toHaveLength(64);
+        expect(JSON.stringify(capture.insertedPayload)).not.toContain('This citation was clinically useful');
+        expect((capture.insertedPayload?.metadata as Record<string, unknown>).raw_citation_quotes_stored).toBe(false);
+        expect(capture.insertedPayload?.citation_indexes).toEqual([1]);
     });
 
     it('builds a respiratory diagnostic workflow for feline nasal discharge and sneezing evidence', async () => {

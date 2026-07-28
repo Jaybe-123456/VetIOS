@@ -9,7 +9,14 @@ export interface AskVetiosSpeculativeDraft {
     metadata: DraftMetadata;
 }
 
-export function shouldEmitAskVetiosSpeculativeDraft(env: NodeJS.ProcessEnv = process.env): boolean {
+export interface AskVetiosSpeculativeDraftEnvironment {
+    readonly [key: string]: string | undefined;
+    VETIOS_ASK_SPECULATIVE_DRAFT_ENABLED?: string;
+}
+
+export function shouldEmitAskVetiosSpeculativeDraft(
+    env: AskVetiosSpeculativeDraftEnvironment = process.env,
+): boolean {
     const value = env.VETIOS_ASK_SPECULATIVE_DRAFT_ENABLED;
     return value !== 'false' && value !== '0';
 }

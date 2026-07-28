@@ -57,6 +57,9 @@ vetios_vvrb*.jsonl
 apps/web/artifacts/
 artifacts/vvrb-training/
 
+# Weco local optimization run artifacts
+.runs/
+
 # Local sidecar repos / model checkouts
 /VetIOS/
 /models/

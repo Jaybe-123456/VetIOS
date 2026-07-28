@@ -15,7 +15,7 @@ import type { FederationRoundRow } from '@/lib/federation/nodeRuntime';
 import {
     buildLocalMultiNodeFederatedRoundProof,
     type LocalClinicalLearningRecord,
-} from '../../../../../packages/federation-node/src/index.ts';
+} from '../../../../../packages/federation-node/src/index';
 
 type X25519KeyPair = { publicKey: KeyObject; privateKey: KeyObject };
 
