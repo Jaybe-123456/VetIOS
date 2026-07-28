@@ -239,44 +239,56 @@ async function loadOutcomeValueMetrics(
     warnings: string[],
 ): Promise<OutcomeValueMetrics> {
     const empty = emptyOutcomeValueMetrics();
-    const { data, error } = await client
-        .from('outcome_value_metrics_v1')
-        .select([
-            'real_inference_events',
-            'outcome_linked_inferences',
-            'outcome_confirmed_inferences',
-            'expert_reviewed_inferences',
-            'lab_confirmed_inferences',
-            'calibration_ready_outcomes',
-            'synthetic_inferences_excluded',
-            'synthetic_outcome_inferences_excluded',
-            'outcome_confirmation_rate',
-            'latest_outcome_confirmed_at',
-            'metric_version',
-        ].join(','))
-        .eq('tenant_id', tenantId)
-        .maybeSingle();
+    const columns = [
+        'real_inference_events',
+        'outcome_linked_inferences',
+        'outcome_confirmed_inferences',
+        'expert_reviewed_inferences',
+        'lab_confirmed_inferences',
+        'calibration_ready_outcomes',
+        'synthetic_inferences_excluded',
+        'synthetic_outcome_inferences_excluded',
+        'outcome_confirmation_rate',
+        'latest_outcome_confirmed_at',
+        'metric_version',
+    ].join(',');
 
-    if (error) {
-        warnings.push(`outcome value metrics unavailable: ${readErrorMessage(error)}`);
-        return empty;
+    for (const table of ['outcome_value_metrics_v2', 'outcome_value_metrics_v1']) {
+        const { data, error } = await client
+            .from(table)
+            .select(columns)
+            .eq('tenant_id', tenantId)
+            .maybeSingle();
+
+        if (error) {
+            if (table === 'outcome_value_metrics_v2') {
+                warnings.push(
+                    `materialized outcome metrics unavailable; using legacy fallback: ${readErrorMessage(error)}`,
+                );
+                continue;
+            }
+            warnings.push(`outcome value metrics unavailable: ${readErrorMessage(error)}`);
+            return empty;
+        }
+        if (!data || typeof data !== 'object') return empty;
+
+        const row = data as Record<string, unknown>;
+        return {
+            real_inference_events: readMetricNumber(row.real_inference_events),
+            outcome_linked_inferences: readMetricNumber(row.outcome_linked_inferences),
+            outcome_confirmed_inferences: readMetricNumber(row.outcome_confirmed_inferences),
+            expert_reviewed_inferences: readMetricNumber(row.expert_reviewed_inferences),
+            lab_confirmed_inferences: readMetricNumber(row.lab_confirmed_inferences),
+            calibration_ready_outcomes: readMetricNumber(row.calibration_ready_outcomes),
+            synthetic_inferences_excluded: readMetricNumber(row.synthetic_inferences_excluded),
+            synthetic_outcome_inferences_excluded: readMetricNumber(row.synthetic_outcome_inferences_excluded),
+            outcome_confirmation_rate: readMetricNumber(row.outcome_confirmation_rate),
+            latest_outcome_confirmed_at: readMetricText(row.latest_outcome_confirmed_at),
+            metric_version: readMetricText(row.metric_version) ?? empty.metric_version,
+        };
     }
-    if (!data || typeof data !== 'object') return empty;
 
-    const row = data as Record<string, unknown>;
-    return {
-        real_inference_events: readMetricNumber(row.real_inference_events),
-        outcome_linked_inferences: readMetricNumber(row.outcome_linked_inferences),
-        outcome_confirmed_inferences: readMetricNumber(row.outcome_confirmed_inferences),
-        expert_reviewed_inferences: readMetricNumber(row.expert_reviewed_inferences),
-        lab_confirmed_inferences: readMetricNumber(row.lab_confirmed_inferences),
-        calibration_ready_outcomes: readMetricNumber(row.calibration_ready_outcomes),
-        synthetic_inferences_excluded: readMetricNumber(row.synthetic_inferences_excluded),
-        synthetic_outcome_inferences_excluded: readMetricNumber(row.synthetic_outcome_inferences_excluded),
-        outcome_confirmation_rate: readMetricNumber(row.outcome_confirmation_rate),
-        latest_outcome_confirmed_at: readMetricText(row.latest_outcome_confirmed_at),
-        metric_version: readMetricText(row.metric_version) ?? empty.metric_version,
-    };
+    return empty;
 }
 
 async function loadWorkflowEvidence(
