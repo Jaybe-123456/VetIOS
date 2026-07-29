@@ -155,6 +155,14 @@ export const AUTH_TRUST_ACTION_REQUIREMENTS: Record<string, AuthTrustActionRequi
         requiredScopes: ['outcome:write'],
         challengeType: 'recent_auth',
     },
+    'outcome.calibration.materialize': {
+        actionKey: 'outcome.calibration.materialize',
+        actionCategory: 'outcome_learning',
+        riskLevel: 'high',
+        requiredAssuranceLevel: 'recent_auth',
+        requiredScopes: ['evaluation:write'],
+        challengeType: 'recent_auth',
+    },
     'dataset.export': {
         actionKey: 'dataset.export',
         actionCategory: 'dataset_export',

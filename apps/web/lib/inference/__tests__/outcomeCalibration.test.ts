@@ -74,8 +74,9 @@ describe('outcome calibration loop', () => {
             outcome_label_count: 6,
             top1_accuracy: 0.8333,
             top3_recall: 1,
+            brier_score: 0.1587,
             overconfidence_rate: 0.1667,
-            calibration_status: 'calibrated',
+            calibration_status: 'overconfident',
         });
         expect(summary.buckets[0]?.source_hash).toMatch(/^[a-f0-9]{64}$/);
         expect(summary.buckets[0]?.evidence).not.toHaveProperty('raw_notes');
@@ -147,6 +148,7 @@ describe('outcome calibration loop', () => {
         });
 
         expect(result.error).toBeNull();
+        expect(result.runId).toBe('33333333-3333-4333-8333-333333333333');
         expect(insertedRuns[0]).toMatchObject({
             tenant_id: tenantId,
             run_status: 'completed',
@@ -156,8 +158,11 @@ describe('outcome calibration loop', () => {
         expect(insertedBuckets[0]).toMatchObject({
             calibration_run_id: '33333333-3333-4333-8333-333333333333',
             outcome_label_count: 5,
-            calibration_status: 'indeterminate',
+            calibration_status: 'underconfident',
         });
         expect(insertedBuckets[0]?.evidence).not.toHaveProperty('raw_output_payload');
+        expect(insertedBuckets[0]?.evidence).toMatchObject({
+            version: 'vetios_outcome_calibration_bucket_v2',
+        });
     });
 });

@@ -3,13 +3,14 @@
 import { useState } from 'react';
 import { Container, PageHeader, ConsoleCard, DataRow, TerminalTabs } from '@/components/ui/terminal';
 import { OutcomeAttachForm } from '@/components/OutcomeAttachForm';
+import { OutcomeCalibrationOperations } from '@/components/outcome/OutcomeCalibrationOperations';
 import { extractUuidFromText } from '@/lib/utils/uuid';
-import { ArrowRight, ArrowDown, BrainCircuit, Activity, Database, GitMerge, CheckCircle2, FlaskConical, MonitorDot } from 'lucide-react';
+import { ArrowRight, ArrowDown, BrainCircuit, Activity, Database, GitMerge, CheckCircle2, FlaskConical, Gauge, MonitorDot } from 'lucide-react';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type PipelineStage = 'idle' | 'prediction' | 'outcome_injected' | 'reinforcement_recorded' | 'telemetry_logged';
-type OutcomeTab = 'injection' | 'monitor';
+type OutcomeTab = 'injection' | 'monitor' | 'evidence';
 
 interface EvalResult {
     id: string;
@@ -122,6 +123,7 @@ export default function OutcomeLearning() {
                 tabs={[
                     { id: 'injection', label: 'Injection', icon: <FlaskConical className="w-4 h-4" /> },
                     { id: 'monitor', label: 'Monitor', icon: <MonitorDot className="w-4 h-4" /> },
+                    { id: 'evidence', label: 'Evidence', icon: <Gauge className="w-4 h-4" /> },
                 ]}
                 activeTab={activeTab}
                 onTabChange={setActiveTab}
@@ -133,7 +135,7 @@ export default function OutcomeLearning() {
                         <OutcomeAttachForm onSubmit={handleSubmit} isSubmitting={state.status === 'submitting'} />
                     </ConsoleCard>
                 </div>
-            ) : (
+            ) : activeTab === 'monitor' ? (
                 <div className="space-y-6 sm:space-y-8 animate-scale-in">
                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
                         <ConsoleCard title="Reinforcement Pipeline Activity">
@@ -238,6 +240,8 @@ export default function OutcomeLearning() {
                     {/* Pipeline Visual is now part of Monitor tab */}
                     <PipelineVisual stage={state.pipelineStage} />
                 </div>
+            ) : (
+                <OutcomeCalibrationOperations />
             )}
         </Container>
     );

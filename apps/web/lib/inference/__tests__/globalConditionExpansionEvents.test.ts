@@ -4,13 +4,15 @@ import type { GlobalConditionExpansionReport } from '../types';
 
 describe('global condition expansion event writer', () => {
     it('persists review-gated verified expansion evidence without enabling probability scoring', async () => {
-        let inserted: Record<string, unknown> | null = null;
+        const capture: { inserted: Record<string, unknown> | null } = {
+            inserted: null,
+        };
         const client = {
             from(table: string) {
                 expect(table).toBe('global_condition_expansion_events');
                 return {
                     insert(payload: Record<string, unknown>) {
-                        inserted = payload;
+                        capture.inserted = payload;
                         return {
                             select() {
                                 return {
@@ -71,18 +73,18 @@ describe('global condition expansion event writer', () => {
         });
 
         expect(result.error).toBeNull();
-        expect(inserted).toMatchObject({
+        expect(capture.inserted).toMatchObject({
             expansion_status: 'verified_candidates_available',
             probability_scoring_status: 'blocked_pending_review',
             reviewer_gate_status: 'required',
             verified_condition_keys: ['rabies'],
             verified_code_systems: ['MONDO'],
         });
-        expect(inserted?.expansion_packet).toMatchObject({
+        expect(capture.inserted?.expansion_packet).toMatchObject({
             expansion_mode: 'shadow',
             scoring_allowed: false,
             source_attested_mapping_count: 1,
         });
-        expect(inserted?.source_manifest_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(capture.inserted?.source_manifest_hash).toMatch(/^[a-f0-9]{64}$/);
     });
 });

@@ -4,13 +4,15 @@ import type { OfficialOntologyIngestionSummary } from '../globalOneHealthOfficia
 
 describe('official ontology ingestion run event writer', () => {
     it('persists provider readiness, skipped providers, and inserted mapping counts', async () => {
-        let inserted: Record<string, unknown> | null = null;
+        const capture: { inserted: Record<string, unknown> | null } = {
+            inserted: null,
+        };
         const client = {
             from(table: string) {
                 expect(table).toBe('official_ontology_ingestion_run_events');
                 return {
                     insert(payload: Record<string, unknown>) {
-                        inserted = payload;
+                        capture.inserted = payload;
                         return {
                             select() {
                                 return {
@@ -76,7 +78,7 @@ describe('official ontology ingestion run event writer', () => {
         });
 
         expect(result.error).toBeNull();
-        expect(inserted).toMatchObject({
+        expect(capture.inserted).toMatchObject({
             ingestion_status: 'partial',
             ready_provider_count: 1,
             skipped_provider_count: 1,
@@ -85,7 +87,7 @@ describe('official ontology ingestion run event writer', () => {
             inserted_mapping_count: 1,
             dry_run: false,
         });
-        expect(inserted?.blockers).toContain('license_required:snomed_ct_release');
-        expect(inserted?.source_manifest_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(capture.inserted?.blockers).toContain('license_required:snomed_ct_release');
+        expect(capture.inserted?.source_manifest_hash).toMatch(/^[a-f0-9]{64}$/);
     });
 });

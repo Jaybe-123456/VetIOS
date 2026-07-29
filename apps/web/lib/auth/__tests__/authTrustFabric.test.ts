@@ -54,6 +54,31 @@ describe('auth trust fabric', () => {
         expect(packet.blockers).toContain('assurance_too_low:session->mfa');
     });
 
+    it('requires recent authentication before committing calibration evidence', () => {
+        const packet = authorizeVetiosAction({
+            tenantId: 'tenant_1',
+            requestId: 'req_calibration_1',
+            actionKey: 'outcome.calibration.materialize',
+            resource: {
+                type: 'outcome_calibration_evidence',
+                tenantId: 'tenant_1',
+            },
+            subject: {
+                type: 'session_user',
+                authMode: 'session',
+                userId: '00000000-0000-4000-8000-000000000001',
+                role: 'admin',
+                grantedScopes: ['*'],
+                assuranceLevel: 'session',
+            },
+        });
+
+        expect(packet.decision).toBe('challenge');
+        expect(packet.actionCategory).toBe('outcome_learning');
+        expect(packet.requiredAssuranceLevel).toBe('recent_auth');
+        expect(packet.challengeType).toBe('recent_auth');
+    });
+
     it('denies dev bypass in production even when the action is otherwise low risk', () => {
         const packet = authorizeVetiosAction({
             tenantId: 'tenant_1',

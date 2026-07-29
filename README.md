@@ -59,6 +59,7 @@ VetIOS publishes the Clinical Inference Reliability Engine (CIRE) methodology as
 The strategy is CUDA-like but more precise: CIRE is the free scoring language and reference contract; VetIOS captures value in the managed infrastructure, outcome-confirmed data graph, AMR feeds, governance APIs, and partner-node workflows that run the standard at production quality.
 
 - Human-readable methodology: [CIRE Scoring Methodology v1.0](docs/research/cire-scoring-methodology-v1.0.md)
+- Source-backed positioning and claim audit: [Post-Tokenmaxxing Strategy Audit](docs/research/post-tokenmaxxing-strategy-audit-2026-07.md)
 - Public standard page: [vetios.tech/platform/cire-standard](https://www.vetios.tech/platform/cire-standard)
 - Machine-readable contract: [vetios.tech/api/public/cire-standard](https://www.vetios.tech/api/public/cire-standard)
 - Public conformance artifact: [vetios.tech/api/public/cire-conformance](https://www.vetios.tech/api/public/cire-conformance)
@@ -149,6 +150,13 @@ The packet is intentionally strict. It separates what is built from what is stil
 >
 > Every prediction can become supervised signal. Every outcome can reveal calibration drift. Every low-confidence or contradictory case can generate synthetic adversarial variants. The result is a compounding clinical intelligence loop designed for safer model routing, sharper confidence estimates, and clearer operational boundaries.
 
+The public north-star counter uses `public.outcome_value_metrics_v1`: one count
+per distinct non-synthetic inference with an `expert_reviewed` or
+`lab_confirmed` diagnosis. Repeated outcome events, inferred-only labels, and
+simulation-linked rows are excluded. CIRE public evidence-grade language also
+requires at least 200 such real clinical pairs and an observed `validated`
+signal; volume alone is not enough.
+
 ## Federated Learning Moat
 
 VetIOS is building toward outcome-confirmed federated learning rather than pooled raw clinical data. The `@vetios/federation-node` package provides the deployable clinic/lab node path: local record loading, outcome eligibility checks, deterministic local delta computation, X25519/HKDF pairwise masking, encrypted unmask-share envelopes, Ed25519 update signatures, service-mode heartbeats, retry/audit logging, and key rotation.
@@ -193,6 +201,26 @@ the console reports the pilot as enrolling or collecting rather than complete.
 - Existing AMR ingestion: `POST /api/amr/stewardship`
 - Existing surveillance: `GET /api/amr/surveillance`
 - Existing One Health export: `GET /api/amr/one-health/export`
+
+## Governed Inference Routing
+
+`POST /api/inference/v2` now executes through the model-routing runtime instead
+of calling a hard-coded provider directly. Each request produces a routing plan,
+uses only an approved router profile or production-safe registry entry, records
+the planned decision, and settles the decision against the persisted inference
+event with selected model, latency, fallback, prediction, and confidence.
+
+The configured `AI_PROVIDER_DEFAULT_MODEL` remains the direct availability
+fallback when planning, persistence, or routed execution fails. Built-in
+alternate profiles are `pending` by default and cannot receive traffic unless
+they are approved through the model registry/router profile workflow. Keep
+`VETIOS_ALLOW_UNGOVERNED_ROUTING_PROFILES=false` in production.
+
+- Runtime: `apps/web/lib/routingEngine/inferenceRuntime.ts`
+- Routing engine: `apps/web/lib/routingEngine/service.ts`
+- Active migration: `supabase/migrations/20260728040000_model_routing_runtime_activation.sql`
+- Persisted ledger: `model_routing_decisions`
+- Approved profile registry: `model_router_profiles`
 
 ## Core API
 

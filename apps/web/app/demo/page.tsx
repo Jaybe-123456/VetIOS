@@ -4,21 +4,27 @@ import { JsonLd } from '@/components/seo/JsonLd';
 import { getConfiguredSiteOrigin } from '@/lib/site';
 
 export const metadata: Metadata = {
-    title: 'Demo Case | VetIOS',
-    description: 'Try a public VetIOS veterinary AI demo case with ranked diagnoses, graph priors, CIRE runtime integrity signals, and outcome learning.',
+    title: 'Clinical Intelligence Control Plane Demo',
+    description: 'Explore a browser-only VetIOS control-plane fixture connecting clinical inference, CIRE telemetry, outcome evidence, privacy boundaries, and AMR context.',
     alternates: { canonical: '/demo' },
-    keywords: ['VetIOS demo', 'veterinary AI demo', 'veterinary diagnosis demo', 'AI veterinary platform demo'],
+    keywords: [
+        'VetIOS demo',
+        'veterinary clinical intelligence',
+        'veterinary outcome learning',
+        'veterinary secure aggregation',
+        'veterinary AMR surveillance',
+    ],
     openGraph: {
-        title: 'Try the VetIOS Demo Case',
-        description: 'Run a public VetIOS demo case with ranked diagnoses, graph priors, runtime integrity signals, and outcome learning.',
+        title: 'VetIOS Clinical Intelligence Control Plane Demo',
+        description: 'Trace one synthetic veterinary case across CIRE, outcome evidence, node sovereignty, and AMR context.',
         url: '/demo',
         type: 'website',
-        images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'VetIOS demo case' }],
+        images: [{ url: '/opengraph-image', width: 1200, height: 630, alt: 'VetIOS clinical intelligence control plane' }],
     },
     twitter: {
         card: 'summary_large_image',
-        title: 'Try the VetIOS Demo Case',
-        description: 'Run a public veterinary AI demo case with ranked diagnoses, graph priors, and runtime integrity signals.',
+        title: 'VetIOS Clinical Intelligence Control Plane Demo',
+        description: 'A truth-labeled public fixture for clinical inference, outcomes, sovereignty, and AMR.',
         images: ['/opengraph-image'],
     },
 };
@@ -38,7 +44,7 @@ export default function DemoPage() {
                     operatingSystem: 'Web',
                     url: `${siteUrl}/demo`,
                     isPartOf: { '@id': `${siteUrl}/#software` },
-                    description: 'Public VetIOS demo case for veterinary AI differential ranking, graph priors, runtime integrity signals, and outcome learning.',
+                    description: 'Browser-only VetIOS control-plane fixture connecting clinical inference, CIRE telemetry, outcome evidence, privacy boundaries, and AMR context.',
                 }}
             />
             <DemoCase />

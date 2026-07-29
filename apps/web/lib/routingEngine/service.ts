@@ -82,9 +82,9 @@ export async function planModelRoute(input: RoutingPlanInput): Promise<RoutingPl
         requestedModelVersion: input.requestedModelVersion,
     });
     const profiles = mergeProfiles([
-        ...dbProfiles,
-        ...registryProfiles,
         ...defaultProfiles,
+        ...registryProfiles,
+        ...dbProfiles,
     ]);
     const candidates = scoreRoutingCandidates({
         profiles,
@@ -264,10 +264,10 @@ export async function createRoutingDecisionRecord(
 
         return mapRoutingDecisionRow(data as Record<string, unknown>, plan);
     } catch (error) {
-        if (isMissingRelationError(error, MODEL_ROUTING_DECISIONS.TABLE)) {
-            return buildEphemeralRoutingDecision(plan, primary, input.caseId ?? null);
-        }
-        throw new Error(`Failed to persist routing decision: ${extractErrorMessage(error)}`);
+        const detail = isMissingRelationError(error, MODEL_ROUTING_DECISIONS.TABLE)
+            ? `Routing decision storage is unavailable; apply the active ${MODEL_ROUTING_DECISIONS.TABLE} migration.`
+            : extractErrorMessage(error);
+        throw new Error(`Failed to persist routing decision: ${detail}`);
     }
 }
 
@@ -406,6 +406,7 @@ export function buildDefaultRoutingProfiles(input: {
     requestedModelVersion: string;
 }): RoutingModelProfile[] {
     const prefix = familyPrefix(input.family);
+    const allowUngovernedAlternates = process.env.VETIOS_ALLOW_UNGOVERNED_ROUTING_PROFILES === 'true';
     const defaultProvider = resolveConfiguredProviderModel('deep_reasoning', input.requestedModelName);
     const fastProvider = resolveConfiguredProviderModel('fast', defaultProvider);
     const deepProvider = resolveConfiguredProviderModel('deep_reasoning', defaultProvider);
@@ -424,7 +425,7 @@ export function buildDefaultRoutingProfiles(input: {
             model_name: `${prefix}_small_v1`,
             model_version: `${prefix}_small_v1`,
             registry_id: null,
-            approval_status: 'approved',
+            approval_status: allowUngovernedAlternates ? 'approved' : 'pending',
             active: true,
             expected_latency_ms: 260,
             base_accuracy: input.family === 'vision' ? 0.79 : 0.76,
@@ -433,7 +434,7 @@ export function buildDefaultRoutingProfiles(input: {
             recall_score: 0.66,
             metadata: {
                 source: 'routing_defaults',
-                explicitly_approved: true,
+                explicitly_approved: allowUngovernedAlternates,
             },
         },
         {
@@ -446,7 +447,7 @@ export function buildDefaultRoutingProfiles(input: {
             model_name: `${prefix}_large_v1`,
             model_version: `${prefix}_large_v1`,
             registry_id: null,
-            approval_status: 'approved',
+            approval_status: allowUngovernedAlternates ? 'approved' : 'pending',
             active: true,
             expected_latency_ms: 950,
             base_accuracy: 0.89,
@@ -455,7 +456,7 @@ export function buildDefaultRoutingProfiles(input: {
             recall_score: 0.84,
             metadata: {
                 source: 'routing_defaults',
-                explicitly_approved: true,
+                explicitly_approved: allowUngovernedAlternates,
             },
         },
         {
@@ -468,7 +469,7 @@ export function buildDefaultRoutingProfiles(input: {
             model_name: `${prefix}_robust_v1`,
             model_version: `${prefix}_robust_v1`,
             registry_id: null,
-            approval_status: 'approved',
+            approval_status: allowUngovernedAlternates ? 'approved' : 'pending',
             active: true,
             expected_latency_ms: 620,
             base_accuracy: 0.87,
@@ -477,7 +478,7 @@ export function buildDefaultRoutingProfiles(input: {
             recall_score: 0.9,
             metadata: {
                 source: 'routing_defaults',
-                explicitly_approved: true,
+                explicitly_approved: allowUngovernedAlternates,
             },
         },
         {
@@ -490,7 +491,7 @@ export function buildDefaultRoutingProfiles(input: {
             model_name: `${prefix}_recall_v1`,
             model_version: `${prefix}_recall_v1`,
             registry_id: null,
-            approval_status: 'approved',
+            approval_status: allowUngovernedAlternates ? 'approved' : 'pending',
             active: true,
             expected_latency_ms: 720,
             base_accuracy: 0.86,
@@ -499,7 +500,7 @@ export function buildDefaultRoutingProfiles(input: {
             recall_score: 0.95,
             metadata: {
                 source: 'routing_defaults',
-                explicitly_approved: true,
+                explicitly_approved: allowUngovernedAlternates,
             },
         },
     ];
@@ -603,6 +604,12 @@ export function resolveRoutingPlanForTest(input: {
         fallback_model: fallbackModel,
         manual_override: manualOverride != null,
     };
+}
+
+export function mergeRoutingProfilesForTest(
+    profiles: RoutingModelProfile[],
+): RoutingModelProfile[] {
+    return mergeProfiles(profiles);
 }
 
 async function executeSingleRoutingPlan<T>(
@@ -1255,6 +1262,7 @@ function buildRequestedModelProfile(input: {
         recall_score: defaultRecallForType(inferredType),
         metadata: {
             source: 'requested_model',
+            explicitly_approved: true,
         },
     };
 }
@@ -1569,44 +1577,6 @@ function serializeAttempt(attempt: RoutingExecutionAttempt) {
     };
 }
 
-function buildEphemeralRoutingDecision(
-    plan: RoutingPlan,
-    primary: RoutingModelProfile | null,
-    caseId: string | null,
-): RoutingDecisionRecord {
-    const now = new Date().toISOString();
-    return {
-        routing_decision_id: plan.routing_decision_id,
-        tenant_id: plan.tenant_id,
-        case_id: caseId,
-        inference_event_id: null,
-        outcome_event_id: null,
-        evaluation_event_id: null,
-        requested_model_name: plan.requested_model_name,
-        requested_model_version: plan.requested_model_version,
-        selected_model_id: primary?.model_id ?? 'unassigned',
-        selected_provider_model: primary?.provider_model ?? 'unassigned',
-        selected_model_version: primary?.model_version ?? 'unassigned',
-        selected_registry_id: primary?.registry_id ?? null,
-        model_family: plan.family,
-        route_mode: plan.route_mode,
-        execution_status: 'planned',
-        trigger_reason: plan.reason,
-        analysis: {
-            ...plan.analysis,
-        },
-        candidates: plan.candidates.map(serializeCandidate),
-        fallback_chain: serializeFallbackChain(plan),
-        consensus_payload: null,
-        actual_latency_ms: null,
-        prediction: null,
-        prediction_confidence: null,
-        outcome_correct: null,
-        created_at: now,
-        updated_at: now,
-    };
-}
-
 function mapRoutingDecisionRow(
     row: Record<string, unknown>,
     plan?: RoutingPlan,
@@ -1794,10 +1764,6 @@ function mergeProfiles(profiles: RoutingModelProfile[]) {
                 ...existing.metadata,
                 ...profile.metadata,
             },
-            active: existing.active || profile.active,
-            approval_status: profile.approval_status === 'approved' || existing.approval_status !== 'approved'
-                ? profile.approval_status
-                : existing.approval_status,
         });
     }
     return Array.from(merged.values());

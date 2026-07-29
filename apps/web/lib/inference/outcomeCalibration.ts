@@ -45,6 +45,15 @@ export interface OutcomeCalibrationRunInput {
     sourceWindowEnd?: string | null;
     minimumRequiredOutcomes?: number;
     rows: OutcomeCalibrationCase[];
+    materialization?: {
+        algorithm_version: string;
+        source_pair_count: number;
+        materialized_count: number;
+        blocked_count: number;
+        canonical_materialized_count: number;
+        blocker_counts: Record<string, number>;
+        source_digest: string;
+    };
 }
 
 export interface OutcomeCalibrationBucket {
@@ -94,7 +103,11 @@ export interface OutcomeCalibrationRunSummary {
 export async function recordOutcomeCalibrationRun(
     client: CalibrationSupabaseClient,
     input: OutcomeCalibrationRunInput,
-): Promise<{ data: OutcomeCalibrationRunSummary | null; error: string | null }> {
+): Promise<{
+    data: OutcomeCalibrationRunSummary | null;
+    error: string | null;
+    runId: string | null;
+}> {
     const summary = buildOutcomeCalibrationBuckets(input);
     const runTable = client.from('outcome_calibration_runs') as {
         insert: (payload: Record<string, unknown>) => InsertResult<Record<string, unknown>>;
@@ -118,17 +131,27 @@ export async function recordOutcomeCalibrationRun(
             warnings: summary.warnings,
             source_digest: summary.source_digest,
             run_packet: {
-                version: 'vetios_outcome_calibration_loop_v1',
+                version: 'vetios_outcome_calibration_loop_v2',
                 privacy_boundary: 'aggregate calibration metrics only; no raw notes, owner identifiers, raw lab reports, images, or raw clinical payloads',
                 synthetic_rows_excluded: summary.synthetic_rows_excluded,
                 bucket_keys: summary.buckets.map((bucket) => bucket.bucket_key),
+                metric_contract: {
+                    brier_score: 'binary Brier score for whether the top-ranked label is correct',
+                    expected_calibration_error: 'equal-mass confidence bins versus observed top-label correctness',
+                    multiclass_scores: 'not claimed unless a complete candidate distribution is explicitly attested',
+                },
+                materialization: input.materialization ?? null,
             },
         })
         .select('id')
         .single();
 
     if (runError || !runRow?.id) {
-        return { data: null, error: runError?.message ?? 'outcome_calibration_run_insert_failed' };
+        return {
+            data: null,
+            error: runError?.message ?? 'outcome_calibration_run_insert_failed',
+            runId: null,
+        };
     }
 
     if (summary.buckets.length > 0) {
@@ -169,11 +192,15 @@ export async function recordOutcomeCalibrationRun(
         })));
 
         if (bucketError) {
-            return { data: null, error: bucketError.message ?? 'outcome_calibration_bucket_insert_failed' };
+            return {
+                data: null,
+                error: bucketError.message ?? 'outcome_calibration_bucket_insert_failed',
+                runId: String(runRow.id),
+            };
         }
     }
 
-    return { data: summary, error: null };
+    return { data: summary, error: null, runId: String(runRow.id) };
 }
 
 export function buildOutcomeCalibrationBuckets(input: OutcomeCalibrationRunInput): OutcomeCalibrationRunSummary {
@@ -227,8 +254,24 @@ function buildBucket(
     const confidences = rows.map(readPredictedProbability).filter((value): value is number => value != null);
     const correctness = rows.map((row) => isTop1Correct(row));
     const rowsWithCorrectness = correctness.filter((value): value is boolean => value != null);
-    const actualProbabilities = rows.map(readActualProbability).filter((value): value is number => value != null);
-    const deltas = rows.map(readCalibrationDelta).filter((value): value is number => value != null);
+    const binaryScores = rows
+        .map((row) => {
+            const confidence = readPredictedProbability(row);
+            const correct = isTop1Correct(row);
+            return confidence == null || correct == null
+                ? null
+                : (confidence - Number(correct)) ** 2;
+        })
+        .filter((value): value is number => value != null);
+    const calibrationGaps = rows
+        .map((row) => {
+            const confidence = readPredictedProbability(row);
+            const correct = isTop1Correct(row);
+            return confidence == null || correct == null
+                ? null
+                : Number(correct) - confidence;
+        })
+        .filter((value): value is number => value != null);
     const criticalRows = rows.filter(isCriticalOutcomeRow);
     const criticalMisses = criticalRows.filter((row) => isTop1Correct(row) === false);
     const overconfidentRows = rows.filter((row) => {
@@ -239,7 +282,7 @@ function buildBucket(
     const blockers: string[] = [];
 
     if (rows.length < minimumRequiredOutcomes) blockers.push('minimum_real_outcomes_not_met');
-    if (actualProbabilities.length < rows.length) warnings.push('actual_probability_missing_for_some_outcomes');
+    if (binaryScores.length < rows.length) warnings.push('top_label_brier_inputs_missing_for_some_outcomes');
     if (rowsWithCorrectness.length < rows.length) warnings.push('top1_correctness_missing_for_some_outcomes');
 
     const top1Accuracy = rowsWithCorrectness.length > 0
@@ -248,11 +291,11 @@ function buildBucket(
     const top3Recall = rows.length > 0
         ? rows.filter((row) => includesActualInTopK(row, 3)).length / rows.length
         : null;
-    const brierScore = actualProbabilities.length > 0
-        ? mean(actualProbabilities.map((p) => (1 - p) ** 2))
+    const brierScore = binaryScores.length > 0
+        ? mean(binaryScores)
         : null;
     const ece = computeExpectedCalibrationError(rows);
-    const meanDelta = deltas.length > 0 ? mean(deltas) : null;
+    const meanDelta = calibrationGaps.length > 0 ? mean(calibrationGaps) : null;
     const status = classifyBucketStatus(rows.length, minimumRequiredOutcomes, meanDelta, ece);
 
     return {
@@ -287,7 +330,7 @@ function buildBucket(
         blockers,
         warnings,
         evidence: {
-            version: 'vetios_outcome_calibration_bucket_v1',
+            version: 'vetios_outcome_calibration_bucket_v2',
             source_event_refs: rows.map((row) => ({
                 outcome_event_id: row.outcomeEventId ?? null,
                 inference_event_id: row.inferenceEventId ?? null,
@@ -296,8 +339,9 @@ function buildBucket(
             metric_contract: {
                 top1_accuracy: 'predicted label matches confirmed label',
                 top3_recall: 'confirmed label appears in top three differential labels',
-                expected_calibration_error: 'decile-binned confidence versus observed correctness',
-                brier_score: 'binary actual-label probability score',
+                expected_calibration_error: 'equal-mass confidence bins versus observed top-label correctness',
+                brier_score: 'binary top-label correctness probability score',
+                mean_delta: 'observed top-label correctness minus predicted top-label confidence',
             },
             privacy_boundary: 'hashes, aggregate metrics, and event ids only; no raw clinical narratives or owner identifiers',
         },
@@ -318,26 +362,68 @@ function makeBucketKey(row: OutcomeCalibrationCase, fallbackModelVersion?: strin
 }
 
 function computeExpectedCalibrationError(rows: OutcomeCalibrationCase[]): number | null {
-    const buckets = new Map<string, Array<{ confidence: number; correct: boolean }>>();
-    for (const row of rows) {
-        const confidence = readPredictedProbability(row);
-        const correct = isTop1Correct(row);
-        if (confidence == null || correct == null) continue;
-        const key = deriveConfidenceBucket(confidence);
-        const group = buckets.get(key) ?? [];
-        group.push({ confidence, correct });
-        buckets.set(key, group);
-    }
-    const total = Array.from(buckets.values()).reduce((sum, group) => sum + group.length, 0);
+    const observations = rows
+        .map((row) => {
+            const confidence = readPredictedProbability(row);
+            const correct = isTop1Correct(row);
+            return confidence == null || correct == null
+                ? null
+                : { confidence, correct };
+        })
+        .filter((entry): entry is { confidence: number; correct: boolean } => entry != null)
+        .sort((left, right) => left.confidence - right.confidence);
+    const total = observations.length;
     if (total === 0) return null;
 
+    const binCount = Math.min(10, Math.max(1, Math.floor(Math.sqrt(total))));
+    const buckets = buildEqualMassBins(observations, binCount);
+
     let ece = 0;
-    for (const group of buckets.values()) {
+    for (const group of buckets) {
         const confidence = mean(group.map((entry) => entry.confidence));
         const accuracy = group.filter((entry) => entry.correct).length / group.length;
         ece += (group.length / total) * Math.abs(confidence - accuracy);
     }
     return ece;
+}
+
+function buildEqualMassBins<T extends { confidence: number }>(
+    observations: T[],
+    requestedBinCount: number,
+): T[][] {
+    if (observations.length === 0) return [];
+    const bins: T[][] = [];
+    let current: T[] = [];
+    let assigned = 0;
+
+    for (let index = 0; index < observations.length; index += 1) {
+        const observation = observations[index] as T;
+        current.push(observation);
+
+        const binsRemaining = requestedBinCount - bins.length - 1;
+        const observationsRemaining = observations.length - index - 1;
+        const targetSize = Math.ceil(
+            (observations.length - assigned) / (binsRemaining + 1),
+        );
+        const next = observations[index + 1];
+        const confidenceBoundary =
+            next == null || next.confidence !== observation.confidence;
+        const enoughRowsRemain = observationsRemaining >= binsRemaining;
+
+        if (
+            binsRemaining > 0
+            && current.length >= targetSize
+            && confidenceBoundary
+            && enoughRowsRemain
+        ) {
+            bins.push(current);
+            assigned += current.length;
+            current = [];
+        }
+    }
+
+    if (current.length > 0) bins.push(current);
+    return bins;
 }
 
 function classifyBucketStatus(

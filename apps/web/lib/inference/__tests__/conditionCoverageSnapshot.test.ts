@@ -4,13 +4,15 @@ import type { GlobalConditionCoverageReport } from '../types';
 
 describe('condition coverage snapshot events', () => {
     it('persists aggregate ontology coverage without materializing source hints as edges', async () => {
-        let inserted: Record<string, unknown> | null = null;
+        const capture: { inserted: Record<string, unknown> | null } = {
+            inserted: null,
+        };
         const client = {
             from(table: string) {
                 expect(table).toBe('condition_coverage_snapshot_events');
                 return {
                     insert(payload: Record<string, unknown>) {
-                        inserted = payload;
+                        capture.inserted = payload;
                         return {
                             select() {
                                 return {
@@ -101,8 +103,8 @@ describe('condition coverage snapshot events', () => {
             open_world_candidate_generation_status: 'missing',
             one_health_edge_count: 0,
         });
-        expect(inserted?.source_manifest_hash).toMatch(/^[a-f0-9]{64}$/);
-        expect(inserted?.coverage_packet).toMatchObject({
+        expect(capture.inserted?.source_manifest_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(capture.inserted?.coverage_packet).toMatchObject({
             inference_event_id: '00000000-0000-4000-8000-000000000002',
             registry_scope: 'closed_world',
             human_correlation_requested: true,

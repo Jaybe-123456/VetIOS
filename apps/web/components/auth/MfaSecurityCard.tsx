@@ -1,6 +1,7 @@
 'use client';
 
 import Image from 'next/image';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff, KeyRound, LoaderCircle, RefreshCw, ShieldCheck } from 'lucide-react';
 import { ConsoleCard, DataRow, TerminalButton, TerminalInput, TerminalLabel } from '@/components/ui/terminal';
@@ -21,7 +22,20 @@ interface MfaFactorSnapshot {
 
 type SecurityPhase = 'loading' | 'ready' | 'enrolling' | 'verifying';
 
-export function MfaSecurityCard() {
+interface MfaSecurityCardProps {
+    actionKey?: string;
+    resourceType?: string;
+    operationLabel?: string;
+    returnTo?: string;
+}
+
+export function MfaSecurityCard({
+    actionKey = 'api_credential.create',
+    resourceType = 'oauth_client',
+    operationLabel = 'critical infrastructure operations',
+    returnTo,
+}: MfaSecurityCardProps) {
+    const router = useRouter();
     const [phase, setPhase] = useState<SecurityPhase>('loading');
     const [currentLevel, setCurrentLevel] = useState<string | null>(null);
     const [verifiedFactors, setVerifiedFactors] = useState<MfaFactorSnapshot[]>([]);
@@ -34,12 +48,12 @@ export function MfaSecurityCard() {
     const refreshSecurityState = useCallback(async () => {
         setError(null);
         const supabase = getSupabaseBrowser();
-        const [factorResult, assuranceResult] = await Promise.all([
-            supabase.auth.mfa.listFactors(),
-            supabase.auth.mfa.getAuthenticatorAssuranceLevel(),
-        ]);
-
+        const factorResult = await supabase.auth.mfa.listFactors();
         if (factorResult.error) throw factorResult.error;
+
+        // Supabase auth operations share one browser-session lock. Keep these
+        // reads sequential so profile startup cannot manufacture lock pressure.
+        const assuranceResult = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
         if (assuranceResult.error) throw assuranceResult.error;
 
         const factors = (factorResult.data?.all ?? []) as MfaFactorSnapshot[];
@@ -62,6 +76,13 @@ export function MfaSecurityCard() {
             active = false;
         };
     }, [refreshSecurityState]);
+
+    useEffect(() => {
+        if (phase === 'ready' && currentLevel === 'aal2' && returnTo) {
+            router.replace(returnTo);
+            router.refresh();
+        }
+    }, [currentLevel, phase, returnTo, router]);
 
     async function beginEnrollment() {
         setPhase('enrolling');
@@ -129,8 +150,8 @@ export function MfaSecurityCard() {
                 headers: { 'content-type': 'application/json' },
                 cache: 'no-store',
                 body: JSON.stringify({
-                    action_key: 'api_credential.create',
-                    resource_type: 'oauth_client',
+                    action_key: actionKey,
+                    resource_type: resourceType,
                 }),
             });
             const completionBody = await completion.json().catch(() => ({})) as {
@@ -146,7 +167,7 @@ export function MfaSecurityCard() {
             setCode('');
             setShowSecret(false);
             await refreshSecurityState();
-            setNotice('AAL2 is active. Critical credential operations are now authorized for this session.');
+            setNotice(`AAL2 is active. Authorization is ready for ${operationLabel}.`);
         } catch (cause) {
             setError(errorMessage(cause));
         } finally {
@@ -166,7 +187,7 @@ export function MfaSecurityCard() {
                     <DataRow label="Authenticator" value={verifiedFactors.length > 0 ? 'Enrolled' : 'Not Enrolled'} tone={verifiedFactors.length > 0 ? 'accent' : 'muted'} />
                     <DataRow label="Critical Operations" value={aal2 ? 'Enabled' : 'Step-Up Required'} tone={aal2 ? 'accent' : 'warning'} />
                     <p className="pt-2 font-mono text-[11px] leading-relaxed text-[hsl(0_0%_64%)]">
-                        OAuth clients, API credentials, model promotion, federation controls, and protected exports require a verified authenticator session.
+                        A verified authenticator session is required for {operationLabel}.
                     </p>
                 </div>
 
@@ -291,7 +312,9 @@ function normalizeTotpCode(value: string): string {
 }
 
 function errorMessage(value: unknown): string {
-    return value instanceof Error && value.message.trim().length > 0
-        ? value.message
-        : 'Unable to complete MFA setup. Refresh the page and try again.';
+    const message = value instanceof Error ? value.message.trim() : '';
+    if (/lockmanager|exclusive.*lock|timed out waiting/i.test(message)) {
+        return 'The browser authentication session is locked. Close every VetIOS tab, reopen one tab, and retry MFA verification.';
+    }
+    return message || 'Unable to complete MFA setup. Refresh the page and try again.';
 }

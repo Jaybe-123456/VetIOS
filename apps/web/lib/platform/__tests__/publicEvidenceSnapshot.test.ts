@@ -44,8 +44,13 @@ describe('public evidence snapshot integrity', () => {
             inference: inference({
                 inference_events: 100,
                 outcome_linked_inferences: 40,
-                cire_sample_size: 40,
+                outcome_confirmed_inferences: 40,
+                expert_reviewed_inferences: 30,
+                lab_confirmed_inferences: 10,
+                cire_sample_size: 220,
+                cire_min_sample_size: 200,
                 cire_status: 'validated',
+                cire_validation_scope: 'real_clinical_outcomes',
             }),
             workflow: workflow({ passive_signal_events: 15 }),
             ask_vetios: askVetios({ query_events: 20, grounded_drafts: 5, regulatory_reviewable: 5 }),
@@ -57,6 +62,29 @@ describe('public evidence snapshot integrity', () => {
         expect(integrity.public_claim_posture).toBe('evidence_grade_claims');
         expect(integrity.outcome_confirmed_corpus).toBe(true);
         expect(integrity.cire_validation_ready).toBe(true);
+    });
+
+    it('does not permit evidence-grade claims for a large weak or inverse CIRE cohort', () => {
+        const integrity = buildPublicEvidenceIntegrity({
+            configured: true,
+            dataset: dataset({ clinical_cases: 300, confirmed_labels: 250 }),
+            inference: inference({
+                inference_events: 400,
+                outcome_confirmed_inferences: 250,
+                cire_sample_size: 250,
+                cire_min_sample_size: 200,
+                cire_status: 'weak_signal',
+                cire_validation_scope: 'real_clinical_outcomes',
+            }),
+            workflow: workflow(),
+            ask_vetios: askVetios(),
+            amr: amr(),
+            specialist_review: specialistReview(),
+        });
+
+        expect(integrity.status).toBe('collecting');
+        expect(integrity.cire_validation_ready).toBe(false);
+        expect(integrity.public_claim_posture).toBe('measured_activity');
     });
 });
 
@@ -75,9 +103,21 @@ function dataset(overrides: Partial<PublicEvidenceSnapshot['dataset']> = {}): Pu
 function inference(overrides: Partial<PublicEvidenceSnapshot['inference']> = {}): PublicEvidenceSnapshot['inference'] {
     return {
         inference_events: 0,
+        real_inference_events: 0,
         outcome_linked_inferences: 0,
+        outcome_confirmed_inferences: 0,
+        expert_reviewed_inferences: 0,
+        lab_confirmed_inferences: 0,
+        calibration_ready_outcomes: 0,
+        synthetic_inferences_excluded: 0,
+        synthetic_outcome_inferences_excluded: 0,
+        outcome_confirmation_rate: 0,
+        latest_outcome_confirmed_at: null,
+        outcome_metric_version: 'outcome_value_v1',
         cire_sample_size: 0,
+        cire_min_sample_size: 200,
         cire_status: 'unconfigured',
+        cire_validation_scope: 'real_clinical_outcomes',
         cire_spearman_r: null,
         ...overrides,
     };

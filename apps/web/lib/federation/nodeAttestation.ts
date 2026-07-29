@@ -110,9 +110,9 @@ export interface FederationNodeAttestationAssessmentInput {
     signed_payload_hash?: string | null;
     signature_hash?: string | null;
     signing_key_fingerprint?: string | null;
-    allowed_task_types?: string[] | null;
+    allowed_task_types?: readonly string[] | null;
     expires_at?: string | null;
-    blockers?: string[] | null;
+    blockers?: readonly string[] | null;
     task_type?: FederationRoundNodeTaskType | string | null;
     now?: Date;
 }
@@ -469,7 +469,10 @@ function resolveNextRequiredAction(input: {
     return null;
 }
 
-function isTaskAllowed(allowedTaskTypes: string[] | null | undefined, taskType: unknown): boolean {
+function isTaskAllowed(
+    allowedTaskTypes: readonly string[] | null | undefined,
+    taskType: unknown,
+): boolean {
     const allowed = normalizeAllowedTaskTypes(allowedTaskTypes);
     const requested = normalizeTaskType(taskType);
     if (!requested) return allowed.length > 0;

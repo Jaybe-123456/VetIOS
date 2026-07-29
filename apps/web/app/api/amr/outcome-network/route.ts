@@ -22,6 +22,7 @@ import {
     recordOutcomeCalibrationRun,
     type OutcomeCalibrationCase,
 } from '@/lib/inference/outcomeCalibration';
+import { readAMRInferenceDifferentials } from '@/lib/amr/calibrationEvidence';
 import { getSupabaseServer } from '@/lib/supabaseServer';
 
 export const runtime = 'nodejs';
@@ -252,7 +253,7 @@ async function runAMROutcomeCalibration(input: {
         inferenceIds.length > 0
             ? input.supabase
                 .from('ai_inference_events')
-                .select('id, case_id, output_payload, differentials, confidence_score, model_version, is_synthetic, created_at')
+                .select('id, case_id, output_payload, confidence_score, model_version, is_synthetic, created_at')
                 .eq('tenant_id', input.tenantId)
                 .in('id', inferenceIds)
             : Promise.resolve({ data: [], error: null }),
@@ -288,7 +289,7 @@ async function runAMROutcomeCalibration(input: {
             ? outcomeById.get(episode.clinical_outcome_id)
             : null;
         if (!inference || !outcome) return [];
-        const topDifferentials = readDifferentials(inference);
+        const topDifferentials = readAMRInferenceDifferentials(inference);
         const actualLabel = readText(outcome.actual_label)
             ?? readText(asRecord(outcome.outcome_payload).label)
             ?? readText(asRecord(outcome.outcome_payload).actual_diagnosis);
@@ -997,29 +998,6 @@ function networkStorageError(detail: string) {
         },
         { status: 503 },
     );
-}
-
-function readDifferentials(row: Record<string, unknown>): Array<{ label: string; probability: number }> {
-    const outputPayload = asRecord(row.output_payload);
-    const diagnosis = asRecord(outputPayload.diagnosis);
-    const candidates = Array.isArray(row.differentials) && row.differentials.length > 0
-        ? row.differentials
-        : Array.isArray(outputPayload.differentials) && outputPayload.differentials.length > 0
-            ? outputPayload.differentials
-            : Array.isArray(diagnosis.top_differentials)
-                ? diagnosis.top_differentials
-                : [];
-    return candidates.flatMap((entry) => {
-        const record = asRecord(entry);
-        const label = readText(record.label) ?? readText(record.name) ?? readText(record.condition);
-        const probability = readNumber(record.probability)
-            ?? readNumber(record.p)
-            ?? readNumber(record.confidence)
-            ?? readNumber(record.confidence_score);
-        return label && probability != null
-            ? [{ label, probability: Math.max(0, Math.min(1, probability)) }]
-            : [];
-    });
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

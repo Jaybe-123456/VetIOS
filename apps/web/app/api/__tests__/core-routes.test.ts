@@ -47,6 +47,7 @@ const userId = '33333333-3333-4333-8333-333333333333';
 const requestId = '11111111-1111-4111-8111-111111111111';
 const inferenceEventId = '44444444-4444-4444-8444-444444444444';
 const outcomeEventId = '55555555-5555-4555-8555-555555555555';
+const simulationId = '66666666-6666-4666-8666-666666666666';
 
 describe('core API regression suite', () => {
     beforeEach(() => {
@@ -202,6 +203,36 @@ describe('core API regression suite', () => {
 
         expect(response.status).toBe(200);
         expect(body.outcome_event_id).toBe(outcomeEventId);
+    });
+
+    it('Outcome route: propagates synthetic simulation provenance into the append-only outcome event', async () => {
+        const outcomeInserts: Array<Record<string, unknown>> = [];
+        mocks.getSupabaseServer.mockReturnValue(createOutcomeSupabaseMock({
+            inferenceFound: true,
+            inferenceSynthetic: true,
+            simulationId,
+            outcomeInserts,
+        }));
+
+        const response = await outcomePost(jsonRequest('/api/outcome', {
+            request_id: requestId,
+            inference_event_id: inferenceEventId,
+            outcome: {
+                type: 'confirmed_diagnosis',
+                payload: {
+                    label: 'canine_pancreatitis',
+                    confidence: 0.9,
+                },
+                timestamp: '2026-05-22T12:00:00.000Z',
+            },
+        }));
+
+        expect(response.status).toBe(200);
+        expect(outcomeInserts[0]).toMatchObject({
+            inference_event_id: inferenceEventId,
+            simulation_id: simulationId,
+            is_synthetic: true,
+        });
     });
 
     it('Outcome route: ordinary session requires recent-auth step-up before confirmation', async () => {
@@ -476,10 +507,13 @@ function createOutcomeSupabaseMock(input: {
     duplicateOutcomeInsert?: boolean;
     cachedOutcomeAfterDuplicate?: boolean;
     labelCalibrationUpsertError?: boolean;
+    inferenceSynthetic?: boolean;
+    simulationId?: string | null;
+    outcomeInserts?: Array<Record<string, unknown>>;
 }) {
     let outcomeSelectCount = 0;
 
-    return createSupabaseMock(({ table, action }) => {
+    return createSupabaseMock(({ table, action, payload }) => {
         if (table === 'clinical_outcome_events' && action === 'select') {
             outcomeSelectCount += 1;
             if (input.cachedOutcomeAfterDuplicate && outcomeSelectCount > 1) {
@@ -522,12 +556,17 @@ function createOutcomeSupabaseMock(input: {
                         },
                         confidence_score: 0.7,
                         model_version: 'gpt-4o-mini',
+                        simulation_id: input.simulationId ?? null,
+                        is_synthetic: input.inferenceSynthetic ?? false,
                     }
                     : null,
                 error: null,
             };
         }
         if (table === 'clinical_outcome_events' && action === 'insert') {
+            if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+                input.outcomeInserts?.push(payload as Record<string, unknown>);
+            }
             if (input.duplicateOutcomeInsert) {
                 return {
                     data: null,
