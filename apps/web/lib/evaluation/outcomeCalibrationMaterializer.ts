@@ -14,6 +14,19 @@ const LOG_LOSS_EPSILON = 1e-15;
 const DEFAULT_SOURCE_LIMIT = 5_000;
 const MAX_SOURCE_LIMIT = 20_000;
 const EVIDENCE_GRADE_AUTHORITIES = new Set(['expert_reviewed', 'lab_confirmed']);
+const INFERENCE_SELECT_COLUMNS = [
+    'id',
+    'tenant_id',
+    'model_name',
+    'model_version',
+    'input_signature',
+    'output_payload',
+    'confidence_score',
+    'simulation_id',
+    'is_synthetic',
+    'created_at',
+];
+const OPTIONAL_INFERENCE_SELECT_COLUMNS = ['differentials'];
 
 export type OutcomeMaterializationMode = 'dry_run' | 'commit';
 export type OutcomeMaterializationStatus = 'materialized' | 'blocked';
@@ -237,7 +250,11 @@ export async function runOutcomeCalibrationMaterialization(
             .map((row) => normalizeText(row.inference_event_id))
             .filter((value): value is string => value != null),
     ));
-    const inferences = await loadInferenceRows(client, input.tenantId, inferenceIds);
+    const inferences = await loadOutcomeCalibrationInferenceRows(
+        client,
+        input.tenantId,
+        inferenceIds,
+    );
     const build = buildOutcomeCalibrationMaterialization({
         tenantId: input.tenantId,
         requestId: input.requestId,
@@ -931,7 +948,7 @@ async function loadOutcomeRows(
     };
 }
 
-async function loadInferenceRows(
+export async function loadOutcomeCalibrationInferenceRows(
     client: SupabaseClient,
     tenantId: string,
     inferenceIds: string[],
@@ -940,32 +957,54 @@ async function loadInferenceRows(
 
     const rows: OutcomeMaterializationInferenceRow[] = [];
     for (const chunk of chunkValues(inferenceIds, 200)) {
-        const { data, error } = await client
+        let result = await client
             .from('ai_inference_events')
             .select([
-                'id',
-                'tenant_id',
-                'model_name',
-                'model_version',
-                'input_signature',
-                'output_payload',
-                'confidence_score',
-                'differentials',
-                'simulation_id',
-                'is_synthetic',
-                'created_at',
+                ...INFERENCE_SELECT_COLUMNS,
+                ...OPTIONAL_INFERENCE_SELECT_COLUMNS,
             ].join(','))
             .eq('tenant_id', tenantId)
             .in('id', chunk);
 
-        if (error) {
-            throw new Error(`outcome_calibration_inference_load_failed: ${error.message}`);
+        if (
+            result.error
+            && isMissingSelectedColumn(result.error, 'differentials')
+        ) {
+            result = await client
+                .from('ai_inference_events')
+                .select(INFERENCE_SELECT_COLUMNS.join(','))
+                .eq('tenant_id', tenantId)
+                .in('id', chunk);
         }
-        if (Array.isArray(data)) {
-            rows.push(...data as OutcomeMaterializationInferenceRow[]);
+
+        if (result.error) {
+            throw new Error(
+                `outcome_calibration_inference_load_failed: ${result.error.message}`,
+            );
+        }
+        if (Array.isArray(result.data)) {
+            rows.push(...result.data as OutcomeMaterializationInferenceRow[]);
         }
     }
     return rows;
+}
+
+function isMissingSelectedColumn(
+    error: { code?: string; message?: string; details?: string } | null,
+    column: string,
+): boolean {
+    if (!error) return false;
+    const message = `${error.message ?? ''} ${error.details ?? ''}`.toLowerCase();
+    const normalizedColumn = column.toLowerCase();
+    return (
+        message.includes(normalizedColumn)
+        && (
+            error.code === '42703'
+            || error.code === 'PGRST204'
+            || message.includes('does not exist')
+            || message.includes('schema cache')
+        )
+    );
 }
 
 async function loadExistingMaterializationKeys(
@@ -1144,10 +1183,13 @@ function firstText(...values: unknown[]): string | null {
 }
 
 function firstArray(...values: unknown[]): unknown[] {
+    let emptyArray: unknown[] | null = null;
     for (const value of values) {
-        if (Array.isArray(value)) return value;
+        if (!Array.isArray(value)) continue;
+        if (value.length > 0) return value;
+        emptyArray ??= value;
     }
-    return [];
+    return emptyArray ?? [];
 }
 
 function readFiniteNumber(...values: unknown[]): number | null {

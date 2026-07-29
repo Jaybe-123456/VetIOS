@@ -34,6 +34,14 @@ const materializerMigration = readFileSync(
     'utf8',
 );
 
+const inferenceCompatibilityMigration = readFileSync(
+    resolve(
+        process.cwd(),
+        '../../supabase/migrations/20260728030000_outcome_calibration_inference_schema_compatibility.sql',
+    ),
+    'utf8',
+);
+
 describe('outcome value metrics migration', () => {
     it('repairs legacy outcome schemas before creating the aggregate view', () => {
         expect(compatibilityMigration).toContain('add column if not exists actual_label text');
@@ -88,6 +96,18 @@ describe('outcome value metrics migration', () => {
         );
         expect(materializerMigration).toContain(
             'revoke all on public.outcome_value_metrics_v2 from anon, authenticated',
+        );
+    });
+
+    it('repairs the optional inference differential materialization column', () => {
+        expect(inferenceCompatibilityMigration).toContain(
+            'add column if not exists differentials jsonb',
+        );
+        expect(inferenceCompatibilityMigration).toContain(
+            "default '[]'::jsonb",
+        );
+        expect(inferenceCompatibilityMigration).toContain(
+            "notify pgrst, 'reload schema'",
         );
     });
 });

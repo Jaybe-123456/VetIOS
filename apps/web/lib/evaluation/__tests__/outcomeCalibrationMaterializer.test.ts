@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
     OUTCOME_CALIBRATION_MATERIALIZER_VERSION,
     buildOutcomeCalibrationMaterialization,
+    loadOutcomeCalibrationInferenceRows,
     type OutcomeMaterializationInferenceRow,
     type OutcomeMaterializationOutcomeRow,
 } from '../outcomeCalibrationMaterializer';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 
@@ -200,5 +202,93 @@ describe('outcome calibration materializer', () => {
         });
 
         expect(forward.source_digest).toBe(reverse.source_digest);
+    });
+
+    it('falls back to output payload when the optional differentials column is absent', async () => {
+        const selectedColumns: string[] = [];
+        const storedInference = inference({
+            differentials: undefined,
+            confidence_score: 0.8,
+            output_payload: {
+                diagnosis: {
+                    top_differentials: [
+                        { label: 'Ehrlichiosis', probability: 0.8 },
+                        { label: 'Anaplasmosis', probability: 0.2 },
+                    ],
+                },
+            },
+        });
+        const client = {
+            from: () => ({
+                select: (columns: string) => {
+                    selectedColumns.push(columns);
+                    const builder = {
+                        eq: () => builder,
+                        in: async () => columns.includes('differentials')
+                            ? {
+                                data: null,
+                                error: {
+                                    code: '42703',
+                                    message:
+                                        'column ai_inference_events.differentials does not exist',
+                                },
+                            }
+                            : {
+                                data: [storedInference],
+                                error: null,
+                            },
+                    };
+                    return builder;
+                },
+            }),
+        } as unknown as SupabaseClient;
+
+        const loaded = await loadOutcomeCalibrationInferenceRows(
+            client,
+            tenantId,
+            [String(storedInference.id)],
+        );
+        const build = buildOutcomeCalibrationMaterialization({
+            tenantId,
+            requestId: 'request-schema-fallback',
+            inferenceEvents: loaded,
+            outcomeEvents: [outcome()],
+        });
+
+        expect(selectedColumns).toHaveLength(2);
+        expect(selectedColumns[0]).toContain('differentials');
+        expect(selectedColumns[1]).not.toContain('differentials');
+        expect(build.events[0]).toMatchObject({
+            materialization_status: 'materialized',
+            predicted_label: 'Ehrlichiosis',
+            top_label_confidence: 0.8,
+        });
+    });
+
+    it('uses populated output differentials when a compatibility column is empty', () => {
+        const build = buildOutcomeCalibrationMaterialization({
+            tenantId,
+            requestId: 'request-empty-compatibility-column',
+            inferenceEvents: [
+                inference({
+                    differentials: [],
+                    output_payload: {
+                        diagnosis: {
+                            top_differentials: [
+                                { label: 'Ehrlichiosis', probability: 0.8 },
+                                { label: 'Anaplasmosis', probability: 0.2 },
+                            ],
+                        },
+                    },
+                }),
+            ],
+            outcomeEvents: [outcome()],
+        });
+
+        expect(build.events[0]).toMatchObject({
+            materialization_status: 'materialized',
+            predicted_label: 'Ehrlichiosis',
+            top_label_confidence: 0.8,
+        });
     });
 });
