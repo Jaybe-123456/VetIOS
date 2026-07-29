@@ -18,6 +18,7 @@ import { withRequestHeaders } from '@/lib/http/requestId';
 import { safeJson } from '@/lib/http/safeJson';
 import {
     beginTelemetryExecutionSample,
+    extractPredictionLabel,
     finishTelemetryExecutionSample,
 } from '@/lib/telemetry/service';
 import { recordInferenceObservability } from '@/lib/telemetry/observability';
@@ -40,6 +41,14 @@ import {
     computePromptTemplateHash,
 } from '@/lib/inference/lineage';
 import {
+    buildInferenceRoutingMetadata,
+    failInferenceRouting,
+    finalizeInferenceRouting,
+    resolveInferenceRoutingModel,
+    runInferenceWithRouting,
+    type InferenceRoutingRuntimeResult,
+} from '@/lib/routingEngine/inferenceRuntime';
+import {
     validateEncounterPayloadV2,
     validateSpeciesPanelGating,
     flattenPanelsToStructuredText,
@@ -52,6 +61,7 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const AI_TIMEOUT_MS = 50_000;
+const DEFAULT_DIAGNOSTIC_MODEL = 'gpt-4o-mini';
 
 /**
  * Map a V2 EncounterPayloadV2 into the V1 input_signature shape
@@ -267,21 +277,37 @@ export async function POST(req: Request) {
 
     const inferenceEventId = randomUUID();
     const executionSample = beginTelemetryExecutionSample();
+    let routingRuntime: InferenceRoutingRuntimeResult<
+        Awaited<ReturnType<typeof runInferencePipeline>>
+    > | null = null;
+    let routingDecisionSettled = false;
 
     try {
-        const inferenceResult = await Promise.race([
-            runInferencePipeline({
-                model: 'gpt-4o-mini',
-                rawInput: { input_signature: v1InputSignature },
-                inputMode: 'json',
+        const requestedModelName = process.env.AI_PROVIDER_DEFAULT_MODEL?.trim()
+            || DEFAULT_DIAGNOSTIC_MODEL;
+        const requestedModelVersion = process.env.AI_PROVIDER_DEFAULT_MODEL_VERSION?.trim()
+            || requestedModelName;
+        routingRuntime = await runWithInferenceTimeout((signal) =>
+            runInferenceWithRouting({
+                client: supabase,
                 tenantId,
-                patientId: null,
-                inferenceEventId,
+                requestedModelName,
+                requestedModelVersion,
+                inputSignature: v1InputSignature,
+                executor: (model) => runInferencePipeline({
+                    model,
+                    rawInput: { input_signature: v1InputSignature },
+                    inputMode: 'json',
+                    tenantId,
+                    patientId: null,
+                    inferenceEventId,
+                    signal,
+                }),
             }),
-            new Promise<never>((_, reject) =>
-                setTimeout(() => reject(new Error('AI_TIMEOUT')), AI_TIMEOUT_MS),
-            ),
-        ]);
+        );
+        const inferenceResult = routingRuntime.output;
+        const routedModel = resolveInferenceRoutingModel(routingRuntime);
+        const routingMetadata = buildInferenceRoutingMetadata(routingRuntime);
 
         const executionMetrics = finishTelemetryExecutionSample(executionSample);
         const latencyMs = Math.max(1, Math.round(executionMetrics.latencyMs));
@@ -296,7 +322,7 @@ export async function POST(req: Request) {
                 actor,
                 inputPayload: rawBody as any,
                 outputPayload: inferenceResult.output_payload,
-                modelVersion: 'gpt-4o-mini',
+                modelVersion: routedModel.modelVersion,
             });
             cirePayload = {
                 phi_hat: cireResult.snapshot.phi_hat,
@@ -322,12 +348,13 @@ export async function POST(req: Request) {
             ...inferenceResult.output_payload,
             ranker: 'classical',
             quantum_result: null,
+            model_routing: routingMetadata,
             governance_lineage: {
                 prompt_template_hash: computePromptTemplateHash(),
                 prompt_template_version: DIAGNOSTIC_PROMPT_TEMPLATE_VERSION,
                 schema_version: 'v2',
-                model_name: 'gpt-4o-mini',
-                model_version: '1.0.0',
+                model_name: routedModel.modelName,
+                model_version: routedModel.modelVersion,
                 phi_hat: phiHat,
                 inference_engine: 'inference_orchestrator_v2',
             },
@@ -345,8 +372,8 @@ export async function POST(req: Request) {
             id: inferenceEventId,
             tenant_id: tenantId,
             user_id: actor.userId ?? null,
-            model_name: 'gpt-4o-mini',
-            model_version: '1.0.0',
+            model_name: routedModel.modelName,
+            model_version: routedModel.modelVersion,
             input_signature: v1InputSignature,
             output_payload: outputPayload,
             confidence_score: inferenceResult.confidence_score ?? null,
@@ -359,12 +386,39 @@ export async function POST(req: Request) {
             active_systems: activeSystems.length > 0 ? activeSystems : null,
         });
 
+        let routingFinalizationStatus: 'completed' | 'failed' | 'not_recorded' =
+            routingRuntime.decision_recorded ? 'completed' : 'not_recorded';
+        try {
+            await finalizeInferenceRouting({
+                client: supabase,
+                runtime: routingRuntime,
+                inferenceEventId: eventId,
+                caseId: null,
+                actualLatencyMs: latencyMs,
+                prediction: extractPredictionLabel(outputPayload),
+                predictionConfidence: inferenceResult.confidence_score ?? null,
+            });
+            routingDecisionSettled = routingRuntime.decision_recorded;
+        } catch {
+            routingFinalizationStatus = 'failed';
+            await failInferenceRouting({
+                client: supabase,
+                runtime: routingRuntime,
+                reason: 'Inference persisted, but routing decision finalization failed.',
+            }).catch(() => undefined);
+            routingDecisionSettled = true;
+        }
+        outputPayload.model_routing = {
+            ...routingMetadata,
+            routing_finalization_status: routingFinalizationStatus,
+        };
+
         // Record observability signals without blocking the response.
 
         recordInferenceObservability(supabase, {
             inferenceEventId: eventId,
             tenantId,
-            modelVersion: '1.0.0',
+            modelVersion: routedModel.modelVersion,
             observedAt: new Date().toISOString(),
             outputPayload,
             confidenceScore: inferenceResult.confidence_score ?? null,
@@ -397,6 +451,7 @@ export async function POST(req: Request) {
             species: payload.patient.species,
             confidence_score: inferenceResult.confidence_score ?? null,
             cire: cirePayload,
+            model_routing: outputPayload.model_routing,
             ranker: 'classical',
             quantum_result: null,
             latency_ms: latencyMs,
@@ -408,6 +463,13 @@ export async function POST(req: Request) {
         return response;
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'V2 inference failed.';
+        if (!routingDecisionSettled) {
+            await failInferenceRouting({
+                client: supabase,
+                runtime: routingRuntime,
+                reason: `Inference request failed after routing: ${errorMessage}`,
+            }).catch(() => undefined);
+        }
         const isTimeout = errorMessage === 'AI_TIMEOUT';
         const isUnavailable = isTimeout || isInferenceUnavailableError(error);
 
@@ -430,6 +492,26 @@ export async function POST(req: Request) {
 
         withRequestHeaders(response.headers, requestId, startTime);
         return response;
+    }
+}
+
+async function runWithInferenceTimeout<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+    const controller = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    try {
+        return await Promise.race([
+            operation(controller.signal),
+            new Promise<never>((_, reject) => {
+                timeout = setTimeout(() => {
+                    controller.abort();
+                    reject(new Error('AI_TIMEOUT'));
+                }, AI_TIMEOUT_MS);
+            }),
+        ]);
+    } finally {
+        if (timeout) clearTimeout(timeout);
     }
 }
 

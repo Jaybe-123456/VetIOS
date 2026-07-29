@@ -202,6 +202,26 @@ the console reports the pilot as enrolling or collecting rather than complete.
 - Existing surveillance: `GET /api/amr/surveillance`
 - Existing One Health export: `GET /api/amr/one-health/export`
 
+## Governed Inference Routing
+
+`POST /api/inference/v2` now executes through the model-routing runtime instead
+of calling a hard-coded provider directly. Each request produces a routing plan,
+uses only an approved router profile or production-safe registry entry, records
+the planned decision, and settles the decision against the persisted inference
+event with selected model, latency, fallback, prediction, and confidence.
+
+The configured `AI_PROVIDER_DEFAULT_MODEL` remains the direct availability
+fallback when planning, persistence, or routed execution fails. Built-in
+alternate profiles are `pending` by default and cannot receive traffic unless
+they are approved through the model registry/router profile workflow. Keep
+`VETIOS_ALLOW_UNGOVERNED_ROUTING_PROFILES=false` in production.
+
+- Runtime: `apps/web/lib/routingEngine/inferenceRuntime.ts`
+- Routing engine: `apps/web/lib/routingEngine/service.ts`
+- Active migration: `supabase/migrations/20260728040000_model_routing_runtime_activation.sql`
+- Persisted ledger: `model_routing_decisions`
+- Approved profile registry: `model_router_profiles`
+
 ## Core API
 
 The current application exposes the three core routes below from the Next.js App Router. Production requests are authenticated with a session or machine credential; local smoke tests can use `VETIOS_DEV_BYPASS=true`.
