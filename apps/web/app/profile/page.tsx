@@ -7,8 +7,23 @@ import { getSupabaseServer, resolveSessionTenant } from '@/lib/supabaseServer';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ProfilePage() {
+interface ProfilePageProps {
+    searchParams: Promise<Record<string, string | string[] | undefined>>;
+}
+
+const STEP_UP_INTENTS = {
+    outcome_calibration: {
+        actionKey: 'outcome.calibration.materialize',
+        resourceType: 'outcome_calibration_evidence',
+        operationLabel: 'outcome calibration materialization',
+        returnTo: '/outcome?step_up=verified',
+    },
+} as const;
+
+export default async function ProfilePage({ searchParams }: ProfilePageProps) {
     const session = await resolveSessionTenant();
+    const query = await searchParams;
+    const stepUpIntent = resolveStepUpIntent(query.step_up);
 
     if (!session) {
         return (
@@ -82,9 +97,16 @@ export default async function ProfilePage() {
                 </ConsoleCard>
             </div>
 
-            <MfaSecurityCard />
+            <MfaSecurityCard {...stepUpIntent} />
         </Container>
     );
+}
+
+function resolveStepUpIntent(value: string | string[] | undefined) {
+    const key = Array.isArray(value) ? value[0] : value;
+    return key && key in STEP_UP_INTENTS
+        ? STEP_UP_INTENTS[key as keyof typeof STEP_UP_INTENTS]
+        : undefined;
 }
 
 async function loadContributionSummary(tenantId: string) {

@@ -1,9 +1,11 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import {
     CheckCircle2,
     DatabaseZap,
+    KeyRound,
     Play,
     RefreshCw,
     ShieldAlert,
@@ -53,10 +55,12 @@ export function OutcomeCalibrationOperations() {
     const [snapshot, setSnapshot] = useState<MaterializationSnapshot | null>(null);
     const [state, setState] = useState<LoadState>('loading');
     const [error, setError] = useState<string | null>(null);
+    const [stepUpRequired, setStepUpRequired] = useState(false);
 
     const refresh = useCallback(async () => {
         setState('loading');
         setError(null);
+        setStepUpRequired(false);
         try {
             const response = await fetch('/api/platform/outcome-calibration', {
                 credentials: 'same-origin',
@@ -81,6 +85,7 @@ export function OutcomeCalibrationOperations() {
     async function run(mode: 'dry_run' | 'commit') {
         setState('running');
         setError(null);
+        setStepUpRequired(false);
         try {
             const response = await fetch('/api/platform/outcome-calibration', {
                 method: 'POST',
@@ -91,6 +96,9 @@ export function OutcomeCalibrationOperations() {
             });
             const body = await response.json();
             if (!response.ok) {
+                if (response.status === 428 || isStepUpResponse(body)) {
+                    setStepUpRequired(true);
+                }
                 throw new Error(formatError(body, 'Calibration materialization failed.'));
             }
             await refresh();
@@ -140,9 +148,22 @@ export function OutcomeCalibrationOperations() {
             </div>
 
             {error && (
-                <div className="flex items-start gap-3 border border-danger bg-danger/5 p-4 font-mono text-xs text-danger">
-                    <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span className="min-w-0 break-words">{error}</span>
+                <div className="flex flex-wrap items-center gap-3 border border-danger bg-danger/5 p-4 font-mono text-xs text-danger">
+                    <ShieldAlert className="h-4 w-4 shrink-0" />
+                    <span className="min-w-0 flex-1 break-words">
+                        {stepUpRequired
+                            ? 'MFA verification is required before calibration evidence can be committed.'
+                            : error}
+                    </span>
+                    {stepUpRequired && (
+                        <Link
+                            href="/profile?step_up=outcome_calibration"
+                            className="inline-flex min-h-11 items-center gap-2 border border-danger px-4 font-bold uppercase transition-colors hover:bg-danger hover:text-black"
+                        >
+                            <KeyRound className="h-4 w-4" />
+                            Verify MFA
+                        </Link>
+                    )}
                 </div>
             )}
 
@@ -315,4 +336,11 @@ function formatError(value: unknown, fallback: string): string {
     const detail = text(record.detail);
     const error = text(record.error);
     return detail ?? error ?? fallback;
+}
+
+function isStepUpResponse(value: unknown): boolean {
+    if (!value || typeof value !== 'object') return false;
+    const record = value as Record<string, unknown>;
+    return record.error === 'step_up_required'
+        || record.code === 'VETIOS_STEP_UP_REQUIRED';
 }
