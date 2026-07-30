@@ -43,4 +43,20 @@ assert.match(
     'verified downstream certificate fingerprint must overwrite any inbound canonical value',
 );
 
-console.log('envoy_header_contract_ok');
+assert.match(
+    template,
+    /path: "\/api\/amr\/network-operations"\s*\r?\n\s+route:\s*\r?\n\s+cluster: vetios_app/,
+    'the exact AMR network operations path must be forwarded through the mTLS boundary',
+);
+assert.doesNotMatch(
+    template,
+    /prefix: "\/api\/amr\/"/,
+    'the mTLS proxy must not forward the entire AMR route namespace',
+);
+assert.match(
+    template,
+    /prefix: "\/"\s*\r?\n\s+direct_response:\s*\r?\n\s+status: 404/,
+    'the mTLS proxy must retain its default-deny catchall',
+);
+
+console.log('envoy_header_and_route_contract_ok');
