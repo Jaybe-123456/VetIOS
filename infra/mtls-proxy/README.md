@@ -12,6 +12,8 @@ This folder provides a deployable Envoy proxy that:
 2. Removes spoofable inbound trust headers.
 3. Forwards Envoy's verified downstream client certificate SHA-256 fingerprint.
 4. Adds the shared mTLS proxy secret header consumed by VetIOS.
+5. Proxies only the OAuth route family and the exact
+   `/api/amr/network-operations` path; every other path remains denied.
 
 Envoy strips the alternate trust-header names and overwrites both canonical `x-vetios-*` headers.
 Do not add the canonical headers to `request_headers_to_remove`: route-configuration removal runs
@@ -50,6 +52,16 @@ Partner OAuth clients should use:
 ```text
 https://mtls.vetios.tech/api/oauth/token
 ```
+
+AMR laboratory connectors should use:
+
+```text
+https://mtls.vetios.tech/api/amr/network-operations
+```
+
+Do not replace the exact AMR path matcher with an `/api/amr/` prefix. Other AMR
+routes contain clinician and administrative workflows that must not inherit the
+machine connector trust boundary.
 
 The normal app remains:
 

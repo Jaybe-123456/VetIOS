@@ -92,6 +92,12 @@ static_resources:
                             host_rewrite_literal: "${VETIOS_UPSTREAM_HOST}"
                             timeout: 60s
                         - match:
+                            path: "/api/amr/network-operations"
+                          route:
+                            cluster: vetios_app
+                            host_rewrite_literal: "${VETIOS_UPSTREAM_HOST}"
+                            timeout: 60s
+                        - match:
                             prefix: "/"
                           direct_response:
                             status: 404
