@@ -56,6 +56,7 @@ describe('AMR outcome network pilot', () => {
                 site_type: 'laboratory',
                 event_type: 'connector_verified',
                 connector_key: 'reference-lab.ast.v1',
+                evidence: verifiedConnectorEvidence(),
                 occurred_at: '2026-07-04T00:00:00.000Z',
             },
             {
@@ -207,7 +208,16 @@ function siteEvent(
         event_type: eventType,
         display_label: `${siteType} ${siteIndex + 1}`,
         connector_key: `${siteType}.connector.v1`,
+        evidence: eventType === 'connector_verified' ? verifiedConnectorEvidence() : {},
         occurred_at: `2026-07-${String(siteIndex + 1).padStart(2, '0')}T00:0${eventIndex}:00.000Z`,
+    };
+}
+
+function verifiedConnectorEvidence() {
+    return {
+        attestation_status: 'verified',
+        attestation_event_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        token_binding_method: 'mtls',
     };
 }
 

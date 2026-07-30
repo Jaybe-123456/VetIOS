@@ -34,6 +34,10 @@ export const OAUTH_CLIENT_CREDENTIAL_SCOPES = [
     'federation:node',
     'federation:admin',
     'secure_aggregation:write',
+    'amr:read',
+    'amr:ingest',
+    'exchange:manage',
+    'exchange:meter',
     'machine:manage',
 ] as const;
 
@@ -106,6 +110,8 @@ export interface OAuthResolvedPrincipal {
     clientName: string;
     scopes: OAuthClientCredentialScope[];
     tokenId: string;
+    tokenBindingMethod: OAuthTokenBindingMethod;
+    mtlsCertThumbprint: string | null;
 }
 
 interface JwtClientAssertionParts {
@@ -781,6 +787,8 @@ export async function resolveOAuthClientCredentialsPrincipal(
             clientName: introspection.oauthClient.client_name,
             scopes: introspection.tokenRecord.scopes,
             tokenId: introspection.tokenRecord.id,
+            tokenBindingMethod: introspection.tokenRecord.token_binding_method,
+            mtlsCertThumbprint: introspection.tokenRecord.mtls_cert_thumbprint,
         },
         error: null,
     };

@@ -14,7 +14,10 @@ import {
     Activity,
     Building2,
     CheckCircle2,
+    CircleDollarSign,
+    Database,
     FlaskConical,
+    Link2,
     RefreshCw,
     ShieldCheck,
 } from 'lucide-react';
@@ -92,11 +95,82 @@ type NetworkSnapshot = {
     proof_hash: string;
 };
 
+type OperationsSnapshot = {
+    connectors: {
+        total_sites: number;
+        production_verified: number;
+        stale: number;
+        failed: number;
+        rows: Array<{
+            site_id: string;
+            status: string;
+            source_system: string;
+            connector_version: string;
+            schema_version: string;
+            last_probe_at: string | null;
+            observed_record_count: number;
+            token_binding_method: string;
+            blockers: string[];
+        }>;
+    };
+    ingestion: {
+        total: number;
+        accepted: number;
+        blocked: number;
+        result_count: number;
+        pending_reconciliation: number;
+        matched: number;
+        failed_reconciliation: number;
+        rows: Array<{
+            id: string;
+            site_id: string;
+            lab_site_id: string;
+            source_system: string;
+            species: string;
+            specimen_type: string;
+            organism_key: string;
+            ingestion_status: string;
+            result_count: number;
+            observed_at: string | null;
+        }>;
+    };
+    exchange: {
+        agreements_total: number;
+        agreements_active: number;
+        metered_events: number;
+        metered_amount_minor: number;
+        unsettled_amount_minor: number;
+        currency: string | null;
+        amounts_by_currency: Array<{
+            currency: string;
+            metered_amount_minor: number;
+            settled_amount_minor: number;
+            unsettled_amount_minor: number;
+        }>;
+        settlement_events: number;
+        agreements: Array<{
+            agreement_id: string;
+            product_key: string;
+            purpose: string;
+            privacy_class: string;
+            pricing_model: string;
+            currency: string;
+            unit_price_minor: number;
+            status: string;
+            active: boolean;
+            blockers: string[];
+        }>;
+    };
+    marketplace_ready: boolean;
+    blockers: string[];
+    next_actions: string[];
+    proof_hash: string;
+};
+
 const SITE_EVENT_TYPES = [
     'invited',
     'enrolled',
     'data_use_approved',
-    'connector_verified',
     'connector_failed',
     'paused',
     'retired',
@@ -114,24 +188,49 @@ const EPISODE_EVENT_TYPES = [
 
 export default function AMROutcomeNetworkPage() {
     const [snapshot, setSnapshot] = useState<NetworkSnapshot | null>(null);
+    const [operations, setOperations] = useState<OperationsSnapshot | null>(null);
     const [siteId, setSiteId] = useState('');
     const [episodeId, setEpisodeId] = useState('');
+    const [agreementId, setAgreementId] = useState('');
+    const [settlementId, setSettlementId] = useState('');
     const [loading, setLoading] = useState(true);
     const [working, setWorking] = useState(false);
     const [notice, setNotice] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [operationsError, setOperationsError] = useState<string | null>(null);
 
     const loadSnapshot = useCallback(async () => {
         setLoading(true);
         setError(null);
+        setOperationsError(null);
         try {
-            const response = await fetch('/api/amr/outcome-network', {
-                credentials: 'same-origin',
-                cache: 'no-store',
-            });
-            const body = await response.json();
-            if (!response.ok) throw new Error(formatApiError(body, 'AMR outcome network unavailable'));
-            setSnapshot(body.snapshot);
+            const [networkResponse, operationsResponse] = await Promise.all([
+                fetch('/api/amr/outcome-network', {
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                }),
+                fetch('/api/amr/network-operations', {
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                }),
+            ]);
+            const [networkBody, operationsBody] = await Promise.all([
+                networkResponse.json(),
+                operationsResponse.json(),
+            ]);
+            if (!networkResponse.ok) {
+                throw new Error(formatApiError(networkBody, 'AMR outcome network unavailable'));
+            }
+            setSnapshot(networkBody.snapshot);
+            if (operationsResponse.ok) {
+                setOperations(operationsBody.snapshot);
+            } else {
+                setOperations(null);
+                setOperationsError(formatApiError(
+                    operationsBody,
+                    'AMR operations kernel unavailable',
+                ));
+            }
         } catch (loadError) {
             setError(loadError instanceof Error ? loadError.message : 'AMR outcome network unavailable');
         } finally {
@@ -167,25 +266,47 @@ export default function AMROutcomeNetworkPage() {
         }
     }
 
+    async function submitExchangeAction(payload: Record<string, unknown>) {
+        setWorking(true);
+        setError(null);
+        setNotice(null);
+        try {
+            const response = await fetch('/api/amr/private-exchange', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify(payload),
+            });
+            const body = await response.json();
+            if (!response.ok) throw new Error(formatApiError(body, 'Exchange operation failed'));
+            if (body.agreement_id) setAgreementId(String(body.agreement_id));
+            if (body.settlement_id) setSettlementId(String(body.settlement_id));
+            setNotice(body.cached
+                ? 'Idempotent replay returned the existing ledger event.'
+                : 'Governed exchange event recorded.');
+            await loadSnapshot();
+        } catch (submitError) {
+            setError(submitError instanceof Error ? submitError.message : 'Exchange operation failed');
+        } finally {
+            setWorking(false);
+        }
+    }
+
     async function handleSiteSubmit(event: React.FormEvent<HTMLFormElement>) {
         event.preventDefault();
         const form = new FormData(event.currentTarget);
-        const eventType = String(form.get('event_type'));
         await submitAction(compactObject({
             action: 'record_site_event',
             request_id: crypto.randomUUID(),
             site_id: siteId || undefined,
             site_type: String(form.get('site_type')),
-            event_type: eventType,
+            event_type: String(form.get('event_type')),
             display_label: textValue(form.get('display_label')),
             site_ref: textValue(form.get('site_ref')),
             connector_key: textValue(form.get('connector_key')),
             evidence: compactObject({
                 agreement_version: textValue(form.get('agreement_version')),
                 connector_version: textValue(form.get('connector_version')),
-                verification_method: eventType === 'connector_verified'
-                    ? String(form.get('verification_method'))
-                    : undefined,
             }),
         }));
     }
@@ -230,6 +351,59 @@ export default function AMROutcomeNetworkPage() {
                     : undefined,
                 followup_days: numberValue(form.get('followup_days')),
             }),
+        }));
+    }
+
+    async function handleAgreementSubmit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        await submitExchangeAction(compactObject({
+            action: 'record_agreement_event',
+            request_id: crypto.randomUUID(),
+            agreement_id: agreementId || undefined,
+            event_type: String(form.get('event_type')),
+            product_key: textValue(form.get('product_key')),
+            provider_site_id: textValue(form.get('provider_site_id')),
+            consumer_tenant_id: textValue(form.get('consumer_tenant_id')),
+            counterparty_ref: textValue(form.get('counterparty_ref')),
+            purpose: textValue(form.get('purpose')),
+            license_key: textValue(form.get('license_key')),
+            privacy_class: textValue(form.get('privacy_class')),
+            permitted_species: commaValues(form.get('permitted_species')),
+            permitted_geographies: commaValues(form.get('permitted_geographies')),
+            permitted_use_cases: commaValues(form.get('permitted_use_cases')),
+            pricing_model: textValue(form.get('pricing_model')),
+            currency: textValue(form.get('currency'))?.toUpperCase(),
+            unit_price_minor: numberValue(form.get('unit_price_minor')),
+            platform_fee_bps: numberValue(form.get('platform_fee_bps')),
+            terms_hash: textValue(form.get('terms_hash')),
+            data_use_agreement_hash: textValue(form.get('data_use_agreement_hash')),
+            effective_at: dateTimeValue(form.get('effective_at')),
+            expires_at: dateTimeValue(form.get('expires_at')),
+        }));
+    }
+
+    async function handleSettlementSubmit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        await submitExchangeAction(compactObject({
+            action: 'materialize_settlement',
+            request_id: crypto.randomUUID(),
+            agreement_id: textValue(form.get('agreement_id')),
+            period_start: dateTimeValue(form.get('period_start')),
+            period_end: dateTimeValue(form.get('period_end')),
+        }));
+    }
+
+    async function handleSettlementStateSubmit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const form = new FormData(event.currentTarget);
+        await submitExchangeAction(compactObject({
+            action: 'record_settlement_state',
+            request_id: crypto.randomUUID(),
+            settlement_id: settlementId || textValue(form.get('settlement_id')),
+            event_type: String(form.get('event_type')),
+            confirmation_hash: textValue(form.get('confirmation_hash')),
         }));
     }
 
@@ -288,6 +462,11 @@ export default function AMROutcomeNetworkPage() {
                     {error ?? notice}
                 </div>
             )}
+            {operationsError && !error && (
+                <div className="my-4 break-words border border-warning/60 px-4 py-3 font-mono text-xs text-warning [overflow-wrap:anywhere]">
+                    {operationsError}
+                </div>
+            )}
 
             {loading ? (
                 <div className="grid min-h-48 place-items-center font-mono text-sm text-muted">
@@ -327,6 +506,86 @@ export default function AMROutcomeNetworkPage() {
                             active={snapshot.federation_manifest.network_threshold_met}
                         />
                     </section>
+
+                    {operations && (
+                        <>
+                            <section className="grid grid-cols-2 gap-3 lg:grid-cols-6">
+                                <Metric
+                                    icon={<Link2 className="h-4 w-4" />}
+                                    label="Connectors"
+                                    value={`${operations.connectors.production_verified}/${operations.connectors.total_sites}`}
+                                    active={operations.connectors.production_verified > 0}
+                                />
+                                <Metric
+                                    icon={<Database className="h-4 w-4" />}
+                                    label="AST accepted"
+                                    value={`${operations.ingestion.accepted}`}
+                                    active={operations.ingestion.accepted > 0}
+                                />
+                                <Metric
+                                    icon={<CheckCircle2 className="h-4 w-4" />}
+                                    label="Reconciled"
+                                    value={`${operations.ingestion.matched}`}
+                                    active={operations.ingestion.matched > 0}
+                                />
+                                <Metric
+                                    icon={<ShieldCheck className="h-4 w-4" />}
+                                    label="Agreements"
+                                    value={`${operations.exchange.agreements_active}/${operations.exchange.agreements_total}`}
+                                    active={operations.exchange.agreements_active > 0}
+                                />
+                                <Metric
+                                    icon={<CircleDollarSign className="h-4 w-4" />}
+                                    label="Unsettled"
+                                    value={formatMinorMoney(
+                                        operations.exchange.unsettled_amount_minor,
+                                        operations.exchange.currency,
+                                    )}
+                                    active={operations.exchange.unsettled_amount_minor > 0}
+                                />
+                                <Metric
+                                    icon={<Activity className="h-4 w-4" />}
+                                    label="Exchange"
+                                    value={operations.marketplace_ready ? 'ready' : 'blocked'}
+                                    active={operations.marketplace_ready}
+                                />
+                            </section>
+
+                            <div className="grid gap-6 xl:grid-cols-2">
+                                <ConsoleCard title="Connector & AST Operations">
+                                    <DataRow label="Production verified" value={operations.connectors.production_verified} tone={operations.connectors.production_verified > 0 ? 'accent' : 'warning'} />
+                                    <DataRow label="Stale connectors" value={operations.connectors.stale} tone={operations.connectors.stale > 0 ? 'warning' : 'muted'} />
+                                    <DataRow label="Blocked ingestions" value={operations.ingestion.blocked} tone={operations.ingestion.blocked > 0 ? 'danger' : 'muted'} />
+                                    <DataRow label="Normalized AST results" value={operations.ingestion.result_count} />
+                                    <DataRow label="Pending reconciliation" value={operations.ingestion.pending_reconciliation} tone={operations.ingestion.pending_reconciliation > 0 ? 'warning' : 'accent'} />
+                                    <DataRow label="Failed reconciliation" value={operations.ingestion.failed_reconciliation} tone={operations.ingestion.failed_reconciliation > 0 ? 'danger' : 'muted'} />
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Private Exchange State">
+                                    <DataRow label="Marketplace gate" value={operations.marketplace_ready ? 'ready' : 'blocked'} tone={operations.marketplace_ready ? 'accent' : 'warning'} />
+                                    <DataRow label="Metered events" value={operations.exchange.metered_events} />
+                                    <DataRow label="Metered value" value={formatMinorMoney(operations.exchange.metered_amount_minor, operations.exchange.currency)} />
+                                    <DataRow label="Settlement events" value={operations.exchange.settlement_events} />
+                                    {operations.exchange.amounts_by_currency.map((amounts) => (
+                                        <DataRow
+                                            key={amounts.currency}
+                                            label={`${amounts.currency} unsettled`}
+                                            value={formatMinorMoney(amounts.unsettled_amount_minor, amounts.currency)}
+                                        />
+                                    ))}
+                                    <div className="border-t border-grid pt-3">
+                                        {operations.blockers.length === 0 ? (
+                                            <div className="font-mono text-xs text-accent">NO EXCHANGE GATE BLOCKERS</div>
+                                        ) : operations.blockers.map((blocker) => (
+                                            <div key={blocker} className="py-1 font-mono text-[11px] text-warning">
+                                                {humanize(blocker)}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </ConsoleCard>
+                            </div>
+                        </>
+                    )}
 
                     <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
                         <ConsoleCard title="Pilot Readiness">
@@ -369,6 +628,208 @@ export default function AMROutcomeNetworkPage() {
                         </ConsoleCard>
                     </div>
 
+                    {operations && (
+                        <div className="grid gap-6 xl:grid-cols-2">
+                            <ConsoleCard title="Private Exchange Agreement Event">
+                                <form className="grid gap-4 sm:grid-cols-2" onSubmit={handleAgreementSubmit}>
+                                    <Field label="Agreement ID">
+                                        <TerminalInput
+                                            value={agreementId}
+                                            onChange={(event) => setAgreementId(event.target.value)}
+                                            placeholder="Generated on draft"
+                                        />
+                                    </Field>
+                                    <SelectField label="Event" name="event_type" options={[
+                                        'drafted',
+                                        'offered',
+                                        'accepted',
+                                        'activated',
+                                        'suspended',
+                                        'revoked',
+                                        'expired',
+                                    ]} />
+                                    <SelectField label="Product" name="product_key" options={[
+                                        'amr.culture_ast.normalized.v1',
+                                        'amr.outcome_evidence.aggregate.v1',
+                                        'amr.surveillance.signal.v1',
+                                        'amr.federated_compute.v1',
+                                        'amr.specialist_review.v1',
+                                    ]} />
+                                    <SelectField label="Privacy class" name="privacy_class" options={[
+                                        'deidentified_record',
+                                        'aggregate_only',
+                                        'federated_only',
+                                    ]} />
+                                    <Field label="Provider site ID"><TerminalInput name="provider_site_id" /></Field>
+                                    <Field label="Consumer tenant ID"><TerminalInput name="consumer_tenant_id" /></Field>
+                                    <Field label="External counterparty reference">
+                                        <TerminalInput name="counterparty_ref" placeholder="Hashed before storage" />
+                                    </Field>
+                                    <Field label="Purpose"><TerminalInput name="purpose" placeholder="AMR surveillance" /></Field>
+                                    <Field label="License key"><TerminalInput name="license_key" placeholder="vetios-amr-private-v1" /></Field>
+                                    <SelectField label="Pricing" name="pricing_model" options={[
+                                        'per_record',
+                                        'per_episode',
+                                        'subscription',
+                                        'no_charge',
+                                    ]} />
+                                    <Field label="Currency"><TerminalInput name="currency" defaultValue="USD" maxLength={3} /></Field>
+                                    <Field label="Unit price, minor"><TerminalInput name="unit_price_minor" type="number" min="0" defaultValue="0" /></Field>
+                                    <Field label="Platform fee, bps"><TerminalInput name="platform_fee_bps" type="number" min="0" max="10000" defaultValue="0" /></Field>
+                                    <Field label="Species"><TerminalInput name="permitted_species" placeholder="canine, bovine" /></Field>
+                                    <Field label="Geographies"><TerminalInput name="permitted_geographies" placeholder="KE, US" /></Field>
+                                    <Field label="Permitted uses"><TerminalInput name="permitted_use_cases" placeholder="surveillance, research" /></Field>
+                                    <Field label="Terms hash"><TerminalInput name="terms_hash" placeholder="SHA-256" /></Field>
+                                    <Field label="Data-use agreement hash"><TerminalInput name="data_use_agreement_hash" placeholder="SHA-256" /></Field>
+                                    <Field label="Effective at"><TerminalInput name="effective_at" type="datetime-local" /></Field>
+                                    <Field label="Expires at"><TerminalInput name="expires_at" type="datetime-local" /></Field>
+                                    <TerminalButton className="sm:col-span-2" disabled={working} type="submit">
+                                        Record agreement event
+                                    </TerminalButton>
+                                </form>
+                            </ConsoleCard>
+
+                            <ConsoleCard title="Settlement Ledger">
+                                <form className="grid gap-4 sm:grid-cols-2" onSubmit={handleSettlementSubmit}>
+                                    <Field label="Agreement ID">
+                                        <TerminalInput
+                                            name="agreement_id"
+                                            value={agreementId}
+                                            onChange={(event) => setAgreementId(event.target.value)}
+                                        />
+                                    </Field>
+                                    <Field label="Period start"><TerminalInput name="period_start" type="datetime-local" /></Field>
+                                    <Field label="Period end"><TerminalInput name="period_end" type="datetime-local" /></Field>
+                                    <div className="flex items-end">
+                                        <TerminalButton className="w-full" disabled={working} type="submit">
+                                            Calculate
+                                        </TerminalButton>
+                                    </div>
+                                </form>
+                                <form className="mt-6 grid gap-4 border-t border-grid pt-6 sm:grid-cols-2" onSubmit={handleSettlementStateSubmit}>
+                                    <Field label="Settlement ID">
+                                        <TerminalInput
+                                            name="settlement_id"
+                                            value={settlementId}
+                                            onChange={(event) => setSettlementId(event.target.value)}
+                                        />
+                                    </Field>
+                                    <SelectField label="State" name="event_type" options={[
+                                        'approved',
+                                        'invoiced',
+                                        'paid',
+                                        'voided',
+                                    ]} />
+                                    <Field label="External confirmation hash">
+                                        <TerminalInput name="confirmation_hash" placeholder="Required for paid" />
+                                    </Field>
+                                    <div className="flex items-end">
+                                        <TerminalButton className="w-full" disabled={working} type="submit">
+                                            Record state
+                                        </TerminalButton>
+                                    </div>
+                                </form>
+                            </ConsoleCard>
+                        </div>
+                    )}
+
+                    {operations && (
+                        <>
+                            <div className="grid gap-6 xl:grid-cols-2">
+                                <ConsoleCard title="Connector Proof Ledger">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full min-w-[620px] text-left font-mono text-xs">
+                                            <thead className="text-muted">
+                                                <tr className="border-b border-grid">
+                                                    <th className="px-2 py-3 font-normal">Site</th>
+                                                    <th className="px-2 py-3 font-normal">Source</th>
+                                                    <th className="px-2 py-3 font-normal">Binding</th>
+                                                    <th className="px-2 py-3 font-normal">Status</th>
+                                                    <th className="px-2 py-3 font-normal">Last proof</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {operations.connectors.rows.slice(0, 50).map((connector) => (
+                                                    <tr key={connector.site_id} className="border-b border-grid/70">
+                                                        <td className="px-2 py-3 text-muted">{connector.site_id}</td>
+                                                        <td className="px-2 py-3 text-white">{connector.source_system}</td>
+                                                        <td className="px-2 py-3 text-muted">{connector.token_binding_method}</td>
+                                                        <td className={`px-2 py-3 ${connector.status === 'verified' ? 'text-accent' : 'text-warning'}`}>
+                                                            {humanize(connector.status)}
+                                                        </td>
+                                                        <td className="px-2 py-3 text-muted">{formatTimestamp(connector.last_probe_at)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Canonical AST Ingestion">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full min-w-[640px] text-left font-mono text-xs">
+                                            <thead className="text-muted">
+                                                <tr className="border-b border-grid">
+                                                    <th className="px-2 py-3 font-normal">Source</th>
+                                                    <th className="px-2 py-3 font-normal">Species</th>
+                                                    <th className="px-2 py-3 font-normal">Organism</th>
+                                                    <th className="px-2 py-3 font-normal">Results</th>
+                                                    <th className="px-2 py-3 font-normal">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {operations.ingestion.rows.slice(0, 50).map((ingestion) => (
+                                                    <tr key={ingestion.id} className="border-b border-grid/70">
+                                                        <td className="px-2 py-3 text-white">{ingestion.source_system}</td>
+                                                        <td className="px-2 py-3 text-muted">{ingestion.species}</td>
+                                                        <td className="px-2 py-3 text-white">{ingestion.organism_key}</td>
+                                                        <td className="px-2 py-3 text-muted">{ingestion.result_count}</td>
+                                                        <td className={`px-2 py-3 ${ingestion.ingestion_status === 'accepted' ? 'text-accent' : 'text-warning'}`}>
+                                                            {ingestion.ingestion_status}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </ConsoleCard>
+                            </div>
+
+                            <ConsoleCard title="Private Exchange Agreements">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full min-w-[880px] text-left font-mono text-xs">
+                                        <thead className="text-muted">
+                                            <tr className="border-b border-grid">
+                                                <th className="px-2 py-3 font-normal">Agreement</th>
+                                                <th className="px-2 py-3 font-normal">Product</th>
+                                                <th className="px-2 py-3 font-normal">Privacy</th>
+                                                <th className="px-2 py-3 font-normal">Pricing</th>
+                                                <th className="px-2 py-3 font-normal">Unit price</th>
+                                                <th className="px-2 py-3 font-normal">Status</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {operations.exchange.agreements.slice(0, 100).map((agreement) => (
+                                                <tr key={agreement.agreement_id} className="border-b border-grid/70">
+                                                    <td className="px-2 py-3 text-muted">{agreement.agreement_id}</td>
+                                                    <td className="px-2 py-3 text-white">{agreement.product_key}</td>
+                                                    <td className="px-2 py-3 text-muted">{humanize(agreement.privacy_class)}</td>
+                                                    <td className="px-2 py-3 text-muted">{humanize(agreement.pricing_model)}</td>
+                                                    <td className="px-2 py-3 text-white">
+                                                        {formatMinorMoney(agreement.unit_price_minor, agreement.currency)}
+                                                    </td>
+                                                    <td className={`px-2 py-3 ${agreement.active ? 'text-accent' : 'text-warning'}`}>
+                                                        {humanize(agreement.status)}
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </ConsoleCard>
+                        </>
+                    )}
+
                     <div className="grid gap-6 xl:grid-cols-2">
                         <ConsoleCard title="Site Enrollment Event">
                             <form className="grid gap-4 sm:grid-cols-2" onSubmit={handleSiteSubmit}>
@@ -396,11 +857,6 @@ export default function AMROutcomeNetworkPage() {
                                 <Field label="Connector version">
                                     <TerminalInput name="connector_version" placeholder="1.0.0" />
                                 </Field>
-                                <SelectField
-                                    label="Verification"
-                                    name="verification_method"
-                                    options={['production_probe', 'schema_validation', 'dry_run', 'manual_attestation']}
-                                />
                                 <div className="flex items-end">
                                     <TerminalButton className="w-full" disabled={working} type="submit">
                                         Record
@@ -592,8 +1048,42 @@ function numberValue(value: FormDataEntryValue | null): number | undefined {
     return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function commaValues(value: FormDataEntryValue | null): string[] | undefined {
+    const text = textValue(value);
+    if (!text) return undefined;
+    const values = Array.from(new Set(
+        text.split(',').map((entry) => entry.trim()).filter(Boolean),
+    ));
+    return values.length > 0 ? values : undefined;
+}
+
+function dateTimeValue(value: FormDataEntryValue | null): string | undefined {
+    const text = textValue(value);
+    if (!text) return undefined;
+    const timestamp = Date.parse(text);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : undefined;
+}
+
 function formatMetric(value: number | null): string {
     return value == null ? 'unavailable' : value.toFixed(4);
+}
+
+function formatMinorMoney(amountMinor: number, currency: string | null): string {
+    if (!currency) return `${amountMinor} minor`;
+    try {
+        return new Intl.NumberFormat(undefined, {
+            style: 'currency',
+            currency,
+        }).format(amountMinor / 100);
+    } catch {
+        return `${currency} ${(amountMinor / 100).toFixed(2)}`;
+    }
+}
+
+function formatTimestamp(value: string | null): string {
+    if (!value) return 'never';
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString() : value;
 }
 
 function humanize(value: string): string {

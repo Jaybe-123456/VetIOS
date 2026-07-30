@@ -28,6 +28,8 @@ export type AuthTrustActionCategory =
     | 'cross_tenant_surveillance'
     | 'ontology_ingestion'
     | 'infrastructure_admin'
+    | 'amr_operations'
+    | 'exchange_admin'
     | 'read_only';
 
 export type AuthTrustRiskLevel = 'low' | 'medium' | 'high' | 'critical';
@@ -268,6 +270,56 @@ export const AUTH_TRUST_ACTION_REQUIREMENTS: Record<string, AuthTrustActionRequi
         requiredScopes: ['machine:manage'],
         allowedRoles: ['admin'],
         challengeType: 'mfa',
+    },
+    'amr.connector.probe': {
+        actionKey: 'amr.connector.probe',
+        actionCategory: 'amr_operations',
+        riskLevel: 'high',
+        requiredAssuranceLevel: 'workload_identity',
+        requiredScopes: ['amr:ingest'],
+        challengeType: 'workload_identity',
+    },
+    'amr.ast.ingest': {
+        actionKey: 'amr.ast.ingest',
+        actionCategory: 'amr_operations',
+        riskLevel: 'high',
+        requiredAssuranceLevel: 'workload_identity',
+        requiredScopes: ['amr:ingest'],
+        challengeType: 'workload_identity',
+    },
+    'amr.reconciliation.write': {
+        actionKey: 'amr.reconciliation.write',
+        actionCategory: 'amr_operations',
+        riskLevel: 'high',
+        requiredAssuranceLevel: 'recent_auth',
+        requiredScopes: ['outcome:write'],
+        challengeType: 'recent_auth',
+    },
+    'amr.exchange.agreement.write': {
+        actionKey: 'amr.exchange.agreement.write',
+        actionCategory: 'exchange_admin',
+        riskLevel: 'critical',
+        requiredAssuranceLevel: 'mfa',
+        requiredScopes: ['exchange:manage'],
+        allowedRoles: ['admin'],
+        challengeType: 'mfa',
+    },
+    'amr.exchange.settlement.write': {
+        actionKey: 'amr.exchange.settlement.write',
+        actionCategory: 'exchange_admin',
+        riskLevel: 'critical',
+        requiredAssuranceLevel: 'mfa',
+        requiredScopes: ['exchange:manage'],
+        allowedRoles: ['admin'],
+        challengeType: 'mfa',
+    },
+    'amr.exchange.usage.write': {
+        actionKey: 'amr.exchange.usage.write',
+        actionCategory: 'exchange_admin',
+        riskLevel: 'high',
+        requiredAssuranceLevel: 'workload_identity',
+        requiredScopes: ['exchange:meter'],
+        challengeType: 'workload_identity',
     },
 };
 

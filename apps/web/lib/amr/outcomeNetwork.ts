@@ -250,7 +250,7 @@ export function buildAMRNetworkSiteSummaries(rows: AMRNetworkSiteEventRow[]): AM
                         dataUseApproved = false;
                         break;
                     case 'connector_verified':
-                        connectorVerified = true;
+                        connectorVerified = isVerifiedConnectorAttestation(event.evidence);
                         break;
                     case 'connector_failed':
                         connectorVerified = false;
@@ -762,6 +762,16 @@ function readNumber(value: unknown): number | null {
 
 function uniqueStrings(values: string[]): string[] {
     return Array.from(new Set(values.filter(Boolean))).sort();
+}
+
+function isVerifiedConnectorAttestation(value: unknown): boolean {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const evidence = value as Record<string, unknown>;
+    return evidence.attestation_status === 'verified'
+        && typeof evidence.attestation_event_id === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+            .test(evidence.attestation_event_id)
+        && evidence.token_binding_method === 'mtls';
 }
 
 function uniqueNonEmptyCount<T>(rows: T[], read: (row: T) => unknown): number {

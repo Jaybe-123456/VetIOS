@@ -30,6 +30,10 @@ export const MACHINE_CREDENTIAL_SCOPES = [
     'federation:node',
     'federation:admin',
     'secure_aggregation:write',
+    'amr:read',
+    'amr:ingest',
+    'exchange:manage',
+    'exchange:meter',
     'machine:manage',
 ] as const;
 
@@ -111,6 +115,9 @@ export interface ClinicalApiActor {
     principalLabel: string | null;
     serviceAccountId: string | null;
     oauthClientId?: string | null;
+    oauthAccessTokenId?: string | null;
+    tokenBindingMethod?: 'bearer' | 'dpop' | 'mtls' | null;
+    mtlsCertThumbprint?: string | null;
     connectorInstallation: ConnectorInstallationRecord | null;
     role: ControlPlaneUserRole | null;
     assuranceLevel: AuthTrustAssuranceLevel;
@@ -543,6 +550,9 @@ export async function resolveClinicalApiActor(
                 principalLabel: oauth.principal.clientName,
                 serviceAccountId: null,
                 oauthClientId: oauth.principal.oauthClientId,
+                oauthAccessTokenId: oauth.principal.tokenId,
+                tokenBindingMethod: oauth.principal.tokenBindingMethod,
+                mtlsCertThumbprint: oauth.principal.mtlsCertThumbprint,
                 connectorInstallation: null,
                 role: null,
                 assuranceLevel: 'workload_identity',

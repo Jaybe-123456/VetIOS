@@ -368,6 +368,16 @@ async function recordSiteEvent(input: {
     actorId: string;
     body: z.infer<typeof RecordSiteEventSchema>;
 }) {
+    if (input.body.event_type === 'connector_verified') {
+        return NextResponse.json(
+            {
+                error: 'connector_verification_is_system_computed',
+                detail: 'Run a successful mTLS production probe through /api/amr/network-operations.',
+            },
+            { status: 403 },
+        );
+    }
+
     const cachedRequest = await loadCachedEventByRequest(
         input.supabase,
         'amr_network_site_events',

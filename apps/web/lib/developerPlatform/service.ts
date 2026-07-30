@@ -652,6 +652,10 @@ function normalizeScopes(input: readonly string[] | undefined): MachineCredentia
         'signals:ingest',
         'signals:connect',
         'signals:read',
+        'amr:read',
+        'amr:ingest',
+        'exchange:manage',
+        'exchange:meter',
         'machine:manage',
     ]);
 
