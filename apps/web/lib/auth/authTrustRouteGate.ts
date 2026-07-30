@@ -154,6 +154,9 @@ export async function enforceVetiosClinicalActorGate(
             principal_label: input.actor.principalLabel,
             service_account_id: input.actor.serviceAccountId,
             connector_installation_id: input.actor.connectorInstallation?.id ?? null,
+            oauth_access_token_id: input.actor.oauthAccessTokenId ?? null,
+            token_binding_method: input.actor.tokenBindingMethod ?? null,
+            mtls_certificate_present: Boolean(input.actor.mtlsCertThumbprint),
             ...input.evidence,
         },
     });
