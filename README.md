@@ -18,7 +18,7 @@ Public links:
 - Live demo: [vetios.tech/demo](https://www.vetios.tech/demo)
 - Veterinary AI: [vetios.tech/veterinary-ai](https://www.vetios.tech/veterinary-ai)
 - Veterinary Diagnostic AI: [vetios.tech/veterinary-diagnostic-ai](https://www.vetios.tech/veterinary-diagnostic-ai)
-- Quantum Veterinary AI: [vetios.tech/quantum-veterinary-ai](https://www.vetios.tech/quantum-veterinary-ai)
+- Quantum computing research boundary: [vetios.tech/quantum-veterinary-ai](https://www.vetios.tech/quantum-veterinary-ai)
 - Platform: [vetios.tech/platform](https://www.vetios.tech/platform)
 - Docs: [vetios.tech/docs](https://www.vetios.tech/docs)
 
@@ -198,7 +198,11 @@ the console reports the pilot as enrolling or collecting rather than complete.
 
 - Migration: `supabase/migrations/20260723000000_amr_outcome_network_pilot.sql`
 - Operations runbook: [AMR Outcome Network Pilot v1](docs/amr-outcome-network-pilot-v1.md)
+- Evidence-fabric migration: `supabase/migrations/20260730010000_amr_evidence_fabric.sql`
+- Phenotype/genotype and quantum boundary: [AMR Evidence Fabric v1](docs/amr-evidence-fabric-v1.md)
 - Existing AMR ingestion: `POST /api/amr/stewardship`
+- Canonical AST and connector operations: `GET|POST /api/amr/network-operations`
+- Isolate-linked genomic evidence: `GET|POST /api/amr/evidence-fabric`
 - Existing surveillance: `GET /api/amr/surveillance`
 - Existing One Health export: `GET /api/amr/one-health/export`
 

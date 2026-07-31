@@ -16,10 +16,12 @@ import {
     CheckCircle2,
     CircleDollarSign,
     Database,
+    Dna,
     FlaskConical,
     Link2,
     RefreshCw,
     ShieldCheck,
+    Waypoints,
 } from 'lucide-react';
 
 type SiteRow = {
@@ -167,6 +169,77 @@ type OperationsSnapshot = {
     proof_hash: string;
 };
 
+type EvidenceFabricSnapshot = {
+    genomics: {
+        total: number;
+        linked_to_ast: number;
+        quality_passed: number;
+        externally_validated: number;
+        validation_evidence_linked: number;
+        clinical_use_allowed: number;
+        experimental_excluded: number;
+        legacy_unclassified: number;
+        rows: Array<{
+            id: string;
+            amr_ast_ingestion_event_id: string | null;
+            species: string | null;
+            pathogen_label: string | null;
+            pipeline_name: string | null;
+            pipeline_version: string | null;
+            pipeline_validation_ref: string | null;
+            external_validation_event_id: string | null;
+            quality_status: string | null;
+            validation_status: string | null;
+            computation_class: string | null;
+            clinical_use_allowed: boolean | null;
+            observed_at: string | null;
+            created_at: string | null;
+        }>;
+    };
+    concordance: {
+        total: number;
+        concordant_resistant: number;
+        concordant_susceptible: number;
+        phenotype_only_resistance: number;
+        genotype_only_signal: number;
+        indeterminate: number;
+        not_comparable: number;
+        review_required: number;
+        surveillance_supported: number;
+        rows: Array<{
+            id: string | null;
+            ast_ingestion_event_id: string;
+            genomic_event_id: string;
+            antimicrobial_key: string;
+            drug_class: string | null;
+            phenotype_status: string;
+            genotype_status: string;
+            concordance_status: string;
+            clinical_actionability: string;
+            observed_at: string;
+        }>;
+    };
+    interoperability: {
+        profiles: Array<{
+            profile_key: string;
+            mapping_ready_records: number;
+            blocked_records: number;
+            not_applicable_records: number;
+            blockers: string[];
+            boundary: string;
+        }>;
+    };
+    quantum_boundary: {
+        clinical_decision_influence: false;
+        experimental_events: number;
+        clinical_events_from_experimental_compute: number;
+        status: string;
+    };
+    blockers: string[];
+    next_actions: string[];
+    proof_hash: string;
+};
+
 const SITE_EVENT_TYPES = [
     'invited',
     'enrolled',
@@ -189,6 +262,7 @@ const EPISODE_EVENT_TYPES = [
 export default function AMROutcomeNetworkPage() {
     const [snapshot, setSnapshot] = useState<NetworkSnapshot | null>(null);
     const [operations, setOperations] = useState<OperationsSnapshot | null>(null);
+    const [evidenceFabric, setEvidenceFabric] = useState<EvidenceFabricSnapshot | null>(null);
     const [siteId, setSiteId] = useState('');
     const [episodeId, setEpisodeId] = useState('');
     const [agreementId, setAgreementId] = useState('');
@@ -198,13 +272,15 @@ export default function AMROutcomeNetworkPage() {
     const [notice, setNotice] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [operationsError, setOperationsError] = useState<string | null>(null);
+    const [evidenceFabricError, setEvidenceFabricError] = useState<string | null>(null);
 
     const loadSnapshot = useCallback(async () => {
         setLoading(true);
         setError(null);
         setOperationsError(null);
+        setEvidenceFabricError(null);
         try {
-            const [networkResponse, operationsResponse] = await Promise.all([
+            const [networkResponse, operationsResponse, evidenceResponse] = await Promise.all([
                 fetch('/api/amr/outcome-network', {
                     credentials: 'same-origin',
                     cache: 'no-store',
@@ -213,10 +289,15 @@ export default function AMROutcomeNetworkPage() {
                     credentials: 'same-origin',
                     cache: 'no-store',
                 }),
+                fetch('/api/amr/evidence-fabric', {
+                    credentials: 'same-origin',
+                    cache: 'no-store',
+                }),
             ]);
-            const [networkBody, operationsBody] = await Promise.all([
+            const [networkBody, operationsBody, evidenceBody] = await Promise.all([
                 networkResponse.json(),
                 operationsResponse.json(),
+                evidenceResponse.json(),
             ]);
             if (!networkResponse.ok) {
                 throw new Error(formatApiError(networkBody, 'AMR outcome network unavailable'));
@@ -229,6 +310,15 @@ export default function AMROutcomeNetworkPage() {
                 setOperationsError(formatApiError(
                     operationsBody,
                     'AMR operations kernel unavailable',
+                ));
+            }
+            if (evidenceResponse.ok) {
+                setEvidenceFabric(evidenceBody.snapshot);
+            } else {
+                setEvidenceFabric(null);
+                setEvidenceFabricError(formatApiError(
+                    evidenceBody,
+                    'AMR evidence fabric unavailable',
                 ));
             }
         } catch (loadError) {
@@ -413,7 +503,7 @@ export default function AMROutcomeNetworkPage() {
                 <div className="min-w-0 flex-1 [&_h1]:break-words [&_p]:break-words [&_p]:[overflow-wrap:anywhere]">
                     <PageHeader
                         title="AMR OUTCOME NETWORK"
-                        description="Operational ledger for laboratory and clinic enrollment, culture/AST episode closure, calibration evidence, and federation eligibility."
+                        description="Operational control for laboratory connectors, quantitative AST, isolate-linked genomic evidence, outcomes, surveillance, and governed exchange."
                     />
                 </div>
                 <div className="grid w-full shrink-0 grid-cols-1 gap-2 sm:w-auto sm:grid-cols-3">
@@ -465,6 +555,11 @@ export default function AMROutcomeNetworkPage() {
             {operationsError && !error && (
                 <div className="my-4 break-words border border-warning/60 px-4 py-3 font-mono text-xs text-warning [overflow-wrap:anywhere]">
                     {operationsError}
+                </div>
+            )}
+            {evidenceFabricError && !error && (
+                <div className="my-4 break-words border border-warning/60 px-4 py-3 font-mono text-xs text-warning [overflow-wrap:anywhere]">
+                    {evidenceFabricError}
                 </div>
             )}
 
@@ -582,6 +677,80 @@ export default function AMROutcomeNetworkPage() {
                                             </div>
                                         ))}
                                     </div>
+                                </ConsoleCard>
+                            </div>
+                        </>
+                    )}
+
+                    {evidenceFabric && (
+                        <>
+                            <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+                                <Metric
+                                    icon={<Dna className="h-4 w-4" />}
+                                    label="Genomic links"
+                                    value={`${evidenceFabric.genomics.linked_to_ast}/${evidenceFabric.genomics.total}`}
+                                    active={evidenceFabric.genomics.linked_to_ast > 0}
+                                />
+                                <Metric
+                                    icon={<ShieldCheck className="h-4 w-4" />}
+                                    label="Validation proofs"
+                                    value={`${evidenceFabric.genomics.validation_evidence_linked}`}
+                                    active={evidenceFabric.genomics.validation_evidence_linked > 0}
+                                />
+                                <Metric
+                                    icon={<Waypoints className="h-4 w-4" />}
+                                    label="Concordance"
+                                    value={`${evidenceFabric.concordance.total}`}
+                                    active={evidenceFabric.concordance.total > 0}
+                                />
+                                <Metric
+                                    icon={<Activity className="h-4 w-4" />}
+                                    label="Review queue"
+                                    value={`${evidenceFabric.concordance.review_required}`}
+                                    active={
+                                        evidenceFabric.concordance.total > 0
+                                        && evidenceFabric.concordance.review_required === 0
+                                    }
+                                />
+                                <Metric
+                                    icon={<ShieldCheck className="h-4 w-4" />}
+                                    label="Quantum boundary"
+                                    value={evidenceFabric.quantum_boundary.status}
+                                    active={evidenceFabric.quantum_boundary.status === 'enforced'}
+                                />
+                            </section>
+
+                            <div className="grid gap-6 xl:grid-cols-2">
+                                <ConsoleCard title="Evidence Fabric">
+                                    <DataRow label="Quality-passed genomics" value={evidenceFabric.genomics.quality_passed} />
+                                    <DataRow label="External validation proofs" value={evidenceFabric.genomics.validation_evidence_linked} tone={evidenceFabric.genomics.validation_evidence_linked > 0 ? 'accent' : 'warning'} />
+                                    <DataRow label="Clinical-use eligible" value={evidenceFabric.genomics.clinical_use_allowed} tone={evidenceFabric.genomics.clinical_use_allowed > 0 ? 'accent' : 'muted'} />
+                                    <DataRow label="Concordant resistance" value={evidenceFabric.concordance.concordant_resistant} />
+                                    <DataRow label="Phenotype-only resistance" value={evidenceFabric.concordance.phenotype_only_resistance} tone={evidenceFabric.concordance.phenotype_only_resistance > 0 ? 'warning' : 'muted'} />
+                                    <DataRow label="Genotype-only signals" value={evidenceFabric.concordance.genotype_only_signal} tone={evidenceFabric.concordance.genotype_only_signal > 0 ? 'warning' : 'muted'} />
+                                    <DataRow label="Surveillance supported" value={evidenceFabric.concordance.surveillance_supported} tone={evidenceFabric.concordance.surveillance_supported > 0 ? 'accent' : 'muted'} />
+                                    <DataRow label="Experimental evidence excluded" value={evidenceFabric.genomics.experimental_excluded} />
+                                    <DataRow label="Experimental clinical violations" value={evidenceFabric.quantum_boundary.clinical_events_from_experimental_compute} tone={evidenceFabric.quantum_boundary.clinical_events_from_experimental_compute > 0 ? 'danger' : 'accent'} />
+                                </ConsoleCard>
+
+                                <ConsoleCard title="Interoperability Readiness">
+                                    {evidenceFabric.interoperability.profiles.map((profile) => (
+                                        <div key={profile.profile_key} className="border-b border-grid py-3 last:border-b-0">
+                                            <DataRow
+                                                label={humanize(profile.profile_key)}
+                                                value={`${profile.mapping_ready_records} mapping ready`}
+                                                tone={profile.mapping_ready_records > 0 ? 'accent' : 'muted'}
+                                            />
+                                            <div className="px-1 font-mono text-[10px] leading-5 text-muted">
+                                                {profile.boundary}
+                                            </div>
+                                            {profile.blockers.slice(0, 3).map((blocker) => (
+                                                <div key={blocker} className="px-1 font-mono text-[10px] text-warning">
+                                                    {humanize(blocker)}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ))}
                                 </ConsoleCard>
                             </div>
                         </>
@@ -923,6 +1092,60 @@ export default function AMROutcomeNetworkPage() {
                             </form>
                         </ConsoleCard>
                     </div>
+
+                    {evidenceFabric && (
+                        <ConsoleCard title="Phenotype / Genotype Concordance">
+                            <div className="overflow-x-auto">
+                                <table className="w-full min-w-[980px] text-left font-mono text-xs">
+                                    <thead className="text-muted">
+                                        <tr className="border-b border-grid">
+                                            <th className="px-2 py-3 font-normal">Antimicrobial</th>
+                                            <th className="px-2 py-3 font-normal">Class</th>
+                                            <th className="px-2 py-3 font-normal">Phenotype</th>
+                                            <th className="px-2 py-3 font-normal">Genotype</th>
+                                            <th className="px-2 py-3 font-normal">Concordance</th>
+                                            <th className="px-2 py-3 font-normal">Use</th>
+                                            <th className="px-2 py-3 font-normal">Observed</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {evidenceFabric.concordance.rows.length === 0 ? (
+                                            <tr>
+                                                <td className="px-2 py-5 text-muted" colSpan={7}>
+                                                    NO ISOLATE-LINKED CONCORDANCE EVENTS
+                                                </td>
+                                            </tr>
+                                        ) : evidenceFabric.concordance.rows.slice(0, 100).map((row) => (
+                                            <tr
+                                                key={row.id ?? `${row.ast_ingestion_event_id}:${row.genomic_event_id}:${row.antimicrobial_key}`}
+                                                className="border-b border-grid/70"
+                                            >
+                                                <td className="px-2 py-3 text-white">{row.antimicrobial_key}</td>
+                                                <td className="px-2 py-3 text-muted">{row.drug_class ?? '-'}</td>
+                                                <td className="px-2 py-3 text-white">{humanize(row.phenotype_status)}</td>
+                                                <td className="px-2 py-3 text-white">{humanize(row.genotype_status)}</td>
+                                                <td className={`px-2 py-3 ${
+                                                    row.concordance_status.startsWith('concordant')
+                                                        ? 'text-accent'
+                                                        : 'text-warning'
+                                                }`}>
+                                                    {humanize(row.concordance_status)}
+                                                </td>
+                                                <td className={`px-2 py-3 ${
+                                                    row.clinical_actionability === 'surveillance_supported'
+                                                        ? 'text-accent'
+                                                        : 'text-muted'
+                                                }`}>
+                                                    {humanize(row.clinical_actionability)}
+                                                </td>
+                                                <td className="px-2 py-3 text-muted">{formatTimestamp(row.observed_at)}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </ConsoleCard>
+                    )}
 
                     <ConsoleCard title="Network Sites">
                         <div className="overflow-x-auto">

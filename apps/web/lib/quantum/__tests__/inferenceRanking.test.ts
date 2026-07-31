@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildAnonymizedGbsProblem } from '@/lib/quantum/inferenceRanking';
 
@@ -46,5 +48,18 @@ describe('buildAnonymizedGbsProblem', () => {
         });
 
         expect(problem).toBeNull();
+    });
+
+    it('keeps quantum output in shadow research and preserves the classical ranker', () => {
+        const source = readFileSync(
+            resolve(process.cwd(), 'lib/quantum/inferenceRanking.ts'),
+            'utf8',
+        );
+
+        expect(source).toContain("ranker: 'classical'");
+        expect(source).not.toContain("ranker: 'hybrid'");
+        expect(source).toContain("execution_mode: 'shadow_research'");
+        expect(source).toContain('clinical_decision_influence: false');
+        expect(source).toContain('classical_baseline_required: true');
     });
 });

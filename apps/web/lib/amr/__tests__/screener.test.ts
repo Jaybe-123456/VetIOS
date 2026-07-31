@@ -16,6 +16,17 @@ describe('AMR screener', () => {
         expect(result.resistance_genes).toContain('tetA');
         expect(result.resistance_classes).toContain('beta_lactam');
         expect(result.sequence_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(result).toMatchObject({
+            quantum_backend: null,
+            computation_class: 'classical_heuristic',
+            validation_status: 'unvalidated',
+            clinical_use_allowed: false,
+            card_db_version: null,
+        });
+        expect(result.reference_database_versions).toEqual({
+            vetios_local_marker_set: 'v1',
+        });
+        expect(result.warnings).toContain('phenotypic_ast_required');
     });
 
     it('aggregates public surveillance rows without individual records', () => {

@@ -260,6 +260,51 @@ describe('auth trust fabric', () => {
         expect(surveillancePacket.decision).toBe('allow');
     });
 
+    it('requires workload identity and AMR ingest scope for genomic evidence', () => {
+        const allowed = authorizeVetiosAction({
+            tenantId: 'tenant_1',
+            requestId: 'req_amr_genomic_1',
+            actionKey: 'amr.genomic.ingest',
+            resource: {
+                type: 'amr_genomic_evidence',
+                id: 'digest_1',
+                tenantId: 'tenant_1',
+            },
+            subject: {
+                type: 'oauth_client',
+                authMode: 'oauth_client',
+                subjectRef: 'lab_connector',
+                grantedScopes: ['amr:ingest'],
+                assuranceLevel: 'workload_identity',
+            },
+        });
+        expect(allowed).toMatchObject({
+            decision: 'allow',
+            actionCategory: 'amr_operations',
+            riskLevel: 'high',
+        });
+
+        const denied = authorizeVetiosAction({
+            tenantId: 'tenant_1',
+            requestId: 'req_amr_genomic_2',
+            actionKey: 'amr.concordance.materialize',
+            resource: {
+                type: 'amr_phenotype_genotype_concordance',
+                id: 'pair_1',
+                tenantId: 'tenant_1',
+            },
+            subject: {
+                type: 'oauth_client',
+                authMode: 'oauth_client',
+                subjectRef: 'lab_connector',
+                grantedScopes: ['amr:read'],
+                assuranceLevel: 'workload_identity',
+            },
+        });
+        expect(denied.decision).toBe('deny');
+        expect(denied.blockers).toContain('missing_scopes:amr:ingest');
+    });
+
     it('hashes request-surface values without storing raw IPs or user agents', () => {
         expect(hashTrustSurfaceValue('203.0.113.10')).toMatch(/^[a-f0-9]{64}$/);
         expect(hashTrustSurfaceValue('')).toBeNull();

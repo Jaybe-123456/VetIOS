@@ -6,7 +6,18 @@ export interface AMRScreenResult {
     resistance_classes: string[];
     novel_pattern_score: number;
     quantum_backend: string | null;
-    card_db_version: string;
+    card_db_version: string | null;
+    reference_database_versions: Record<string, string>;
+    algorithm_id: string;
+    algorithm_version: string;
+    computation_class:
+        | 'classical_validated'
+        | 'classical_heuristic'
+        | 'quantum_experimental'
+        | 'hybrid_experimental';
+    validation_status: 'unvalidated' | 'internally_validated' | 'externally_validated';
+    clinical_use_allowed: boolean;
+    warnings: string[];
     latency_ms: number;
 }
 
@@ -71,8 +82,21 @@ export function screenSequenceLocally(sequence: string): AMRScreenResult {
         resistance_genes: resistanceGenes,
         resistance_classes: resistanceClasses,
         novel_pattern_score: estimateNoveltyScore(normalized),
-        quantum_backend: 'local_entropy_fallback',
-        card_db_version: 'local-marker-v1',
+        quantum_backend: null,
+        card_db_version: null,
+        reference_database_versions: {
+            vetios_local_marker_set: 'v1',
+        },
+        algorithm_id: 'vetios_local_amr_marker_screen',
+        algorithm_version: '1.0.0',
+        computation_class: 'classical_heuristic',
+        validation_status: 'unvalidated',
+        clinical_use_allowed: false,
+        warnings: [
+            'research_screening_only',
+            'not_a_validated_genomic_pipeline',
+            'phenotypic_ast_required',
+        ],
         latency_ms: Date.now() - startedAt,
     };
 }
