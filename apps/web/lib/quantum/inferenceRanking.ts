@@ -12,6 +12,9 @@ export interface QuantumInferenceResult {
     latency_ms: number;
     anonymized_node_count: number;
     anonymized_edge_count: number;
+    execution_mode: 'shadow_research';
+    clinical_decision_influence: false;
+    classical_baseline_required: true;
     error?: string;
 }
 
@@ -71,6 +74,9 @@ export async function runOptionalQuantumRanking(input: {
                     latency_ms: Date.now() - startedAt,
                     anonymized_node_count: problem.request.nodes.length,
                     anonymized_edge_count: problem.request.edges.length,
+                    execution_mode: 'shadow_research',
+                    clinical_decision_influence: false,
+                    classical_baseline_required: true,
                     error: 'Quantum service health check failed.',
                 },
             };
@@ -78,7 +84,9 @@ export async function runOptionalQuantumRanking(input: {
 
         const response = await client.rank(problem.request);
         return {
-            ranker: 'hybrid',
+            // Quantum output is retained as shadow research telemetry only.
+            // It never changes the deterministic clinical differential order.
+            ranker: 'classical',
             quantumResult: {
                 status: 'completed',
                 backend: response.backend,
@@ -87,6 +95,9 @@ export async function runOptionalQuantumRanking(input: {
                 latency_ms: Date.now() - startedAt,
                 anonymized_node_count: problem.request.nodes.length,
                 anonymized_edge_count: problem.request.edges.length,
+                execution_mode: 'shadow_research',
+                clinical_decision_influence: false,
+                classical_baseline_required: true,
             },
         };
     } catch (error) {
@@ -100,6 +111,9 @@ export async function runOptionalQuantumRanking(input: {
                 latency_ms: Date.now() - startedAt,
                 anonymized_node_count: problem.request.nodes.length,
                 anonymized_edge_count: problem.request.edges.length,
+                execution_mode: 'shadow_research',
+                clinical_decision_influence: false,
+                classical_baseline_required: true,
                 error: error instanceof Error ? error.message : 'Quantum ranking failed.',
             },
         };
@@ -196,6 +210,9 @@ function disabledResult(status: 'disabled' | 'unavailable' | 'insufficient_graph
         latency_ms: 0,
         anonymized_node_count: 0,
         anonymized_edge_count: 0,
+        execution_mode: 'shadow_research',
+        clinical_decision_influence: false,
+        classical_baseline_required: true,
         error,
     };
 }

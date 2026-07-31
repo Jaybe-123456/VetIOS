@@ -287,6 +287,22 @@ export const AUTH_TRUST_ACTION_REQUIREMENTS: Record<string, AuthTrustActionRequi
         requiredScopes: ['amr:ingest'],
         challengeType: 'workload_identity',
     },
+    'amr.genomic.ingest': {
+        actionKey: 'amr.genomic.ingest',
+        actionCategory: 'amr_operations',
+        riskLevel: 'high',
+        requiredAssuranceLevel: 'workload_identity',
+        requiredScopes: ['amr:ingest'],
+        challengeType: 'workload_identity',
+    },
+    'amr.concordance.materialize': {
+        actionKey: 'amr.concordance.materialize',
+        actionCategory: 'amr_operations',
+        riskLevel: 'high',
+        requiredAssuranceLevel: 'workload_identity',
+        requiredScopes: ['amr:ingest'],
+        challengeType: 'workload_identity',
+    },
     'amr.reconciliation.write': {
         actionKey: 'amr.reconciliation.write',
         actionCategory: 'amr_operations',
