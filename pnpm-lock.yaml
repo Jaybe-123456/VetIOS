@@ -282,7 +282,7 @@ importers:
         specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
-  packages/federation-node:
+  packages/evidence-node:
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
@@ -294,7 +294,7 @@ importers:
         specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
-  packages/evidence-node:
+  packages/federation-node:
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
@@ -303,7 +303,7 @@ importers:
         specifier: workspace:*
         version: link:../tsconfig
       typescript:
-        specifier: ^5.7.0
+        specifier: '>=5.7.0 <6.0.0'
         version: 5.9.3
 
   packages/gaas:
