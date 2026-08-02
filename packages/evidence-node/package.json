@@ -1,0 +1,45 @@
+{
+    "name": "@vetios/evidence-node",
+    "version": "0.0.1",
+    "private": true,
+    "license": "UNLICENSED",
+    "type": "module",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./runtime": {
+            "types": "./dist/runtime.d.ts",
+            "default": "./dist/runtime.js"
+        },
+        "./spool": {
+            "types": "./dist/spool.d.ts",
+            "default": "./dist/spool.js"
+        },
+        "./client": {
+            "types": "./dist/client.d.ts",
+            "default": "./dist/client.js"
+        }
+    },
+    "bin": {
+        "vetios-evidence-node": "./dist/cli.js"
+    },
+    "files": [
+        "dist",
+        "README.md"
+    ],
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "test": "node --experimental-strip-types src/__tests__/evidence-node.test.ts",
+        "build": "tsc",
+        "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\""
+    },
+    "devDependencies": {
+        "@types/node": "^20.0.0",
+        "@vetios/tsconfig": "workspace:*",
+        "typescript": "^5.7.0"
+    }
+}

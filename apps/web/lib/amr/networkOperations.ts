@@ -349,12 +349,20 @@ export function evaluateAMRConnectorProbe(input: {
         if (input.observedRecordCount <= 0 && input.probeType === 'production_probe') {
             blockers.add('production_probe_requires_observed_records');
         }
-        if (!newestRecord) {
-            blockers.add('newest_record_timestamp_required');
-        } else if (hoursBetween(newestRecord, now) > AMR_CONNECTOR_PROBE_MAX_AGE_HOURS) {
-            blockers.add('connector_feed_stale');
+        if (input.probeType === 'production_probe') {
+            if (!newestRecord) {
+                blockers.add('newest_record_timestamp_required');
+            } else if (hoursBetween(newestRecord, now) > AMR_CONNECTOR_PROBE_MAX_AGE_HOURS) {
+                blockers.add('connector_feed_stale');
+            } else if (newestRecord.getTime() > now.getTime() + 5 * 60_000) {
+                blockers.add('connector_record_timestamp_in_future');
+            }
+        } else if (!newestRecord) {
+            warnings.add('heartbeat_without_observed_source_record');
         } else if (newestRecord.getTime() > now.getTime() + 5 * 60_000) {
             blockers.add('connector_record_timestamp_in_future');
+        } else if (hoursBetween(newestRecord, now) > AMR_CONNECTOR_PROBE_MAX_AGE_HOURS) {
+            warnings.add('connector_feed_stale');
         }
     } else if (input.tokenBindingMethod !== 'mtls') {
         warnings.add('non_production_probe_does_not_activate_connector');
