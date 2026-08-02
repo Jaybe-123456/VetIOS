@@ -71,6 +71,29 @@ describe('AMR network operations kernel', () => {
         expect(evaluation.receipt_hash).toMatch(/^[a-f0-9]{64}$/);
     });
 
+    it('accepts a zero-volume mTLS heartbeat without fabricating record freshness', () => {
+        const evaluation = evaluateAMRConnectorProbe({
+            probeType: 'heartbeat',
+            tokenBindingMethod: 'mtls',
+            oauthClientId: 'oauth-client-1',
+            certificateThumbprint: SHA_A,
+            sourceSystem: 'reference_lab_lis',
+            connectorVersion: '1.0.0',
+            schemaVersion: AMR_AST_SCHEMA_VERSION,
+            observedRecordCount: 0,
+            requestDigest: SHA_A,
+            responseDigest: SHA_B,
+            now: '2026-07-30T11:00:00.000Z',
+        });
+
+        expect(evaluation).toMatchObject({
+            production_verified: true,
+            status: 'passed',
+            blockers: [],
+        });
+        expect(evaluation.warnings).toContain('heartbeat_without_observed_source_record');
+    });
+
     it('blocks synthetic, identifiable, QC-failed, and malformed AST packets', () => {
         const packet = validPacket();
         packet.deidentified = false;

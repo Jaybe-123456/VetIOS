@@ -119,6 +119,26 @@ const IngestASTSchema = z.object({
     packet: CanonicalASTPacketSchema,
 }).strict();
 
+const IngestEvidenceNodeSchema = z.object({
+    action: z.literal('ingest_evidence_node_packet'),
+    request_id: UuidSchema,
+    contract_id: UuidSchema,
+    contract_version: z.string().trim().min(1).max(80),
+    adapter_key: z.string().trim().min(1).max(160),
+    mapping_version: z.string().trim().min(1).max(80),
+    mapping_hash: Sha256Schema,
+    reference_key_id: z.string().regex(/^[a-zA-Z0-9._-]{1,120}$/),
+    source_transport: z.enum(['webhook', 'api_poll', 'sftp', 'file_drop']),
+    source_format: z.enum(['vetios_ast_json_v1', 'hl7_v2_oru_r01', 'fhir_r4_bundle', 'rfc4180_csv']),
+    source_ref_hash: Sha256Schema,
+    accession_ref_hash: Sha256Schema,
+    packet: CanonicalASTPacketSchema,
+    reconciliation: z.object({
+        case_id: UuidSchema.nullable(),
+        patient_episode_id: UuidSchema.nullable(),
+    }).strict(),
+}).strict();
+
 const ReconcileASTSchema = z.object({
     action: z.literal('record_reconciliation_event'),
     request_id: UuidSchema,
@@ -135,6 +155,7 @@ const PostSchema = z.discriminatedUnion('action', [
     RecordProbeSchema,
     ValidateASTSchema,
     IngestASTSchema,
+    IngestEvidenceNodeSchema,
     ReconcileASTSchema,
 ]);
 
@@ -244,7 +265,10 @@ export async function POST(req: Request) {
             request_id: requestId,
             error: null,
         });
-    } else if (parsed.data.action === 'ingest_ast_packet') {
+    } else if (
+        parsed.data.action === 'ingest_ast_packet'
+        || parsed.data.action === 'ingest_evidence_node_packet'
+    ) {
         response = await ingestASTPacket({
             supabase,
             actor: auth.actor,
@@ -424,7 +448,7 @@ async function ingestASTPacket(input: {
     actor: ClinicalApiActor;
     actorId: string;
     requestId: string;
-    body: z.infer<typeof IngestASTSchema>;
+    body: z.infer<typeof IngestASTSchema> | z.infer<typeof IngestEvidenceNodeSchema>;
 }) {
     const trustGate = await enforceVetiosClinicalActorGate({
         client: input.supabase as unknown as Parameters<typeof enforceVetiosClinicalActorGate>[0]['client'],
@@ -440,6 +464,9 @@ async function ingestASTPacket(input: {
             route: 'api/amr/network-operations',
             lab_site_id: input.body.packet.lab_site_id,
             schema_version: input.body.packet.schema_version,
+            adapter_key: input.body.action === 'ingest_evidence_node_packet'
+                ? input.body.adapter_key
+                : null,
         },
     });
     if (!trustGate.ok) return trustGate.response;
@@ -494,7 +521,9 @@ async function ingestASTPacket(input: {
         tenantId: input.actor.tenantId,
         requestId: input.body.request_id,
         actorId: input.actorId,
-        connectorInstallationId: input.body.connector_installation_id ?? null,
+        connectorInstallationId: input.body.action === 'ingest_ast_packet'
+            ? input.body.connector_installation_id ?? null
+            : input.actor.connectorInstallation?.id ?? null,
         oauthClientId: input.actor.oauthClientId ?? null,
         packet: input.body.packet,
     });
@@ -507,19 +536,68 @@ async function ingestASTPacket(input: {
         prepared.surveillance_events = [];
     }
 
-    const { data, error } = await input.supabase.rpc('ingest_amr_ast_packet_v1', {
-        p_ingestion: prepared.ingestion,
-        p_results: prepared.results,
-        p_surveillance_events: prepared.surveillance_events,
-    });
-    if (error) return storageError(error.message, input.requestId);
+    const evidenceNodeProvenance = input.body.action === 'ingest_evidence_node_packet'
+        ? asRecord(asRecord(input.body.packet.evidence).evidence_node)
+        : {};
+    const rpc = input.body.action === 'ingest_evidence_node_packet'
+        ? await input.supabase.rpc('ingest_evidence_node_packet_v1', {
+            p_ingestion: prepared.ingestion,
+            p_results: prepared.results,
+            p_surveillance_events: prepared.surveillance_events,
+            p_receipt: {
+                request_id: input.body.request_id,
+                receipt_id: deterministicUuid(`evidence-receipt:${input.body.request_id}`),
+                contract_id: input.body.contract_id,
+                contract_version: input.body.contract_version,
+                adapter_key: input.body.adapter_key,
+                mapping_version: input.body.mapping_version,
+                mapping_hash: input.body.mapping_hash,
+                reference_key_id: input.body.reference_key_id,
+                source_transport: input.body.source_transport,
+                source_format: input.body.source_format,
+                source_ref_hash: input.body.source_ref_hash,
+                accession_ref_hash: input.body.accession_ref_hash,
+                certificate_thumbprint_hash: hashAMRNetworkValue(input.actor.mtlsCertThumbprint!),
+                removed_direct_identifier_count: readNonnegativeInteger(
+                    evidenceNodeProvenance.direct_identifier_fields_removed,
+                ),
+                evidence: {
+                    source_payload_hash: readText(evidenceNodeProvenance.source_payload_hash),
+                    reference_key_id: input.body.reference_key_id,
+                    raw_payload_stored_centrally: false,
+                    breakpoints_computed_by_vetios: false,
+                    oauth_access_token_id: input.actor.oauthAccessTokenId ?? null,
+                },
+            },
+            p_reconciliation: input.body.reconciliation,
+        })
+        : await input.supabase.rpc('ingest_amr_ast_packet_v1', {
+            p_ingestion: prepared.ingestion,
+            p_results: prepared.results,
+            p_surveillance_events: prepared.surveillance_events,
+        });
+    const { data, error } = rpc;
+    if (error) {
+        if (
+            input.body.action === 'ingest_evidence_node_packet'
+            && error.code === '23514'
+        ) {
+            return NextResponse.json({
+                error: 'evidence_node_contract_gate_blocked',
+                detail: error.message,
+                request_id: input.requestId,
+            }, { status: 409 });
+        }
+        return storageError(error.message, input.requestId);
+    }
     const result = asRecord(data);
     const ingestionEventId = readText(result.ingestion_event_id);
     if (!ingestionEventId) {
         return storageError('AMR AST ingestion RPC did not return an event ID.', input.requestId);
     }
 
-    const metering = prepared.accepted
+    const receiptStatus = readText(result.receipt_status);
+    const metering = prepared.accepted && receiptStatus !== 'duplicate' && result.cached !== true
         ? await meterASTIngestion({
             supabase: input.supabase,
             tenantId: input.actor.tenantId,
@@ -533,6 +611,14 @@ async function ingestASTPacket(input: {
     return NextResponse.json({
         accepted: prepared.accepted,
         ingestion_event_id: ingestionEventId,
+        receipt_event_id: readText(result.receipt_event_id),
+        receipt_id: readText(result.receipt_id),
+        receipt_status: receiptStatus,
+        receipt_hash: readText(result.receipt_hash),
+        identity_link_id: readText(result.identity_link_id),
+        identity_status: readText(result.identity_status),
+        amr_episode_id: readText(result.amr_episode_id),
+        closure_task_id: readText(result.closure_task_id),
         reconciliation_event_id: readText(result.reconciliation_event_id),
         lab_feed_event_ids: Array.isArray(result.lab_feed_event_ids)
             ? result.lab_feed_event_ids
@@ -837,14 +923,23 @@ function resolveTokenBinding(actor: ClinicalApiActor): 'session' | 'api_key' | '
 }
 
 function storageError(message: string, requestId: string) {
-    const missingSchema = /relation .* does not exist|schema cache|could not find the table/i.test(message);
+    if (/Evidence Node idempotency key payload mismatch/i.test(message)) {
+        return NextResponse.json({
+            error: 'idempotency_key_reused_with_different_operation',
+            request_id: requestId,
+        }, { status: 409 });
+    }
+    const missingSchema = /relation .* does not exist|schema cache|could not find the (?:table|function)|function .* does not exist/i.test(message);
+    const evidenceNodeSchema = /evidence_node|ingest_evidence_node_packet_v1/i.test(message);
     return NextResponse.json({
         error: missingSchema
             ? 'amr_network_operations_migration_required'
             : 'amr_network_operations_storage_failed',
         detail: message,
         migration: missingSchema
-            ? 'supabase/migrations/20260730000000_amr_network_operations_exchange.sql'
+            ? evidenceNodeSchema
+                ? 'supabase/migrations/20260801000000_evidence_node_lab_adapter.sql'
+                : 'supabase/migrations/20260730000000_amr_network_operations_exchange.sql'
             : undefined,
         request_id: requestId,
     }, { status: 503 });
@@ -864,6 +959,11 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function readText(value: unknown): string | null {
     return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readNonnegativeInteger(value: unknown): number {
+    const parsed = typeof value === 'number' ? value : Number(value);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
 
 function uniqueStrings(values: string[]): string[] {

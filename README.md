@@ -206,6 +206,24 @@ the console reports the pilot as enrolling or collecting rather than complete.
 - Existing surveillance: `GET /api/amr/surveillance`
 - Existing One Health export: `GET /api/amr/one-health/export`
 
+### Laboratory Evidence Node
+
+`@vetios/evidence-node` is the deployable laboratory-side runtime for the AMR
+Outcome Network. It ingests CSV, HL7 v2 ORU/R01, FHIR R4, JSON, SFTP, signed
+webhooks, API polls, and file drops into an encrypted local spool, then sends
+only de-identified canonical AST packets through mTLS-bound OAuth. Contract,
+mapping, receipt, identity-link, closure-task, and export evidence is append-only.
+
+- Runtime: `packages/evidence-node`
+- Control plane: `GET|POST /api/amr/evidence-node`
+- Contract-bound ingestion: `POST /api/amr/network-operations`
+- Migration: `supabase/migrations/20260801000000_evidence_node_lab_adapter.sql`
+- Runbook: [Evidence Node Laboratory Adapter v1](docs/evidence-node-laboratory-adapter-v1.md)
+
+InFARM, NAHLN, and KABS outputs are compatibility projections until the receiving
+authority returns an external acceptance receipt. VetIOS does not embed or
+reproduce licensed breakpoint tables in this runtime.
+
 ## Governed Inference Routing
 
 `POST /api/inference/v2` now executes through the model-routing runtime instead
@@ -390,6 +408,7 @@ Licensed/credentialed terminology operations can be verified through `GET|POST /
 |   |-- inference-schema/     Shared inference types and validation
 |   |-- logger/               Shared logging package
 |   |-- federation-node/      Clinic/lab federated learning node SDK and runner
+|   |-- evidence-node/        Contract-bound laboratory adapter and encrypted local spool
 |   |-- pharmacos/            Veterinary formulary and drug safety logic
 |   |-- tsconfig/             Shared TypeScript configuration
 |   `-- ui/                   Shared UI primitives
@@ -561,6 +580,7 @@ VetIOS uses layered verification:
 - `bash apps/web/scripts/test-api-local.sh` for core API smoke tests.
 - `pnpm test:adversarial-regressions` for failure-driven regression coverage.
 - `pnpm --filter @vetios/federation-node test` for clinic-node training, masking, signing, and proof-bundle coverage.
+- `pnpm --filter @vetios/evidence-node test` for CSV, HL7, FHIR, privacy, encrypted spool, dedupe, dead-letter, and replay coverage.
 - `pnpm --filter @vetios/web test -- lib/federation/__tests__/aggregateBuilder.test.ts` for coordinator aggregate materialization coverage.
 
 The adversarial runner lives at [`internal/testing/test_adversarial_regressions.ts`](internal/testing/test_adversarial_regressions.ts) and is executed with Node's TypeScript stripping support.
